@@ -20,7 +20,7 @@ import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHE
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { CLASSIFIER_SUMMARY_ENV, FILE_CHECKPOINTING_ENV, transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
-import { INSTRUCTIONS_COMMAND_ENV, INSTRUCTIONS_DIRS_ENV, INSTRUCTIONS_SCRIPT_ENV, type InstructionsLaunch } from '../../src/main/instructions-launch';
+import { INSTRUCTIONS_COMMAND_ENV, INSTRUCTIONS_DIRS_ENV, INSTRUCTIONS_PROFILE_ENV, INSTRUCTIONS_SCRIPT_ENV, type InstructionsLaunch } from '../../src/main/instructions-launch';
 import { SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
@@ -200,6 +200,7 @@ export class ClaudeRun {
       INSTRUCTIONS_COMMAND_ENV,
       INSTRUCTIONS_SCRIPT_ENV,
       INSTRUCTIONS_DIRS_ENV,
+      INSTRUCTIONS_PROFILE_ENV,
     ]);
   }
 

@@ -298,7 +298,7 @@ describe('toChatEvents: attachment の行', () => {
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
     // TANACODE.md を渡すフック。フックの記録（コマンドの目印）も、Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）も出さない。2.1.303
-    const instructions = instructionsContext(`${CWD}/TANACODE.md`, '# 決まり', '0123456789ab');
+    const instructions = instructionsContext([{ path: `${CWD}/TANACODE.md`, content: '# 決まり', sum: '0123456789ab' }]);
     expect(events(attachment({ type: 'hook_success', hookName: 'SessionStart:startup', hookEvent: 'SessionStart', command: INSTRUCTIONS_HOOK_COMMAND, stdout: '{}' }))).toEqual([]);
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [instructions] }))).toEqual([]);
     // ユーザーの SessionStart のフックが渡した文は出す。アプリのフックの文と 1 つの記録にまとまっていても、ユーザーの文だけを出す（2.1.303）
@@ -674,7 +674,7 @@ describe('toChatEvents: 発言の行', () => {
     // 一覧の名前は、はじめに送った発言から
     expect(transcriptTitle(user(three, { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual({ title: '指示 A', priority: 1 });
     // 作業中に押した「親にする」と、親の指示がまとまっても分ける。TANACODE_PARENT.md の中の tanacode のタグは、切れ目にしない
-    const role = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり\n<tanacode-parent-message> が来たら従う');
+    const role = parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親の決まり\n<tanacode-parent-message> が来たら従う' }]);
     expect(events(user([role, parentMessageText(parent, '次はこれ')].join('\n'), { uuid: 'u2', mergedSendUuids: ['u1'] }))).toEqual([
       { type: 'notice', id: 'u1', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: expect.stringContaining('＜tanacode-parent-message> が来たら従う') },
       { type: 'user', id: 'u2', text: '次はこれ', at, parent },
@@ -718,7 +718,7 @@ describe('toChatEvents: 発言の行', () => {
   });
 
   it('「親にする」の発言は、「親のセッションにしました」の知らせにし、開くと前書きと TANACODE_PARENT.md が読める。一覧のタイトルにしない。順番待ちには出す', () => {
-    const text = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり\n子に任せる');
+    const text = parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親の決まり\n子に任せる' }]);
     const body = text.replace(/^<[^>]+>\n/, '').replace(/\n<\/[^>]+>$/, '');
     const notice = { type: 'notice', id: 'u1', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: body };
     expect(events(user(text))).toEqual([notice]);
@@ -730,7 +730,7 @@ describe('toChatEvents: 発言の行', () => {
   });
 
   it('「親として始める」の発言は、「親のセッションにしました」の知らせのあとに、最初の指示を人の発言として出す。タイトル・順番待ちも指示から', () => {
-    const text = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり', 'ログイン画面を作って\n\n<pasted_content id="1">\nログ\n</pasted_content id="1">');
+    const text = parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親の決まり' }], 'ログイン画面を作って\n\n<pasted_content id="1">\nログ\n</pasted_content id="1">');
     expect(events(user(text))).toEqual([
       { type: 'notice', id: 'u1:parent-role', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: expect.stringContaining('# 親の決まり') },
       { type: 'user', id: 'u1', text: 'ログイン画面を作って', pastes: ['ログ'], at: expect.any(Number) },

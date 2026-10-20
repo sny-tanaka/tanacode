@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
@@ -335,7 +335,14 @@ describe('フォルダ（新規セッションの画面）', () => {
   });
 
   it('「親にする」で読ませる TANACODE_PARENT.md は、パスだけを返す（中身は画面に渡さない）。フォルダは、その直下を探す', async () => {
+    // プロファイルのフォルダ（Claude Code の設定のフォルダ）も見るので、手元の ~/.claude に左右されないよう、空のフォルダにする
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    onTestFinished(() => {
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = saved;
+    });
     await boot();
+    process.env.CLAUDE_CONFIG_DIR = join(state.root, 'empty-profile');
     await expect(invoke(IpcChannel.SessionsParentInstructions, 'parent')).resolves.toBe('/work/parent/TANACODE_PARENT.md');
     await expect(invoke(IpcChannel.SessionsParentInstructions, 's1')).resolves.toBeNull();
     await expect(invoke(IpcChannel.FolderParentInstructions, state.root)).resolves.toBeNull();
@@ -354,6 +361,28 @@ describe('フォルダ（新規セッションの画面）', () => {
     await expect(invoke(IpcChannel.FolderParentInstructions, join(repo, 'sub'), true)).resolves.toBe(join(realpathSync(repo), 'TANACODE_PARENT.md'));
     // リポジトリでなければ、選んだフォルダ
     await expect(invoke(IpcChannel.FolderParentInstructions, state.root, true)).resolves.toBe(join(state.root, 'TANACODE_PARENT.md'));
+  });
+
+  it('新規セッションの画面の「親として始める」は、プロファイルのフォルダ（Claude Code の設定のフォルダ）の TANACODE_PARENT.md だけでも選べる', async () => {
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    await boot();
+    // 設定のフォルダは、呼んだときの環境変数で決まる（claude-config.ts）
+    const profile = join(state.root, 'profile');
+    mkdirSync(profile, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = profile;
+    try {
+      const work = join(state.root, 'work');
+      mkdirSync(work, { recursive: true });
+      await expect(invoke(IpcChannel.FolderParentInstructions, work)).resolves.toBeNull();
+      writeFileSync(join(profile, 'TANACODE_PARENT.md'), '# プロファイルの親の決まり');
+      await expect(invoke(IpcChannel.FolderParentInstructions, work)).resolves.toBe(join(profile, 'TANACODE_PARENT.md'));
+      // 両方あれば、プロファイルのもの（読ませる順のはじめ）
+      writeFileSync(join(work, 'TANACODE_PARENT.md'), '# フォルダの親の決まり');
+      await expect(invoke(IpcChannel.FolderParentInstructions, work)).resolves.toBe(join(profile, 'TANACODE_PARENT.md'));
+    } finally {
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = saved;
+    }
   });
 
   it('フォルダの情報は、フォルダがあるときだけ読む', async () => {

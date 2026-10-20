@@ -7,6 +7,8 @@ export const INSTRUCTIONS_COMMAND_ENV = 'TANACODE_INSTRUCTIONS_COMMAND';
 export const INSTRUCTIONS_SCRIPT_ENV = 'TANACODE_INSTRUCTIONS_SCRIPT';
 // 探すフォルダ（JSON の配列。セッションのフォルダ、worktree のセッションなら元のリポジトリの順）
 export const INSTRUCTIONS_DIRS_ENV = 'TANACODE_INSTRUCTIONS_DIRS';
+// Claude Code のプロファイルのフォルダ（そのセッションの CLAUDE_CONFIG_DIR。~/.claude など）。そこの TANACODE.md も渡す
+export const INSTRUCTIONS_PROFILE_ENV = 'TANACODE_INSTRUCTIONS_PROFILE';
 
 // フックを動かす実行ファイル（tanacode 本体の Helper を Node として。互換性の確認では node）と、フックのスクリプト（instructions-hook.js）
 export type InstructionsLaunch = { command: string; script: string };
@@ -24,10 +26,11 @@ export function instructionsHooks(): unknown[] {
 }
 
 // 起動する Claude Code の環境に足す、フックが使う環境変数
-export function instructionsHookEnv(launch: InstructionsLaunch, dirs: readonly string[]): Record<string, string> {
+export function instructionsHookEnv(launch: InstructionsLaunch, dirs: readonly string[], profileDir: string): Record<string, string> {
   return {
     [INSTRUCTIONS_COMMAND_ENV]: launch.command,
     [INSTRUCTIONS_SCRIPT_ENV]: launch.script,
     [INSTRUCTIONS_DIRS_ENV]: JSON.stringify(dirs),
+    [INSTRUCTIONS_PROFILE_ENV]: profileDir,
   };
 }

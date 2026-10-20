@@ -63,7 +63,7 @@ import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from 
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import type { InstructionsLaunch } from './instructions-launch';
-import { instructionDirs, instructionsProblemText, readInstructions, type InstructionsFile } from './project-instructions';
+import { instructionDirs, instructionFiles, instructionsProblemText, type InstructionsFile } from './project-instructions';
 import { PendingQuestions } from './pending-questions';
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
@@ -944,13 +944,26 @@ export class SessionManager {
     return true;
   }
 
-  // 「親にする」で読ませる TANACODE_PARENT.md（セッションのフォルダの直下。worktree のセッションでそこに無ければ、元のリポジトリの直下）。
-  // 子のセッション（子は start_session を使えない）・一覧に無いセッション・ファイルが無いときは null。
-  // あっても使えない（空・大きすぎる・読めない）ものは、そのまま返す（ボタンは押せて、押すと理由を出す）
-  parentInstructions(id: string): InstructionsFile | null {
+  // 「親にする」で読ませる TANACODE_PARENT.md。プロファイルのフォルダ（Claude Code の設定のフォルダ）と、セッションのフォルダの直下
+  // （worktree のセッションでそこに無ければ、元のリポジトリの直下）の、見つけたものをプロファイル → フォルダの順に返す。
+  // 子のセッション（子は start_session を使えない）・一覧に無いセッション・どこにも無いときは空。
+  // あっても使えない（空・大きすぎる・読めない）ものも、そのまま返す（ボタンは押せて、押すと理由を出す）
+  parentInstructions(id: string): InstructionsFile[] {
     const record = this.store.get(id);
-    if (!record || record.parentId) return null;
-    return readInstructions(PARENT_INSTRUCTIONS_FILE, instructionDirs(record.cwd, record.worktree?.root));
+    if (!record || record.parentId) return [];
+    return instructionFiles(PARENT_INSTRUCTIONS_FILE, claudeConfigDir(this.claudeDir), instructionDirs(record.cwd, record.worktree?.root));
+  }
+
+  // 読ませる TANACODE_PARENT.md の中身。空のものは除く（渡すものが無いだけ）。大きすぎる・読めないものがあれば、そのわけ
+  // （一部だけを黙って読ませない）。読ませるものが 1 つも無ければ、無い・空のわけ
+  private parentFiles(id: string): { path: string; content: string }[] | string {
+    const found = this.parentInstructions(id);
+    const broken = found.find((file) => 'problem' in file && file.problem !== 'empty');
+    if (broken && 'problem' in broken) return instructionsProblemText(broken);
+    const usable = found.flatMap((file) => ('content' in file ? [file] : []));
+    if (usable.length > 0) return usable;
+    const empty = found.find((file) => 'problem' in file);
+    return empty && 'problem' in empty ? instructionsProblemText(empty) : t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE });
   }
 
   // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（親の状態は覚えない。会話を消すと忘れるので、もう一度押す）。
@@ -958,12 +971,11 @@ export class SessionManager {
   // ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。読ませられなければ、理由を投げる
   async becomeParent(id: string): Promise<void> {
     if (this.store.get(id)?.parentId) throw new Error(t('main.parentRole.child'));
-    const found = this.parentInstructions(id);
-    if (!found) throw new Error(t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE }));
-    if (!('content' in found)) throw new Error(instructionsProblemText(found));
+    const files = this.parentFiles(id);
+    if (typeof files === 'string') throw new Error(files);
     const rt = this.runtimes.get(id);
     if (!rt || (!rt.process && !rt.restarting)) throw new SendError('notRunning');
-    const text = parentRoleText(found.path, found.content);
+    const text = parentRoleText(files);
     if (rt.terminal && !rt.switching) {
       if (!this.pasteIntoTerminal(id, text)) throw new Error(t('main.parentRole.cannotPaste'));
       return;
@@ -974,19 +986,20 @@ export class SessionManager {
   // 新規セッションの画面の「親として始める」: 最初の指示の前に、TANACODE_PARENT.md を付けた発言にする。
   // 始めるまでにファイルが無くなっていた・使えなくなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
   withParentRole(id: string, text: string): string {
-    const found = this.parentInstructions(id);
-    if (found && 'content' in found) return parentRoleText(found.path, found.content, text);
-    const notice = found ? t('main.parentRole.unusableOnStart', { reason: instructionsProblemText(found) }) : t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE });
+    const files = this.parentFiles(id);
+    if (typeof files !== 'string') return parentRoleText(files, text);
+    const notice = this.parentInstructions(id).length > 0 ? t('main.parentRole.unusableOnStart', { reason: files }) : t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE });
     this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: notice, warning: true }]);
     return text;
   }
 
-  // TANACODE.md があるのに使えない（大きすぎる・読めない）なら、渡していないことをチャットで知らせる（フックは黙って何も渡さない）。
-  // 空のものは、渡すものが無いだけなので知らせない
+  // TANACODE.md（プロファイルとフォルダ）があるのに使えない（大きすぎる・読めない）なら、渡していないことをチャットで知らせる
+  // （フックは、使えないものを黙って渡さない）。空のものは、渡すものが無いだけなので知らせない
   private noteUnusableInstructions(id: string, record: SessionRecord): void {
-    const found = readInstructions(INSTRUCTIONS_FILE, instructionDirs(record.cwd, record.worktree?.root));
-    if (!found || 'content' in found || found.problem === 'empty') return;
-    this.pushEvents(id, [{ type: 'info', id: `instructions-unusable:${randomUUID()}`, text: instructionsProblemText(found), warning: true }]);
+    for (const file of instructionFiles(INSTRUCTIONS_FILE, claudeConfigDir(this.claudeDir), instructionDirs(record.cwd, record.worktree?.root))) {
+      if ('content' in file || file.problem === 'empty') continue;
+      this.pushEvents(id, [{ type: 'info', id: `instructions-unusable:${randomUUID()}`, text: instructionsProblemText(file), warning: true }]);
+    }
   }
 
   // 書くだけの Stop のフックが、TUI のターンの終わりを知らせた（ターミナルモード）。input: フックの入力（permission_mode）

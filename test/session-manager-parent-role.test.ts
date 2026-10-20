@@ -34,14 +34,17 @@ async function idleSession(parentId: string | null = null) {
 }
 
 describe('parentInstructions', () => {
-  it('セッションのフォルダの直下の TANACODE_PARENT.md。子のセッション・一覧に無いセッション・ファイルが無ければ null', async () => {
+  it('プロファイルのフォルダとセッションのフォルダの直下の TANACODE_PARENT.md（プロファイル → フォルダの順）。子のセッション・一覧に無いセッション・どこにも無ければ空', async () => {
     const { id } = await idleSession();
-    expect(app.manager.parentInstructions(id)).toBeNull();
+    expect(app.manager.parentInstructions(id)).toEqual([]);
     putRules();
-    expect(app.manager.parentInstructions(id)).toEqual({ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), content: RULES });
+    expect(app.manager.parentInstructions(id)).toEqual([{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), content: RULES }]);
+    // 既定のプロファイルなら、Claude Code の設定のフォルダは ~/.claude
+    putRules(join(app.home, '.claude'));
+    expect(app.manager.parentInstructions(id).map((file) => file.path)).toEqual([join(app.home, '.claude', PARENT_INSTRUCTIONS_FILE), join(app.cwd, PARENT_INSTRUCTIONS_FILE)]);
     const { id: child } = await idleSession(id);
-    expect(app.manager.parentInstructions(child)).toBeNull();
-    expect(app.manager.parentInstructions('none')).toBeNull();
+    expect(app.manager.parentInstructions(child)).toEqual([]);
+    expect(app.manager.parentInstructions('none')).toEqual([]);
   });
 });
 
@@ -52,12 +55,34 @@ describe('becomeParent', () => {
     await app.manager.becomeParent(id);
     expect(pipe.prompts).toHaveLength(1);
     const sent = parseParentRole(sentText(pipe.prompts[0]));
-    expect(sent).toMatchObject({ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), rest: '' });
+    expect(sent).toMatchObject({ files: [{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE) }], rest: '' });
     expect(sent!.body).toContain(RULES.trim());
     // 順番待ち・送信中の表示にも出す（ボタンで頼んだものなので）
     expect(queue(id)).toMatchObject([{ text: '親にする（TANACODE_PARENT.md を読ませる）', state: 'sending' }]);
     app.append(id, { ...line.user(sentText(pipe.prompts[0])), uuid: (pipe.prompts[0] as { uuid: string }).uuid });
     await app.waitFor('知らせが出る', () => app.events(id).some((e) => e.type === 'notice' && e.text === 'TANACODE_PARENT.md を読ませて、親のセッションにしました'));
+  });
+
+  it('プロファイルのフォルダとセッションのフォルダの両方にあれば、両方を 1 つの発言で読ませる（プロファイル → フォルダの順）', async () => {
+    const { id, pipe } = await idleSession();
+    putRules();
+    mkdirSync(join(app.home, '.claude'), { recursive: true });
+    writeFileSync(join(app.home, '.claude', PARENT_INSTRUCTIONS_FILE), 'プロファイルの親の決まり');
+    await app.manager.becomeParent(id);
+    const sent = parseParentRole(sentText(pipe.prompts[0]));
+    expect(sent?.files.map((file) => file.path)).toEqual([join(app.home, '.claude', PARENT_INSTRUCTIONS_FILE), join(app.cwd, PARENT_INSTRUCTIONS_FILE)]);
+    expect(sent!.body.indexOf('プロファイルの親の決まり')).toBeLessThan(sent!.body.indexOf(RULES.trim()));
+    // プロファイルのものだけでも押せる
+    rmSync(join(app.cwd, PARENT_INSTRUCTIONS_FILE));
+    await app.manager.becomeParent(id);
+    expect(parseParentRole(sentText(pipe.prompts[1]))?.files.map((file) => file.path)).toEqual([join(app.home, '.claude', PARENT_INSTRUCTIONS_FILE)]);
+    // 空のものは除いて読ませる。大きすぎる・読めないものがあれば、一部だけを黙って読ませず、わけを投げる
+    writeFileSync(join(app.cwd, PARENT_INSTRUCTIONS_FILE), '');
+    await app.manager.becomeParent(id);
+    expect(parseParentRole(sentText(pipe.prompts[2]))?.files.map((file) => file.path)).toEqual([join(app.home, '.claude', PARENT_INSTRUCTIONS_FILE)]);
+    writeFileSync(join(app.cwd, PARENT_INSTRUCTIONS_FILE), 'x'.repeat(1024 * 1024 + 1));
+    await expect(app.manager.becomeParent(id)).rejects.toThrow('が大きすぎる（1MB を超える）ので、Claude に渡していません');
+    expect(pipe.prompts).toHaveLength(3);
   });
 
   it('今の作業が終わってから届くように送る（priority: later。作業中に押しても、今のターンの途中には入らない）。押すたびに 1 回ずつ送る', async () => {
@@ -77,7 +102,7 @@ describe('becomeParent', () => {
     writeFileSync(join(app.cwd, PARENT_INSTRUCTIONS_FILE), ' \n');
     await expect(app.manager.becomeParent(id)).rejects.toThrow(`${join(app.cwd, PARENT_INSTRUCTIONS_FILE)} が空なので、Claude に渡していません`);
     // 使えなくても、ボタンは押せる（押すとわけを出す）ので、パスは返す
-    expect(app.manager.parentInstructions(id)).toEqual({ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), problem: 'empty' });
+    expect(app.manager.parentInstructions(id)).toEqual([{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), problem: 'empty' }]);
     putRules();
     const { id: child, pipe: childPipe } = await idleSession(id);
     await expect(app.manager.becomeParent(child)).rejects.toThrow('子のセッションは親にできません');
@@ -99,7 +124,7 @@ describe('becomeParent', () => {
     const pty = app.host.spawned.at(-1) as ScriptedPty;
     await app.manager.becomeParent(id);
     expect(pty.writes).toHaveLength(1);
-    expect(pty.writes[0].startsWith('\u001b[200~<tanacode-parent-role path=')).toBe(true);
+    expect(pty.writes[0].startsWith('\u001b[200~<tanacode-parent-role>\n')).toBe(true);
     expect(pty.writes[0].endsWith('</tanacode-parent-role>\u001b[201~')).toBe(true);
     app.manager.permissionRequested(id, { tool_name: 'Bash', tool_input: { command: 'ls' } }, Date.now());
     await expect(app.manager.becomeParent(id)).rejects.toThrow('Claude Code が確認・質問を出している間は、入力欄に貼れません');
@@ -112,7 +137,7 @@ describe('withParentRole（新規セッションの画面の「親として始�
     const { id } = await idleSession();
     putRules();
     const text = app.manager.withParentRole(id, 'ログイン画面を作って');
-    expect(parseParentRole(text)).toMatchObject({ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), rest: 'ログイン画面を作って' });
+    expect(parseParentRole(text)).toMatchObject({ files: [{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE) }], rest: 'ログイン画面を作って' });
     expect(infos(id)).toEqual([]);
   });
 
@@ -140,13 +165,18 @@ describe('withParentRole（新規セッションの画面の「親として始�
     pipe.answers.set('rewind_conversation', { rewound: true, prefillText: app.manager.withParentRole(id, 'ログイン画面を作って') });
     expect(await app.manager.rewind(id, first, { conversation: true, code: false })).toEqual({ ok: true, prefillText: 'ログイン画面を作って', error: null });
     // 「親にする」だけの発言を戻したときは、入力欄に何も戻さない
-    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: parentRoleText(join(app.cwd, PARENT_INSTRUCTIONS_FILE), RULES) });
+    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: parentRoleText([{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), content: RULES }]) });
     expect(await app.manager.rewind(id, first, { conversation: true, code: false })).toEqual({ ok: true, prefillText: null, error: null });
   });
 });
 
 describe('TANACODE.md を渡すフック', () => {
-  it('起動したとき、TANACODE.md があるのに使えない（大きすぎる・読めない）なら、渡していないことをチャットに出す。空なら出さない', async () => {
+  it('起動する Claude Code に、プロファイルのフォルダも環境変数で渡す（そこの TANACODE.md も渡すため）', async () => {
+    const { pipe } = await idleSession();
+    expect(pipe.request.env.TANACODE_INSTRUCTIONS_PROFILE).toBe(join(app.home, '.claude'));
+  });
+
+  it('起動したとき、TANACODE.md（プロファイル・フォルダ）があるのに使えない（大きすぎる・読めない）なら、渡していないことをチャットに出す。空なら出さない', async () => {
     const big = join(app.cwd, 'TANACODE.md');
     writeFileSync(big, 'x'.repeat(1024 * 1024 + 1));
     const { id } = await idleSession();

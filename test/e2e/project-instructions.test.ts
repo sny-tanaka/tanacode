@@ -44,7 +44,8 @@ describe('TANACODE.md と「親にする」', () => {
     const context = contextOf(FIRST);
     expect(context).toContain(`<tanacode-instructions path="${app.work}/TANACODE.md"`);
     expect(context).toContain(RULES.trim());
-    expect(context).toContain(`<tanacode-parent-role path="${app.work}/TANACODE_PARENT.md">`);
+    expect(context).toContain('<tanacode-parent-role>');
+    expect(context).toContain(`<instructions-file path="${app.work}/TANACODE_PARENT.md">`);
     expect(context).toContain(PARENT_RULES.trim());
     // チャットには、知らせと、最初の指示（人の発言）が出る。囲みや、TANACODE.md のフックは出ない
     await app.byText('.chat-list .chat-notice', NOTICE).waitFor();

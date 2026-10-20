@@ -15,7 +15,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
 import { TranscriptFollower } from './transcript-follower';
 import type { EntryHandler, MissingParentHandler, RemovedHandler } from './transcript-tail';
-import { projectLogDir } from './claude-config';
+import { claudeConfigDir, projectLogDir } from './claude-config';
 import { StreamClient, type StreamEvents } from './stream/client';
 import { endSession } from './stream/internal';
 import { LineLog } from './stream/log';
@@ -223,7 +223,7 @@ export class ClaudeSession {
       ...(this.options.sessions ? sessionsGateEnv(this.options.sessions) : {}),
       ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
       ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
-      ...(this.options.instructions ? instructionsHookEnv(this.options.instructions, instructionDirs(cwd, worktreeRoot)) : {}),
+      ...(this.options.instructions ? instructionsHookEnv(this.options.instructions, instructionDirs(cwd, worktreeRoot), claudeConfigDir(this.options.claudeDir ?? null)) : {}),
     };
   }
 

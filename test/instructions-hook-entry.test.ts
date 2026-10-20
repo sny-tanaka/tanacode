@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { INSTRUCTIONS_DIRS_ENV } from '../src/main/instructions-launch';
+import { INSTRUCTIONS_DIRS_ENV, INSTRUCTIONS_PROFILE_ENV } from '../src/main/instructions-launch';
 
 // TANACODE.md を渡すフックの入口（src/main/instructions-hook.ts）。Claude Code が起動すると、読み込んだだけで動き出す。
 // フックの本体（runInstructionsHook）は差し替え、入口が環境変数と標準入力から、何をどの値で呼び、何を書くかを確かめる
@@ -12,17 +12,21 @@ vi.mock('../src/main/project-instructions', async (importOriginal) => ({
 }));
 
 const saved = process.env[INSTRUCTIONS_DIRS_ENV];
+const savedProfile = process.env[INSTRUCTIONS_PROFILE_ENV];
 let exit: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.resetModules();
   mocks.runInstructionsHook.mockReset();
   process.env[INSTRUCTIONS_DIRS_ENV] = JSON.stringify(['/work/repo/.claude/worktrees/w1', '/work/repo']);
+  process.env[INSTRUCTIONS_PROFILE_ENV] = '/Users/me/.claude-personal';
   exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 });
 afterEach(() => {
   vi.restoreAllMocks();
   if (saved === undefined) delete process.env[INSTRUCTIONS_DIRS_ENV];
   else process.env[INSTRUCTIONS_DIRS_ENV] = saved;
+  if (savedProfile === undefined) delete process.env[INSTRUCTIONS_PROFILE_ENV];
+  else process.env[INSTRUCTIONS_PROFILE_ENV] = savedProfile;
 });
 
 // 標準入力の代わり。Claude Code は JSON を書いて閉じる
@@ -47,7 +51,7 @@ const stdout = () => {
 const start = () => import('../src/main/instructions-hook');
 
 describe('TANACODE.md を渡すフックの入口', () => {
-  it('標準入力を読み終えてから、環境変数の探すフォルダでフックを動かし、答えにアプリのフックの印を足して書き終えたら終わる', async () => {
+  it('標準入力を読み終えてから、環境変数の探すフォルダ（セッションのフォルダとプロファイルのフォルダ）でフックを動かし、答えにアプリのフックの印を足して書き終えたら終わる', async () => {
     const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '<tanacode-instructions …>' } });
     mocks.runInstructionsHook.mockReturnValue(output);
     const input = stdin();
@@ -57,7 +61,7 @@ describe('TANACODE.md を渡すフックの入口', () => {
     input.data('{"hook_event_name":');
     input.data('"SessionStart","source":"startup"}');
     input.end();
-    expect(mocks.runInstructionsHook).toHaveBeenCalledWith('{"hook_event_name":"SessionStart","source":"startup"}', ['/work/repo/.claude/worktrees/w1', '/work/repo']);
+    expect(mocks.runInstructionsHook).toHaveBeenCalledWith('{"hook_event_name":"SessionStart","source":"startup"}', ['/work/repo/.claude/worktrees/w1', '/work/repo'], '/Users/me/.claude-personal');
     expect(out.written.map((w) => JSON.parse(w))).toEqual([{ ...JSON.parse(output), suppressOutput: true }]);
     // 書き終える前には終わらない（答えが途中で切れないように）
     expect(exit).not.toHaveBeenCalled();
@@ -81,14 +85,15 @@ describe('TANACODE.md を渡すフックの入口', () => {
       input.end();
       expect(out.written).toEqual(['{"suppressOutput":true}\n']);
     }
-    expect(mocks.runInstructionsHook.mock.calls.at(-1)).toEqual(['', ['/a']]);
+    expect(mocks.runInstructionsHook.mock.calls.at(-1)).toEqual(['', ['/a'], '/Users/me/.claude-personal']);
     delete process.env[INSTRUCTIONS_DIRS_ENV];
+    delete process.env[INSTRUCTIONS_PROFILE_ENV];
     vi.resetModules();
     mocks.runInstructionsHook.mockReset().mockReturnValue('');
     const input = stdin();
     stdout();
     await start();
     input.end();
-    expect(mocks.runInstructionsHook).toHaveBeenCalledWith('', []);
+    expect(mocks.runInstructionsHook).toHaveBeenCalledWith('', [], null);
   });
 });

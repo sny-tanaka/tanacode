@@ -406,7 +406,7 @@ const SessionManager = fakeClass('SessionManager', {
   modelsOf: echo('manager.modelsOf'),
   restart: echo('manager.restart'),
   // TANACODE_PARENT.md のあるセッション（parent）だけ、パスと中身を返す
-  parentInstructions: (_self, id: string) => (id === 'parent' ? { path: '/work/parent/TANACODE_PARENT.md', content: '# 親' } : null),
+  parentInstructions: (_self, id: string) => (id === 'parent' ? [{ path: '/work/parent/TANACODE_PARENT.md', content: '# 親' }] : []),
   becomeParent: echo('manager.becomeParent'),
   withParentRole: (_self, id: string, text: string) => `<role of ${id}>${text}`,
   setRemoteControl: echo('manager.setRemoteControl'),

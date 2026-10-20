@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
-import { instructionDirs, readInstructions } from './project-instructions';
+import { instructionDirs, instructionFiles } from './project-instructions';
 import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
@@ -604,12 +604,13 @@ function registerIpc(): void {
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
-  // 始めたあとに main が探す場所と同じところを見る。worktree で始めるなら、worktree はリポジトリのいちばん上から作られるので、そこ
-  // （サブフォルダを選んでいても）。そうでなければ、フォルダ（.claude/worktrees/<名前> を選んだなら、元のリポジトリも）
-  handle(IpcChannel.FolderParentInstructions, async (_e, cwd: string, worktree?: boolean) => {
+  // 始めたあとに main が探す場所と同じところを見る。プロファイルのフォルダ（Claude Code の設定のフォルダ）と、セッションのフォルダ。
+  // worktree で始めるなら、worktree はリポジトリのいちばん上から作られるので、そこ（サブフォルダを選んでいても）。そうでなければ、
+  // フォルダ（.claude/worktrees/<名前> を選んだなら、元のリポジトリも）。どちらかにあれば、そのパス（プロファイルが先）
+  handle(IpcChannel.FolderParentInstructions, async (e, cwd: string, worktree?: boolean) => {
     const dir = String(cwd);
     const dirs = worktree === true ? [(await repositoryRoot(dir)) ?? dir] : instructionDirs(dir, null);
-    return readInstructions(PARENT_INSTRUCTIONS_FILE, dirs)?.path ?? null;
+    return instructionFiles(PARENT_INSTRUCTIONS_FILE, claudeConfigDir(P(e).claudeDir), dirs)[0]?.path ?? null;
   });
   handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
   handle(IpcChannel.FolderCommands, (e, cwd: string) => listCommands(cwd, null, P(e).claudeDir));
@@ -676,7 +677,7 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsConfigure, (e, id: string, options: SessionOptions) => P(e).manager.configure(id, options));
   handle(IpcChannel.SessionsModels, (e, id: string) => P(e).manager.modelsOf(id));
   handle(IpcChannel.SessionsRestart, (e, id: string) => P(e).manager.restart(id));
-  handle(IpcChannel.SessionsParentInstructions, (e, id: string) => P(e).manager.parentInstructions(id)?.path ?? null);
+  handle(IpcChannel.SessionsParentInstructions, (e, id: string) => P(e).manager.parentInstructions(id)[0]?.path ?? null);
   handle(IpcChannel.SessionsBecomeParent, (e, id: string) => P(e).manager.becomeParent(id));
   // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
   handle(IpcChannel.ChecklistGet, (e, id: string) => (P(e).manager.summary(id) ? P(e).checklists.lists(id) : []));

@@ -201,6 +201,11 @@ describe('起動', () => {
       TANACODE_INSTRUCTIONS_SCRIPT: '/x/instructions-hook.js',
       TANACODE_INSTRUCTIONS_DIRS: JSON.stringify([join(root, 'work')]),
     });
+    // プロファイルのフォルダ（CLAUDE_CONFIG_DIR）。既定のプロファイルなら ~/.claude
+    expect(env.TANACODE_INSTRUCTIONS_PROFILE).toBe(join(process.env.HOME ?? '', '.claude'));
+    session({ instructions, claudeDir: '/Users/me/.claude-personal' }).claude.start();
+    expect(host.spawned.at(-1)!.request.env.TANACODE_INSTRUCTIONS_PROFILE).toBe('/Users/me/.claude-personal');
+    host.spawned.pop();
     expect(JSON.parse(host.spawned[0].arg('--settings')!).hooks.SessionStart[0].hooks[0].command).toContain('TANACODE_INSTRUCTIONS_HOOK=1');
     const worktree = join(root, 'work', '.claude', 'worktrees', 'w1');
     session({ instructions, cwd: worktree, worktree: 'w1', worktreeRoot: join(root, 'work') }).claude.start();

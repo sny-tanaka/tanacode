@@ -11,13 +11,16 @@ import { MockApi } from './mock-api';
 // - 新しい会話・/clear（最適化圧縮も同じ）・圧縮のあとに、今の TANACODE.md が Claude に渡る。書き換えたら、次の /clear から新しい中身
 // - 再開（--resume。起動し直し・切り替え）では、最後に渡したものと同じなら渡し直さない。書き換えていれば新しい中身を渡す
 // - チャットのフックの一覧には出ず（ユーザーの SessionStart のフックは出る）、Claude が知っている範囲（読んだファイル・コンテキストの中身）に出る
-// - 「親にする」で、TANACODE_PARENT.md が Claude に渡り、チャットには知らせとして出る
+// - プロファイルのフォルダ（CLAUDE_CONFIG_DIR。ここでは HOME の .claude）の TANACODE.md も、フォルダのものより前に渡る
+// - 「親にする」で、TANACODE_PARENT.md（プロファイル → フォルダ）が Claude に渡り、チャットには知らせとして出る
 
 const version = claudeVersion();
 const RULES_V1 = '# プロジェクトの決まり（1）\n- 答えは日本語で書く\n';
 const RULES_V2 = '# プロジェクトの決まり（2）\n- テストを足してから直す\n';
 const RULES_V3 = '# プロジェクトの決まり（3）\n- 小さく分けてコミットする\n';
 const PARENT_RULES = '# 親として動くときの決まり\n- 作業は子のセッションに任せる\n';
+const PROFILE_RULES = '# どのプロジェクトでもの決まり\n- 短く報告する\n';
+const PROFILE_PARENT_RULES = '# どのプロジェクトでも親として\n- 子の変更は自分で確かめる\n';
 // ユーザーの SessionStart のフックが渡す文（アプリのフックと見分けられるか）
 const USER_CONTEXT = 'ユーザーのフックが渡した文';
 
@@ -33,6 +36,8 @@ describe(`Claude Code ${version} と TANACODE.md・TANACODE_PARENT.md`, () => {
   };
   const delivered = (context: string) => context.match(/<tanacode-instructions path="[^"]*" sum="[0-9a-f]+">/g) ?? [];
   const writeRules = (text: string) => writeFileSync(join(run.cwd, INSTRUCTIONS_FILE), text);
+  // プロファイルのフォルダ（ClaudeRun は CLAUDE_CONFIG_DIR を持ち込まないので、HOME の .claude）
+  const profileFile = (name: string) => join(run.home, '.claude', name);
 
   beforeAll(async () => {
     const script = await buildRelay('instructions-hook');
@@ -110,11 +115,33 @@ describe(`Claude Code ${version} と TANACODE.md・TANACODE_PARENT.md`, () => {
     expect(context).toContain(RULES_V3.trim());
   });
 
-  it('「親にする」で、TANACODE_PARENT.md が Claude に渡り、チャットには知らせとして出る', async () => {
+  it('プロファイルのフォルダの TANACODE.md も、フォルダのものより前に渡る。コンテキストの中身では、ファイルごとの行になる', async () => {
+    writeFileSync(profileFile(INSTRUCTIONS_FILE), PROFILE_RULES);
+    const switched = run.switches.length;
+    await run.send('/clear');
+    await run.waitUntil('/clear のあとの乗り換え', () => run.switches.length > switched && run.idle, 30_000);
+    const context = await ask('プロファイルにも置いたあとの発言です');
+    expect(delivered(context)).toEqual([
+      expect.stringContaining(`path="${profileFile(INSTRUCTIONS_FILE)}"`),
+      expect.stringContaining(`path="${join(run.cwd, INSTRUCTIONS_FILE)}"`),
+    ]);
+    expect(context.indexOf(PROFILE_RULES.trim())).toBeGreaterThan(-1);
+    expect(context.indexOf(PROFILE_RULES.trim())).toBeLessThan(context.indexOf(RULES_V3.trim()));
+    await run.waitUntil('読んだファイルの印', () => run.knowledge?.files[INSTRUCTIONS_FILE] === 'read', 10_000);
+    const files = (await run.manager.context(run.sessionId!)).items.filter((i) => i.kind === 'file' && i.tokens > 0).map((i) => i.label);
+    expect(files).toEqual(expect.arrayContaining(['~/.claude/TANACODE.md', INSTRUCTIONS_FILE]));
+  });
+
+  it('「親にする」で、TANACODE_PARENT.md（プロファイル → フォルダ）が Claude に渡り、チャットには知らせとして出る', async () => {
+    writeFileSync(profileFile(PARENT_INSTRUCTIONS_FILE), PROFILE_PARENT_RULES);
     await run.manager.becomeParent(run.sessionId!);
     await run.waitUntil('親にした返事', () => run.idle && api.lastPrompts.some((p) => p.includes(PARENT_RULES.trim())), 30_000);
     const prompt = api.lastPrompts.find((p) => p.includes(PARENT_RULES.trim()))!;
-    expect(prompt).toContain(`<tanacode-parent-role path="${join(run.cwd, PARENT_INSTRUCTIONS_FILE)}">`);
+    expect(prompt).toContain('<tanacode-parent-role>');
+    const profile = prompt.indexOf(`<instructions-file path="${profileFile(PARENT_INSTRUCTIONS_FILE)}">\n${PROFILE_PARENT_RULES.trim()}\n</instructions-file>`);
+    const folder = prompt.indexOf(`<instructions-file path="${join(run.cwd, PARENT_INSTRUCTIONS_FILE)}">\n${PARENT_RULES.trim()}\n</instructions-file>`);
+    expect(profile).toBeGreaterThan(-1);
+    expect(folder).toBeGreaterThan(profile);
     await run.waitUntil('知らせ', () => run.chatEvents.some((e) => e.type === 'notice' && e.text === 'TANACODE_PARENT.md を読ませて、親のセッションにしました'), 10_000);
     expect(run.chatEvents.some((e) => e.type === 'user' && e.text.includes('tanacode-parent-role'))).toBe(false);
     await run.waitUntil('読んだファイルの印', () => run.knowledge?.files[PARENT_INSTRUCTIONS_FILE] === 'read', 10_000);

@@ -62,12 +62,11 @@ export class KnowledgeTracker {
       if (a?.type === 'nested_memory') mark(a.path, 'read');
       if (a?.type === 'compact_file_reference') mark(a.filename, 'stale');
       // 作業の途中に届いた「親にする」の発言（TANACODE_PARENT.md の中身が丸ごと入っている）
-      if (a?.type === 'queued_command' && typeof a.prompt === 'string') mark(parseParentRole(a.prompt)?.path, 'read');
+      if (a?.type === 'queued_command' && typeof a.prompt === 'string') for (const file of parseParentRole(a.prompt)?.files ?? []) mark(file.path, 'read');
       // アプリのフックが渡した TANACODE.md（中身が丸ごと Claude に渡っている。長すぎて中身を入れなかったものは、Claude が読んだときに付く）
       if (a?.type === 'hook_additional_context' && Array.isArray(a.content)) {
         for (const text of a.content) {
-          const instructions = typeof text === 'string' ? parseInstructions(text) : null;
-          if (instructions?.full) mark(instructions.path, 'read');
+          for (const block of typeof text === 'string' ? parseInstructions(text) : []) if (block.full) mark(block.path, 'read');
         }
       }
     }
@@ -75,7 +74,7 @@ export class KnowledgeTracker {
     if (entry.type === 'user' && !entry.isMeta) {
       const content = entry.message?.content;
       const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join('') : '';
-      if (text) mark(parseParentRole(text)?.path, 'read');
+      for (const file of text ? (parseParentRole(text)?.files ?? []) : []) mark(file.path, 'read');
     }
     if (entry.type === 'assistant') {
       const content = entry.message?.content;

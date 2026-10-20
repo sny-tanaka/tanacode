@@ -199,8 +199,8 @@ describe('ContextTracker（続き）', () => {
   it('アプリのフックが渡した TANACODE.md は、CLAUDE.md と同じくファイルの行にする。同じ記録のユーザーのフックの文は、やりとりに入れる', () => {
     last = null;
     const rules = '# 決まり\n'.repeat(20);
-    const context = instructionsContext(`${CWD}/TANACODE.md`, rules, '0123456789ab');
-    const root = instructionsContext('/work/repo/TANACODE.md', 'worktree の元', '0123456789ab');
+    const context = instructionsContext([{ path: `${CWD}/TANACODE.md`, content: rules, sum: '0123456789ab' }]);
+    const root = instructionsContext([{ path: '/work/repo/TANACODE.md', content: 'worktree の元', sum: '0123456789ab' }]);
     const items = track([
       attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [context, 'ユーザーのフックの文'] }),
       prompt('始めます'),
@@ -214,8 +214,8 @@ describe('ContextTracker（続き）', () => {
 
   it('「親にする」で読ませた TANACODE_PARENT.md はファイルの行に、「親として始める」の最初の指示はやりとりにする', () => {
     last = null;
-    const alone = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり');
-    const withFirst = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり', 'ログイン画面を作って');
+    const alone = parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親の決まり' }]);
+    const withFirst = parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親の決まり' }], 'ログイン画面を作って');
     const items = track([prompt(withFirst), reply('m1', 10, 100, [{ type: 'text', text: 'はい' }]), prompt(alone)]);
     expect(items.map((i) => [i.kind, i.label])).toEqual([
       ['topic', 'ログイン画面を作って'],
@@ -225,6 +225,35 @@ describe('ContextTracker（続き）', () => {
     const rest = estimateTokens('ログイン画面を作って');
     expect(find(items, 'ログイン画面を作って')!.tokens).toBe(Math.round(rest + 10));
     expect(find(items, 'TANACODE_PARENT.md')!.tokens).toBe(Math.round(estimateTokens(withFirst) - rest + estimateTokens(alone)));
+  });
+
+  it('プロファイルとフォルダの両方の TANACODE.md・TANACODE_PARENT.md は、1 つの文でもファイルごとの行にする（前書きは、はじめのファイルの行）', () => {
+    last = null;
+    const profile = join(homedir(), '.claude');
+    const general = { path: join(profile, 'TANACODE.md'), content: '# どのセッションでも', sum: '0123456789ab' };
+    const local = { path: `${CWD}/TANACODE.md`, content: '# このフォルダでは', sum: 'ba9876543210' };
+    const parents = [
+      { path: join(profile, 'TANACODE_PARENT.md'), content: '# どの親でも' },
+      { path: `${CWD}/TANACODE_PARENT.md`, content: '# このフォルダの親' },
+    ];
+    const role = parentRoleText(parents);
+    const items = track([
+      attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [instructionsContext([general, local])] }),
+      prompt(role),
+    ]);
+    expect(items.map((i) => [i.kind, i.label])).toEqual([
+      ['file', '~/.claude/TANACODE.md'],
+      ['file', 'TANACODE.md'],
+      ['topic', '親にする（TANACODE_PARENT.md）'],
+      ['file', '~/.claude/TANACODE_PARENT.md'],
+      ['file', 'TANACODE_PARENT.md'],
+    ]);
+    expect(find(items, '~/.claude/TANACODE.md')!.tokens).toBe(Math.round(estimateTokens(instructionsContext([general]))));
+    expect(find(items, 'TANACODE.md')!.tokens).toBe(Math.round(estimateTokens(instructionsContext([local]))));
+    const section = `<instructions-file path="${CWD}/TANACODE_PARENT.md">\n# このフォルダの親\n</instructions-file>`;
+    expect(role).toContain(section);
+    expect(find(items, 'TANACODE_PARENT.md')!.tokens).toBe(Math.round(estimateTokens(section)));
+    expect(find(items, '~/.claude/TANACODE_PARENT.md')!.tokens).toBe(Math.round(estimateTokens(role) - estimateTokens(section)));
   });
 
   it('作業中に送った人の発言はやりとりを区切り、作業中に届いた完了通知・別の Claude からの知らせは区切らない', () => {
