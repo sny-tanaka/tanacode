@@ -22,6 +22,7 @@
   "test/e2e/reload.test.ts": 8,
   "test/e2e/restart-queue.test.ts": 25,
   "test/e2e/restart.test.ts": 17,
+  "test/e2e/rewind.test.ts": 10,
   "test/e2e/scm.test.ts": 10,
   "test/e2e/session-ops.test.ts": 11,
   "test/e2e/sessions.test.ts": 67,

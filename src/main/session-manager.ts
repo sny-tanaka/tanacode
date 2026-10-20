@@ -152,6 +152,8 @@ const MAX_STREAM_TOOLS = 200;
 // stream で見た本体の応答の行の控え（streamMessages）の上限
 const MAX_STREAM_MESSAGES = 50;
 const MAX_SHOWN_TOOLS = 1000;
+// チャットの今の状態を表すイベント（画面は、最後のものを使う。chatState.ts）。会話の置き換えで切り落とさない（replaceChat）
+const STATE_EVENTS = ['queue', 'remote-control', 'pr-link'] as const;
 // ツールの呼び出しごとに動くフックの出来事（hook_name が「出来事:ツールの名前」）
 const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
 // stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
@@ -1448,11 +1450,25 @@ export class SessionManager {
     if (at === -1) return;
     const kept = rt.events.slice(0, rt.chain[at].eventStart);
     rt.chain = rt.chain.slice(0, at);
-    rt.events = kept;
+    this.replaceChat(id, rt, kept, true);
+    this.changed(id);
+  }
+
+  // チャットの表示を、kept（巻き戻し・枝分かれ・取り消しで残すイベント）に置き換える。replace は events に残さず（kept がそのまま
+  // 置き換え後の状態）、通し番号だけ進める。画面は置き換えを空のチャットから当て直し、最後の順番待ち・Remote Control のつながり・
+  // PR へのリンクを今の状態として使う（chatState.ts）。切り落とした分にあった、それらの最新の知らせは、残すイベントのあとに足し直す
+  // （足さないと、切り落とした発言を送ったときの送信中の知らせが最後の順番待ちとして残り、入力欄に戻した発言がチャットにも残る。
+  // 切り落とした行のあとに送って、まだ順番待ちの発言は消え、つながっている Remote Control は切れて見える）
+  private replaceChat(id: string, rt: Runtime, kept: ChatEvent[], live: boolean): void {
+    const events = [...kept];
+    for (const type of STATE_EVENTS) {
+      const now = lastEvent(rt.events, type);
+      if (now && lastEvent(kept, type) !== now) events.push(now);
+    }
+    rt.events = events;
     const fromSeq = rt.seq;
     rt.seq += 1;
-    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: kept }], live: true });
-    this.changed(id);
+    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: [...events] }], live });
   }
 
   addedFoldersOf(id: string): string[] {
@@ -2744,11 +2760,12 @@ export class SessionManager {
   }
 
   // ターンが始まった。前のターンの終わりをまだ出していなければ、先に出す（ターンを開いてから出す。終わりの知らせの間に、
-  // 手が空いたように見せない）
+  // 手が空いたように見せない）。そのとき、前のターンの最後の応答は、まだ会話ログに出ていない（順番待ちの発言は、result から
+  // 0〜6ms で始まる。手元の stream の控えで実測）。その書きかけの文は消さずに残し、会話ログに出たら入れ替える
   private openTurn(id: string, rt: Runtime, past: boolean): void {
     if (rt.turnOpen) return;
     rt.turnOpen = true;
-    if (rt.turnEnding) this.flushTurnEnd(id, rt);
+    if (rt.turnEnding) this.flushTurnEnd(id, rt, true);
     rt.lateTurnEnd = null;
     rt.lastTurnLine = null;
     rt.turnPrompt = null;
@@ -2825,8 +2842,9 @@ export class SessionManager {
     this.flushTurnEnd(id, rt);
   }
 
-  // チャットにターンの終わりを出し、完了を知らせる
-  private flushTurnEnd(id: string, rt: Runtime): void {
+  // チャットにターンの終わりを出し、完了を知らせる。keepPartial: 待っていた行より先に次のターンが始まった（openTurn）。書きかけの文は
+  // 捨てず、ターンの終わりと同じ配信に今の書きかけを載せ直す（画面は、ターンの終わりで書きかけを消し、配信に載った書きかけに置き換える）
+  private flushTurnEnd(id: string, rt: Runtime, keepPartial = false): void {
     const ending = rt.turnEnding;
     if (!ending) return;
     clearTimeout(ending.timer);
@@ -2835,7 +2853,8 @@ export class SessionManager {
     const held = [...rt.heldHooks.values()].flat();
     rt.heldHooks.clear();
     // 会話ログに出ないまま残った書きかけの文は捨てる（ターンの終わりと一緒に送る）
-    rt.partial.clear();
+    if (keepPartial) rt.partial.resend();
+    else rt.partial.clear();
     this.pushEvents(id, [...held, ...(ending.error ? [ending.error] : []), ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
     // 出さなかった通知を覚えている）にも入れない
@@ -3197,11 +3216,7 @@ export class SessionManager {
     if (cut) {
       const kept = rt.events.slice(0, cut.eventCut);
       rt.chain = rt.chain.slice(0, cut.chainCut);
-      rt.events = kept;
-      // replace は events に残さない（kept がそのまま置き換え後の状態）。通し番号だけ進める
-      const fromSeq = rt.seq;
-      rt.seq += 1;
-      this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: kept }], live: !isHistory });
+      this.replaceChat(id, rt, kept, !isHistory);
     }
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
   }
@@ -3217,11 +3232,8 @@ export class SessionManager {
     const retracted = retract(rt.chain, rt.events, uuids);
     if (!retracted) return;
     rt.chain = retracted.chain;
-    rt.events = retracted.events;
-    // 巻き戻しと同じく、残ったものに置き換える（replace は events に残さず、通し番号だけ進める）
-    const fromSeq = rt.seq;
-    rt.seq += 1;
-    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: [...retracted.events] }], live: !isHistory });
+    // 巻き戻しと同じく、残ったものに置き換える
+    this.replaceChat(id, rt, retracted.events, !isHistory);
   }
 
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある）
@@ -3432,6 +3444,12 @@ export class SessionManager {
 function withVersion(event: UnknownEvent, rt: Runtime): UnknownEvent {
   const version = rt.statusLine?.version;
   return event.version || !version ? event : { ...event, version };
+}
+
+// events のうち、最後の type のイベント
+function lastEvent(events: ChatEvent[], type: ChatEvent['type']): ChatEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].type === type) return events[i];
+  return undefined;
 }
 
 // いちばん前の、Claude Code が答えを待っている要求
