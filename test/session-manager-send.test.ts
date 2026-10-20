@@ -284,6 +284,24 @@ describe('再起動と、送ったがまだ会話に出ていない発言', () =
     expect(next.prompts.map((p) => p.uuid)).toEqual([second.uuid]);
   });
 
+  it('止める直前に、捨てられた発言が Claude Code にまとめられて 1 行で会話ログに出ていたら（mergedSendUuids）、どれも送り直さない', async () => {
+    const { id, pipe, sent } = await queueTwo();
+    const [first, second] = sent;
+    discardOnEnd(pipe, [first.uuid, second.uuid]);
+    const discard = pipe.onSend!;
+    pipe.onSend = (line_) => {
+      // 行の uuid は最後に送ったもの、mergedSendUuids はそれより前に送ったもの（2.1.303 で実測）
+      if (line_.includes('"end_session"')) app.append(id, { ...line.user('テストも直して\n予約していた発言'), uuid: second.uuid, mergedSendUuids: [first.uuid] });
+      discard(line_);
+    };
+    await app.manager.restart(id);
+    const next = app.pipe(id);
+    await app.ready(id);
+    await app.waitFor('順番待ちが空く', () => queue(id).length === 0);
+    await sleep(200);
+    expect(next.prompts).toEqual([]);
+  });
+
   it('再起動の途中に送った発言は、送り直す発言のあとに送る', async () => {
     const { id, pipe, sent } = await queueTwo();
     discardOnEnd(pipe, sent.map((p) => p.uuid));
@@ -402,5 +420,31 @@ describe('submitWhenReady', () => {
     await app.ready(id);
     await app.manager.submitWhenReady(id, 'これを見て', 5000, { attachments: [image('a.png')], pastes: ['1\n2\n3\n4'] });
     expect(pipe.prompts).toMatchObject([{ message: { content: [imageBlock('a.png'), { type: 'text', text: 'これを見て' }] }, pasted_content: ['1\n2\n3\n4'], priority: 'later' }]);
+  });
+});
+
+describe('順番待ちの発言をまとめた行', () => {
+  it('Claude Code がまとめた行（mergedSendUuids）が会話に出たら、まとめた発言のどれも順番待ちから外し、親の指示を 1 つずつの発言にする', async () => {
+    const parent = app.create();
+    const { id, pipe } = app.create({ mode: 'manual' }, parent.id);
+    await app.ready(id);
+    app.say(id, line.user('はじめ'), line.text('考えています'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    const texts = ['テストも直して', '文書も直して', '終わったら知らせて'];
+    for (const text of texts) await app.manager.submitWhenReady(id, parentMessageText(parent.id, text), 1000);
+    const sent = pipe.prompts.map((p) => p.uuid);
+    for (const uuid of sent) pipe.emit(stream.lifecycle(uuid, 'queued'));
+    await app.waitFor('順番待ち', () => queue(id).filter((p) => p.state === 'queued').length === 3);
+    app.finish(id);
+    for (const uuid of sent) pipe.emit(stream.lifecycle(uuid, 'started'));
+    // 本文は送った順に改行 1 つでつなぎ、行の uuid は最後に送ったもの、mergedSendUuids はそれより前（2.1.303 で実測）
+    const merged = { ...line.user(texts.map((text) => parentMessageText(parent.id, text)).join('\n')), uuid: sent[2], mergedSendUuids: sent.slice(0, 2), origin: undefined };
+    app.append(id, merged);
+    // 直す前は、行の uuid の 1 通だけを外し、ほかの 2 通は、ターンの終わりの completed まで順番待ちに残って、チャットの発言と二重に見えていた
+    await app.waitFor('会話に出た', () => app.events(id).some((e) => e.type === 'user' && e.parent === parent.id));
+    expect(queue(id)).toEqual([]);
+    expect(app.events(id).filter((e) => e.type === 'user' && e.parent === parent.id)).toMatchObject(texts.map((text, i) => ({ id: sent[i], text, parent: parent.id })));
+    // 今のターンを始めた発言は、会話に出たものとして扱う
+    expect(app.manager.unseenTurnPrompt(id)).toBeNull();
   });
 });
