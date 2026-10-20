@@ -144,4 +144,47 @@ describe('会話ログを読む', () => {
     const file = write('agent.jsonl', user('u1', null, '調べて', { isSidechain: true }), assistant('a1', 'u1', '調べました', { isSidechain: true }));
     expect(texts(await readAgentLog(file, CWD))).toEqual(['調べて', '調べました']);
   });
+
+  // フォークの会話ログの形（手元の会話ログ。本体からのフォークは 2.1.283、サブエージェントからのフォークは 2.1.302）
+  const forkCall = (uuid: string) => ({
+    ...assistant(uuid, 'x', ''),
+    isSidechain: true,
+    message: { id: `msg_${uuid}`, role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 'toolu_fork', name: 'Agent', input: { subagent_type: 'fork', description: '調べもの', prompt: 'a.ts を調べて' } }] },
+  });
+  const forkStart = (uuid: string) => ({
+    ...user(uuid, null, ''),
+    isSidechain: true,
+    message: {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'toolu_fork', content: [{ type: 'text', text: 'Fork started — processing in background' }] },
+        { type: 'text', text: '<fork-boilerplate>\nYou are a worker fork. …\n</fork-boilerplate>\n\nYour directive: a.ts を調べて' },
+      ],
+    },
+  });
+
+  it('readAgentLog: フォークは、そのエージェントを起こした呼び出しまで（親の会話の写し）を出さず、指示から始める', async () => {
+    writeFileSync(join(dir, 'agent-afork.meta.json'), JSON.stringify({ agentType: 'fork', isFork: true, toolUseId: 'toolu_fork', spawnDepth: 2 }));
+    const file = write(
+      'agent-afork.jsonl',
+      // 親の会話の写し（サブエージェントからのフォーク）
+      user('c1', null, '親への指示', { isSidechain: true }),
+      assistant('c2', 'c1', '親の応答', { isSidechain: true }),
+      forkCall('f1'),
+      forkStart('f2'),
+      assistant('f3', 'f2', '調べました', { isSidechain: true }),
+    );
+    const events = await readAgentLog(file, CWD);
+    expect(texts(events)).toEqual(['a.ts を調べて', '調べました']);
+    expect(events.some((e) => e.type === 'tool-use')).toBe(false);
+    // 本体からのフォーク（写しの代わりに fork-context-ref の 1 行）
+    const main = write('agent-amain.jsonl', { type: 'fork-context-ref', agentId: 'amain', parentSessionId: 's1', parentLastUuid: 'x', contextLength: 10 }, forkCall('m1'), forkStart('m2'), assistant('m3', 'm2', '調べました', { isSidechain: true }));
+    writeFileSync(join(dir, 'agent-amain.meta.json'), JSON.stringify({ agentType: 'fork', isFork: true, toolUseId: 'toolu_fork', spawnDepth: 1 }));
+    expect(texts(await readAgentLog(main, CWD))).toEqual(['a.ts を調べて', '調べました']);
+    // フォークでない（meta が無い・isFork でない）ものは、そのまま出す
+    writeFileSync(join(dir, 'agent-aplain.meta.json'), JSON.stringify({ agentType: 'general-purpose', toolUseId: 'toolu_fork' }));
+    const plain = write('agent-aplain.jsonl', user('p1', null, '親への指示', { isSidechain: true }), forkCall('p2'));
+    expect(texts(await readAgentLog(plain, CWD))).toEqual(['親への指示']);
+    expect((await readAgentLog(plain, CWD)).some((e) => e.type === 'tool-use')).toBe(true);
+  });
 });

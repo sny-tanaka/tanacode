@@ -192,6 +192,11 @@ describe('toChatEvents: attachment の行', () => {
     });
     expect(events(notice)).toEqual([]);
     expect(events(attachment({ type: 'queued_command', commandMode: 'prompt', origin: { kind: 'peer' }, prompt: '<agent-message from="a1">報告</agent-message>' }))).toEqual([]);
+    // サブエージェントの報告（SubagentHandback）は、ターンの途中の補足の行で見せる（注記があれば、報告の前に）
+    const handback = { kind: 'peer', from: 'a1', senderTaskId: 'a1', name: 'Explore', body: '…', handback: true, handbackReportText: '調べました', handbackNote: '注意書き' };
+    expect(events(attachment({ type: 'queued_command', commandMode: 'prompt', origin: handback, prompt: '<agent-message from="a1">…</agent-message>' }))).toEqual([
+      { type: 'info', id: 'at1', text: 'サブエージェント「Explore」の報告', detail: '注意書き\n\n調べました' },
+    ]);
     expect(events(attachment({ type: 'queued_command', commandMode: 'prompt', prompt: 'origin の無い発言' }))).toEqual([]);
     const ci = attachment({ type: 'queued_command', commandMode: 'prompt', prompt: '<ci-monitor-event>Auto-fix was just enabled for PR #7.</ci-monitor-event>' });
     expect(events(ci)).toEqual([{ type: 'notice', id: 'at1', text: 'CI の自動修正（PR #7）: 有効になりました', detail: 'Auto-fix was just enabled for PR #7.' }]);

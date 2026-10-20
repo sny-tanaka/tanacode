@@ -1,6 +1,7 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
+import { handbackOf, type Handback } from './handback';
 import { modelName } from './model-name';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseWakeup } from './scheduled';
@@ -310,7 +311,11 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
       return withImages(prompt ? userTextEvents(target, prompt) : [], target, images);
     }
     const kind = entry.attachment?.type;
-    // 作業中に届いた、発言でない差し込み（完了通知・別の Claude からの知らせ）は出さない（midTurnPromptOf）
+    // 作業中に届いた、サブエージェントの報告（SubagentHandback）。Claude Code の画面と同じく、報告を見せる。
+    // ターンの途中なので、ターンを始めるお知らせではなく、補足の行にする
+    const handback = kind === 'queued_command' && !sidechain ? handbackOf(entry.attachment?.origin) : null;
+    if (handback) return [{ type: 'info', ...handbackView(entry.uuid ?? '', handback) }];
+    // 作業中に届いた、ほかの発言でない差し込み（完了通知・別の Claude からの知らせ）は出さない（midTurnPromptOf）
     if (kind === 'queued_command') return [];
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     // Claude が、発言に関係のありそうなメモリを思い出した（中身は Claude にだけ渡り、画面には数とファイル名を出す。TUI と同じ程度）
@@ -360,8 +365,12 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
   }
 
   // 待機中の Claude Code は、別の Claude からの知らせで続きを始める。会話ログでは isMeta の user 行で残るので、ここで拾う
-  // （作業の途中に届いたものは attachment の queued_command になり、ターンは始まらない）
-  if (entry.type === 'user' && entry.isMeta && entry.origin?.kind === 'peer' && !sidechain) return [{ type: 'turn-start' }];
+  // （作業の途中に届いたものは attachment の queued_command になり、ターンは始まらない）。
+  // サブエージェントの報告（SubagentHandback）は、Claude Code の画面と同じく報告を見せる（開くと全文）
+  if (entry.type === 'user' && entry.isMeta && entry.origin?.kind === 'peer' && !sidechain) {
+    const handback = handbackOf(entry.origin);
+    return [handback ? { type: 'notice', ...handbackView(entry.uuid ?? '', handback) } : { type: 'turn-start' }];
+  }
 
   if (entry.type === 'user' && !entry.isMeta && !entry.isCompactSummary && !entry.isVisibleInTranscriptOnly) {
     const content = entry.message?.content;
@@ -386,6 +395,11 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
 
   // メタの行（Claude への文脈・スキルの本文など）・圧縮の要約・会話ログにだけ見える行は出さない
   return [];
+}
+
+// サブエージェントの報告の行の見出しと、開いたときの中身（注記があれば、報告の前に）
+function handbackView(id: string, handback: Handback): { id: string; text: string; detail: string } {
+  return { id, text: t('chat.transcript.agentReport', { name: handback.name }), detail: handback.note ? `${handback.note}\n\n${handback.report}` : handback.report };
 }
 
 // 会話ログの行の未知のイベント

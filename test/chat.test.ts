@@ -49,14 +49,19 @@ it('再開したときに Claude Code が差し込む <synthetic> の埋め合�
   ]);
 });
 
-it('待機中に届いた別の Claude からの知らせ（origin が peer の isMeta の行）は、ターンの始まりだけを伝える', () => {
-  const peer = user('p1', 'Another Claude session sent a message:\n<agent-message from="a689fff9e26ff86f0">\n調べた結果です\n</agent-message>', {
+it('待機中に届いた別の Claude からの知らせ（origin が peer の isMeta の行）は、ターンの始まりを伝える。サブエージェントの報告は、報告を見せる', () => {
+  const frame = '[Subagent hand-back] The text below is the final report of a subagent this session delegated to. The report follows:';
+  // 2.1.302 の形
+  const peer = user('p1', `Another Claude session sent a message:\n<agent-message from="a689fff9e26ff86f0">\n${frame}\n  調べた結果です\n</agent-message>`, {
     isMeta: true,
-    origin: { kind: 'peer', from: 'a689fff9e26ff86f0', senderTaskId: 'a689fff9e26ff86f0', name: 'general-purpose', handback: true },
+    origin: { kind: 'peer', from: 'a689fff9e26ff86f0', senderTaskId: 'a689fff9e26ff86f0', name: 'general-purpose', body: `${frame}\n  調べた結果です`, handback: true, handbackReportText: '調べた結果です' },
     promptSource: 'system',
     turnOrigin: 'peer',
   });
-  expect(toChatEvents(peer, CWD)).toEqual([{ type: 'turn-start' }]);
+  expect(toChatEvents(peer, CWD)).toEqual([{ type: 'notice', id: 'p1', text: 'サブエージェント「general-purpose」の報告', detail: '調べた結果です' }]);
+  // 報告でない知らせは、ターンの始まりだけ
+  const message = user('p3', 'Another Claude session sent a message:\n<agent-message from="s1">\nこんにちは\n</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 's1', body: 'こんにちは' } });
+  expect(toChatEvents(message, CWD)).toEqual([{ type: 'turn-start' }]);
   // サブエージェントの会話ログでは、ターンは始まらない
   expect(toChatEvents(peer, CWD, true)).toEqual([]);
   // 出どころの無い isMeta の行（Claude 向けの補足）は、何も出さない

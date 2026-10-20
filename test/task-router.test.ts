@@ -59,7 +59,7 @@ const BASH_NOTICE = [
 
 function fakes() {
   const workflows = { add: vi.fn(), notified: vi.fn() };
-  const subagents = { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn() };
+  const subagents = { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn(), handback: vi.fn() };
   const bashTasks = { start: vi.fn(), startMonitor: vi.fn(), event: vi.fn(), notified: vi.fn() };
   const router = new TaskRouter({
     workflows: workflows as unknown as WorkflowTracker,
@@ -189,6 +189,26 @@ describe('TaskRouter', () => {
     expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_mon', 'completed', null, '/tmp/claude-0/-work-app/s1/tasks/bus48501k.output');
     // 終わりの知らせの中身は、途中の知らせとして足さない（出力ファイルに入っている）
     expect(bashTasks.event).toHaveBeenCalledTimes(1);
+  });
+
+  it('サブエージェントの報告（SubagentHandback）を、順番待ちの行・待機中の行・作業中の差し込みのどれからも渡す', () => {
+    const { router, subagents } = fakes();
+    const frame = '[Subagent hand-back] The text below is the final report of a subagent this session delegated to. The report follows:';
+    // 2.1.302 の形（会話ログでは、この順で完了通知より先に並ぶ）
+    feed(router, { type: 'queue-operation', operation: 'enqueue', content: `<agent-message from="a5687e770d4090df2">\n${frame}\n  終わった\n</agent-message>` } as TranscriptEntry);
+    expect(subagents.handback).toHaveBeenLastCalledWith('a5687e770d4090df2', '終わった');
+    const origin = { kind: 'peer', from: 'a5687e770d4090df2', senderTaskId: 'a5687e770d4090df2', name: 'general-purpose', body: `${frame}\n  終わった`, handback: true, handbackReportText: '終わった' };
+    feed(router, { type: 'user', uuid: 'p1', isMeta: true, origin, message: { role: 'user', content: 'Another Claude session sent a message: …' } } as TranscriptEntry);
+    feed(router, { type: 'attachment', uuid: 'p2', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '<agent-message from="a1">…</agent-message>', origin: { ...origin, from: 'a1', senderTaskId: 'a1', handbackReportText: '作業中に届いた報告' } } } as TranscriptEntry);
+    expect(subagents.handback.mock.calls).toEqual([
+      ['a5687e770d4090df2', '終わった'],
+      ['a5687e770d4090df2', '終わった'],
+      ['a1', '作業中に届いた報告'],
+    ]);
+    // 報告でない別の Claude からの知らせ・人の発言は渡さない
+    feed(router, { type: 'queue-operation', operation: 'enqueue', content: '<agent-message from="a2">\nこんにちは\n</agent-message>' } as TranscriptEntry);
+    feed(router, { type: 'user', uuid: 'p3', isMeta: true, origin: { kind: 'peer', from: 'a2', body: 'こんにちは' }, message: { role: 'user', content: 'x' } } as TranscriptEntry);
+    expect(subagents.handback).toHaveBeenCalledTimes(3);
   });
 
   it('ワークフローの起動の行を、スクリプトの中身と一緒に渡す', () => {
