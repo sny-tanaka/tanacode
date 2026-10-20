@@ -765,6 +765,7 @@
       "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
       "wakeup": "Claude の予約の時刻になりました",
       "usageLimitResume": "利用枠が戻ったので、続きを頼みました",
+      "compactCancelled": "最適化圧縮を取りやめたので、止めたところから続けるよう頼みました",
       "modelFallback": "モデルを {from} から {to} に切り替えました",
       "modelFallbackUnknown": "モデルを切り替えました",
       "modelRefusalFallback": "{from} が応答を断ったので、{to} で取り直しました",
@@ -794,6 +795,7 @@
       "codeOnlyIn": "「{title}」のコードは戻しました。会話は戻せませんでした（{error}）"
     },
     "compactPrompt": {
+      "cancelled": "tanacode は最適化圧縮を取りやめ、会話を消していません。あなたのターンは、コンテキストが埋まってきたので、tanacode がツールの切れ目で止めたものです。ユーザーが中断したのではなく、聞かれるのを待ってもいません。止めたところから作業を続けてください。作業がもう終わっていたなら、そう短く報告してください。",
       "handoff": {
         "triggerManual": "（ユーザーが「最適化圧縮」のボタンを押しました）",
         "triggerAuto": "（自動・コンテキスト {percent}%）",

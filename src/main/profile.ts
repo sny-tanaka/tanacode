@@ -276,7 +276,11 @@ export class Profile {
     this.scheduled = new ScheduledMessages(
       join(dataDir, 'scheduled-messages.json'),
       manager,
-      (messages) => send(IpcChannel.ScheduledChanged, messages),
+      (messages) => {
+        send(IpcChannel.ScheduledChanged, messages);
+        // 親の利用枠の再開の予約が無くなったら、預かっていた子の知らせを送る
+        this.sessionsControl?.scheduledChanged();
+      },
       (message) => {
         if (this.sessionsControl?.scheduledTrouble(message)) return;
         notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message));

@@ -492,6 +492,60 @@ describe('adopt', () => {
   });
 });
 
+describe('アプリを閉じている間に利用枠で止まったターン', () => {
+  const RESET = Date.now() + 3 * 60 * 60_000;
+  // 前のアプリが claude を動かしたまま終えた時刻（引き継ぐ claude は、その前から動いている）
+  const DETACHED = Date.now() - 30_000;
+  const at = (entry: Record<string, unknown>, time: number) => ({ ...entry, timestamp: new Date(time).toISOString() });
+
+  // 前のアプリの頃の会話（閉じる前の行と、閉じている間の行）を書いて、引き継ぐ。引き継いだあとの onTurnLimit を返す
+  async function adoptWith(before: Record<string, unknown>[], during: Record<string, unknown>[]): Promise<{ id: string; limits: unknown[] }> {
+    const id = await previous(...before);
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    store.update(id, { detachedAt: DETACHED });
+    app.append(id, ...during);
+    const seen = app.turnLimits.length;
+    app.host.hosted = [hosted(id)];
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle' && app.manager.snapshot(id).events.some((e) => e.type === 'turn-end'));
+    await sleep(100);
+    return { id, limits: app.turnLimits.slice(seen).map((t) => t.limit) };
+  }
+
+  it('閉じている間に最後のターンが利用枠で止まって終わったら、引き継いで読み終えたときに、ターンの終わりと同じく知らせる（戻ったら再開する予約が入る）。閉じた時刻は一度だけ使う', async () => {
+    const { id, limits } = await adoptWith([at(line.user('はじめ'), DETACHED - 20_000), at(line.text('はい'), DETACHED - 19_000)], [at(line.user('続けて'), DETACHED + 1000), at(line.limit(RESET), DETACHED + 2000)]);
+    expect(limits).toEqual([{ resetsAt: RESET, window: 'five_hour' }]);
+    expect(new SessionStore(join(app.userData, 'sessions.json')).get(id)?.detachedAt ?? null).toBeNull();
+  });
+
+  it('閉じる前に止まったもの（前のアプリが知らせた）・閉じている間に止まったあと作業が進んだもの・枠が戻る時刻を過ぎたものは知らせない', async () => {
+    const cases: [Record<string, unknown>[], Record<string, unknown>[]][] = [
+      [[at(line.user('はじめ'), DETACHED - 20_000), at(line.limit(RESET), DETACHED - 19_000)], []],
+      [[], [at(line.user('続けて'), DETACHED + 1000), at(line.limit(RESET), DETACHED + 2000), at(line.user('もう一度'), DETACHED + 3000), at(line.text('進めました'), DETACHED + 4000)]],
+      [[], [at(line.user('続けて'), DETACHED + 1000), at(line.limit(Date.now() - 1000), DETACHED + 2000)]],
+    ];
+    for (const [before, during] of cases) {
+      const { limits } = await adoptWith(before.length > 0 ? before : [at(line.user('はじめ'), DETACHED - 20_000)], during);
+      expect(limits).toEqual([]);
+    }
+  });
+
+  it('claude を動かしたままアプリを終えるときは、終えた時刻を記録に残す（止めて終えるときは残さない）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const before = Date.now();
+    app.manager.closeAll(false);
+    expect(new SessionStore(join(app.userData, 'sessions.json')).get(id)?.detachedAt).toBeGreaterThanOrEqual(before);
+    const other = new ScriptedApp();
+    const stopped = other.create();
+    await other.ready(stopped.id);
+    other.manager.closeAll(true);
+    expect(new SessionStore(join(other.userData, 'sessions.json')).get(stopped.id)?.detachedAt ?? null).toBeNull();
+    other.dispose();
+  });
+});
+
 describe('closeAll', () => {
   it('アプリの終了では claude を止めずに見るのをやめる（次のアプリが引き継ぐ）。2 回目は何もしない', async () => {
     const { id, pipe } = app.create();

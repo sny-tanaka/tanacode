@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { contextPercent, contextUsage } from '@shared/context';
 import type { SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
-import { midTurnPercent, type AutoCompactTrigger, type CompactFailure, type CompactStatus } from '@shared/optimized-compact';
+import { autoCompactStopReason, midTurnPercent, type AutoCompactTrigger, type CompactFailure, type CompactStatus } from '@shared/optimized-compact';
 import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 
@@ -232,7 +232,8 @@ export class AutoCompact {
   // 止めるファイル。フックが、この中身をそのまま出す（Claude Code がターンを止める）
   private writeStop(id: string, percent: number | null): void {
     const file = this.deps.stopFile(id);
-    const reason = `tanacode: the context is ${percent === null ? 'almost' : `${Math.round(percent)}%`} full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).`;
+    // チャットでは、この文を目印に、ユーザーのフックが止めた記録と見分ける（@shared/optimized-compact の isAutoCompactStop）
+    const reason = autoCompactStopReason(percent);
     try {
       mkdirSync(dirname(file), { recursive: true });
       // suppressOutput: アプリのフックの印（hook-output.ts）
