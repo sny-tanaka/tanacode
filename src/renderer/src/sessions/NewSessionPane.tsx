@@ -166,8 +166,11 @@ export function NewSessionPane({
     [cwd, addedFolders],
   );
 
-  // 選んでいるフォルダの TANACODE_PARENT.md（無ければ「親として始める」を選べない）
-  const parentFile = useParentInstructions(cwd, (dir) => window.tanacode.folders.parentInstructions(dir));
+  // 選んでいるフォルダで始めたときに読ませる TANACODE_PARENT.md（無ければ「親として始める」を選べない）。worktree を使うかで、探す場所が
+  // 変わる（worktree はリポジトリのいちばん上から作る）。main が始めたあとに探す場所と同じところを、main に聞く
+  const parentFile = useParentInstructions(cwd ? `${options.worktree ? 'worktree' : 'folder'}:${cwd}` : null, () =>
+    window.tanacode.folders.parentInstructions(cwd!, options.worktree),
+  );
   const missing = !!cwd && info === null;
   // ブランチを切り替えている間は送らない（切り替え前のブランチで始まらないように）
   const blocked = !cwd || missing || starting || switching;

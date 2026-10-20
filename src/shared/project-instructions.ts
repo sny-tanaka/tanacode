@@ -2,7 +2,8 @@ import { t } from './i18n';
 import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // プロジェクトに置く、tanacode のセッションのための指示のファイル。置き場所は、セッションのフォルダの直下
-// （worktree のセッションでそこに無ければ、元のリポジトリの直下。コミットしていない自分用のファイルも、子に渡るように）。
+// （worktree のセッションでそこに無ければ、元のリポジトリの直下。コミットしていない自分用のファイルも、子に渡るように。
+// worktree にファイルがあれば、使えなくても元には戻らない。main の readInstructions）。
 // TANACODE.md: tanacode で動くすべてのセッション（親にも子にも）に、SessionStart のフックで自動で渡す（main の instructions-hook.ts）。
 // tanacode の外の claude には渡らない（CLAUDE.md とは別のもの）
 export const INSTRUCTIONS_FILE = 'TANACODE.md';
@@ -19,12 +20,6 @@ export const PARENT_ROLE_TAG = 'tanacode-parent-role';
 // チェックリストの知らせと同じく、囲みと前書きまで含めてこれに収める。収まらないファイルは、中身の代わりに Read で読むよう頼む
 export const MAX_INSTRUCTIONS_CHARS = 9_000;
 
-// 囲みの中に、囲みを閉じるタグがあっても効かないようにする（ほかの tanacode- のタグは、ファイルの中身のまま渡す。
-// TANACODE.md は発言ではなくフックの文なので、発言の行の読み分けに関わらない）
-function neutralize(text: string, tag: string): string {
-  return text.replace(new RegExp(`<(/?)(${tag})`, 'gi'), '＜$1$2');
-}
-
 // 属性に入れるパス（" を含むパスでも囲みを読めるように）
 function attribute(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
@@ -34,14 +29,15 @@ function unattribute(value: string): string {
   return value.replaceAll('&quot;', '"').replaceAll('&amp;', '&');
 }
 
-// SessionStart のフックで Claude に渡す、TANACODE.md の文。Claude だけが読むので英語（中身は書かれたまま）。
+// SessionStart のフックで Claude に渡す、TANACODE.md の文。Claude だけが読むので英語（中身は書かれたまま。ただし tanacode のタグは、
+// 「親にする」の発言と同じく、どれも効かなくする（neutralizeTags。囲みを閉じさせない・tanacode からの知らせに見せない））。
 // sum: 中身の印（main の instructionsSum）。会話を再開したとき（resume）、最後に渡したものと同じなら渡し直さないのに使う
 // 長すぎて中身を入れられないときは、中身の代わりに Read で読むよう頼み、囲みに印（omitted）を付ける（読んだファイルの印を付けない）
 export function instructionsContext(path: string, content: string, sum: string): string {
   const head = `<${INSTRUCTIONS_TAG} path="${attribute(path)}" sum="${sum}"`;
   const close = `</${INSTRUCTIONS_TAG}>`;
-  const about = `${INSTRUCTIONS_FILE} is the project's instructions for the Claude sessions that tanacode runs, kept at the root of the project next to CLAUDE.md. Follow it as you follow CLAUDE.md. tanacode passes it to every session it runs, and again after /clear and compaction.`;
-  const body = neutralize(content.trim(), INSTRUCTIONS_TAG);
+  const about = `${INSTRUCTIONS_FILE} is the project's instructions for the Claude sessions that tanacode runs, kept in the session's folder (for a worktree session, it can come from the original repository). Follow it as you follow CLAUDE.md. tanacode passes it to every session it runs, and again after /clear and compaction.`;
+  const body = neutralizeTags(content.trim());
   const full = [`${head}>`, about, '', body, close].join('\n');
   if (full.length <= MAX_INSTRUCTIONS_CHARS) return full;
   return [

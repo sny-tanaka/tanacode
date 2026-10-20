@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -340,6 +341,19 @@ describe('フォルダ（新規セッションの画面）', () => {
     await expect(invoke(IpcChannel.FolderParentInstructions, state.root)).resolves.toBeNull();
     writeFileSync(join(state.root, 'TANACODE_PARENT.md'), '# 親の決まり');
     await expect(invoke(IpcChannel.FolderParentInstructions, state.root)).resolves.toBe(join(state.root, 'TANACODE_PARENT.md'));
+    // .claude/worktrees/<名前> を選んだら、元のリポジトリの直下も見る（始めたあとに main が探す場所と同じ）
+    const worktree = join(state.root, '.claude', 'worktrees', 'w1');
+    mkdirSync(worktree, { recursive: true });
+    await expect(invoke(IpcChannel.FolderParentInstructions, worktree)).resolves.toBe(join(state.root, 'TANACODE_PARENT.md'));
+    // worktree で始めるなら、リポジトリのいちばん上を見る（サブフォルダを選んでいても。worktree はいちばん上から作られる）
+    const repo = join(state.root, 'repo');
+    mkdirSync(join(repo, 'sub'), { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    writeFileSync(join(repo, 'TANACODE_PARENT.md'), '# 親の決まり');
+    await expect(invoke(IpcChannel.FolderParentInstructions, join(repo, 'sub'))).resolves.toBeNull();
+    await expect(invoke(IpcChannel.FolderParentInstructions, join(repo, 'sub'), true)).resolves.toBe(join(realpathSync(repo), 'TANACODE_PARENT.md'));
+    // リポジトリでなければ、選んだフォルダ
+    await expect(invoke(IpcChannel.FolderParentInstructions, state.root, true)).resolves.toBe(join(state.root, 'TANACODE_PARENT.md'));
   });
 
   it('フォルダの情報は、フォルダがあるときだけ読む', async () => {

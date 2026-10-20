@@ -705,8 +705,9 @@ export type TanacodeApi = {
     pick(): Promise<string | null>;
     // フォルダが無ければ null
     info(cwd: string): Promise<WorkspaceInfo | null>;
-    // フォルダの直下の TANACODE_PARENT.md のパス（新規セッションの画面の「親として始める」）。無ければ null
-    parentInstructions(cwd: string): Promise<string | null>;
+    // 新規セッションの画面の「親として始める」で読ませる TANACODE_PARENT.md のパス（始めたあとに main が探す場所と同じ。worktree で始めるなら、
+    // フォルダのリポジトリのいちばん上）。無ければ null（あっても使えないものは、パスを返す）
+    parentInstructions(cwd: string, worktree?: boolean): Promise<string | null>;
     listFiles(cwd: string): Promise<string[]>;
     commands(cwd: string): Promise<SlashCommand[]>;
     // フォルダを右パネル（エクスプローラー・ソース管理・検索）とエディタで開き、workspace・git に渡す id を返す。

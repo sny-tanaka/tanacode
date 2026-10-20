@@ -187,7 +187,7 @@ const api: TanacodeApi = {
   folders: {
     pick: () => invoke(IpcChannel.FolderPick),
     info: (cwd) => invoke(IpcChannel.FolderInfo, cwd),
-    parentInstructions: (cwd) => invoke(IpcChannel.FolderParentInstructions, cwd),
+    parentInstructions: (cwd, worktree) => invoke(IpcChannel.FolderParentInstructions, cwd, worktree),
     listFiles: (cwd) => invoke(IpcChannel.FolderFiles, cwd),
     commands: (cwd) => invoke(IpcChannel.FolderCommands, cwd),
     open: (cwd) => invoke(IpcChannel.FolderOpen, cwd),

@@ -464,7 +464,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
       api.install();
       const p = props();
       await mount(p);
-      expect(api.argsOf('folders.parentInstructions')).toEqual([['/work/a']]);
+      expect(api.argsOf('folders.parentInstructions')).toEqual([['/work/a', false]]);
       expect(asParent().disabled).toBe(false);
       expect(asParent().checked).toBe(false);
       expect(tipOf(asParent())).toContain('TANACODE_PARENT.md を Claude に読ませて');
@@ -505,6 +505,26 @@ describe('NewSessionPane（新規セッションの画面）', () => {
       expect(asParent().disabled).toBe(true);
       expect(asParent().checked).toBe(false);
       expect(send(p)[5]).toBe(false);
+    });
+
+    it('worktree を使うかを切り替えると、始めたあとに探す場所（worktree ならリポジトリのいちばん上）で決め直す', async () => {
+      const api = mockApi({
+        'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }),
+        'folders.parentInstructions': (_cwd: never, worktree: never) => Promise.resolve(worktree ? '/work/TANACODE_PARENT.md' : null),
+      });
+      api.install();
+      const p = props();
+      await mount(p);
+      expect(asParent().disabled).toBe(true);
+      fireEvent.click(worktree());
+      await settle();
+      expect(api.argsOf('folders.parentInstructions')).toEqual([
+        ['/work/a', false],
+        ['/work/a', true],
+      ]);
+      expect(asParent().disabled).toBe(false);
+      fireEvent.click(asParent());
+      expect(send(p)[5]).toBe(true);
     });
 
     it('フォルダを変えて描き直すと、変えた先のフォルダのファイルで決める', async () => {

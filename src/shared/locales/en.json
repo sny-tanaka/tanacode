@@ -292,7 +292,14 @@
     "parentRole": {
       "missing": "{file} not found. Put it in the session folder to use this",
       "cannotPaste": "Can't paste into the input while Claude Code is showing a prompt. Answer it, then try again",
-      "missingOnStart": "{file} wasn't found, so only the first instruction was sent (not started as a parent)"
+      "missingOnStart": "{file} wasn't found, so only the first instruction was sent (not started as a parent)",
+      "child": "A child session can't be made a parent (a child can't start child sessions of its own)",
+      "unusableOnStart": "{reason}. Sent only the first instruction (not started as a parent)"
+    },
+    "instructions": {
+      "empty": "{path} is empty, so it isn't passed to Claude",
+      "tooLarge": "{path} is larger than 1 MB, so it isn't passed to Claude",
+      "unreadable": "Couldn't read {path}, so it isn't passed to Claude"
     }
   },
   "commands": {

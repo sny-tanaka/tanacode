@@ -290,7 +290,14 @@
     "parentRole": {
       "missing": "{file} が見つかりません。セッションのフォルダに置くと使えます",
       "cannotPaste": "Claude Code が確認・質問を出している間は、入力欄に貼れません。答えてから、もう一度押してください",
-      "missingOnStart": "{file} が見つからなかったので、親としては始めず、最初の指示だけを送りました"
+      "missingOnStart": "{file} が見つからなかったので、親としては始めず、最初の指示だけを送りました",
+      "child": "子のセッションは親にできません（子は、さらに子のセッションを作れないため）",
+      "unusableOnStart": "{reason}。親としては始めず、最初の指示だけを送りました"
+    },
+    "instructions": {
+      "empty": "{path} が空なので、Claude に渡していません",
+      "tooLarge": "{path} が大きすぎる（1MB を超える）ので、Claude に渡していません",
+      "unreadable": "{path} を読めないので、Claude に渡していません"
     }
   },
   "commands": {

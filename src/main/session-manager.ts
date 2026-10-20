@@ -24,7 +24,7 @@ import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
 import { modeWithin, parentMessageText, type SessionState } from '@shared/session-tools';
-import { PARENT_INSTRUCTIONS_FILE, parentRoleText } from '@shared/project-instructions';
+import { INSTRUCTIONS_FILE, PARENT_INSTRUCTIONS_FILE, parentRoleText, parseParentRole } from '@shared/project-instructions';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -63,7 +63,7 @@ import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from 
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import type { InstructionsLaunch } from './instructions-launch';
-import { instructionDirs, readInstructions } from './project-instructions';
+import { instructionDirs, instructionsProblemText, readInstructions, type InstructionsFile } from './project-instructions';
 import { PendingQuestions } from './pending-questions';
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
@@ -945,35 +945,48 @@ export class SessionManager {
   }
 
   // 「親にする」で読ませる TANACODE_PARENT.md（セッションのフォルダの直下。worktree のセッションでそこに無ければ、元のリポジトリの直下）。
-  // 子のセッション（子は start_session を使えない）・一覧に無いセッション・ファイルが無いときは null
-  parentInstructions(id: string): { path: string; content: string } | null {
+  // 子のセッション（子は start_session を使えない）・一覧に無いセッション・ファイルが無いときは null。
+  // あっても使えない（空・大きすぎる・読めない）ものは、そのまま返す（ボタンは押せて、押すと理由を出す）
+  parentInstructions(id: string): InstructionsFile | null {
     const record = this.store.get(id);
     if (!record || record.parentId) return null;
     return readInstructions(PARENT_INSTRUCTIONS_FILE, instructionDirs(record.cwd, record.worktree?.root));
   }
 
   // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（親の状態は覚えない。会話を消すと忘れるので、もう一度押す）。
-  // 作業中なら、ふつうの発言と同じく順番待ちに入る。ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。
-  // 読ませられなければ、理由を投げる
+  // 作業中に押したら、親の指示・予約と同じく、今の作業が終わってから届くように送る（priority: later。今のターンの途中には入れない）。
+  // ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。読ませられなければ、理由を投げる
   async becomeParent(id: string): Promise<void> {
+    if (this.store.get(id)?.parentId) throw new Error(t('main.parentRole.child'));
     const found = this.parentInstructions(id);
     if (!found) throw new Error(t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE }));
-    const text = parentRoleText(found.path, found.content);
+    if (!('content' in found)) throw new Error(instructionsProblemText(found));
     const rt = this.runtimes.get(id);
-    if (rt?.terminal && !rt.switching) {
+    if (!rt || (!rt.process && !rt.restarting)) throw new SendError('notRunning');
+    const text = parentRoleText(found.path, found.content);
+    if (rt.terminal && !rt.switching) {
       if (!this.pasteIntoTerminal(id, text)) throw new Error(t('main.parentRole.cannotPaste'));
       return;
     }
-    await this.submit(id, text);
+    await this.submit(id, text, [], [], 'later');
   }
 
   // 新規セッションの画面の「親として始める」: 最初の指示の前に、TANACODE_PARENT.md を付けた発言にする。
-  // 始めるまでにファイルが無くなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
+  // 始めるまでにファイルが無くなっていた・使えなくなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
   withParentRole(id: string, text: string): string {
     const found = this.parentInstructions(id);
-    if (found) return parentRoleText(found.path, found.content, text);
-    this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE }), warning: true }]);
+    if (found && 'content' in found) return parentRoleText(found.path, found.content, text);
+    const notice = found ? t('main.parentRole.unusableOnStart', { reason: instructionsProblemText(found) }) : t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE });
+    this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: notice, warning: true }]);
     return text;
+  }
+
+  // TANACODE.md があるのに使えない（大きすぎる・読めない）なら、渡していないことをチャットで知らせる（フックは黙って何も渡さない）。
+  // 空のものは、渡すものが無いだけなので知らせない
+  private noteUnusableInstructions(id: string, record: SessionRecord): void {
+    const found = readInstructions(INSTRUCTIONS_FILE, instructionDirs(record.cwd, record.worktree?.root));
+    if (!found || 'content' in found || found.problem === 'empty') return;
+    this.pushEvents(id, [{ type: 'info', id: `instructions-unusable:${randomUUID()}`, text: instructionsProblemText(found), warning: true }]);
   }
 
   // 書くだけの Stop のフックが、TUI のターンの終わりを知らせた（ターミナルモード）。input: フックの入力（permission_mode）
@@ -1486,7 +1499,9 @@ export class SessionManager {
     );
     if (!result.rewound) return failed(rewindReasonText(result.reason, result.error), choice.code);
     if (rt.process === process) this.cutBefore(id, rt, messageId);
-    return { ok: true, prefillText: result.prefillText, error: null };
+    // 「親として始める」の最初の指示を戻したときは、人が打った指示だけを入力欄に戻す（囲み・前書き・TANACODE_PARENT.md の中身は戻さない）
+    const role = result.prefillText === null ? null : parseParentRole(result.prefillText);
+    return { ok: true, prefillText: role ? role.rest || null : result.prefillText, error: null };
   }
 
   // チャットの表示を、uuid の行の前の時点に戻す（巻き戻したとき。次の発言の枝分かれを待たずに、表示を合わせる）
@@ -2167,6 +2182,7 @@ export class SessionManager {
     // 起動の知らせ（画面はチャットを空にする。順番待ちも）と、戻した・持ち越した順番待ちは、同じ配信で送る。分けて送ると、その間に
     // 画面が描いたとき、順番待ちの発言が消えて見える（CI の E2E で、起動し直した直後に順番待ちの発言が見つからなかった）
     this.pushEvents(id, [{ type: 'process-start' }, ...(rt.unsent.size > 0 ? [queueEvent(rt)] : [])]);
+    if (instructions) this.noteUnusableInstructions(id, record);
     const runtime = rt;
     runtime.attention = null;
     runtime.ready = false;

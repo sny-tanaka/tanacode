@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
-import { readInstructions } from './project-instructions';
+import { instructionDirs, readInstructions } from './project-instructions';
+import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
@@ -603,7 +604,13 @@ function registerIpc(): void {
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
-  handle(IpcChannel.FolderParentInstructions, (_e, cwd: string) => readInstructions(PARENT_INSTRUCTIONS_FILE, [String(cwd)])?.path ?? null);
+  // 始めたあとに main が探す場所と同じところを見る。worktree で始めるなら、worktree はリポジトリのいちばん上から作られるので、そこ
+  // （サブフォルダを選んでいても）。そうでなければ、フォルダ（.claude/worktrees/<名前> を選んだなら、元のリポジトリも）
+  handle(IpcChannel.FolderParentInstructions, async (_e, cwd: string, worktree?: boolean) => {
+    const dir = String(cwd);
+    const dirs = worktree === true ? [(await repositoryRoot(dir)) ?? dir] : instructionDirs(dir, null);
+    return readInstructions(PARENT_INSTRUCTIONS_FILE, dirs)?.path ?? null;
+  });
   handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
   handle(IpcChannel.FolderCommands, (e, cwd: string) => listCommands(cwd, null, P(e).claudeDir));
   handle(IpcChannel.FolderOpen, async (e, cwd: string) => {

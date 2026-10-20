@@ -1,33 +1,56 @@
 import { createHash } from 'node:crypto';
-import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { INSTRUCTIONS_FILE, instructionsContext, INSTRUCTIONS_TAG, parseInstructions } from '@shared/project-instructions';
+import { INSTRUCTIONS_FILE, instructionsContext, parseInstructions } from '@shared/project-instructions';
+import { t } from '@shared/i18n';
+import { projectRootOf } from '@shared/session-tools';
 
 // TANACODE.md・TANACODE_PARENT.md（@shared/project-instructions）を探して読む。
 // TANACODE.md は、アプリが起動する Claude Code に足す SessionStart のフック（instructions-hook.ts）が、その都度読んで渡す
 
 // 読むファイルの大きさの上限。これより大きいものは読まない（指示のファイルとして置くものではないので、渡さない）
-const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_FILE_BYTES = 1024 * 1024;
 
-// セッションで探すフォルダ。セッションのフォルダ、worktree のセッションなら元のリポジトリ（いちばん上）の順
+// セッションで探すフォルダ。セッションのフォルダ、worktree のセッションなら元のリポジトリ（いちばん上）の順。
+// 元のリポジトリは、記録の worktree が無くても、パスから求める（.claude/worktrees/<名前> を直に選んだセッション・既存の worktree を
+// フォルダにした子。@shared/session-tools の projectRootOf と同じ）
 export function instructionDirs(cwd: string, worktreeRoot: string | null | undefined): string[] {
-  return worktreeRoot && worktreeRoot !== cwd ? [cwd, worktreeRoot] : [cwd];
+  const root = projectRootOf({ cwd, worktree: worktreeRoot ? { root: worktreeRoot } : null });
+  return root !== cwd ? [cwd, root] : [cwd];
 }
 
-// dirs の順に、そのフォルダの直下の name を探す。見つかったファイルのパスと中身（無い・読めない・大きすぎる・空なら次へ。どこにも無ければ null）
-export function readInstructions(name: string, dirs: readonly string[]): { path: string; content: string } | null {
+// 見つけたファイル。content: 中身 / problem: あるが使えない（empty: 空白だけ・tooLarge: MAX_FILE_BYTES より大きい・unreadable: 読めない・ファイルでない）
+export type InstructionsFile = { path: string; content: string } | { path: string; problem: 'empty' | 'tooLarge' | 'unreadable' };
+
+// dirs の順に、そのフォルダの直下の name を探す。無ければ次へ（どこにも無ければ null）。あれば、使えなくても次へは行かない
+// （worktree に置いたものが使えないのに、黙って元のリポジトリのものを渡さない）
+export function readInstructions(name: string, dirs: readonly string[]): InstructionsFile | null {
   for (const dir of dirs) {
     const path = join(dir, name);
+    let stat;
     try {
-      const stat = statSync(path);
-      if (!stat.isFile() || stat.size > MAX_FILE_BYTES) continue;
+      stat = statSync(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return { path, problem: 'unreadable' };
+    }
+    if (!stat.isFile()) return { path, problem: 'unreadable' };
+    if (stat.size > MAX_FILE_BYTES) return { path, problem: 'tooLarge' };
+    try {
       const content = readFileSync(path, 'utf8');
-      if (content.trim()) return { path, content };
+      return content.trim() ? { path, content } : { path, problem: 'empty' };
     } catch {
-      // 無い・読めない
+      return { path, problem: 'unreadable' };
     }
   }
   return null;
+}
+
+// 使えないファイルの、チャットに出す理由（画面の言語）
+export function instructionsProblemText(file: { path: string; problem: 'empty' | 'tooLarge' | 'unreadable' }): string {
+  const key = file.problem === 'empty' ? 'main.instructions.empty' : file.problem === 'tooLarge' ? 'main.instructions.tooLarge' : 'main.instructions.unreadable';
+  return t(key, { path: file.path });
 }
 
 // 中身の印（会話ログに残った、最後に渡したものと比べる）
@@ -35,80 +58,67 @@ export function instructionsSum(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 12);
 }
 
-// 会話ログを後ろから読むときの 1 回の大きさ
-const CHUNK_BYTES = 1024 * 1024;
-const MARK = `<${INSTRUCTIONS_TAG} `;
-const BOUNDARY = '"subtype":"compact_boundary"';
+// これより大きい会話ログは読まない（同じ中身でも渡し直す側に倒す）
+const MAX_TRANSCRIPT_BYTES = 256 * 1024 * 1024;
 
-// 会話ログで、今の会話に最後に渡した TANACODE.md の印。それより後に圧縮の境目があれば（要約に置き換わった）、渡していないとして null。
-// 会話ログは大きいことがあるので、後ろから少しずつ読み、囲みか圧縮の境目の、いちばん後ろの行だけを読む
-// chunkBytes: 1 回に読む大きさ（テストでは小さくして、行が読む部分の境目をまたぐときを確かめる）
-export function lastDeliveredSum(transcript: string, chunkBytes = CHUNK_BYTES): string | null {
-  let fd: number | null = null;
+// 会話ログの行のうち、今の枝をたどるのに使うもの。sum: TANACODE.md を渡した記録なら、その囲みの印 / boundary: 圧縮の境目
+type Node = { parent: string | null; sum: string | null; boundary: boolean };
+type Line = { uuid?: unknown; parentUuid?: unknown; isSidechain?: unknown; type?: unknown; subtype?: unknown; attachment?: { type?: unknown; content?: unknown } };
+
+// 会話ログで、今の会話（今の枝）に最後に渡した TANACODE.md の印。渡していない・それより後に圧縮の境目がある（要約に置き換わった）なら null。
+// 会話ログは、巻き戻し（「ここまで戻す」）のあとの発言から同じファイルの中で枝分かれするので、ファイルの後ろから探すのではなく、
+// いちばん後ろの行から親（parentUuid）をたどる（@main/chat-log の branchCut と同じ見方）。外れた枝に渡したものは数えない。
+// 圧縮の境目は親を持たない（parentUuid が null）ので、たどるのもそこで止まる
+export function lastDeliveredSum(transcript: string): string | null {
+  let text: string;
   try {
-    fd = openSync(transcript, 'r');
-    let end = fstatSync(fd).size;
-    // 前に読んだ部分の頭（行の途中で切れたもの）。次に読む部分のうしろにつなぐ
-    let carry = Buffer.alloc(0);
-    while (end > 0) {
-      const start = Math.max(0, end - chunkBytes);
-      const chunk = Buffer.alloc(end - start);
-      readSync(fd, chunk, 0, chunk.length, start);
-      const data = Buffer.concat([chunk, carry]);
-      // 頭の行は、前の部分に続いているかもしれないので、まだ読まない（ファイルの頭まで読んだときは読む）。
-      // 改行が無ければ、全部が 1 行の途中なので、まるごと次へ持ち越す
-      const firstBreak = start > 0 ? data.indexOf(0x0a) : -1;
-      if (start > 0 && firstBreak < 0) {
-        carry = data;
-        end = start;
-        continue;
-      }
-      const lines = data.subarray(firstBreak + 1).toString('utf8').split('\n');
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i];
-        // 文字で当たりを付けてから、行を読む（ほとんどの行は読まずに済む）
-        const sum = line.includes(MARK) ? sumOfLine(line) : null;
-        if (sum) return sum;
-        if (line.includes(BOUNDARY) && isBoundary(line)) return null;
-      }
-      carry = data.subarray(0, firstBreak + 1);
-      end = start;
-    }
-    return null;
+    if (statSync(transcript).size > MAX_TRANSCRIPT_BYTES) return null;
+    text = readFileSync(transcript, 'utf8');
   } catch {
     return null;
-  } finally {
-    if (fd !== null) closeSync(fd);
   }
+  const nodes = new Map<string, Node>();
+  let leaf: string | null = null;
+  for (const raw of text.split('\n')) {
+    if (!raw) continue;
+    let line: Line;
+    try {
+      line = JSON.parse(raw) as Line;
+    } catch {
+      // 書きかけの行
+      continue;
+    }
+    if (typeof line?.uuid !== 'string' || !('parentUuid' in line) || line.isSidechain === true) continue;
+    nodes.set(line.uuid, {
+      parent: typeof line.parentUuid === 'string' ? line.parentUuid : null,
+      sum: sumOf(line),
+      boundary: line.type === 'system' && line.subtype === 'compact_boundary',
+    });
+    leaf = line.uuid;
+  }
+  const seen = new Set<string>();
+  for (let id = leaf; id !== null && !seen.has(id); ) {
+    seen.add(id);
+    const node = nodes.get(id);
+    if (!node) return null;
+    if (node.sum) return node.sum;
+    if (node.boundary) return null;
+    id = node.parent;
+  }
+  return null;
 }
 
-// 会話ログの 1 行が、Claude に TANACODE.md を渡した記録（hook_additional_context の attachment）なら、その囲みの印。
+// Claude に TANACODE.md を渡した記録（hook_additional_context の attachment）なら、その囲みの印。
 // 同じ文は、フックの記録（hook_success の stdout）・リクエストの控え（api-request-blob）や、Claude が読んだファイルの中にも出るが、
 // Claude に渡ったのはこの記録なので、ほかは読まない
-function sumOfLine(line: string): string | null {
-  let value: { type?: unknown; attachment?: { type?: unknown; content?: unknown } };
-  try {
-    value = JSON.parse(line) as typeof value;
-  } catch {
-    return null;
-  }
-  const { attachment } = value;
-  if (value.type !== 'attachment' || attachment?.type !== 'hook_additional_context' || !Array.isArray(attachment.content)) return null;
+function sumOf(line: Line): string | null {
+  const { attachment } = line;
+  if (line.type !== 'attachment' || attachment?.type !== 'hook_additional_context' || !Array.isArray(attachment.content)) return null;
   for (const text of attachment.content) {
     const found = typeof text === 'string' ? parseInstructions(text) : null;
     if (found) return found.sum;
   }
   return null;
-}
-
-// 圧縮の境目の行か
-function isBoundary(line: string): boolean {
-  try {
-    const value = JSON.parse(line) as { type?: unknown; subtype?: unknown };
-    return value.type === 'system' && value.subtype === 'compact_boundary';
-  } catch {
-    return false;
-  }
 }
 
 // Claude Code がフックの標準入力に渡す JSON のうち、使うもの。source: startup・resume・clear・compact
@@ -126,8 +136,9 @@ export function runInstructionsHook(stdin: string, dirs: readonly string[]): str
     return '';
   }
   if (input.hook_event_name !== 'SessionStart') return '';
+  // 使えないもの（空・大きすぎる・読めない）は渡さない（アプリが、起動したときにチャットで知らせる。SessionManager.start）
   const found = readInstructions(INSTRUCTIONS_FILE, dirs);
-  if (!found) return '';
+  if (!found || !('content' in found)) return '';
   const sum = instructionsSum(found.content);
   if (input.source === 'resume' && input.transcript_path && lastDeliveredSum(input.transcript_path) === sum) return '';
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: instructionsContext(found.path, found.content, sum) } });

@@ -58,13 +58,18 @@ export function worktreePath(root: string, name: string): string {
   return join(root, WORKTREES_DIR, name);
 }
 
+// cwd のリポジトリのいちばん上（worktree を作る場所）。git のリポジトリでなければ null
+export async function repositoryRoot(cwd: string): Promise<string | null> {
+  return git(cwd, ['rev-parse', '--show-toplevel']).then(
+    (out) => out.trim() || null,
+    () => null,
+  );
+}
+
 // cwd から、worktree を作る場所と名前を決める。Claude Code はサブフォルダから始めても、リポジトリのいちばん上に作る（実測）。
 // git のリポジトリでない・まだコミットが無いときは、理由を添えて失敗する
 export async function planWorktree(cwd: string): Promise<WorktreePlan> {
-  const root = await git(cwd, ['rev-parse', '--show-toplevel']).then(
-    (out) => out.trim(),
-    () => null,
-  );
+  const root = await repositoryRoot(cwd);
   if (!root) throw new WorktreeError('notRepo', t('main.worktree.notRepo'));
   const hasHead = await git(root, ['rev-parse', '--verify', '-q', 'HEAD']).then(
     () => true,
