@@ -172,9 +172,9 @@ jobs:
             summary="動作確認済のバージョン（$VERSION）の控え（か、その目録）がまだ無いので、毎日の互換性の確認で取った控えを足します。"
           fi
           if [ "$inventory" = changed ]; then
-            merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違うので、**自動ではマージしません**。下の差分を仕分けて（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ）、手元の本物の会話ログでも確かめてから、マージしてください（CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
+            merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違うので、**自動ではマージしません**。下の差分を仕分けて（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ）、手元の本物の会話ログでも確かめてから（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）、マージしてください（CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
           else
-            merge_note="- PR の CI が通ったら、そのまま squash マージします"
+            merge_note="- PR の CI が通ったら、そのまま squash マージします。手元の Claude Code がこのバージョンになって数日使ったら、本物の会話ログでも確かめます（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）"
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
