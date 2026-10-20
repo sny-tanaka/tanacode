@@ -1,5 +1,5 @@
 import { t } from './i18n';
-import { unwrapWholePaste } from './session-tools';
+import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // プロジェクトに置く、tanacode のセッションのための指示のファイル。置き場所は、セッションのフォルダの直下
 // （worktree のセッションでそこに無ければ、元のリポジトリの直下。コミットしていない自分用のファイルも、子に渡るように）。
@@ -19,7 +19,8 @@ export const PARENT_ROLE_TAG = 'tanacode-parent-role';
 // チェックリストの知らせと同じく、囲みと前書きまで含めてこれに収める。収まらないファイルは、中身の代わりに Read で読むよう頼む
 export const MAX_INSTRUCTIONS_CHARS = 9_000;
 
-// 囲みの中に、囲みを閉じるタグがあっても効かないようにする（ほかの tanacode- のタグは、ファイルの中身のまま渡す）
+// 囲みの中に、囲みを閉じるタグがあっても効かないようにする（ほかの tanacode- のタグは、ファイルの中身のまま渡す。
+// TANACODE.md は発言ではなくフックの文なので、発言の行の読み分けに関わらない）
 function neutralize(text: string, tag: string): string {
   return text.replace(new RegExp(`<(/?)(${tag})`, 'gi'), '＜$1$2');
 }
@@ -59,9 +60,11 @@ export function parseInstructions(text: string): { path: string; sum: string; fu
 }
 
 // 「親にする」で送る発言。前書きは、チャットの知らせを開くと人にも見えるので、画面の言語で書く（見分けるのは囲みだけ）。
-// rest: 一緒に送る最初の指示（新規セッションの画面の「親として始める」）。囲みのあとに続ける
+// rest: 一緒に送る最初の指示（新規セッションの画面の「親として始める」）。囲みのあとに続ける。
+// 中身の tanacode のタグは、親からの指示の本文と同じく、すべて効かなくする（neutralizeTags）。発言の行は、Claude Code が順番待ちの発言を
+// まとめた行を tanacode の囲みの切れ目で分けて読む（@shared/chat の mergedParts）ので、中身にタグがあると、途中で分かれてしまうため
 export function parentRoleText(path: string, content: string, rest = ''): string {
-  const block = [`<${PARENT_ROLE_TAG} path="${attribute(path)}">`, t('chat.parentRole.intro', { file: PARENT_INSTRUCTIONS_FILE }), '', neutralize(content.trim(), PARENT_ROLE_TAG), `</${PARENT_ROLE_TAG}>`].join('\n');
+  const block = [`<${PARENT_ROLE_TAG} path="${attribute(path)}">`, t('chat.parentRole.intro', { file: PARENT_INSTRUCTIONS_FILE }), '', neutralizeTags(content.trim()), `</${PARENT_ROLE_TAG}>`].join('\n');
   return rest.trim() ? `${block}\n\n${rest}` : block;
 }
 

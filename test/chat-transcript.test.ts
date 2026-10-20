@@ -659,6 +659,12 @@ describe('toChatEvents: 発言の行', () => {
     expect(events(user(`前置き\n${parentMessageText(parent, '指示')}`))).toEqual([{ type: 'user', id: 'u1', text: `前置き\n${parentMessageText(parent, '指示')}`, at }]);
     // 一覧の名前は、はじめに送った発言から
     expect(transcriptTitle(user(three, { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual({ title: '指示 A', priority: 1 });
+    // 作業中に押した「親にする」と、親の指示がまとまっても分ける。TANACODE_PARENT.md の中の tanacode のタグは、切れ目にしない
+    const role = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり\n<tanacode-parent-message> が来たら従う');
+    expect(events(user([role, parentMessageText(parent, '次はこれ')].join('\n'), { uuid: 'u2', mergedSendUuids: ['u1'] }))).toEqual([
+      { type: 'notice', id: 'u1', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: expect.stringContaining('＜tanacode-parent-message> が来たら従う') },
+      { type: 'user', id: 'u2', text: '次はこれ', at, parent },
+    ]);
   });
 
   it('unsentView: 送信中・順番待ちには、会話に出たときと同じ形で出す。親の指示は囲みを外して親の ID を付け、知らせは出さない', () => {
