@@ -125,9 +125,13 @@ const IGNORED_SYSTEM = new Set([
   'agents_killed',
 ]);
 
-// 意図して捨てる attachment。どれも Claude Code が Claude に渡す文脈で、チャットには出さない
+// 意図して捨てる attachment。どれも Claude Code が Claude に渡す文脈か、ほかの行に同じ中身がある控えで、チャットには出さない
 // （コンテキストの中身（main の context-tracker.ts）や、読んだファイル（main の knowledge-tracker.ts）では使うものもある）
 const IGNORED_ATTACHMENTS = new Set([
+  // ワークフローのエージェントが、決めた形（スキーマ）で返した結果の控え（data・toolUseID。2.1.296〜2.1.303 で確かめた）。data は、
+  // toolUseID の StructuredOutput の呼び出しの input と同じで、チャットではその呼び出しのカードの入力に出る。エージェントの結果
+  // としても、ワークフローの journal の result（タスクの画面の「結果」）に同じものが入る
+  'structured_output',
   // 環境・日付・セッションの情報・指示・出力の形・システムプロンプトの控え
   'environment',
   'model',

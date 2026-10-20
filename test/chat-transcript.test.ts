@@ -204,6 +204,20 @@ describe('toChatEvents: attachment の行', () => {
     expect(events(ci)).toEqual([{ type: 'notice', id: 'at1', text: 'CI の自動修正（PR #7）: 有効になりました', detail: 'Auto-fix was just enabled for PR #7.' }]);
   });
 
+  it('ワークフローのエージェントが決めた形（スキーマ）で返した結果（structured_output）は出さない。同じ中身は、StructuredOutput の呼び出しの入力に出る', () => {
+    // 2.1.296〜2.1.303 のワークフローのエージェントの会話ログ（行はどれもサイドチェーン）の終わり。StructuredOutput の呼び出し →
+    // structured_output（data は呼び出しの input と同じ。toolUseID はその呼び出しの ID） → 呼び出しの結果
+    const data = { status: 'done', summary: '直しました', changedFiles: ['src/a.ts'] };
+    const lines: TranscriptEntry[] = [
+      assistant([{ type: 'tool_use', id: 'toolu_so', name: 'StructuredOutput', input: data }], { isSidechain: true }),
+      { ...attachment({ type: 'structured_output', data, toolUseID: 'toolu_so' }), isSidechain: true },
+      { ...result('toolu_so', 'Structured output provided successfully'), isSidechain: true },
+    ];
+    const out = lines.flatMap((entry) => events(entry, true));
+    expect(out.filter((e) => e.type === 'unknown-event')).toEqual([]);
+    expect(out).toContainEqual(expect.objectContaining({ type: 'tool-use', id: 'toolu_so', name: 'StructuredOutput', input: JSON.stringify(data, null, 2) }));
+  });
+
   it('hooks の記録（出力のあったもの）。止めた理由・Claude に渡した内容を読み、アプリが足したフックは出さない', () => {
     // 2.1.292 の PostToolUse の hooks の成功
     const success = attachment({
