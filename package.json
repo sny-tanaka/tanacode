@@ -22,6 +22,7 @@
     "test": "vitest run",
     "test:cli": "vitest run --config vitest.cli.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "check:transcripts": "vitest run --config vitest.transcripts.config.ts",
     "coverage": "vitest run --coverage",
     "coverage:cli": "vitest run --config vitest.cli.config.ts --coverage",
     "coverage:e2e": "TANACODE_E2E_COVERAGE=1 vitest run --config vitest.e2e.config.ts",
