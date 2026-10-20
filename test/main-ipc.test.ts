@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
+import { defaultPrompt } from '@shared/prompts';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
@@ -872,6 +873,25 @@ describe('通知・モデル・翻訳', () => {
     await invoke(IpcChannel.NotificationsSet, true);
     await expect(invoke(IpcChannel.NotificationsGet)).resolves.toBe(true);
     expect(savedSettings().notifications).toBe(true);
+  });
+
+  it('Claude に送る文は、アプリ全体の設定に、画面が送った欄だけを今の保存の値に重ねて保存する（null・空は既定に戻す。既定の文と同じ欄・知らない欄は持たない）。予約と最適化圧縮は、送るたびにそれを読む', async () => {
+    await boot();
+    await expect(invoke(IpcChannel.PromptsGet)).resolves.toEqual({});
+    const usageResume = '枠が戻りました。報告して待ってください。';
+    await expect(invoke(IpcChannel.PromptsUpdate, { usageResume, handoff: defaultPrompt('handoff'), resume: '  ', other: '知らない欄' })).resolves.toEqual({ usageResume });
+    await expect(invoke(IpcChannel.PromptsGet)).resolves.toEqual({ usageResume });
+    expect(savedSettings().prompts).toEqual({ usageResume });
+    const prompts = (argsOf('UsageLimitResume')[0] as { prompts: () => unknown }).prompts;
+    expect(prompts()).toEqual({ usageResume });
+    // 別の窓で、別の欄だけを変えた。先に変えた欄は残る
+    await expect(invoke(IpcChannel.PromptsUpdate, { resume: '報告して待って' })).resolves.toEqual({ usageResume, resume: '報告して待って' });
+    // 既定に戻す（null）。送っていない欄は残る
+    await expect(invoke(IpcChannel.PromptsUpdate, { usageResume: null })).resolves.toEqual({ resume: '報告して待って' });
+    expect(prompts()).toEqual({ resume: '報告して待って' });
+    // 形の違う値は、何も変えない
+    await expect(invoke(IpcChannel.PromptsUpdate, '壊れた値')).resolves.toEqual({ resume: '報告して待って' });
+    await expect(invoke(IpcChannel.PromptsUpdate, { resume: 3 })).resolves.toEqual({ resume: '報告して待って' });
   });
 
   it('モデルの一覧。読めなければ null', async () => {

@@ -5,6 +5,7 @@ import { app, shell, type Session, type WebContents } from 'electron';
 import { IpcChannel, type ArchiveOptions, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
+import type { CustomPrompts } from '@shared/prompts';
 import type { AppSettings } from './app-settings';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
@@ -56,6 +57,8 @@ export type ProfileOptions = {
   settings: AppSettings;
   // 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts の SESSIONS_NO_ASK_FILE）
   sessionsNoAskFile: string;
+  // 利用者が変えた、Claude に送る文（アプリ全体で 1 つ。メニューの「Claude に送る文…」。無い欄は既定の文）
+  prompts: () => CustomPrompts;
   // このプロファイルの画面への知らせと、画面（アプリ内ブラウザの webview を持つもの）
   send: Send;
   host: () => WebContents | null;
@@ -286,6 +289,7 @@ export class Profile {
       enabled: () => this.settings.usageLimitResumeEnabled(),
       parentOf: (id) => manager.parentOf(id),
       terminal: (id) => !!manager.summary(id)?.terminal,
+      prompts: this.options.prompts,
     });
     // アーカイブした・一覧から消したセッションの予約は取り消し、ウォークスルーは捨てる
     manager.watchState((id) => {
@@ -320,6 +324,7 @@ export class Profile {
       lists: (id) => this.checklists.lists(id),
       usedSince: (id, at) => checklistControl.usedSince(id, at),
       enabled: () => this.settings.checklistControlEnabled(),
+      prompts: this.options.prompts,
       onChange: (sessionId, status) => {
         send(IpcChannel.CompactChanged, { sessionId, status });
         // 流れが始まった・終わったので、外から見た状態が変わる（待っていた知らせを送る・親に知らせる）

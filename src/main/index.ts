@@ -18,6 +18,7 @@ import { SESSIONS_NO_ASK_FILE, writeSessionsNoAskFile } from './sessions-bridge'
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
+import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared/prompts';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
@@ -524,6 +525,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     // 既定のプロファイルの設定は、アプリ全体の設定と同じファイル
     settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
     sessionsNoAskFile: sessionsNoAskPath(),
+    prompts: () => settings.prompts(),
     send: sendTo(info.id),
     host: () => contentsOf(info.id),
     drawHost: () => drawView(info.id),
@@ -818,6 +820,13 @@ function registerIpc(): void {
   });
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
+  // Claude に送る文は、アプリ全体で 1 つ（どのプロファイルの画面から変えても、すべてのセッションに効く）。
+  // 画面は変えた欄だけを送るので、今の保存の値に重ねる（既定の文と同じ欄は持たない）
+  handle(IpcChannel.PromptsGet, () => settings.prompts());
+  handle(IpcChannel.PromptsUpdate, (_e, changes: PromptChanges) => {
+    settings.setPrompts(applyPromptChanges(settings.prompts(), promptChangesOf(changes)));
+    return settings.prompts();
+  });
   handle(IpcChannel.ModelsRefresh, (e) =>
     readModelCatalog(P(e).claudeDir).then(
       (catalog) => (catalog ? { catalog } : { error: t('main.model.noCatalog') }),
@@ -946,6 +955,13 @@ function buildMenu(): void {
             click: () => {
               showWindow();
               sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
+            },
+          },
+          {
+            label: t('main.menu.prompts'),
+            click: () => {
+              showWindow();
+              sendTo(activeId)(IpcChannel.PromptsOpen, undefined);
             },
           },
           { type: 'separator' },

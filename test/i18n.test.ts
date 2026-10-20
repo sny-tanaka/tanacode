@@ -62,6 +62,14 @@ describe('値の埋め込み', () => {
   it('値の中の {…} や $ は、そのまま入れる（置き換えの記号として読まない）', () => {
     expect(fill('「{name}」', { name: '{count} $& $1' })).toBe('「{count} $& $1」');
   });
+
+  it('値として使うのは、渡した値そのものだけ。{constructor}・{toString} などのオブジェクトの持ち物は、無い名前としてそのまま残す（利用者が書いた文にも使う）', () => {
+    expect(fill('{constructor} {toString} {hasOwnProperty} {__proto__} {trigger}', { trigger: '(T)' })).toBe('{constructor} {toString} {hasOwnProperty} {__proto__} (T)');
+    // 文言の埋め込み（t()）も同じ
+    expect(t('chat.compactPrompt.handoff.intro', { trigger: '(T)' })).not.toContain('function');
+    // 渡した値なら、名前がオブジェクトの持ち物と同じでも使う
+    expect(fill('{constructor}/{toString}', { constructor: 'c', toString: 's' } as never)).toBe('c/s');
+  });
 });
 
 describe('使う言語の決め方', () => {

@@ -2,6 +2,7 @@ import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT } from '@shared/opt
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
+import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
 
 // 登録した Claude Code の設定ファイル。覚えるのは名前とパスだけ（中身は預からない）
 export type StoredSettingsFile = { id: string; name: string; path: string };
@@ -18,6 +19,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // terminalControl: Claude に人のターミナルを使わせるか（起動する Claude Code に、ターミナルの MCP サーバーを足すか）/
 // autoCompactPercent: 最適化圧縮を自動で始める大きさ（コンテキストの割合。40・60・80）/
 // usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
+// prompts: tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。shared/prompts.ts）/
 // language: 画面の言語（system は Mac の言語の設定に合わせる）
 type Values = {
   notifications: boolean;
@@ -33,6 +35,7 @@ type Values = {
   terminalControl: boolean;
   autoCompactPercent: number;
   usageLimitResume: boolean;
+  prompts: CustomPrompts;
   language: LanguageSetting;
 };
 
@@ -145,6 +148,15 @@ export class AppSettings {
     this.update({ usageLimitResume: on });
   }
 
+  // 利用者が変えた、Claude に送る文（無い欄は既定の文）
+  prompts(): CustomPrompts {
+    return this.values.prompts;
+  }
+
+  setPrompts(prompts: CustomPrompts): void {
+    this.update({ prompts: customPromptsOf(prompts) });
+  }
+
   setBrowserHosts(hosts: string[]): void {
     this.update({ browserHosts: hosts });
   }
@@ -177,7 +189,8 @@ export class AppSettings {
   }
 }
 
-// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルと許す先は、無ければ無し。言語は、無ければ Mac に合わせる
+// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルと許す先は、無ければ無し。Claude に送る文は、無ければ既定の文。
+// 言語は、無ければ Mac に合わせる
 function load(file: string): Values {
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as {
@@ -194,6 +207,7 @@ function load(file: string): Values {
       terminalControl?: unknown;
       autoCompactPercent?: unknown;
       usageLimitResume?: unknown;
+      prompts?: unknown;
       language?: unknown;
     };
     return {
@@ -210,10 +224,11 @@ function load(file: string): Values {
       terminalControl: data.terminalControl !== false,
       autoCompactPercent: (AUTO_COMPACT_PERCENTS as readonly unknown[]).includes(data.autoCompactPercent) ? (data.autoCompactPercent as number) : DEFAULT_AUTO_COMPACT_PERCENT,
       usageLimitResume: data.usageLimitResume !== false,
+      prompts: customPromptsOf(data.prompts),
       language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, prompts: {}, language: 'system' };
   }
 }
 
