@@ -108,7 +108,6 @@
     },
     "remote": {
       "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
-      "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
       "failed": "Remote Control を切り替えられませんでした（{reason}）"
     },
     "task": {

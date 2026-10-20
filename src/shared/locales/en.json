@@ -110,7 +110,6 @@
     },
     "remote": {
       "unavailable": "Remote Control isn't available in development builds (launch with TANACODE_REMOTE_CONTROL=1 to enable it)",
-      "switching": "Remote Control is already switching. Wait a moment and try again.",
       "failed": "Couldn't switch Remote Control ({reason})"
     },
     "task": {

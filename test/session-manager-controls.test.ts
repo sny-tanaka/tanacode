@@ -272,6 +272,50 @@ describe('Remote Control', () => {
     await app.waitFor('切れた', () => app.manager.remoteConnectedOf(id) === false);
   });
 
+  it('つなぐ返事を待っている間に切ったら、つながったあとで切る（切ったつもりで、つながったまま残さない）', async () => {
+    // 起動が終わったときのつなぐ要求（reconcileRemote）に、すぐには答えない
+    app.answers.set('remote_control', null);
+    const { id, pipe } = app.create({ remoteControl: true });
+    await app.ready(id);
+    await app.waitFor('つなぐ要求', () => pipe.requests('remote_control').length === 1);
+    const off = app.manager.setRemoteControl(id, false);
+    expect(app.manager.summary(id)?.remoteControl).toBe(false);
+    pipe.respond(pipe.requests('remote_control')[0].request_id, { session_url: 'https://claude.ai/code/session_x', bridge_session_id: 'bridge-1' });
+    await app.waitFor('切る要求', () => pipe.requests('remote_control').length === 2);
+    expect(pipe.requests('remote_control')[1].request).toEqual({ subtype: 'remote_control', enabled: false });
+    pipe.respond(pipe.requests('remote_control')[1].request_id);
+    expect(await off).toBeNull();
+    expect(app.manager.remoteConnectedOf(id)).toBe(false);
+    expect(app.manager.summary(id)?.remoteControl).toBe(false);
+    expect(app.events(id).filter((e) => e.type === 'remote-control').at(-1)).toEqual({ type: 'remote-control', url: null });
+  });
+
+  it('切り替えの途中に何度変えても、最後の指定に落ち着く。前の切り替えが失敗しても、あとの指定は戻さない', async () => {
+    app.answers.set('remote_control', null);
+    const { id, pipe } = app.create({ remoteControl: true });
+    await app.ready(id);
+    await app.waitFor('つなぐ要求', () => pipe.requests('remote_control').length === 1);
+    // 切って、すぐ入れ直した。つないだあとは、何も送らない（切ってからつなぎ直さない）
+    const off = app.manager.setRemoteControl(id, false);
+    const on = app.manager.setRemoteControl(id, true);
+    pipe.respond(pipe.requests('remote_control')[0].request_id, { session_url: 'https://claude.ai/code/session_x', bridge_session_id: 'bridge-1' });
+    expect(await off).toBeNull();
+    expect(await on).toBeNull();
+    expect(pipe.requests('remote_control')).toHaveLength(1);
+    expect(app.manager.remoteConnectedOf(id)).toBe(true);
+    expect(app.manager.summary(id)?.remoteControl).toBe(true);
+    // 切る要求の返事を待っている間に入れ直し、切る要求は断られた。断られた理由は返すが、指定は入れ直したまま（つながったまま）
+    const offAgain = app.manager.setRemoteControl(id, false);
+    await app.waitFor('切る要求', () => pipe.requests('remote_control').length === 2);
+    const onAgain = app.manager.setRemoteControl(id, true);
+    pipe.fail(pipe.requests('remote_control')[1].request_id, 'bridge is busy');
+    expect(await offAgain).toBe('Remote Control を切り替えられませんでした（bridge is busy）');
+    expect(await onAgain).toBeNull();
+    expect(pipe.requests('remote_control')).toHaveLength(2);
+    expect(app.manager.remoteConnectedOf(id)).toBe(true);
+    expect(app.manager.summary(id)?.remoteControl).toBe(true);
+  });
+
   it('止まっていたセッションを開き直してつなぐときも、前の Remote Control のセッションに付け直す（記録に残す）', async () => {
     app.answers.set('remote_control', { session_url: 'https://claude.ai/code/session_x', bridge_session_id: 'bridge-1' });
     const { id } = app.create({ remoteControl: true });
