@@ -808,6 +808,7 @@
       "scheduledTaskNamed": "Scheduled task “{name}” started",
       "wakeup": "Claude's wake-up time has come",
       "usageLimitResume": "The usage limit has reset, so tanacode asked Claude to continue",
+      "compactCancelled": "Optimized compact was cancelled, so tanacode asked Claude to continue from where it was stopped",
       "parentRole": "Made this the parent session with {file}",
       "modelFallback": "Switched the model from {from} to {to}",
       "modelFallbackUnknown": "Switched the model",
@@ -842,6 +843,7 @@
       "codeOnlyIn": "The code in “{title}” was rewound, but the conversation couldn't be ({error})"
     },
     "compactPrompt": {
+      "cancelled": "tanacode cancelled the optimized compaction and did not reset the conversation. Your turn had been stopped by tanacode between tool calls because the context was filling up: the user did not interrupt you and is not waiting to be asked. Continue the work from where your turn was stopped. If the work was already finished, report that briefly.",
       "handoff": {
         "triggerManual": "(the user pressed the \"optimized compaction\" button)",
         "triggerAuto": "(automatic; context {percent}% full)",

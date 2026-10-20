@@ -18,6 +18,10 @@ import { neutralizeTags, unwrapWholePaste } from './session-tools';
 // 仕上げの頼みと、再開の文の囲み。チェックリストの MCP サーバーの説明に、この囲みは tanacode が送るものだと書いてある
 export const HANDOFF_TAG = 'tanacode-handoff';
 export const RESUME_TAG = 'tanacode-resume';
+// アプリがターンの途中で止めて始めた自動の流れを、会話を消さずに取りやめたときに、止めたところから続けるよう頼む文の囲み。
+// 止めたままにすると、作業が止まったまま誰も気づかない。本文は画面の言語の決まった文（利用者は変えられない。仕上げの頼みの
+// 「作業を続けずにターンを終えて」を打ち消すだけの文なので）。チャットでは知らせとして出す（人の発言に数えない）
+export const CANCELLED_TAG = 'tanacode-compact-cancelled';
 
 // 流れの段階。finalizing: 仕上げのターン / clearing: /clear を送って、新しい会話になるのを待っている /
 // resuming: 再開の文を送っている / waiting: 再開の文を送れず、入力欄が空くのを待っている
@@ -539,6 +543,33 @@ export function parseCompactMessage(text: string): { kind: 'handoff' | 'resume';
   if (!m) return null;
   const body = m[3].trim();
   return { kind: m[1] === HANDOFF_TAG ? 'handoff' : 'resume', body, trigger: m[2] ? triggerOfAttributes(m[2]) : legacyTrigger(body) };
+}
+
+// 自動の最適化圧縮が、ターンの途中（ツールのあとのフック）で止めるときの理由（フックの答えの stopReason。Claude Code の画面に出る）。
+// 会話ログには、コマンドの無い「止めた」記録（hook_stopped_continuation）として、この文だけが残る。チャットでユーザーのフックと
+// 見分ける目印にするので、文を変えるときは、前の文も見分けられるようにする（isAutoCompactStop）。percent: 分からなければ null
+export function autoCompactStopReason(percent: number | null): string {
+  return `tanacode: the context is ${percent === null ? 'almost' : `${Math.round(percent)}%`} full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).`;
+}
+
+const AUTO_COMPACT_STOP = /^tanacode: the context is (?:almost|\d+%) full, so tanacode stops here to reset the conversation and resume from the checklists \(optimized compaction\)\.$/;
+
+// 止めた理由が、自動の最適化圧縮のものか（文の全体で見る。ユーザーのフックが文を引いていても拾わない）。前のバージョンのアプリも同じ文
+export function isAutoCompactStop(reason: string): boolean {
+  return AUTO_COMPACT_STOP.test(reason.trim());
+}
+
+// ターンの途中で止めた自動の流れを取りやめたときの、続きを頼む文（CANCELLED_TAG）
+export function cancelledText(): string {
+  return [`<${CANCELLED_TAG}>`, t('chat.compactPrompt.cancelled'), `</${CANCELLED_TAG}>`].join('\n');
+}
+
+const CANCELLED_MESSAGE = new RegExp(`^<${CANCELLED_TAG}>([\\s\\S]*)</${CANCELLED_TAG}>$`);
+
+// 会話ログの発言が、取りやめたあとの続きを頼む文なら、その本文
+export function parseCompactCancelled(text: string): { body: string } | null {
+  const m = unwrapWholePaste(text).trim().match(CANCELLED_MESSAGE);
+  return m ? { body: m[1].trim() } : null;
 }
 
 // Claude Code の入力欄に残った文字が、仕上げの頼みか再開の文か（順番待ちの行・入力欄の下書きで、人の発言として扱わないため）

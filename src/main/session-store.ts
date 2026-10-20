@@ -68,6 +68,10 @@ export type SessionRecord = {
   // アプリから Claude への知らせ（session-notices.ts）のうち、このセッションに送る前にアプリを終えたもの（列の名前 → [キー, 中身]）。
   // 次のアプリが戻し、手が空いたら送る
   notices?: Record<string, [string, unknown][]> | null;
+  // claude を動かしたままアプリを終えた時刻。次のアプリが引き継いだら、それよりあとの会話ログの行（アプリを閉じている間の行）から、
+  // 最後のターンが利用枠で止まって終わったかを見て、再開の予約を入れる（前のアプリの頃の行なので、ターンの終わりでは知らせない）。
+  // 引き継いだら消す（アプリが落ちて、終えた時刻を書けなかったときは、前に終えた時刻を使い回さない）
+  detachedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 };

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { checklistToolId } from '@shared/checklist-tools';
-import { HANDOFF_TAG, RESUME_TAG } from '@shared/optimized-compact';
+import { CANCELLED_TAG, HANDOFF_TAG, RESUME_TAG } from '@shared/optimized-compact';
 import type { Block } from '../cli/mock-api';
 import { E2EApp } from './app';
 
@@ -32,6 +32,12 @@ describe('最適化圧縮を自動で始める', () => {
   let lowAfterReset = false;
   // 仕上げの頼みに、チェックリストのツールを使わずに答える（取りやめになる）
   let skipTools = false;
+  // 取りやめになる仕上げの頼みに答えたら、コンテキストが小さくなったことにする（続きのターンで、また止めない）
+  let lowAfterSkip = false;
+  // 最後に返した手順の番号（取りやめのあとに続きを頼まれたら、次の手順から続ける）
+  let lastStep = 0;
+  // 長い頼みを送った回数（ツールの呼び出しの ID を、回ごとに分ける）
+  let longRuns = 0;
   // コンテキストの上限（トークン）。ヘッダーのメーター（「2% · 20.0k」）から求める
   let limit = 0;
   const use = (percent: number) => {
@@ -89,7 +95,10 @@ describe('最適化圧縮を自動で始める', () => {
 
   // 何番目の応答かが決まらない（どのツールの切れ目で止まるかは、そのときしだい）ので、最後の発言の中身で応答を決める
   const respond = (prompt: string, results: string[]): Block[] | null => {
-    if (prompt.includes(`<${HANDOFF_TAG} `) && skipTools) return [{ type: 'text', text: NOT_WRITTEN }];
+    if (prompt.includes(`<${HANDOFF_TAG} `) && skipTools) {
+      if (lowAfterSkip) use(1);
+      return [{ type: 'text', text: NOT_WRITTEN }];
+    }
     if (prompt.includes(`<${HANDOFF_TAG} `)) {
       stateCards += 1;
       return [{ type: 'tool_use', id: `toolu_state_${stateCards}`, name: checklistToolId('card_add'), input: { list: 'いまの状態', list_description: '変わったら書き換える', list_kind: 'state', cards: [{ title: `状態 ${stateCards}`, body: '手順の途中' }] } }];
@@ -100,12 +109,18 @@ describe('最適化圧縮を自動で始める', () => {
     // 再開の文のあとの会話では、何番目の応答かが変わるので、ふつうの発言にも、中身で答える
     if (prompt.includes(SMALL)) return [{ type: 'text', text: SMALL_REPLY }];
     if (prompt.includes(OFF)) return [{ type: 'text', text: OFF_REPLY }];
-    if (prompt.includes(LONG)) return [{ type: 'tool_use', id: 'toolu_step_1', name: 'Bash', input: { command: 'sleep 0.6 && echo step-1', description: '手順 1' } }];
+    if (prompt.includes(LONG)) {
+      lastStep = 1;
+      longRuns += 1;
+      return [{ type: 'tool_use', id: `toolu_step_${longRuns}_1`, name: 'Bash', input: { command: 'sleep 0.6 && echo step-1', description: '手順 1' } }];
+    }
     const result = results.join('\n');
     const step = /step-(\d)/.exec(result);
-    if (step) {
-      const next = Number(step[1]) + 1;
-      return next > 8 ? [{ type: 'text', text: '手順を終えました' }] : [{ type: 'tool_use', id: `toolu_step_${next}`, name: 'Bash', input: { command: `sleep 0.6 && echo step-${next}`, description: `手順 ${next}` } }];
+    const cancelled = prompt.includes(`<${CANCELLED_TAG}>`);
+    if (step || cancelled) {
+      const next = (step ? Number(step[1]) : lastStep) + 1;
+      lastStep = next;
+      return next > 8 ? [{ type: 'text', text: '手順を終えました' }] : [{ type: 'tool_use', id: `toolu_step_${longRuns}_${next}`, name: 'Bash', input: { command: `sleep 0.6 && echo step-${next}`, description: `手順 ${next}` } }];
     }
     if (result.includes('Added #')) return [{ type: 'text', text: WRITTEN }];
     if (result.includes('## ')) return [{ type: 'text', text: RESUMED }];
@@ -219,6 +234,12 @@ describe('最適化圧縮を自動で始める', () => {
     await resumed(2);
     await button().waitFor();
     expect(prompts(SUMMARY_REQUEST)).toEqual([]);
+    // 止めた記録（コマンドの無い hook_stopped_continuation）は、ユーザーのフックの「止めた」として、ツールのカードに付けない。
+    // 続けて呼んだツールのカードは 1 行にまとまり、開くまでカード（とフック）を描かないので、まとまりを開いてから数える
+    const heads = app.page.locator('.chat-list .tool-group-head[aria-expanded="false"]');
+    for (let n = await heads.count(); n > 0; n = await heads.count()) await heads.first().click();
+    await app.page.locator('.chat-list .tool-card', { hasText: `手順 ${done}` }).first().waitFor();
+    expect(await app.page.locator('.chat-list .hook-run.blocked').count()).toBe(0);
   });
 
   it('Claude Code の自動の圧縮が始まる大きさ（97%）でも、圧縮の前のフックで止めて、要約を作らせずに切り替える', async () => {
@@ -277,6 +298,32 @@ describe('最適化圧縮を自動で始める', () => {
     await app.send(OFF);
     await app.waitUntil('Claude Code の自動の圧縮（要約の頼み）', () => prompts(SUMMARY_REQUEST).length > 0, 60_000);
     expect(handoffs()).toHaveLength(5);
+  });
+
+  it('ターンの途中で止めたのに取りやめになったら、会話を消さずに、止めたところから続けるよう頼む（止めたままにしない）', async () => {
+    use(1);
+    await ask(SMALL, SMALL_REPLY);
+    await button().waitFor();
+    // 「自動」を入れ直す（休んでいたのも戻る）
+    await toggle().click();
+    await app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"][aria-checked="true"]').waitFor();
+    const handed = handoffs().length;
+    const resumedBefore = resumes().length;
+    const finishedBefore = await shown('手順を終えました');
+    skipTools = true;
+    lowAfterSkip = true;
+    use(92);
+    await app.send(LONG);
+    await app.waitUntil('途中で止めたあとの仕上げの頼み', () => handoffs().length === handed + 1, 90_000);
+    await app.waitUntil('続きを頼む文', () => prompts(`<${CANCELLED_TAG}>`).length === 1, 60_000);
+    expect(prompts(`<${CANCELLED_TAG}>`)[0]).toContain('止めたところから作業を続けてください。');
+    await untilShown('手順を終えました', finishedBefore + 1);
+    await app.byText('.chat-list .chat-notice', '最適化圧縮を取りやめたので、止めたところから続けるよう頼みました').waitFor();
+    // 会話は消していない
+    expect(resumes()).toHaveLength(resumedBefore);
+    await button().waitFor();
+    skipTools = false;
+    lowAfterSkip = false;
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

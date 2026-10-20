@@ -545,6 +545,25 @@ describe('statusLine', () => {
       expect(app.turnLimits).toHaveLength(1);
     });
 
+    it('利用枠で止まったターンの最後の行が、次のターン（順番待ちの発言）が始まってから会話ログに出ても、次のターンに数えない', async () => {
+      const { id } = app.create();
+      await app.ready(id);
+      await app.prompt(id, '続けて');
+      // 合成の応答は stream に先に届き、会話ログに書かれるのは遅れる。その間に result が来て、順番待ちの発言で次のターンが始まる
+      const limited = line.limit(RESET);
+      app.pipe(id).emit(stream.assistant(limited, app.claudeId(id)));
+      app.pipe(id).emit(stream.limited(app.claudeId(id)));
+      await app.prompt(id, '次');
+      await app.waitFor('止まったターンの終わり', () => app.turnLimits.length === 1);
+      app.append(id, limited);
+      await app.waitFor('遅れて出た行', () => app.events(id).some((e) => e.type === 'api-error'));
+      app.say(id, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('次のターンの終わり', () => app.turnLimits.length === 2);
+      // 直す前は、次のターンも止まったとして、要らない再開の予約が入っていた
+      expect(app.turnLimits.map((t) => t.limit)).toEqual([{ resetsAt: null, window: null }, null]);
+    });
+
     it('ターンが終わったあとに遅れて出た利用枠の行は、次のターンに数えない', async () => {
       const { id } = app.create();
       await app.ready(id);

@@ -278,6 +278,12 @@ export class SessionsControl {
     this.notices.dispose();
   }
 
+  // 予約が変わった（ScheduledMessages の onChanged）。親の利用枠の再開の予約を人が取り消した・送れなかったときは、親の状態が
+  // 変わらないまま預かる理由が無くなるので、預かっている子の知らせを送れるか見直す
+  scheduledChanged(): void {
+    this.notices.recheck();
+  }
+
   // signal: Claude Code が呼び出しを取り消した（Esc で中断した）。待っている wait_sessions をやめる
   async handle(callerId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     if (!sessionTool(name)) return textResult(`Unknown tool: ${name}`, true);
@@ -1021,7 +1027,8 @@ export class SessionsControl {
     const limit = usageLimitStopOf(after);
     // 切り替えのあとの「引き継ぎました」の報告で終わったターン（答えを待っている・続ける作業が無い）と、取りやめた仕上げのターンは、
     // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。再開のあとに作業を続けたターンの終わりは、作業の終わり。
-    // 途中で止めたのに取りやめになった仕上げのターンの終わりも知らせる（子は止まったまま）
+    // 途中で止めたのに取りやめになった仕上げのターンの終わりも知らせる（続きを頼めなかったとき。子は止まったまま。
+    // 頼めたときは、続きのターンが始まってから流れが終わるので、ここには来ない）
     let lastAt = after.length - 1;
     while (lastAt >= 0 && !startsTurn(after[lastAt])) lastAt--;
     const last = after[lastAt];

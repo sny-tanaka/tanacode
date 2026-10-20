@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { fill, setLanguage, t } from '../src/shared/i18n';
 import type { ChatEvent } from '../src/shared/chat';
 import type { Checklist } from '../src/shared/checklist';
-import { handoffText, IDLE_COMPACT_STATUS, parseCompactMessage, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
+import { handoffText, IDLE_COMPACT_STATUS, parseCompactCancelled, parseCompactMessage, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
 import { defaultPrompt, type CustomPrompts } from '../src/shared/prompts';
 import type { SessionState } from '../src/shared/session-tools';
 import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compact';
@@ -299,6 +299,47 @@ describe('自動で始めた流れ', () => {
     expect(resume).toContain('continue the work that was in progress from where it stopped (the state list, and "Where the turn was stopped" below)');
     expect(resume).toContain('Your last words before the stop:\nテストを流します\nYour last tool calls, oldest first:\n- Bash: npm test → finished');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
+  });
+
+  it('ターンの途中で止めたのに取りやめたら、会話は消さずに、止めたところから続けるよう頼む（止めたままにしない）。続きのターンが始まるまでは流れの途中', async () => {
+    script();
+    const onSubmit = host.onSubmit;
+    host.onSubmit = (text) => {
+      onSubmit(text);
+      // 続きのターンは、少し遅れて始まる
+      if (parseCompactCancelled(text)) setTimeout(() => (host.state = 'working'), 6);
+    };
+    used = false;
+    const auto = { percent: 91, midTurn: true };
+    compact.start(ID, auto);
+    const status = await finished();
+    const stateAtEnd = host.state;
+    expect(status.failure).toBe('not-used');
+    expect(host.submitted).toHaveLength(2);
+    expect(host.submitted).not.toContain('/clear');
+    expect(parseCompactCancelled(host.submitted[1])?.body).toContain('Continue the work from where your turn was stopped');
+    // 流れが終わったときには、もう続きのターンが始まっている（「待機」に見せて、親に「止まった」と知らせない）
+    expect(stateAtEnd).toBe('working');
+    expect(finishes).toEqual([{ failure: 'not-used', auto }]);
+  });
+
+  it('続けるよう頼むのは、アプリがターンの途中で止めたときだけ。人が中断した・発言した・利用枠で止まったとき、ターンの終わりの自動・手動では頼まない', async () => {
+    const cases: { auto: AutoCompactTrigger | null; after?: () => void }[] = [
+      { auto: { percent: 83, midTurn: false } },
+      { auto: null },
+      { auto: { percent: 91, midTurn: true }, after: () => host.events.push({ type: 'turn-end', interrupted: true }) },
+      { auto: { percent: 91, midTurn: true }, after: () => host.events.push({ type: 'turn-end' }, { type: 'user', id: 'u9', text: 'やっぱり待って' }) },
+      { auto: { percent: 91, midTurn: true }, after: () => host.events.push({ type: 'api-error', id: 'e', text: '利用枠', retrying: false, limit: { resetsAt: Date.now() + 3_600_000, window: 'five_hour' } }, { type: 'turn-end' }) },
+    ];
+    for (const { auto, after } of cases) {
+      host.submitted = [];
+      statuses = [];
+      used = false;
+      script(after ? { afterHandoff: () => { after(); host.state = 'idle'; } } : {});
+      compact.start(ID, auto);
+      expect((await finished()).failure).not.toBeNull();
+      expect(host.submitted.filter((text) => parseCompactCancelled(text))).toEqual([]);
+    }
   });
 
   it('仕上げのターンが API エラーで終わった（上限に当たったなど）ら、仕上げを飛ばして切り替え、再開の文にそう書く。チェックリストを使っていなくても取りやめない', async () => {

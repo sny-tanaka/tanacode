@@ -30,7 +30,8 @@ type Deps<T> = {
   delayMs?: number;
   // 送り先がターミナルモードのとき、TUI の入力欄に貼る知らせか（人がボタンで頼んだもの）。省くと、どれも捨てる
   pasteInTerminal?: (item: T) => boolean;
-  // 手が空いていても、まだ送らずに預かるか（送り先が利用枠で止まって、再開を待っている間など）。次に状態が変わったときに見直す
+  // 手が空いていても、まだ送らずに預かるか（送り先が利用枠で止まって、再開を待っている間など）。次に状態が変わったときと、
+  // recheck を呼んだときに見直す
   holds?: (target: string) => boolean;
   // 列の名前。付けると、預かっている知らせを送り先の記録に残し（host.saveNotices）、アプリを終えても次のアプリが戻して送る。
   // 中身（T）は JSON にできるものにする
@@ -75,6 +76,11 @@ export class SessionNotices<T> {
     this.pending.set(target, queue);
     this.keep(target);
     this.schedule(target);
+  }
+
+  // 預かっている知らせを、送れるか見直す（預かる理由が、送り先の状態でないところで変わったとき。送り先の再開の予約が無くなったなど）
+  recheck(): void {
+    for (const target of this.pending.keys()) this.schedule(target);
   }
 
   remove(target: string, key: string): void {

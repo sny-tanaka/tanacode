@@ -3567,6 +3567,28 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
       }
     });
 
+    it('親の再開の予約を人が取り消した・送れなかったら、親の状態が変わらなくても、預かっていた子の知らせを送る（予約が変わったことを受ける）', async () => {
+      const notifying = new SessionsControl({ host, enabled: () => true, archive: async () => null, home: '/nonexistent-home', scheduled: () => scheduled, notifyDelayMs: 10 });
+      try {
+        const settle = () => new Promise((r) => setTimeout(r, 60));
+        const parentResume = scheduled!.add(PARENT, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
+        host.events.set(CHILD, limitTurn());
+        host.set(CHILD, 'idle');
+        await settle();
+        // 予約が変わっても、まだ再開を待っているなら預かったまま
+        notifying.scheduledChanged();
+        await settle();
+        expect(host.submitted.filter((x) => x.id === PARENT)).toEqual([]);
+        // 親は待機のまま、予約だけが無くなった。直す前は、親の状態が変わるまで届かなかった
+        scheduled!.cancel(parentResume.id);
+        notifying.scheduledChanged();
+        await settle();
+        expect(host.submitted.filter((x) => x.id === PARENT)).toHaveLength(1);
+      } finally {
+        notifying.dispose();
+      }
+    });
+
     it('list_wakeups・cancel_wakeup: 利用枠の再開の予約は tanacode のものとして見せ（本文の代わりに中身の説明）、Claude には取り消させない', async () => {
       const added = scheduled!.add(PARENT, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
       const listed = jsonOf<Listed>(await control.handle(PARENT, 'list_wakeups', {}));

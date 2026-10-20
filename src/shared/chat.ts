@@ -3,7 +3,7 @@ import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
 import { handbackOf, type Handback } from './handback';
 import { modelName } from './model-name';
-import { isCompactMessage, parseCompactMessage, type AutoCompactTrigger } from './optimized-compact';
+import { CANCELLED_TAG, isAutoCompactStop, isCompactMessage, parseCompactCancelled, parseCompactMessage, type AutoCompactTrigger } from './optimized-compact';
 import { INSTRUCTIONS_TAG, PARENT_INSTRUCTIONS_FILE, parseParentRole } from './project-instructions';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
@@ -582,6 +582,9 @@ function hookRunOf(a: Record<string, unknown>, type: string): HookRun | null {
   // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
   // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせと TANACODE.md は囲みで見分ける）
   if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || (users ? users.length === 0 : isAppText(content))) return null;
+  // 自動の最適化圧縮が、ツールのあとのフックでターンを止めた記録（hook_stopped_continuation）。コマンドが載らないので、止めた理由の文で
+  // 見分ける。前のバージョンのアプリ（suppressOutput を書かなかった頃）の成功の記録は、標準出力の JSON の stopReason に入る
+  if (isAutoCompactStop(str(a.message)) || isAutoCompactStop(content) || isAutoCompactStop(stopReasonOf(str(a.stdout)))) return null;
   // ユーザーのフックが、標準出力の JSON で suppressOutput を指定した成功の記録（Claude Code の画面でも出ない）。読めない JSON・ほかの出力は出す。
   // Stop は、要約（stop_hook_summary）の行に、出力の無いフックとしてコマンドだけが残る
   if (type === 'hook_success' && suppressesOutput(str(a.stdout))) return null;
@@ -597,6 +600,18 @@ function hookRunOf(a: Record<string, unknown>, type: string): HookRun | null {
     message: truncate(blocking?.blockingError ?? (type === 'hook_success' ? '' : content || str(a.message)), OUTPUT_CHARS),
     toolUseId: str(a.toolUseID) || null,
   };
+}
+
+// フックの標準出力の JSON の stopReason（無い・読めなければ空）
+function stopReasonOf(stdout: string): string {
+  const text = stdout.trim();
+  if (!text.startsWith('{')) return '';
+  try {
+    const reason = (JSON.parse(text) as { stopReason?: unknown }).stopReason;
+    return typeof reason === 'string' ? reason : '';
+  } catch {
+    return '';
+  }
 }
 
 // フックの標準出力が、suppressOutput: true を指定した JSON のオブジェクトか（Claude Code と同じく、出力の全体が JSON のときだけ読む）
@@ -744,6 +759,9 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
         : t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoffAuto' : 'chat.transcript.compactResumeAuto', { percent: trigger.percent });
     return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind, trigger }];
   }
+  // アプリがターンの途中で止めた自動の最適化圧縮を取りやめたので、止めたところから続けるよう頼んだ文。開くと全文が読める
+  const cancelled = parseCompactCancelled(text);
+  if (cancelled) return [{ type: 'notice', id: entry.uuid ?? '', text: t('chat.transcript.compactCancelled'), detail: cancelled.body }];
   const special = specialUserText(entry.uuid ?? '', text.trimStart());
   if (special) return [special];
   if (text.includes('<task-notification>')) {
@@ -837,6 +855,7 @@ export function isHumanPrompt(text: string): boolean {
     !head.startsWith(`<${WAKEUP_TAG}`) &&
     !head.startsWith(`<${USAGE_RESUME_TAG}`) &&
     !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
+    !head.startsWith(`<${CANCELLED_TAG}`) &&
     !isCompactMessage(text)
   );
 }
@@ -1047,7 +1066,7 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
   ) {
     // 順番待ちの発言をまとめた行は、はじめに送った発言で決める
     const text = mergedParts(entry, entry.message.content)?.[0].text ?? entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseWakeup(text) || parseUsageResume(text)) return null;
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseCompactCancelled(text) || parseWakeup(text) || parseUsageResume(text)) return null;
     // 「親にする」の発言は、続く最初の指示から（「親として始める」）。指示が無ければタイトルにしない
     const parentRole = parseParentRole(text);
     if (parentRole && !parentRole.rest) return null;
