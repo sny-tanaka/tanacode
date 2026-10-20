@@ -494,8 +494,21 @@ export class E2EApp {
       const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click'];
       const listener = (e: Event) => entries.push(snapshot(e.type, e as MouseEvent));
       for (const type of types) window.addEventListener(type, listener, true);
+      // チャットの一覧が押している間に動いたとき、いつ・どれだけ動いたか（スクロールは泡立たないので、捕まえる側で受ける）。
+      // 一覧の子の数も残す（描き直しで一覧が作り直されたかを見分ける）
+      const scrolled = (e: Event) => {
+        if (!(e.target instanceof Element) || !e.target.classList.contains('chat-list')) return;
+        entries.push({ ...snapshot('scroll'), children: e.target.childElementCount });
+      };
+      document.addEventListener('scroll', scrolled, true);
       entries.push(snapshot('start'));
-      w.__e2ePress = { entries, stop: () => types.forEach((type) => window.removeEventListener(type, listener, true)) };
+      w.__e2ePress = {
+        entries,
+        stop: () => {
+          types.forEach((type) => window.removeEventListener(type, listener, true));
+          document.removeEventListener('scroll', scrolled, true);
+        },
+      };
     }, element);
     let entries: Record<string, string | number | boolean>[] = [];
     try {

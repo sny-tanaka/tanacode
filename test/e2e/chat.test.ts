@@ -102,7 +102,8 @@ describe('チャットから Claude Code を動かす', () => {
     await chat.getByText('サーバーのツールを使いました').waitFor();
     const row = app.byText('details.chat-unknown', 'assistant/server_tool_use');
     expect(await row.locator('summary').textContent()).toBe('未知のイベント: assistant/server_tool_use');
-    await row.locator('summary').click();
+    // 押したときの記録を残す（届かなければ、そのわけと一緒に落とす。CI で、開かないまま次を待って落ちたことがある）
+    await app.press(row.locator('summary'));
     expect(await row.locator('.chat-unknown-meta').textContent()).toMatch(/^会話ログの行Claude Code \d+\.\d+\.\d+$/);
     expect(JSON.parse((await row.locator('.chat-unknown-raw').textContent())!)).toMatchObject({ type: 'server_tool_use', id: 'srvtoolu_e2e' });
     // 手元の Mac（裏で起動）では、人のクリップボードを書き換えないよう、写す先を差し替える。CI では本物のクリップボードに写して読み直す。
