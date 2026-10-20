@@ -258,6 +258,26 @@ describe('ターミナルモード: 画面の下の知らせ', () => {
     expect(container.querySelector('.claude-screen-notes')).toBeNull();
   });
 
+  it('起動し直したときの知らせ（screen の付いたお知らせ）は、画面の下にも出す。× で閉じても、チャットには残る', () => {
+    const items: ChatState['items'] = [
+      { kind: 'user', id: 'u1', text: 'ログインを直してください' },
+      { kind: 'info', id: 'i1', text: 'AGENTS.md を読み込みました' },
+      { kind: 'info', id: 'switch-back:1', text: 'チャットに戻せませんでした', detail: 'Error: settings', warning: true, screen: true },
+    ];
+    const { container, rerender } = render(<ClaudePane {...props({ chat: chatOf({ status: 'running', items }) })} />);
+    const notes = () => container.querySelector<HTMLElement>('.claude-screen-notes');
+    expect(notes()!.textContent).toContain('チャットに戻せませんでした');
+    // ほかのお知らせは出さない。開くと全文
+    expect(notes()!.textContent).not.toContain('AGENTS.md');
+    expect(notes()!.querySelector('.chat-notice-detail')!.textContent).toBe('Error: settings');
+    fireEvent.click(within(notes()!).getByRole('button', { name: '閉じる' }));
+    expect(notes()).toBeNull();
+    // チャットに戻ると、会話の中にある
+    rerender(<ClaudePane {...props({ terminalOpen: false, chat: chatOf({ status: 'running', items }) })} />);
+    expect(chatList(container).textContent).toContain('チャットに戻せませんでした');
+    expect(notes()).toBeNull();
+  });
+
   it('終了している間も、ヘッダーのボタンでチャットに戻せる。起動の途中は押せない', () => {
     const onToggleTerminal = vi.fn();
     const button = () => screen.getByLabelText('ターミナルモード') as HTMLButtonElement;

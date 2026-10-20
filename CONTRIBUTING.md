@@ -406,7 +406,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
     - MCP のツールの渡し方: 本物の API では、Claude Code は MCP のツールの定義を一覧に入れず、名前だけを発言（「The following deferred tools are now available via ToolSearch.…」のあとに 1 行に 1 つ）で知らせ、Claude が `ToolSearch` で読み込んでから呼びます（tool search。読み込んだツールは、次の要求から一覧に `defer_loading` 付きで入る）。`ANTHROPIC_BASE_URL` を差し替えたモックでは、2.1.303 までは tool search が既定で無効で、MCP のツールは最初から一覧に入ります。2.1.304 からは、モックでも本物と同じく有効です（CHANGELOG の「Changed tool search to be on by default behind a custom `ANTHROPIC_BASE_URL`」）。モックは、一覧に付いてきたツール（`tools`）と、名前だけを知らされたツール（`deferredTools`）を分けて控え、ツールが Claude に渡ることは、どちらの形でも確かめます（`offeredTools`。名前だけのものは、`ToolSearch` が一覧にあるときだけ数える）。本物と同じ形（名前だけを知らせ、`ToolSearch` で読み込む）は、`checklist.test.ts` が `ENABLE_TOOL_SEARCH=true` で、どのバージョンでも確かめます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 21 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 24 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -415,6 +415,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `stop.test.ts` | バックグラウンドのタスクを、アプリから止める（`SessionManager.stopTask`。`stop_task` で止め、止まったことは Claude Code の `task_notification` で確かめる）。サブエージェント・名前の違う Bash 2 つ・長いコマンドの Bash・同じコマンドの Bash 2 つ・ワークフローを動かし続け、止めたものだけが止まる（ほかは動いたまま。同じコマンドが 2 つでも、ID で止めるので取り違えない）。止めても確認や質問として知らせないこと、もう動いていないものは止めようとせず理由を返すことも |
     | `session.test.ts` | 会話の操作を、キーを送らずに制御の要求と発言で行う。権限モード（`set_permission_mode`。Claude Code が知らせたモードが一覧に出る）→ 作業中の進み具合と一覧の状態 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 応答のモデル → モデルとエフォート（`set_model`・`apply_flag_settings`。起動し直さず、次の応答から使われる）→ 裏の Bash の `stop_task` → `/compact`（圧縮の間は進み具合が圧縮中になり、終わると戻る）→ 複数行の指示を添えた `/compact`（1 つの発言で送り、要約の頼みの `Additional Instructions:` に、改行もそのまま入るか）→ 要約の頼みを API エラーにした `/compact`（失敗の理由がチャットに出る）→ `/clear`（`system/init` の `session_id` で新しい会話ログに乗り換え、チャットを空にして出し直す）→ `--resume` → 巻き戻し（`rewind_files` でコードだけを戻す・`rewind_conversation` で会話を戻すと、戻した発言の文が返り、次の発言から枝分かれする） |
     | `terminal-mode.test.ts` | チャット（stream-json）とターミナルモード（TUI）の行き来。ターミナルモードにすると、同じ会話を `--resume` して TUI を起動し、TUI が起動を終える（statusLine が動く）。チャットに戻すと、stream-json を `--resume` で起動し、同じ会話ログに続く。TUI の画面は読まず、キーも押さない。statusLine の控えもここで取る |
+    | `terminal-stop-hook.test.ts` | ターミナルモード（TUI）で、Stop のフックが文を渡して続けさせたターンの会話ログ。Stop のフックは 2 回動くが、ターンの終わりの行（`turn_duration`）は、続きを終えたあとに 1 回だけ書かれるか（アプリは、TUI のターンの終わりをこの行で知る）。アプリの道では TUI に発言を送れない（キーは押さない）ので、ここだけは TUI を node-pty で直に起動し、最初の発言を起動の引数で渡す。画面は読まない |
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ 引き継いだ claude の作業の完了と、そのあとの発言 → アプリを止めている間の `/clear`（引き継いですぐ新しい会話ログに乗り換える） |
     | `progress.test.ts` | 作業中の進み具合のうち、Claude Code の知らせから作る段階。auto モードの判定を 5 秒待たせる（モデルを呼ばない判定の呼び出しを、モックの API が遅らせる）と判定待ちになり、済むとツールの実行に戻る → コンテキストを埋めて、自動の圧縮をアプリの圧縮の前のフック（チェックリストの hooks と同じ入口を、ビルドして動かす）に止めさせると、圧縮中にならず、失敗も出ない → 止めないと、圧縮中になり、区切りが出る |
     | `permission-mode.test.ts` | 子の権限モードの上限にする親のモード（`SessionManager.modeOf`）。止まっていたセッションを開き直すと、権限モードは新しいセッションと同じ決まり（設定の `defaultMode`、無ければ auto、使えなければ default）で決め（前回のモードは引き継がない）、上限は Claude Code の今のモードになるか |
@@ -587,7 +588,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。チャットの間は、ユーザーの statusLine も動きません（決めたこと）。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
 - チェックリストを Claude に扱わせるときは、`--settings` に、今のチェックリストを Claude に渡すフック（`UserPromptSubmit`・`Stop`・`SessionStart`）も足します（下の「チェックリスト」）。どれも `-p` で動きます（2.1.301 で実測）。
 - 書くだけのフック（何も決めない）: 許可の確認を出す直前（`PermissionRequest`）のツールの名前と入力、Claude Code の知らせ（`Notification`）、ターンの終わり（`Stop`）を、`statusline/<id>.permission.json`・`<id>.notification.json`・`<id>.idle.json` に書かせます（`PERMISSION_FILE_COMMAND`・`NOTIFICATION_FILE_COMMAND`・`IDLE_FILE_COMMAND`。いつも足す）。
-  - ターミナルモードの間に、確認待ちと、手が空いたことを知るためです（下の「ターミナルモード」。`Notification` のファイルは、今は読んでいません）。チャットでは使いません（`can_use_tool` と `result` で分かる）。
+  - ターミナルモードの間に、確認待ちと、メニューが閉じたこと・TUI の権限モードを知るためです（下の「ターミナルモード」。Stop のファイルでは、ターンの終わりは決めない。`Notification` のファイルは、今は読んでいません）。チャットでは使いません（`can_use_tool` と `result` で分かる）。
   - 何も決めない（決める欄の無い `{"suppressOutput":true}` だけを書く）ので、`can_use_tool` と競いません（実測: フックが何も決めなければ、Claude Code はアプリの返事を待つ）。
   - ファイルの場所は、環境変数 `TANACODE_ASK_FILE`（`ASK_FILE_ENV`）の `<id>.ask.json` から作ります（このファイルそのものは書かない）。コマンドにこの変数が入るので、チャットのフックの一覧には出しません。
 - Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
@@ -1169,14 +1170,15 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - ターミナルモードから: TUI のターンの外（`tuiTurn`。下）。
   - 裏のタスクが動いていれば、止まることを画面で確かめたときだけ（`stopTasks`）。チャットに戻すときは、TUI の入力欄の書きかけが消えることも確かめます（画面を読まないので、書きかけがあるかは分からない）。
 - 切り替えは、今の claude を止めて（`ClaudeSession.stop`）終わったのを確かめてから、もう片方で `--resume` します。権限モードは今のもの（`relaunchMode`）を必ず渡します。
+  - bypassPermissions は引き継がず、子と Claude が始めた独立したセッションは、起動したときのモード（`launchMode`）より強くしません（再起動の `restart` も同じ）。下げたときは、起動し直したあと、チャットとターミナルモードの画面の下に注意の行を出します（`noteLoweredMode`）。
   - 止めた claude の終わりは、チャットに出しません（すぐもう片方で起動するため。`switchStopping`）。切り替えの途中でも、claude が自分で終わった（落ちた）ときは、終了を出し、切り替えずに止まったままにします（出さないと止まったと分からず、送った発言が黙って消えるため）。再起動（`restart`）で止めた claude の終わりも、同じく出しません（`restarting`）。起動し直せなかったときだけ、終了を出します（チャットの「再開」で開き直せるように）。
   - ターミナルモードへ: Remote Control を使わないセッション（と開発版）では、止める前に `remote_control` の要求で切ります。TUI の `--resume` は、会話ログに残った前のつながりに自分でつなぎ直し、キーを送らない TUI では切れないためです。切れなければ、切り替えません。Remote Control を使うセッションは `--remote-control <名前>` を付け、同じ Remote Control のセッションに自動でつながり直します（実測）。
-  - チャットへ: TUI で変えたモデル・エフォート（statusLine を、切り替えたときの値と比べる）と Remote Control（会話ログの `bridge-session`）を、次の起動の指定に写します（`adoptTuiChanges`。チャットは指定で起動するので、写さないと黙って元に戻る）。権限モードは、会話ログの発言の行と、書くだけのフックの `permission_mode` から分かったもの。Remote Control を使うセッションは、起動を終えたら `remote_control` の要求に前の `bridge_session_id`（`reattach_session_id`）を添えて、同じセッションに付け直します（実測）。
-  - もう片方を起動できなかったときは、元の種類で開き直し、わけを返します。起動を終える前に終わったとき（`switchedFrom`）は、チャットに戻した先なら、元の種類（ターミナルモード）で開き直し、わけをチャットに出します。ターミナルモードにした先（TUI のフォルダの信頼の確認で「No, exit」を選んだなど）なら、チャットで開き直さず、ターミナルモードのまま止めて、わけを終了の知らせ（`process-exit` の `reason`）に添えます。チャットは隠れているので、画面の下の終了の表示に、終了コードの代わりに出します。
+  - チャットへ: TUI で変えたモデル・エフォート（statusLine を、TUI を起動したときの値（`tuiBaseline`）と比べる）と Remote Control（会話ログの `bridge-session`）を、次の起動の指定に写します（`adoptTuiChanges`。チャットは指定で起動するので、写さないと黙って元に戻る）。起動したときの値は、その TUI が最初に書いた statusLine です（TUI は起動を終えたときに書く。前の claude の値は、止めたあとに変わった指定や、前の TUI で変えたものかもしれない）。アプリを起動し直して引き継いだ TUI は、引き継ぐ前に書いていた statusLine のファイルの値（引き継ぐ前に変えたものは、起動したときの値が分からないので写さない）。分からないうちは写しません（変えていない「既定」を、明示の値に固定しないため）。権限モードは、会話ログの発言の行と、書くだけのフックの `permission_mode` から分かったもの。Remote Control を使うセッションは、起動を終えたら `remote_control` の要求に前の `bridge_session_id`（`reattach_session_id`）を添えて、同じセッションに付け直します（実測）。
+  - もう片方を起動できなかったときは、元の種類で開き直し、わけを返します。起動を終える前に終わったとき（`switchedFrom`）は、チャットに戻した先なら、元の種類（ターミナルモード）で開き直し、わけ（開くと標準エラーの末尾）をチャットとターミナルモードの画面の下に出します。開き直すと起動の知らせ（`process-start`）で画面のチャットが空になるので、わけは、開き直した会話を読み直し、受け付けられるようになってから出します（`flushLaunchNotes`。下げた権限モードの注意の行も同じ。下げた先のモードは、起動の途中で変わることがあるため（auto を使えないモデルなら manual）、そのときのモードで書く）。ターミナルモードにした先（TUI のフォルダの信頼の確認で「No, exit」を選んだなど）なら、チャットで開き直さず、ターミナルモードのまま止めて、わけを終了の知らせ（`process-exit` の `reason`）に添えます。チャットは隠れているので、画面の下の終了の表示に、終了コードの代わりに出します。
   - 切り替えるたびに、Claude Code がツール・スキルの一覧を会話に足し直すので、TUI への切り替えのあとの最初のターンは、キャッシュの書き込みが約 1.5 万トークン増えます（チャットに戻すときは 1 千弱。2.1.296 で実測）。
 - ターミナルモードの間は、TUI の中身を読まず、キーも押しません（貼り付けだけ）。状態は次のもので知ります。
-  - ターンの始まりと終わり: 会話ログ（人の発言・モデルの応答で始まり、ターンの終わりの行で終わる。`tuiEntry`）と、書くだけの Stop のフック（`statusline/<id>.idle.json`。`tuiIdle`）。終わったら、完了を知らせます。ターンの途中は、一覧に「ターミナルモード・作業中」と出します。
-  - 確認・質問: 書くだけの PermissionRequest のフック（`<id>.permission.json`）で知り、通知と一覧の印にします（`tuiAsk`）。答えたこと（会話ログの user の行）で消します。
+  - ターンの始まりと終わり: 会話ログ（人の発言・モデルの応答で始まり、ターンの終わりの行（`turn_duration`・中断の行・ローカルのコマンドの行）で終わる。`tuiEntry`）。終わったら、完了を知らせます。ターンの途中は、一覧に「ターミナルモード・作業中」と出し、チャットに戻させません。書くだけの Stop のフック（`statusline/<id>.idle.json`。`tuiStopHook`）では終えません。一緒に動くチェックリストの Stop のフック（とユーザーの Stop のフック）が、文を渡して続けさせることがあり、そこで終えると、続きを作業中の TUI を止めてしまうためです（`turn_duration` は、続きを終えたあとに 1 回だけ書かれる。2.1.303 で実測。`test/cli/terminal-stop-hook.test.ts`）。
+  - 確認・質問: 書くだけの PermissionRequest のフック（`<id>.permission.json`）で知り、通知と一覧の印にします（`tuiAsk`）。答えたこと（会話ログの user の行のうち、フックがファイルに書いたあとの時刻のもの）か、書くだけの Stop のフックで消します。アプリを起動し直して引き継いだ TUI は、TUI の起動よりあとに書かれた `<id>.permission.json` があり、そのあとに Stop のフックが動いていなければ、出したままのメニューとして戻します（通知はしない。答えたことは、読み直す会話ログで分かる。`adoptedTui`）。
   - モデル・エフォート・コンテキスト・利用枠: statusLine（TUI では動く）。
   - 権限モード: 会話ログと、書くだけのフックの `permission_mode`。
 - ターミナルモードの間に、アプリが止めるもの
@@ -1191,6 +1193,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 入力欄への差し込み（`insertIntoChat`。ターミナルの「Claude へ送る」・アプリ内ブラウザで選んだ要素など）は、ターミナルモードでは Claude Code の入力欄にブラケットペーストで貼ります（`pasteIntoClaudeScreen`。Enter は送らない）。見えていないチャットの入力欄に入れても、気づけないためです。コードへのコメントは画面の下に並べ、「入力欄に貼る」で同じように貼ります。Claude Code が起動の途中・終了している間は貼れないので、チャットの入力欄に入れます（起動の途中に貼った文字は、Claude Code が取りこぼすため）。チャットの入力欄に入れるときは、長ければ（`isLongPaste`）文字にせず、札にします。
   - 描き方（fullscreen・classic）は、Claude Code の設定のままです。
   - Claude Code が終わったら、画面（xterm。最後の画面が残る）の下に、終了と「再開」を出します（`ClaudePane` の `exitedCallout`。チャットのときと同じもの）。ヘッダーのターミナルモードのボタンは、止まっている間も押せます（起動・切り替えの途中だけ押せない）。
+  - 起動し直したときの知らせ（チャットに戻せなかったわけ・下げた権限モード。`screen` の付いたお知らせ）は、チャットに並べるほか、画面の下にも出します（チャットは隠れているため）。× で閉じても、チャットには残ります。
 
 ### アプリ内ブラウザ（Claude による操作）
 

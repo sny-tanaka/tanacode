@@ -446,3 +446,33 @@ export const ターミナルモードで起動の前に終わった: Story = {
   render: (args) => <Pane {...args} exitReason={t('main.terminal.tuiExited', { code: 1 })} />,
 };
 
+// 起動し直したときの知らせ（screen の付いたお知らせ）。チャットは隠れているので、画面の下にも出す。× で閉じる（チャットには残る）。
+// 上: チャットに戻した先が起動の途中で終わって、ターミナルモードに戻した（開くと標準エラーの末尾）/ 下: 起動し直して権限モードを下げた
+export const ターミナルモードで起動し直したときの知らせ: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true },
+  render: (args) => (
+    <Pane
+      {...args}
+      items={[
+        ...args.items,
+        {
+          kind: 'info',
+          id: 'switch-back:1',
+          text: t('main.terminal.chatExited', { code: 1 }),
+          detail: 'Error: Invalid settings file: /Users/me/.claude/settings.json',
+          warning: true,
+          screen: true,
+        },
+        {
+          kind: 'info',
+          id: 'mode-lowered:1',
+          text: t('main.session.modeCapped', { from: t('composer.mode.auto'), to: t('composer.mode.acceptEdits') }),
+          warning: true,
+          screen: true,
+        },
+      ]}
+    />
+  ),
+};
+

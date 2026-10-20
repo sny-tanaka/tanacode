@@ -244,10 +244,12 @@ type Runtime = {
   restarting: { process: ClaudeSession; done: Promise<void> } | null;
   // アーカイブ・一覧からの削除で片付けている途中（worktree も消すときは、止め終わるまで一覧から外さない）。止めたあとに起動し直さない
   closing: boolean;
-  // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
+  // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行で終わる。書くだけの Stop のフックでは終えない。
+  // 一緒に動くチェックリストやユーザーの Stop のフックが、文を渡して続けさせることがあるため）
   tuiTurn: boolean;
-  // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
-  tuiAsk: { kind: 'permission' | 'question'; menu: Menu } | null;
+  // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）。
+  // at: フックがファイルに書いた時刻（これより前に書かれた会話ログの行は、答えではない）
+  tuiAsk: { kind: 'permission' | 'question'; menu: Menu; at: number } | null;
   // 引き継いだ TUI の、常駐のホストでの pty の ID。最初に画面を出したとき（resize）に、ホストが持つ今の画面を取り直して流す。済んだら null
   redrawFromHost: string | null;
   // initialize の返事が来た（コマンド・モデルの一覧など）。来るまでは起動中
@@ -319,10 +321,16 @@ type Runtime = {
   // チャットとターミナルモードを切り替えて起動した、元の種類。切り替えた先が起動を終える前に終わったら、元の種類で開き直す。
   // 起動を終えたら（チャットは initialize のあと、TUI は statusLine か会話ログの新しい行が届いたら）null
   switchedFrom: LaunchKind | null;
-  // ターミナルモードに切り替えたときの、モデルとエフォート（statusLine）。チャットに戻すとき、TUI で変えたものを指定に写すため
+  // TUI を起動したときの、モデルとエフォート（statusLine）。チャットに戻すとき、TUI で変えたものを指定に写すため。
+  // この TUI が最初に書いた statusLine（引き継いだ TUI は、引き継ぐ前に書いていたもの）。分からないうちは null（写さない）
   tuiBaseline: { model: string | null; effort: string | null } | null;
   // ターミナルモードの間に、TUI が Remote Control のつながりを会話ログに書いた（/remote-control で変えたかもしれない）
   tuiRemoteSeen: boolean;
+  // 起動し直したときの知らせ（切り替えに失敗したわけ）と、起動し直して下げた権限モード（下げる前のモード）。会話ログを読み直し、
+  // 受け付けられるようになってから出す（flushLaunchNotes）。起動の知らせは画面のチャットを空にし、読み直した会話はそのあとに並ぶので、
+  // 先に出すと会話のいちばん上に埋もれる。下げた先のモードは、起動の途中で変わることがある（auto を使えないモデルなら manual）
+  launchNotes: ChatEvent[];
+  loweredFrom: PermissionMode | null;
   // つないだ Remote Control のセッションの ID（ターミナルモードから戻ったとき、同じセッションに付け直す）
   bridgeSessionId: string | null;
   // 裏のタスクの ID（tool_use の ID → task_started の task_id。stop_task で止めるときに使う）
@@ -909,9 +917,7 @@ export class SessionManager {
     // ターミナルモードの間は、TUI が出した確認・質問を、通知と一覧の印にする（答えたことは、会話ログの行で分かる）
     if (rt.terminal && rt.process) {
       this.noteHookMode(id, rt, raw);
-      const input = request.tool_input as Record<string, unknown>;
-      const ask = { tool_name: request.tool_name, input } as CanUseToolRequest;
-      rt.tuiAsk = { kind: request.tool_name === 'AskUserQuestion' ? 'question' : 'permission', menu: requestMenu(ask) };
+      rt.tuiAsk = tuiAskOf(raw, at);
       this.updateAttention(id, rt);
     }
     this.changed(id);
@@ -939,16 +945,17 @@ export class SessionManager {
     return true;
   }
 
-  // 書くだけの Stop のフックが、TUI のターンの終わりを知らせた（ターミナルモード）。input: フックの入力（permission_mode）
-  tuiIdle(id: string, input: unknown = null): void {
+  // 書くだけの Stop のフックが動いた（ターミナルモード）。input: フックの入力（permission_mode）。
+  // ターンの終わりは決めない。一緒に動くチェックリストの Stop のフック（ユーザーの Stop のフックも）が、文を渡して続けさせることがあり、
+  // ここで終えると、続きを作業中の TUI を「チャットに戻す」で止めてしまう。終わりは、会話ログのターンの終わりの行で知る（tuiEntry）。
+  // 確認・質問のメニューは閉じている（Stop は、メニューに答えたあとに動く）
+  tuiStopHook(id: string, input: unknown = null): void {
     const rt = this.runtimes.get(id);
-    if (rt?.terminal) this.noteHookMode(id, rt, input);
-    if (!rt?.terminal || (!rt.tuiTurn && !rt.tuiAsk)) return;
-    rt.tuiTurn = false;
+    if (!rt?.terminal) return;
+    this.noteHookMode(id, rt, input);
+    if (!rt.tuiAsk) return;
     rt.tuiAsk = null;
     this.updateAttention(id, rt);
-    this.emitSessions();
-    this.changed(id);
   }
 
   // チャットとターミナルモードを切り替える（設計書 9 節）。今の claude を止めて終わりを確かめ、もう片方で --resume する
@@ -991,6 +998,7 @@ export class SessionManager {
         if (refused !== null) throw new Error(t('main.terminal.remoteOffFailed', { reason: refused }));
       }
       if (!on) this.adoptTuiChanges(id, rt);
+      const before = rt.knownMode;
       const mode = this.relaunchMode(id, rt);
       rt.switchStopping = process;
       const stopped = await process.stop(this.stopStepMs).finally(() => {
@@ -1003,11 +1011,13 @@ export class SessionManager {
       const from: LaunchKind = on ? 'stream' : 'tui';
       try {
         this.start(id, mode, null, on ? 'tui' : 'stream');
+        this.noteLoweredMode(id, rt, before);
       } catch (error) {
         // もう片方を起動できなければ、元の種類で開き直して、わけを返す
         const reason = error instanceof Error ? error.message : String(error);
         try {
           this.start(id, mode, null, from);
+          this.noteLoweredMode(id, rt, before);
         } catch {
           // 元の種類でも起動できない。止まったまま（チャットの「再開」で開き直せる）
           this.pushEvents(id, [{ type: 'process-exit', exitCode: 0 }]);
@@ -1032,7 +1042,9 @@ export class SessionManager {
     let changed = false;
     // TUI が新しい行を書いた＝起動を終えた（切り替えた先として、元の種類に戻すことはもう無い）
     if (!isHistory) rt.switchedFrom = null;
-    if (entry.type === 'user' && rt.tuiAsk) {
+    // 確認を出す前に書かれた行（遅れて届いた前のツールの結果・引き継いだときに読み直す、前の行）は、答えではない
+    const written = entryTime(entry);
+    if (entry.type === 'user' && rt.tuiAsk && !(written > 0 && written < Math.floor(rt.tuiAsk.at))) {
       rt.tuiAsk = null;
       changed = true;
     }
@@ -1054,7 +1066,23 @@ export class SessionManager {
     this.changed(id);
   }
 
+  // 引き継ぐ TUI（since: 起動した時刻）の、前のアプリの頃からのもの。statusLine と書くだけのフックのファイルのうち、この TUI が書いたもの
+  // （起動より後に書かれたもの）から戻す。
+  // baseline: 引き継ぐ前に書いた statusLine のモデル・エフォート（チャットに戻すとき、引き継いだあとに変えたものを写す。引き継ぐ前に
+  // 変えたものは、起動したときの値が分からないので写さない）。無ければ、引き継いだあとの最初の statusLine（statusLineChanged）
+  // ask: 出したままの確認・質問のメニュー（PermissionRequest のファイル）。そのあとに Stop のフックが動いていれば、閉じている。
+  // 答えたこと（そのあとに書かれた user の行）は、このあと読み直す会話ログで分かる（tuiEntry）
+  private adoptedTui(id: string, since: number): { baseline: Runtime['tuiBaseline']; ask: Runtime['tuiAsk'] } {
+    const status = this.statusLines.peek(id);
+    const baseline = status && status.updatedAt >= since ? { model: status.model?.id ?? null, effort: status.effort } : null;
+    const asked = this.statusLines.peekPermission(id);
+    const stoppedAt = this.statusLines.stopHookAt(id);
+    const open = asked && asked.at >= since && (stoppedAt === null || stoppedAt < asked.at);
+    return { baseline, ask: open ? tuiAskOf(asked.request, asked.at) : null };
+  }
+
   // 起動し直すときの権限モード。今のモードを渡すが、子は起動したときのモードより強くしない。bypassPermissions は引き継がない
+  // （下げたことは、起動し直したあとに noteLoweredMode で知らせる）
   private relaunchMode(id: string, rt: Runtime): PermissionMode | null {
     let mode = rt.knownMode;
     const launchMode = this.store.get(id)?.launchMode;
@@ -1062,8 +1090,40 @@ export class SessionManager {
     return mode && mode !== 'bypassPermissions' ? mode : null;
   }
 
+  // 起動し直した claude の権限モードが、止める前のモード（before）より弱い（bypassPermissions を引き継がなかった・子の上限に戻した）なら、
+  // チャットに注意の行で知らせる（黙って下げると、上げたつもりのまま、確認が出たり作業が止まったりする。ターミナルモードの画面の下にも出す）。
+  // start のあとに呼ぶ
+  private noteLoweredMode(id: string, rt: Runtime, before: PermissionMode | null): void {
+    if (!before || !rt.knownMode || modeWithin(before, rt.knownMode)) return;
+    rt.loweredFrom = before;
+    this.flushLaunchNotes(id, rt);
+  }
+
+  // 起動し直したときの知らせを、会話ログを読み直し、受け付けられるようになってから、チャットの最後に出す（start のあとに足す）
+  private addLaunchNotes(id: string, rt: Runtime, events: ChatEvent[]): void {
+    rt.launchNotes.push(...events);
+    this.flushLaunchNotes(id, rt);
+  }
+
+  private flushLaunchNotes(id: string, rt: Runtime): void {
+    if (!rt.historyLoaded || !rt.ready) return;
+    const events = rt.launchNotes.splice(0);
+    const from = rt.loweredFrom;
+    const to = rt.knownMode;
+    rt.loweredFrom = null;
+    if (from && to && !modeWithin(from, to)) {
+      const text =
+        from === 'bypassPermissions'
+          ? t('main.session.bypassNotCarried', { to: modeLabel(to) })
+          : t('main.session.modeCapped', { from: modeLabel(from), to: modeLabel(to) });
+      events.push({ type: 'info', id: `mode-lowered:${Date.now()}`, text, warning: true, screen: true });
+    }
+    if (events.length > 0) this.pushEvents(id, events);
+  }
+
   // ターミナルモードからチャットに戻す前に、TUI で変えたもの（/model・/effort・/remote-control）を、次に起動するときの指定に写す
-  // （チャットは指定で起動するので、写さないと黙って元に戻る）。モデル・エフォートは statusLine、Remote Control は会話ログで分かる
+  // （チャットは指定で起動するので、写さないと黙って元に戻る）。モデル・エフォートは statusLine、Remote Control は会話ログで分かる。
+  // モデル・エフォートは、起動したときの値（tuiBaseline）が分からなければ写さない（変えていない「既定」を、明示の値に固定しないため）
   private adoptTuiChanges(id: string, rt: Runtime): void {
     const record = this.store.get(id);
     if (!record) return;
@@ -1165,8 +1225,12 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (!rt) return;
     rt.statusLine = info;
-    // TUI が statusLine を出した＝起動を終えた（フォルダの信頼の確認の間は出ない）
-    if (rt.terminal) rt.switchedFrom = null;
+    if (rt.terminal) {
+      // TUI が statusLine を出した＝起動を終えた（フォルダの信頼の確認の間は出ない）
+      rt.switchedFrom = null;
+      // 最初の statusLine は、起動したときのモデル・エフォート（TUI は起動を終えたときに書く。チャットに戻すとき、変えたものだけを写す）
+      rt.tuiBaseline ??= { model: info.model?.id ?? null, effort: info.effort };
+    }
     this.listeners.onStatusLine(id, info);
     // /clear で新しい会話になると、statusLine の会話ログのパスが変わる
     if (info.transcriptPath) rt.process?.followTranscript(info.transcriptPath);
@@ -1604,6 +1668,7 @@ export class SessionManager {
     }
     // 起動し直せないと分かっているのに、動いている claude を止めないよう、先に設定ファイルを確かめる
     this.checkSettingsFile(this.store.get(id)?.settingsFile);
+    const before = rt.knownMode;
     const mode = this.relaunchMode(id, rt);
     // 自分で止めるので、切り替えた先の起動の途中の終わりとはみなさない（元の種類に戻さない）
     rt.switchedFrom = null;
@@ -1628,6 +1693,7 @@ export class SessionManager {
       try {
         // ターミナルモードなら、TUI で起動し直す
         this.start(id, mode, null, rt.terminal ? 'tui' : 'stream');
+        this.noteLoweredMode(id, rt, before);
       } catch (error) {
         // 起動し直せなかった。止めた claude の終わりは出していないので、ここで出す（チャットの「再開」で開き直せる）。
         // 送り直すはずだった発言は、送る先が無いので、順番待ちから外す
@@ -2052,6 +2118,8 @@ export class SessionManager {
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
+        launchNotes: [],
+        loweredFrom: null,
         tuiTurn: false,
         tuiAsk: null,
         redrawFromHost: null,
@@ -2136,10 +2204,17 @@ export class SessionManager {
     // 止まっても、アプリを起動し直しても、この種類のまま開く（記録の terminal）
     if (!!record.terminal !== tui) this.store.update(id, { terminal: tui });
     runtime.switchedFrom = null;
-    runtime.tuiBaseline = tui ? { model: runtime.statusLine?.model?.id ?? null, effort: runtime.statusLine?.effort ?? null } : null;
+    // 起動したときのモデル・エフォートは、この TUI が最初に書く statusLine で知る（statusLineChanged。前の claude の statusLine は、
+    // 止めたあとに変わった指定や、前の TUI で変えたものかもしれない）。引き継ぐ TUI と、出したままの確認・質問は、前のアプリの頃に
+    // 書いたファイルから戻す（会話ログを読み直しても分からない。adoptedTui）
+    const resumed = adopted?.kind === 'pty' ? this.adoptedTui(id, adopted.startedAt) : null;
+    runtime.tuiBaseline = resumed?.baseline ?? null;
     runtime.tuiRemoteSeen = false;
     runtime.tuiTurn = false;
-    runtime.tuiAsk = null;
+    runtime.tuiAsk = resumed?.ask ?? null;
+    if (resumed?.ask) runtime.permissionAt = resumed.ask.at;
+    runtime.launchNotes = [];
+    runtime.loweredFrom = null;
     runtime.redrawFromHost = adopted?.kind === 'pty' ? adopted.id : null;
     runtime.freshConversation = false;
     runtime.requests.clear();
@@ -2285,13 +2360,26 @@ export class SessionManager {
               // 「再開」か、切り替えボタンでチャットに戻す。決めたこと）
               this.pushEvents(id, [{ type: 'process-exit', exitCode, reason: t('main.terminal.tuiExited', { code: exitCode }) }]);
             } else if (back) {
-              // チャットに戻した先が、起動を終える前に終わった。元の種類（ターミナルモード）で開き直し、わけを出す
-              this.pushEvents(id, [{ type: 'info', id: `switch-back:${Date.now()}`, text: t('main.terminal.chatExited', { code: exitCode }) }]);
+              // チャットに戻した先が、起動を終える前に終わった。元の種類（ターミナルモード）で開き直し、わけ（標準エラーの末尾も）を出す。
+              // 開き直すと、起動の知らせで画面のチャットが空になるので、わけは開き直した会話を読み直してから出す。チャットは隠れるので、
+              // ターミナルモードの画面の下にも出す（screen。出さないと、黙って TUI に戻ったように見える）
+              const detail = runtime.stderr.trim().split('\n').slice(-8).join('\n');
+              const reason: ChatEvent = {
+                type: 'info',
+                id: `switch-back:${Date.now()}`,
+                text: t('main.terminal.chatExited', { code: exitCode }),
+                ...(detail ? { detail } : {}),
+                warning: true,
+                screen: true,
+              };
+              const before = runtime.knownMode;
               try {
                 this.start(id, this.relaunchMode(id, runtime), null, back);
+                this.addLaunchNotes(id, runtime, [reason]);
+                this.noteLoweredMode(id, runtime, before);
               } catch (error) {
                 console.error('切り替える前の種類で開き直せませんでした', error);
-                this.pushEvents(id, [{ type: 'process-exit', exitCode }]);
+                this.pushEvents(id, [reason, { type: 'process-exit', exitCode }]);
               }
             } else {
               this.pushEvents(id, [{ type: 'process-exit', exitCode }]);
@@ -2316,6 +2404,7 @@ export class SessionManager {
         onHistoryLoaded: () => {
           runtime.historyLoaded = true;
           this.historySettled(id, runtime, adopted !== null);
+          if (runtime.process === process) this.flushLaunchNotes(id, runtime);
           this.resendCarried(id, runtime);
         },
         onSwitch: (nextClaudeSessionId) => {
@@ -2343,6 +2432,8 @@ export class SessionManager {
     if (tui) {
       // TUI には initialize を送らない（人が画面で操作する）。起動したら受け付けたことにする
       this.markReady(id, runtime);
+      // 引き継いだ TUI が出したままのメニューは、一覧の印にする（前のアプリが通知したものなので、通知はしない）
+      if (runtime.tuiAsk) this.updateAttention(id, runtime, true);
     } else {
       if (!adopted) this.watchStart(id, runtime, process);
       void this.initialize(id, runtime, process, adopted as HostedPipeInfo | null, claudeSessionId);
@@ -2484,6 +2575,7 @@ export class SessionManager {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
       this.reconcileRemote(id, rt);
+      this.flushLaunchNotes(id, rt);
     } else if (rt.preparing) rt.readyAfterPrep = true;
     this.resendCarried(id, rt);
     this.emitSessions();
@@ -2556,6 +2648,7 @@ export class SessionManager {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
       this.reconcileRemote(id, rt);
+      this.flushLaunchNotes(id, rt);
     }
     // 準備の間に再起動して、止めた claude が捨てた発言があれば、受け付けられるようになったここで送り直す
     this.resendCarried(id, rt);
@@ -3741,6 +3834,28 @@ function stateLabel(rt: Runtime, browserAsk: boolean): string {
   if (rt.turnOpen) return count > 0 ? t('main.state.workingWithBackground', { count }) : t('main.state.working');
   if (count > 0) return t('main.state.waitingBackground', { count });
   return t('main.state.idle');
+}
+
+// 書くだけの PermissionRequest のフックの入力（tool_name・tool_input）から、TUI が出した確認・質問のメニュー。読めなければ null。
+// at: フックがファイルに書いた時刻
+function tuiAskOf(raw: unknown, at: number): Runtime['tuiAsk'] {
+  const request = raw as { tool_name?: unknown; tool_input?: unknown } | null;
+  if (!request || typeof request.tool_name !== 'string' || !request.tool_input || typeof request.tool_input !== 'object') return null;
+  const ask = { tool_name: request.tool_name, input: request.tool_input as Record<string, unknown> } as CanUseToolRequest;
+  return { kind: request.tool_name === 'AskUserQuestion' ? 'question' : 'permission', menu: requestMenu(ask), at };
+}
+
+// 権限モードの表示名（画面のモード欄と同じ）
+const MODE_LABELS: Record<PermissionMode, MessageKey> = {
+  manual: 'composer.mode.manual',
+  acceptEdits: 'composer.mode.acceptEdits',
+  plan: 'composer.mode.plan',
+  auto: 'composer.mode.auto',
+  bypassPermissions: 'chat.pane.bypassPermissions',
+};
+
+function modeLabel(mode: PermissionMode): string {
+  return t(MODE_LABELS[mode]);
 }
 
 function entryTime(entry: TranscriptEntry): number {

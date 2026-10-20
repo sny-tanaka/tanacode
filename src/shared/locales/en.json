@@ -96,7 +96,9 @@
     "session": {
       "untitled": "New Session",
       "notFound": "Session not found",
-      "notStopped": "Couldn't restart because Claude Code couldn't be stopped. The current Claude Code keeps running (the changed settings are used the next time it starts)"
+      "notStopped": "Couldn't restart because Claude Code couldn't be stopped. The current Claude Code keeps running (the changed settings are used the next time it starts)",
+      "bypassNotCarried": "Claude Code was restarted, so the permission mode is now {to} (Bypass permissions isn't carried over when Claude Code restarts)",
+      "modeCapped": "Claude Code was restarted, so the permission mode went back from {from} to {to}, the mode it was started with (a stronger mode set in terminal mode or Remote Control isn't carried over when Claude Code restarts)"
     },
     "state": {
       "question": "Needs answer",

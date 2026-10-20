@@ -1336,6 +1336,16 @@ body.resizing-rows {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--border-subtle);
 }
+/* 起動し直したときの知らせ（下げた権限モード・チャットに戻せなかったわけ）と、閉じるボタン */
+.claude-screen-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.claude-screen-note > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .claude-screen-comments {
   display: flex;
   align-items: flex-start;

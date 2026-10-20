@@ -431,7 +431,7 @@ describe('部品から画面への知らせ', () => {
     fnArg('StatusLineWatcher', 2)('s1', { tool_name: 'Bash' }, 5);
     expect(manager().permissionRequested.mock.calls).toEqual([['s1', { tool_name: 'Bash' }, 5]]);
     fnArg('StatusLineWatcher', 3)('s1', { permission_mode: 'plan' });
-    expect(manager().tuiIdle.mock.calls).toEqual([['s1', { permission_mode: 'plan' }]]);
+    expect(manager().tuiStopHook.mock.calls).toEqual([['s1', { permission_mode: 'plan' }]]);
   });
 
   it('セッションのフォルダで、Claude が頼んだコマンドをターミナルで動かす', async () => {
