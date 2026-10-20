@@ -11,6 +11,7 @@ import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
+import { SESSIONS_NO_ASK_FILE, writeSessionsNoAskFile } from './sessions-bridge';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
@@ -519,6 +520,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     claudeDir: info.claudeDir,
     // 既定のプロファイルの設定は、アプリ全体の設定と同じファイル
     settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
+    sessionsNoAskFile: sessionsNoAskPath(),
     send: sendTo(info.id),
     host: () => contentsOf(info.id),
     drawHost: () => drawView(info.id),
@@ -910,6 +912,7 @@ function buildMenu(): void {
           { label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
           { label: t('main.menu.browserControl'), type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
           { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+          { label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
           { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
           { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           { label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
@@ -1112,6 +1115,31 @@ function setSessionsControl(item: MenuItem): void {
   }
 }
 
+// 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts）
+const sessionsNoAskPath = () => join(app.getPath('userData'), SESSIONS_NO_ASK_FILE);
+
+// 印のファイルを、保存した設定に合わせる（起動したときと、切り替えられなかったとき）。置けない・消せなければ、ログに残して続ける
+function syncSessionsNoAskFile(): void {
+  try {
+    writeSessionsNoAskFile(sessionsNoAskPath(), settings.sessionsStartConfirmEnabled());
+  } catch (error) {
+    console.error('子セッションの起動の確認の印を、設定に合わせられませんでした', error);
+  }
+}
+
+// メニューの「Claude がセッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// 起動の確認のフックは、呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く（sessions-bridge.ts の sessionsGateCommand）。
+// 印のファイルを先に置く・消してから保存する。どちらかができなかったら、チェックと印のファイルを、保存した設定に戻す
+function setSessionsStartConfirm(item: MenuItem): void {
+  try {
+    writeSessionsNoAskFile(sessionsNoAskPath(), item.checked);
+    settings.setSessionsStartConfirmEnabled(item.checked);
+  } catch {
+    item.checked = settings.sessionsStartConfirmEnabled();
+    syncSessionsNoAskFile();
+  }
+}
+
 // メニューの「Claude にチェックリストを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（checklist-control の handle）。画面のチェックリストは使える。
 // 保存できなかったら、チェックを元に戻す
@@ -1304,6 +1332,8 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
+  // 前に動いていたアプリが置いた・消した印を、設定に合わせ直す（設定ファイルを書き換えられていても、設定のとおりにする）
+  syncSessionsNoAskFile();
   sharedPrefs = new SharedPrefStore(join(app.getPath('userData'), 'shared-prefs.json'));
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();

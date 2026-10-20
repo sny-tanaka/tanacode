@@ -52,6 +52,7 @@
       "updateOnQuit": "Install Updates on Quit (Homebrew)",
       "browserControl": "Let Claude Control the In-App Browser",
       "sessionsControl": "Let Claude Manage Other Sessions",
+      "sessionsStartConfirm": "Ask Before Claude Starts a Session",
       "checklistControl": "Let Claude Manage Checklists",
       "walkthroughControl": "Let Claude Give Walkthroughs",
       "terminalControl": "Let Claude Use the Terminal",

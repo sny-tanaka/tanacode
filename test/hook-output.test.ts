@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { appHookOutput, SUPPRESS_OUTPUT } from '../src/main/hook-output';
-import { sessionsGateCommand } from '../src/main/sessions-bridge';
+import { sessionsGateCommand, SESSIONS_NO_ASK_ENV } from '../src/main/sessions-bridge';
 import { AUTO_COMPACT_STOP_COMMAND, IDLE_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 import { worktreeGuardCommand } from '../src/main/worktree-guard';
 
@@ -39,11 +39,12 @@ describe('シェルで動くアプリのフック', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const sh = (command: string, input: Record<string, unknown>) =>
+  // 子セッションの起動の確認を省く印のファイルは、既定では置かない（アプリを動かしている環境の値を受け継がない）
+  const sh = (command: string, input: Record<string, unknown>, noAskFile = join(dir, 'sessions-start-no-ask')) =>
     execFileSync('sh', ['-c', command], {
       input: JSON.stringify(input),
       encoding: 'utf8',
-      env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+      env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
     });
 
   it('書くだけのフック（許可の確認の直前・知らせ・ターンの終わり）は、入力をファイルに書き、suppressOutput を書く', () => {
@@ -70,20 +71,35 @@ describe('シェルで動くアプリのフック', () => {
   // （読まずに終わるフックは、必ず EPIPE になる）
   it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', () => {
     const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
-    for (const command of [AUTO_COMPACT_STOP_COMMAND, sessionsGateCommand(), worktreeGuardCommand(), PERMISSION_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, IDLE_FILE_COMMAND]) {
+    // 子セッションの起動の確認は、印のファイルがあるとき（allow）と無いとき（ask）の両方で
+    const noAsk = join(dir, 'sessions-start-no-ask');
+    writeFileSync(noAsk, '');
+    for (const [command, noAskFile] of [
+      [AUTO_COMPACT_STOP_COMMAND, ''],
+      [sessionsGateCommand(), ''],
+      [sessionsGateCommand(), noAsk],
+      [worktreeGuardCommand(), ''],
+      [PERMISSION_FILE_COMMAND, ''],
+      [NOTIFICATION_FILE_COMMAND, ''],
+      [IDLE_FILE_COMMAND, ''],
+    ]) {
       const result = spawnSync('sh', ['-c', command], {
         input,
         encoding: 'utf8',
-        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
       });
-      expect({ command, error: result.error?.message, status: result.status }).toEqual({ command, error: undefined, status: 0 });
+      expect({ command, noAskFile, error: result.error?.message, status: result.status }).toEqual({ command, noAskFile, error: undefined, status: 0 });
     }
   });
 
-  it('Bash の前の確認・子セッションの起動の前の確認は、確認を出させるときも、何もしないときも、suppressOutput を付ける', () => {
+  it('Bash の前の確認・子セッションの起動の前の確認は、確認を出させるときも、許すときも、何もしないときも、suppressOutput を付ける', () => {
     const bash = (command: string) => sh(worktreeGuardCommand(), { session_id: 'x', cwd: '/r/proj', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
     expect(bash('ls -la').trim()).toBe(SUPPRESS_OUTPUT);
     expect(JSON.parse(bash('git worktree remove --force .claude/worktrees/a'))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
     expect(JSON.parse(sh(sessionsGateCommand(), { hook_event_name: 'PreToolUse' }))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
+    // 確認を省くとき（allow）も
+    const noAsk = join(dir, 'no-ask');
+    writeFileSync(noAsk, '');
+    expect(JSON.parse(sh(sessionsGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'allow' }, suppressOutput: true });
   });
 });

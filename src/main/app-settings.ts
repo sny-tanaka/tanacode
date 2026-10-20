@@ -12,6 +12,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
 // sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
+// sessionsStartConfirm: Claude がセッションを始める前に、人に許可を求めるか（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く）/
 // checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）/
 // walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
 // terminalControl: Claude に人のターミナルを使わせるか（起動する Claude Code に、ターミナルの MCP サーバーを足すか）/
@@ -26,6 +27,7 @@ type Values = {
   browserControl: boolean;
   browserHosts: string[];
   sessionsControl: boolean;
+  sessionsStartConfirm: boolean;
   checklistControl: boolean;
   walkthroughControl: boolean;
   terminalControl: boolean;
@@ -92,6 +94,14 @@ export class AppSettings {
 
   setSessionsControlEnabled(on: boolean): void {
     this.update({ sessionsControl: on });
+  }
+
+  sessionsStartConfirmEnabled(): boolean {
+    return this.values.sessionsStartConfirm;
+  }
+
+  setSessionsStartConfirmEnabled(on: boolean): void {
+    this.update({ sessionsStartConfirm: on });
   }
 
   checklistControlEnabled(): boolean {
@@ -178,6 +188,7 @@ function load(file: string): Values {
       browserControl?: unknown;
       browserHosts?: unknown;
       sessionsControl?: unknown;
+      sessionsStartConfirm?: unknown;
       checklistControl?: unknown;
       walkthroughControl?: unknown;
       terminalControl?: unknown;
@@ -193,6 +204,7 @@ function load(file: string): Values {
       browserControl: data.browserControl !== false,
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
       sessionsControl: data.sessionsControl !== false,
+      sessionsStartConfirm: data.sessionsStartConfirm !== false,
       checklistControl: data.checklistControl !== false,
       walkthroughControl: data.walkthroughControl !== false,
       terminalControl: data.terminalControl !== false,
@@ -201,7 +213,7 @@ function load(file: string): Values {
       language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, language: 'system' };
   }
 }
 
