@@ -475,6 +475,7 @@
       "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
       "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
+      "childBackground": "子セッション「{name}」（{id}）のターンが終わりましたが、裏のタスクがまだ動いています（get_session の background_tasks に出ます）。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
       "childUsageLimit": "子セッション「{name}」（{id}）は、利用枠の上限に達して止まりました。{time} に、続きを頼むメッセージを送る予約があります（それまで様子を見に行く必要はありません）。",
       "childUsageLimitNoResume": "子セッション「{name}」（{id}）は、利用枠の上限に達して止まりました（枠が戻るのは {time}）。自動で再開する予約はありません。",

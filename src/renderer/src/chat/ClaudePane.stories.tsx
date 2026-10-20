@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { PartialBlock, UnsentPrompt } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
+import type { PendingPermission } from '@shared/questions';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
@@ -57,7 +58,7 @@ function conversation(count: number): ChatItem[] {
 // comments: コードへのコメント / exited: Claude Code が終了している（exitReason: 終わったわけ）/ running: 作業中 /
 // unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
 // starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション /
-// partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）
+// partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）/ permission: 答えを待っている許可の確認（会話の最後にカードで出る）
 function Pane({
   items,
   settingsFile = null,
@@ -74,6 +75,7 @@ function Pane({
   starting = false,
   child = false,
   partial = [],
+  permission = null,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -90,6 +92,7 @@ function Pane({
   starting?: boolean;
   child?: boolean;
   partial?: PartialBlock[];
+  permission?: PendingPermission | null;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -136,6 +139,7 @@ function Pane({
         pending={pending === null ? null : { text: pending, attachments: [], pastes: [] }}
         onTakePending={() => null}
         scheduled={scheduled}
+        permission={permission}
       />
       <TooltipLayer />
     </div>
@@ -237,6 +241,26 @@ export const 書いている途中: Story = {
 };
 
 export const 書いている途中の文が伸びる: Story = { render: () => <WritingPane /> };
+
+// 長い会話の最後に、許可の確認のカード。少し上へスクロールして選択肢が下端に来ても、「最新のメッセージへ」のボタンは選択肢に重ならない
+// （カードが見えている間は出さない）。カードが見えなくなるまで上へスクロールすると出る
+export const 許可の確認を待っている長い会話: Story = {
+  args: {
+    items: conversation(30),
+    running: true,
+    permission: {
+      id: 'req-1',
+      tool: 'Bash',
+      title: 'Claude wants to run a command',
+      description: 'テストを流す',
+      input: { command: 'npm test -- --run test/session-manager.test.ts', description: 'テストを流す' },
+      reason: null,
+      always: ['Bash(npm test:*)'],
+      plan: null,
+      agent: null,
+    },
+  },
+};
 
 const LITELLM = { id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' };
 

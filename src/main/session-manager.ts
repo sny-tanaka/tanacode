@@ -2148,6 +2148,15 @@ export class SessionManager {
         onEntry: (entry, isHistory) => this.handleEntry(id, entry, isHistory),
         // Claude Code が取り消した応答（tombstone）の行を、会話ログに書いたあとで消した。会話ログから作り直したチャットには無いので、外す
         onRemoved: (uuids) => this.retractEntries(id, runtime, uuids, false),
+        // 会話ログの行の親が、まだ読んでいない行だった。stream に出た本体の応答の行は、会話ログにはその子より先に書かれるので、
+        // それを読まないまま子が届いたなら、書かれたあと、読む前に消された（取り消された応答。tombstone）。その親を待たずに出させ
+        // （待つと、取り直した応答とターンの終わりが 1 秒遅れる）、取り消された応答の書きかけの文も外す（外さないと、取り直した
+        // 応答の書きかけと並んで、取り直した応答が会話ログから届くまで残る）
+        onMissingParent: (parent) => {
+          if (!runtime.streamMessages.has(parent)) return false;
+          this.retractStreamed(id, runtime, [parent]);
+          return true;
+        },
         // 再開時、応答のないまま終わった過去のターンを作業中として扱わない。
         // 引き継いだ claude がターンの途中なら、本当に作業中なのでそのままにする（前のアプリの頃の行を読み終えてから決める）
         onHistoryLoaded: () => {
