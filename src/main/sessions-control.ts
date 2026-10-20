@@ -219,6 +219,9 @@ export class SessionsControl {
   private readonly compacted = new Set<string>();
   // 親が止めた子。止めてターンが終わったことは、親に知らせない
   private readonly stopped = new Set<string>();
+  // 裏のタスクが動いたままターンを終えたことを、親に知らせた子（`親:子`）。裏のタスクの知らせ（Monitor の途中の知らせなど）で
+  // 始まったターンが、また完了待ちで終わっても、知らせ直さない
+  private readonly backgroundTold = new Set<string>();
   // 予約を保存しないことを結果に添えたセッション。Claude が呼ぶたびに人へ伝え直さないよう、最初の 1 回だけ添える（画面の予約にも出ている）
   private readonly wakeupsUnsavedNoted = new Set<string>();
   private readonly unwatch: () => void;
@@ -760,6 +763,7 @@ export class SessionsControl {
     if (host.stateOf(child.id) !== 'archived') throw new ToolError(`Could not archive ${who}: ${failure ?? 'unknown error'}`);
     this.notices.remove(caller.id, child.id);
     this.stopped.delete(child.id);
+    this.backgroundTold.delete(`${caller.id}:${child.id}`);
     const alreadyArchived = before === 'archived';
     const notes = [alreadyArchived ? 'It was already archived.' : `Archived. The user can restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`];
     if (tasks.length > 0) {
@@ -937,6 +941,12 @@ export class SessionsControl {
     while (lastAt >= 0 && !startsTurn(after[lastAt])) lastAt--;
     const last = after[lastAt];
     if (!limit && last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactMidTurn(detailOf(last)))) return;
+    // 裏のタスクが動いたままターンを終えたことは、知らせてあれば知らせ直さない。人の発言でないもの（裏のタスクの知らせ・予約など）で
+    // 始まったターンが、また完了待ちで終わったとき（Monitor は、途中の知らせのたびにターンを始める）。
+    // 終わりは、裏のタスクが無くなって手が空いたターンの終わりに知らせる
+    const key = `${parentId}:${childId}`;
+    if (!limit && state === 'background' && last?.type !== 'user' && !(last?.type === 'notice' && last.compact) && this.backgroundTold.has(key)) return;
+    if (state !== 'background') this.backgroundTold.delete(key);
     this.notices.add(parentId, childId, { state, at, ...(limit ? { limit } : {}) });
   }
 
@@ -945,6 +955,7 @@ export class SessionsControl {
     const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
     if (notices.length === 0) return null;
+    for (const [child, event] of notices) if (event.state === 'background' && !event.limit) this.backgroundTold.add(`${parentId}:${child}`);
     const message = [
       ...notices.map(([child, event]) =>
         event.limit && (event.state === 'idle' || event.state === 'background')
@@ -1260,6 +1271,8 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   if (state === 'terminal') return t('tools.notice.childTerminal', params);
   if (state === 'browser') return t('tools.notice.childBrowser', params);
   if (state === 'exited') return t('tools.notice.childExited', params);
+  // ターンは終わったが、裏のタスクがまだ動いている（作業が終わったとは言わない）
+  if (state === 'background') return t('tools.notice.childBackground', params);
   return t('tools.notice.childDone', params);
 }
 

@@ -60,7 +60,7 @@ const BASH_NOTICE = [
 function fakes() {
   const workflows = { add: vi.fn(), notified: vi.fn() };
   const subagents = { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn() };
-  const bashTasks = { start: vi.fn(), notified: vi.fn() };
+  const bashTasks = { start: vi.fn(), startMonitor: vi.fn(), event: vi.fn(), notified: vi.fn() };
   const router = new TaskRouter({
     workflows: workflows as unknown as WorkflowTracker,
     subagents: subagents as unknown as SubagentTracker,
@@ -137,7 +137,58 @@ describe('TaskRouter', () => {
     router.track(assistant([toolUse('toolu_fg', 'Bash', { command: 'ls' }), toolUse('toolu_noinput', 'Bash', undefined as never)]), false);
     router.track(result('toolu_fg', 'a.ts'), false);
     router.track(result('toolu_noinput', ''), false);
-    expect(bashTasks.start).toHaveBeenCalledTimes(2);
+    expect(bashTasks.start).toHaveBeenCalledTimes(3);
+    expect(bashTasks.start).toHaveBeenLastCalledWith('toolu_fg', { command: 'ls' }, undefined, 'a.ts', false);
+  });
+
+  it('時間切れで裏に回された Bash も渡す（input に run_in_background は無く、結果に backgroundTaskId と timedOutAfterMs が付く）', () => {
+    const { router, bashTasks } = fakes();
+    const input = { command: 'npm test', description: 'テストを流す', timeout: 600000 };
+    router.track(assistant([toolUse('toolu_slow', 'Bash', input)]), false);
+    // 2.1.302 の形
+    const text =
+      'Command did not complete within its 600s timeout and was moved to the background (ID: bwnjrl6gm). Output is being written to: /tmp/claude-0/-work-app/s1/tasks/bwnjrl6gm.output. You will be notified when it completes.';
+    const toolUseResult = { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'bwnjrl6gm', timedOutAfterMs: 600000 };
+    router.track(result('toolu_slow', text, toolUseResult), false);
+    expect(bashTasks.start).toHaveBeenLastCalledWith('toolu_slow', input, toolUseResult, text, false);
+  });
+
+  it('Monitor の見張りを、結果の行で渡す。途中の知らせは順番待ちの行（enqueue）からだけ渡し、終わりの知らせで出力ファイルを渡す', () => {
+    const { router, bashTasks } = fakes();
+    const input = { description: 'PR #261 の CI の結果', command: 'gh pr checks 261 --watch', timeout_ms: 1800000 };
+    router.track(assistant([toolUse('toolu_mon', 'Monitor', input)]), false);
+    const toolUseResult = { taskId: 'bus48501k', timeoutMs: 1800000, persistent: false };
+    router.track(result('toolu_mon', 'Monitor started (task bus48501k, expires in 30m unless the source ends first).', toolUseResult), false);
+    expect(bashTasks.startMonitor).toHaveBeenLastCalledWith('toolu_mon', input, toolUseResult, false);
+    // 途中の知らせ（2.1.302 の形）。tool-use-id と status が無い。同じ知らせは、待機中なら発言の行、作業中なら queued_command にも書かれる
+    const event = [
+      '<task-notification>',
+      '<task-id>bus48501k</task-id>',
+      '<summary>Monitor event: "PR #261 の CI の結果"</summary>',
+      '<event>build: pass\nunit: pass</event>',
+      "If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.",
+      '</task-notification>',
+    ].join('\n');
+    feed(router, { type: 'queue-operation', operation: 'enqueue', content: event } as TranscriptEntry);
+    router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: event } }, false);
+    feed(router, { type: 'attachment', attachment: { type: 'queued_command', prompt: event } } as TranscriptEntry);
+    expect(bashTasks.event).toHaveBeenCalledTimes(1);
+    expect(bashTasks.event).toHaveBeenLastCalledWith('bus48501k', 'build: pass\nunit: pass');
+    expect(bashTasks.notified).not.toHaveBeenCalled();
+    const end = [
+      '<task-notification>',
+      '<task-id>bus48501k</task-id>',
+      '<tool-use-id>toolu_mon</tool-use-id>',
+      '<output-file>/tmp/claude-0/-work-app/s1/tasks/bus48501k.output</output-file>',
+      '<status>completed</status>',
+      '<summary>Monitor "PR #261 の CI の結果" stream ended</summary>',
+      '<event>check: pass</event>',
+      '</task-notification>',
+    ].join('\n');
+    feed(router, { type: 'queue-operation', operation: 'enqueue', content: end } as TranscriptEntry);
+    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_mon', 'completed', null, '/tmp/claude-0/-work-app/s1/tasks/bus48501k.output');
+    // 終わりの知らせの中身は、途中の知らせとして足さない（出力ファイルに入っている）
+    expect(bashTasks.event).toHaveBeenCalledTimes(1);
   });
 
   it('ワークフローの起動の行を、スクリプトの中身と一緒に渡す', () => {
@@ -180,7 +231,7 @@ describe('TaskRouter', () => {
     router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } }, false);
     expect(workflows.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed');
     expect(subagents.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', 'サブエージェントの結果', { durationMs: 1746, totalTokens: 120, toolUses: 2 });
-    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', null);
+    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', null, '/tmp/claude-0/-work-app/s1/tasks/acc4e89e2bbe86674.output');
     router.track({ type: 'user', message: { content: '<task-notification>\n<summary>なにか</summary>\n</task-notification>' } }, false);
     expect(workflows.notified).toHaveBeenCalledTimes(1);
   });
@@ -253,6 +304,9 @@ describe('taskNotificationOf', () => {
       status: 'completed',
       result: 'サブエージェントの結果',
       exitCode: null,
+      taskId: 'acc4e89e2bbe86674',
+      outputFile: '/tmp/claude-0/-work-app/s1/tasks/acc4e89e2bbe86674.output',
+      event: null,
     });
   });
 
@@ -264,6 +318,9 @@ describe('taskNotificationOf', () => {
       status: 'completed',
       result: null,
       exitCode: 0,
+      taskId: 'blktx4qxr',
+      outputFile: '/tmp/claude-0/-work-app/s1/tasks/blktx4qxr.output',
+      event: null,
     });
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'dequeue' } as TranscriptEntry)).toBeNull();
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'enqueue', content: '追加の頼みです' } as TranscriptEntry)).toBeNull();

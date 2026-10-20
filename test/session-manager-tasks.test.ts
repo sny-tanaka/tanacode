@@ -51,6 +51,32 @@ describe('バックグラウンドのタスクの数', () => {
     ]);
     expect(app.subagents.get(id)).toEqual(app.manager.subagents(id));
   });
+
+  it('時間切れで裏に回された Bash と、Monitor の見張りも数える。ターンが終わっても完了待ちのまま', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    app.say(
+      id,
+      line.user('テストを流して、CI を見張って'),
+      // input に run_in_background は無い。時間切れで Claude Code が裏に回すと、結果に backgroundTaskId と timedOutAfterMs が付く（2.1.302）
+      line.toolUse('toolu_slow', 'Bash', { command: 'npm test', description: 'テストを流す', timeout: 600000 }),
+      line.toolResult(
+        'toolu_slow',
+        'Command did not complete within its 600s timeout and was moved to the background (ID: bslow). Output is being written to: /nonexistent/bslow.output. You will be notified when it completes.',
+        { toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bslow', timedOutAfterMs: 600000 } },
+      ),
+      line.toolUse('toolu_mon', 'Monitor', { description: 'CI の結果', command: 'gh pr checks 1 --watch', timeout_ms: 1800000 }),
+      line.toolResult('toolu_mon', 'Monitor started (task bmon, expires in 30m unless the source ends first).', { toolUseResult: { taskId: 'bmon', timeoutMs: 1800000, persistent: false } }),
+      line.text('見張っています'),
+    );
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end') && app.manager.summary(id)?.backgroundTasks === 2);
+    expect(app.manager.stateOf(id)).toBe('background');
+    expect(app.manager.bashTasks(id).map((task) => [task.taskId, task.description, task.state])).toEqual([
+      ['bslow', 'テストを流す', 'running'],
+      ['bmon', 'CI の結果', 'running'],
+    ]);
+  });
 });
 
 describe('バックグラウンドのタスクが動いている間のターンの終わり', () => {
