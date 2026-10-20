@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
+import type { ChatEvent } from '../src/shared/chat';
 import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // 動いている Claude Code への操作（SessionManager。設計書 8 節）。画面にキーを送らず、どれも 1 つの制御の要求にする:
@@ -151,6 +153,32 @@ describe('巻き戻し', () => {
     const replaced = [...app.events(id)].reverse().find((e) => e.type === 'replace');
     expect(replaced?.type === 'replace' && replaced.events.filter((e) => e.type === 'user').map((e) => (e.type === 'user' ? e.text : ''))).toEqual(['ログインを直して']);
     expect(app.manager.snapshot(id).events.some((e) => e.type === 'user' && e.text === 'テストも足して')).toBe(false);
+  });
+
+  it('rewind: 置き換えたチャットに、戻した発言の送信中を残さない。Remote Control のつながりは、戻した発言より後に知らされた今のまま', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const first = await app.prompt(id, 'ログインを直して');
+    app.say(id, { ...line.text('直しました'), parentUuid: first });
+    app.finish(id);
+    // 戻す発言は、送ったとき送信中に出る（その発言の行より前に、送信中の知らせがある）
+    const second = await app.prompt(id, 'テストも足して');
+    const url = 'https://claude.ai/code/session_rewind';
+    app.say(id, { ...line.text('足しました'), parentUuid: second }, { uuid: randomUUID(), timestamp: new Date().toISOString(), type: 'system', subtype: 'bridge_status', url });
+    app.finish(id);
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle' && app.events(id).some((e) => e.type === 'remote-control'));
+    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: 'テストも足して' });
+    expect(await app.manager.rewind(id, second, { conversation: true, code: false })).toMatchObject({ ok: true });
+    // 画面は、置き換えのイベントを空のチャットから当て直し、最後の順番待ち・つながりを使う（chatState.ts の apply）
+    const replaced = [...app.events(id)].reverse().find((e) => e.type === 'replace');
+    const kept = replaced?.type === 'replace' ? replaced.events : [];
+    const last = <T extends ChatEvent['type']>(events: ChatEvent[], type: T) => [...events].reverse().find((e): e is Extract<ChatEvent, { type: T }> => e.type === type);
+    // 直す前は、戻した発言の送信中（その発言の行より前の知らせ）が最後の順番待ちになり、入力欄に戻した文が、チャットにも残っていた
+    expect(last(kept, 'queue')?.prompts).toEqual([]);
+    expect(last(kept, 'remote-control')?.url).toBe(url);
+    // 開き直したときのチャット（snapshot）も同じ
+    expect(last(app.manager.snapshot(id).events, 'queue')?.prompts).toEqual([]);
+    expect(last(app.manager.snapshot(id).events, 'remote-control')?.url).toBe(url);
   });
 
   it('rewind: 会話だけ・コードだけも選べる。戻せなかったら理由を返し、表示は変えない', async () => {

@@ -60,6 +60,35 @@ describe('書いている途中の文', () => {
     expect(app.manager.snapshot(id).partial).toEqual([]);
   });
 
+  it('ターンの最後の応答が会話ログに出る前に、順番待ちの発言で次のターンが始まっても、その応答の書きかけを消さない', async () => {
+    const { id, pipe } = await started();
+    // 作業中に送った発言が、順番待ちになっている
+    const queued = await app.send(id, '次はこれ');
+    pipe.emit(stream.lifecycle(queued, 'queued'));
+    pipe.emit(stream.messageStart('msg_a'));
+    pipe.emit(stream.blockStart('text', null, 0));
+    pipe.emit(stream.delta(0, '最後の返事です'));
+    pipe.emit(stream.blockStop(0));
+    await app.waitFor('途中の文', () => !!lastPartial(id)?.length);
+    // 応答を書き終えてターンが終わり、すぐ順番待ちの発言で次のターンが始まる（result から 0〜6ms。手元の stream の控えで実測）。
+    // 会話ログの応答の行は、まだ読めていない
+    const answer = reply('msg_a', 0, '最後の返事です');
+    pipe.emit(stream.assistant(answer));
+    app.finish(id);
+    pipe.emit(stream.lifecycle(queued, 'started'));
+    const ended = () => [...app.batches].reverse().find((b) => b.sessionId === id && b.events.some((e) => e.type === 'turn-end'));
+    await app.waitFor('ターンの終わり', () => !!ended());
+    // 画面は、ターンの終わりで書きかけを消す（chatState.ts）。同じ配信に今の書きかけを載せて、消さずに残す
+    // （直す前は、ここで書きかけが消え、会話ログに出るまで、最後の返事が画面から消えていた）
+    const shown = [{ id: 'msg_a:0', kind: 'text', text: '最後の返事です' }];
+    expect(ended()!.partial).toEqual(shown);
+    expect(app.manager.snapshot(id).partial).toEqual(shown);
+    // 会話ログに出たら、その応答と同じ配信で外す
+    app.append(id, answer);
+    await app.waitFor('会話ログの応答', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === '最後の返事です'));
+    expect(app.batches.find((b) => b.events.some((e) => e.type === 'assistant-text'))!.partial).toEqual([]);
+  });
+
   it('思考と文は、ブロックごとに出し、ブロックごとに外す。空の思考（署名だけ）・ツールの入力は出さない', async () => {
     const { id, pipe } = await started();
     pipe.emit(stream.messageStart('msg_a'));
