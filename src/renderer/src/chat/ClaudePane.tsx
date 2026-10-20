@@ -56,6 +56,15 @@ const PRESSABLE = 'button, a[href], [role="button"], summary, label';
 // 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
 const PRESS_SLOP_PX = 4;
 
+// 一覧の最後に出すカード（質問・許可の確認・MCP サーバーからの質問・巻き戻しの確かめ）が、見えている範囲に少しでも入っているか
+function cardInView(list: HTMLElement): boolean {
+  const view = list.getBoundingClientRect();
+  return [...list.querySelectorAll(':scope > .menu-card')].some((card) => {
+    const rect = card.getBoundingClientRect();
+    return rect.bottom > view.top && rect.top < view.bottom;
+  });
+}
+
 type Props = {
   session: SessionSummary;
   // 一覧のすべてのセッション。チャットに出るほかのセッション（親・子・@ の参照）の名前と、入力欄の @ の候補に使う
@@ -364,11 +373,14 @@ export const ClaudePane = memo(function ClaudePane({
     };
   }, []);
 
-  // 最下部にいるか（40px 以内）を読み直す。最下部にいれば、新しい行を追いかける
+  // 最下部にいるか（40px 以内）を読み直す。最下部にいれば、新しい行を追いかける。
+  // 答えを待っているカードが見えている間は、最下部から離れていても「最新のメッセージへ」のボタンを出さない。ボタンは一覧の下端に
+  // 重ねて出すので、少し上へスクロールしてカードの選択肢が下端に来ると、選択肢の上に重なる（選択肢の代わりにボタンを押してしまう）。
+  // カードは一覧の最後にあるので、見えていれば最新のところは見えている
   const updateBottom = (el: HTMLElement) => {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     stickToBottom.current = atBottom;
-    setAwayFromBottom(!atBottom);
+    setAwayFromBottom(!atBottom && !cardInView(el));
   };
   const jumpToBottom = () => {
     const list = listRef.current;
@@ -427,11 +439,15 @@ export const ClaudePane = memo(function ClaudePane({
   const canSend = !blocked && hasContent;
   // 質問や確認のカードが出たときも、最下部にいれば追いかける。カードは会話ログから来ないので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
-  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
+  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）。
+  // 上を読んでいる間にカードが出た・閉じたときは、カードが見えているかでボタンを出すかを決め直す（updateBottom）
   const cardKey = asked ? `question:${asked.id}` : prompt ? `permission:${prompt.id}` : elicited ? `elicitation:${elicited.id}` : '';
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (cardKey && list && stickToBottom.current) toBottom(list);
+    if (!list) return;
+    if (stickToBottom.current) {
+      if (cardKey) toBottom(list);
+    } else updateBottom(list);
   }, [cardKey]);
   const canConfigure = !running && !waiting;
   const canRewind = live && chat.status === 'idle';

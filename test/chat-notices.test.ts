@@ -173,9 +173,17 @@ describe('メモリ（relevant_memories・memory_saved）', () => {
       attachment: { type: 'relevant_memories', memories: [memory('/home/u/.claude/projects/p/memory/build.md'), memory('/home/u/.claude/projects/p/memory/style.md')] },
     };
     expect(toChatEvents(recalled, CWD)).toEqual([{ type: 'info', id: 'm1', text: 'メモリを 2 件思い出しました', detail: 'build.md\nstyle.md' }]);
-    // 形の違うもの・空のものは出さない
-    expect(toChatEvents({ type: 'attachment', uuid: 'm2', attachment: { type: 'relevant_memories', memories: [{ path: 3 }] } }, CWD)).toEqual([]);
-    expect(toChatEvents({ type: 'attachment', uuid: 'm3', attachment: { type: 'relevant_memories' } }, CWD)).toEqual([]);
+    // 空のものは出さない
+    expect(toChatEvents({ type: 'attachment', uuid: 'm2', attachment: { type: 'relevant_memories', memories: [] } }, CWD)).toEqual([]);
+  });
+
+  it('思い出したメモリの形が違えば（一覧が無い・パスでないものが混じる）、黙って捨てずに未知のイベント（形の崩れ）として出す', () => {
+    const malformed = { type: 'unknown-event', name: 'attachment/relevant_memories', problem: 'malformed', source: 'transcript' };
+    expect(toChatEvents({ type: 'attachment', uuid: 'm3', attachment: { type: 'relevant_memories' } }, CWD)).toEqual([expect.objectContaining(malformed)]);
+    expect(toChatEvents({ type: 'attachment', uuid: 'm4', attachment: { type: 'relevant_memories', memories: [memory('/m/build.md'), { path: 3 }] } }, CWD)).toEqual([
+      expect.objectContaining(malformed),
+    ]);
+    expect(toChatEvents({ type: 'attachment', uuid: 'm5', attachment: { type: 'relevant_memories', memories: [null] } }, CWD)).toEqual([expect.objectContaining(malformed)]);
   });
 
   it('保存したメモリは「メモリを N 件保存しました」。開くとファイルの名前が読める', () => {
@@ -183,7 +191,13 @@ describe('メモリ（relevant_memories・memory_saved）', () => {
       { type: 'info', id: 's1', text: 'メモリを 1 件保存しました', detail: 'build.md' },
     ]);
     expect(toChatEvents(system('memory_saved', { writtenPaths: [] }), CWD)).toEqual([]);
-    expect(toChatEvents(system('memory_saved'), CWD)).toEqual([]);
+  });
+
+  it('保存したメモリの形が違えば（一覧が無い・パスでないものが混じる）、黙って捨てずに未知のイベント（形の崩れ）として出す', () => {
+    const malformed = { type: 'unknown-event', name: 'system/memory_saved', problem: 'malformed', source: 'transcript' };
+    expect(toChatEvents(system('memory_saved'), CWD)).toEqual([expect.objectContaining(malformed)]);
+    expect(toChatEvents(system('memory_saved', { writtenPaths: '/m/build.md' }), CWD)).toEqual([expect.objectContaining(malformed)]);
+    expect(toChatEvents(system('memory_saved', { writtenPaths: ['/m/build.md', ''] }), CWD)).toEqual([expect.objectContaining(malformed)]);
   });
 });
 

@@ -285,7 +285,7 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
     if (entry.subtype === 'compact_boundary') return [{ type: 'divider', id: entry.uuid ?? '', text: compactText(entry) }];
     if (entry.subtype === 'stop_hook_summary') return stopHookEvents(entry);
     if (entry.subtype === 'model_fallback' || entry.subtype === 'model_refusal_fallback') return [modelSwitchEvent(entry)];
-    if (entry.subtype === 'memory_saved') return memoryEvents(entry, entry.writtenPaths, 'chat.transcript.memorySaved');
+    if (entry.subtype === 'memory_saved') return memoryEvents(entry, entry.writtenPaths, 'chat.transcript.memorySaved', 'system/memory_saved');
     if (entry.subtype === 'api_error') {
       const error = entry.error as { formatted?: string; message?: string } | undefined;
       const message = error?.formatted ?? error?.message ?? t('chat.transcript.unknownError');
@@ -315,8 +315,9 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     // Claude が、発言に関係のありそうなメモリを思い出した（中身は Claude にだけ渡り、画面には数とファイル名を出す。TUI と同じ程度）
     if (entry.attachment?.type === 'relevant_memories') {
-      const memories = Array.isArray(entry.attachment.memories) ? (entry.attachment.memories as { path?: unknown }[]) : [];
-      return memoryEvents(entry, memories.map((m) => m?.path), 'chat.transcript.memoryRecalled');
+      const memories = entry.attachment.memories;
+      const paths = Array.isArray(memories) ? memories.map((m: { path?: unknown } | null) => m?.path) : undefined;
+      return memoryEvents(entry, paths, 'chat.transcript.memoryRecalled', 'attachment/relevant_memories');
     }
     // hooks の記録（hook_ で始まるもの）。出さないもの（アプリが足したフックなど）も、ここで決める（hookRunOf）
     if (typeof kind === 'string' && kind.startsWith('hook_')) {
@@ -645,11 +646,12 @@ export function retractedUuidsOf(entry: TranscriptEntry): string[] {
   return entry.retractedMessageUuids.filter((uuid): uuid is string => typeof uuid === 'string' && uuid !== '');
 }
 
-// メモリを思い出した（relevant_memories）・保存した（memory_saved）お知らせ。開くと、そのファイルの名前が読める。ファイルが無ければ出さない
-function memoryEvents(entry: TranscriptEntry, paths: unknown, key: 'chat.transcript.memorySaved' | 'chat.transcript.memoryRecalled'): ChatEvent[] {
-  const files = (Array.isArray(paths) ? paths : []).filter((p): p is string => typeof p === 'string' && p !== '');
-  if (files.length === 0) return [];
-  return [{ type: 'info', id: entry.uuid ?? '', text: t(key, { count: files.length }), detail: files.map((p) => p.split('/').pop()).join('\n') }];
+// メモリを思い出した（relevant_memories）・保存した（memory_saved）お知らせ。開くと、そのファイルの名前が読める。ファイルが無ければ出さない。
+// 形が違う（ファイルの一覧が無い・パスでないものが混じる）ときは、黙って捨てずに、未知のイベント（name の形の崩れ）として出す
+function memoryEvents(entry: TranscriptEntry, paths: unknown, key: 'chat.transcript.memorySaved' | 'chat.transcript.memoryRecalled', name: string): ChatEvent[] {
+  if (!Array.isArray(paths) || !paths.every((p): p is string => typeof p === 'string' && p !== '')) return [unknownLine(entry, name, 'malformed')];
+  if (paths.length === 0) return [];
+  return [{ type: 'info', id: entry.uuid ?? '', text: t(key, { count: paths.length }), detail: paths.map((p) => p.split('/').pop()).join('\n') }];
 }
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
