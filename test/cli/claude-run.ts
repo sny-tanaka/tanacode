@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { inject } from 'vitest';
+import { expect, inject } from 'vitest';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
@@ -533,25 +533,21 @@ export class ClaudeRun {
   }
 
   // claude を止めて、使い捨てのフォルダを消す。claude は終わるときにも設定の控えなどを書くので、
-  // 終わるのを待ってからもう一度消す（待たずに呼んでも、すぐ一度は消す）。
-  // 消す前に、Claude Code が書いた行を見直す（survey）。知らない種類があれば、片付けたあとで失敗にする
+  // 終わるのを待ってから消す。
+  // 消す前に、Claude Code が書いた行を見直す（survey）。知らない種類があれば、片付けたあとで失敗にする。見直すのは claude が終わってから
+  // （Claude Code は終わるときにも会話ログに行を書く。待たずに読むと、目録に載るかが実行ごとに揺れる）
   async stop(): Promise<void> {
     this.closeApp(true);
     this.app = null;
-    const survey = this.survey();
     const gone = this.host.dispose();
     process.env.HOME = this.oldHome;
-    const remove = () => rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    try {
-      remove();
-    } catch {
-      // 終わろうとしている claude が書いている途中。終わってから消す
-    }
     await gone;
-    remove();
+    const survey = this.survey();
+    rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     // 控えを取るとき（TANACODE_RECORD=1）は、この台本の目録を置く。全部の台本が終わったら、test/cli/global-setup.ts が 1 つにまとめる
     const dir = inject('inventoryDir');
-    if (process.env.TANACODE_RECORD && dir) writeFileSync(join(dir, `${randomUUID()}.json`), JSON.stringify(survey.inventory.result()));
+    const source = expect.getState().testPath?.split('/').pop() ?? '';
+    if (process.env.TANACODE_RECORD && dir) writeFileSync(join(dir, `${randomUUID()}.json`), JSON.stringify(survey.inventory.result(source)));
     if (survey.problems.length > 0) throw new Error(`Claude Code が、アプリの知らない行を書きました（台本でわざと出させるものは、ClaudeRun の unknown に足す）:\n${survey.problems.join('\n')}`);
   }
 

@@ -14,10 +14,12 @@ import { classifyLine } from '@shared/transcript-line';
 // ツールの結果はそのキー（オブジェクトでなければ (string)・(array) など）。意図して捨てる行（API の要求の控えなど）は、
 // 種類だけを載せる（中身は読まないので、フィールドが変わっても困らない。新しい種類が増えたことには気づける）
 // stream-json の種類の名前: type・system/<subtype>・result/<subtype>・control_request/<subtype>・control_response/<subtype>・
-// stream_event/<event の type>。フィールドは、いちばん上のキーと、message・request・event の中のキー
+// stream_event/<event の type>。フィールドは、いちばん上のキーと、message・request・event の中のキー。
+// sources: その種類が出た台本（test/cli のファイルの名前）。比べるものではなく、差分を仕分けるときの手がかり（台本の揺れを見分ける）
 export type Inventory = {
   transcript: Record<string, string[]>;
   stream: Record<string, string[]>;
+  sources?: { transcript: Record<string, string[]>; stream: Record<string, string[]> };
 };
 
 type Kinds = Map<string, Set<string>>;
@@ -72,20 +74,28 @@ export class InventoryBuilder {
     }
   }
 
-  result(): Inventory {
-    return { transcript: sorted(this.transcript), stream: sorted(this.stream) };
+  // source: 台本の名前（あれば、どの種類にも出た台本として添える）
+  result(source?: string): Inventory {
+    const inventory: Inventory = { transcript: sorted(this.transcript), stream: sorted(this.stream) };
+    if (source === undefined) return inventory;
+    const from = (kinds: Record<string, string[]>) => Object.fromEntries(Object.keys(kinds).map((kind) => [kind, [source]]));
+    return { ...inventory, sources: { transcript: from(inventory.transcript), stream: from(inventory.stream) } };
   }
 }
 
 // 目録を合わせる（台本ごとに作ったものを 1 つにする）
 export function mergeInventories(inventories: Inventory[]): Inventory {
   const merged = { transcript: new Map(), stream: new Map() } as { transcript: Kinds; stream: Kinds };
+  const sources = { transcript: new Map(), stream: new Map() } as { transcript: Kinds; stream: Kinds };
   for (const inventory of inventories) {
     for (const part of ['transcript', 'stream'] as const) {
       for (const [kind, names] of Object.entries(inventory[part])) fields(merged[part], kind, names);
+      for (const [kind, names] of Object.entries(inventory.sources?.[part] ?? {})) fields(sources[part], kind, names);
     }
   }
-  return { transcript: sorted(merged.transcript), stream: sorted(merged.stream) };
+  const result: Inventory = { transcript: sorted(merged.transcript), stream: sorted(merged.stream) };
+  if (sources.transcript.size === 0 && sources.stream.size === 0) return result;
+  return { ...result, sources: { transcript: sorted(sources.transcript), stream: sorted(sources.stream) } };
 }
 
 function transcriptKind(entry: TranscriptEntry): string {

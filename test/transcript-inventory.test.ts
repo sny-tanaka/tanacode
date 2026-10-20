@@ -84,6 +84,16 @@ describe('InventoryBuilder', () => {
     const b: Inventory = { transcript: { user: ['message'], 'system/init': [] }, stream: { result: ['type'] } };
     expect(mergeInventories([a, b])).toEqual({ transcript: { 'system/init': [], user: ['message', 'type', 'uuid'] }, stream: { result: ['type'] } });
   });
+
+  it('台本の名前を添えると、種類ごとに出た台本を sources に載せ、合わせるときもまとめる', () => {
+    const builder = new InventoryBuilder();
+    builder.addTranscript([{ type: 'custom-title', customTitle: '名前' }], CWD);
+    builder.addStream([JSON.stringify({ type: 'result', subtype: 'success' })]);
+    const basic = builder.result('basic.test.ts');
+    expect(basic.sources).toEqual({ transcript: { 'custom-title': ['basic.test.ts'] }, stream: { 'result/success': ['basic.test.ts'] } });
+    const other: Inventory = { transcript: { 'custom-title': ['type'] }, stream: {}, sources: { transcript: { 'custom-title': ['session.test.ts'] }, stream: {} } };
+    expect(mergeInventories([basic, other]).sources).toEqual({ transcript: { 'custom-title': ['basic.test.ts', 'session.test.ts'] }, stream: { 'result/success': ['basic.test.ts'] } });
+  });
 });
 
 describe('missingUsedFields', () => {
@@ -140,6 +150,35 @@ describe('scripts/inventory-diff.mjs', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  it('出た台本（sources）があれば添える。消えたものは前の目録の台本、ほかは新しい目録の台本。台本の違いだけでは差にしない', () => {
+    const prev = write('a.json', { transcript: { user: ['type'], 'system/old': [] }, stream: {}, sources: { transcript: { user: ['basic.test.ts'], 'system/old': ['errors.test.ts'] }, stream: {} } });
+    const next = write('b.json', { transcript: { user: ['type', 'promptId'], 'system/new_notice': ['level'] }, stream: {}, sources: { transcript: { user: ['input.test.ts'], 'system/new_notice': ['session.test.ts'] }, stream: {} } });
+    expect(run(prev, next).text).toBe(
+      [
+        '### 会話ログ',
+        '',
+        '- 増えた種類: `system/new_notice`（フィールド: `level`）［台本: session.test.ts］',
+        '- 消えた種類: `system/old`［台本: errors.test.ts］',
+        '- `user` に増えたフィールド: `promptId`［台本: input.test.ts］',
+        '',
+      ].join('\n'),
+    );
+    const same = { transcript: { user: ['type'] }, stream: {} };
+    expect(run(write('c.json', { ...same, sources: { transcript: { user: ['a.test.ts'] }, stream: {} } }), write('d.json', { ...same, sources: { transcript: { user: ['b.test.ts'] }, stream: {} } })).status).toBe('same');
+  });
+
+  it('揺れる種類（ターミナルモードの TUI が止められるときに書く permission-mode）は、出た・出ないの違いを差にせず、ほかに差があれば書き添える', () => {
+    const base = { transcript: { user: ['type'] }, stream: {} };
+    const flapped = { transcript: { user: ['type'], 'permission-mode': ['permissionMode', 'type'] }, stream: {} };
+    expect(run(write('a.json', base), write('b.json', flapped)).status).toBe('same');
+    expect(run(write('c.json', flapped), write('d.json', base)).status).toBe('same');
+    // 出たときのフィールドは比べる
+    expect(run(write('e.json', flapped), write('f.json', { ...flapped, transcript: { ...flapped.transcript, 'permission-mode': ['type'] } })).text).toContain('`permission-mode` から消えたフィールド: `permissionMode`');
+    const { text } = run(write('g.json', base), write('h.json', { ...flapped, transcript: { ...flapped.transcript, 'system/new': [] } }));
+    expect(text).toContain('- 増えた種類: `system/new`');
+    expect(text).toContain('### 揺れる種類\n\n- 揺れる種類（比べない）: `permission-mode`（ターミナルモードの TUI が、止められるときに書く');
   });
 
   it('前の目録が無ければ、changed と、比べられないことを書く。新しい目録が無ければ失敗にする', () => {
