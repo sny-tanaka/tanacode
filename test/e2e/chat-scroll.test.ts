@@ -81,7 +81,10 @@ describe('チャットの一覧のスクロール', () => {
   });
 
   // 直す前: 少し上へスクロールして、カードの選択肢が一覧の下端に来ると、その上に「最新のメッセージへ」が重なった
-  // （選択肢を押したつもりが、ボタンを押してしまう）
+  // （選択肢を押したつもりが、ボタンを押してしまう）。
+  // CI で一度落ちた（gap が 0）: 許可のカードは stream から、ツールの行は会話ログからあとで届く。ホイールで動いた位置の知らせ（scroll）が
+  // 届く前にツールの行が届くと、一覧がまだ最下部を追いかけているつもりで、最下部へ送り直していた（アプリの不具合。ClaudePane の toBottom で直した。
+  // 決まった順で起こす確かめは test/renderer/press-chat-pane.test.tsx）
   it('許可の確認のカードが見えている間は、少し上へスクロールしても「最新のメッセージへ」を出さず、カードが見えなくなるまで上へ送ると出す', async () => {
     await app.startSession(CARD_PROMPT, { mode: 'manual' });
     const card = await app.menuCard('permission');
@@ -94,15 +97,26 @@ describe('チャットの一覧のスクロール', () => {
     });
     await nextFrames();
     const jump = app.page.getByRole('button', { name: '最新のメッセージへ' });
-    // 最下部からの距離と、カードの上端が一覧の下端よりどれだけ上にあるか（正なら見えている）。スクロールが止まるまで待って読む
+    // 最下部からの距離（gap）と、カードの上端が一覧の下端よりどれだけ上にあるか（cardShown。正なら見えている）。スクロールが止まるまで
+    // 待って読む。落ちたときに読めるよう、一覧の位置と大きさ・カードの位置（一覧の上端から）・行の数・ボタンが出ているかも添える
     const settled = async () => {
       let last = '';
       for (let i = 0; i < 100; i++) {
         await nextFrames();
         const now = await app.page.evaluate(() => {
           const list = document.querySelector('.chat-list')!;
-          const top = document.querySelector('.chat-list > .menu-card')!.getBoundingClientRect().top;
-          return { gap: Math.round(list.scrollHeight - list.scrollTop - list.clientHeight), cardShown: Math.round(list.getBoundingClientRect().bottom - top) };
+          const view = list.getBoundingClientRect();
+          const card = document.querySelector('.chat-list > .menu-card')!.getBoundingClientRect();
+          return {
+            gap: Math.round(list.scrollHeight - list.scrollTop - list.clientHeight),
+            cardShown: Math.round(view.bottom - card.top),
+            scrollTop: Math.round(list.scrollTop),
+            scrollHeight: list.scrollHeight,
+            clientHeight: list.clientHeight,
+            card: `${Math.round(card.top - view.top)}〜${Math.round(card.bottom - view.top)}`,
+            rows: list.children.length,
+            jump: !!document.querySelector('.chat-jump-bottom'),
+          };
         });
         if (JSON.stringify(now) === last) return now;
         last = JSON.stringify(now);
@@ -111,14 +125,18 @@ describe('チャットの一覧のスクロール', () => {
     };
     const box = (await app.page.locator('.chat-list').boundingBox())!;
     await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const before = await settled();
     await app.page.mouse.wheel(0, -70);
     const near = await settled();
-    // 最下部から離れた（ボタンを出す距離）が、カードはまだ見えている
-    expect(near.gap).toBeGreaterThanOrEqual(40);
-    expect(near.cardShown).toBeGreaterThan(0);
-    expect(await jump.isVisible()).toBe(false);
+    const state = JSON.stringify({ before, near });
+    // 最下部から離れた（ボタンを出す距離）が、カードはまだ見えている。ホイールで動かした直後に会話ログからツールの行が届いても、
+    // 最下部へ戻さない（ClaudePane の toBottom）
+    expect(near.gap, state).toBeGreaterThanOrEqual(40);
+    expect(near.cardShown, state).toBeGreaterThan(0);
+    expect(await jump.isVisible(), state).toBe(false);
     await app.page.mouse.wheel(0, -(near.cardShown + 200));
-    expect((await settled()).cardShown).toBeLessThan(0);
+    const far = await settled();
+    expect(far.cardShown, JSON.stringify(far)).toBeLessThan(0);
     await jump.waitFor();
     // ボタンで最下部へ戻ると、カードの選択肢を押せる
     await jump.click();
