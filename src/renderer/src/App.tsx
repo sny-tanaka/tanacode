@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BranchChanges, FileChange, FileContent, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
+import type { BranchChanges, FileChange, FileContent, GitEntry, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import { listRecentFolders } from '@shared/recent-folders';
 import type { Checklist } from '@shared/checklist';
 import { t } from '@shared/i18n';
@@ -22,7 +22,7 @@ import type { ReviewComment } from './review/LineComments';
 import { DiffPane } from './scm/DiffPane';
 import { branchPaths, ScmPanel } from './scm/ScmPanel';
 import { useScmView, type ScmView } from './scm/scmView';
-import { gitMarks, useGitState } from './scm/useGitState';
+import { gitMarks, useFileRevision, useGitState } from './scm/useGitState';
 import { QuickOpen } from './search/QuickOpen';
 import { SearchPanel } from './search/SearchPanel';
 import { useSessionPermissions } from './screen/useSessionPermissions';
@@ -1186,7 +1186,9 @@ export function App() {
           {viewId && cwd && diffView && diffView.source !== 'task' && diffView.source !== 'preview' && diffView.source !== 'card' && (
             <DiffView
               sessionId={viewId}
+              cwd={cwd}
               view={diffView}
+              scmEntry={git.state?.isRepo ? (git.state.entries.find((e) => e.path === diffView.path) ?? null) : null}
               branchChanges={branchChanges}
               scmView={scmView}
               comments={sessionComments}
@@ -1269,7 +1271,9 @@ export function App() {
 
 function DiffView({
   sessionId,
+  cwd,
   view,
+  scmEntry,
   branchChanges,
   scmView,
   comments,
@@ -1281,7 +1285,11 @@ function DiffView({
   onAsk,
 }: {
   sessionId: string;
+  // セッションのフォルダ（差分のパスは、ここからの相対）
+  cwd: string;
   view: DiffView;
+  // ソース管理の差分のファイルの、git status の印（ステージした・コミットした・戻したら変わる）。一覧に無ければ null
+  scmEntry: GitEntry | null;
   branchChanges: BranchChanges | null;
   scmView: ScmView;
   comments: ReviewComment[];
@@ -1294,13 +1302,16 @@ function DiffView({
   onAsk: ((question: RangeQuestion) => void) | undefined;
 }) {
   const lineComments = { list: comments.filter((c) => c.path === view.path), onAdd: onAddComment, onRemove: onRemoveComment };
+  // ファイルがディスク上で変わったら（Claude が書き換えたなど）、差分を読み直す。読み直さないと、古い差分のまま、行のコメントや
+  // 「ここを聞く」を使ってしまう。git status の印や、ブランチの差分の増減の行数は、書き換えても同じことがあるので、それだけでは気づけない
+  const revision = useFileRevision(cwd, view.path);
   if (view.source === 'scm') {
     return (
       <DiffPane
         path={view.path}
         subtitle={view.staged ? t('app.diff.staged') : t('app.diff.unstaged')}
         load={() => window.tanacode.git.diffSides(sessionId, view.path, view.staged)}
-        reloadKey={String(view.staged)}
+        reloadKey={JSON.stringify([view.staged, scmEntry, revision])}
         onClose={() => onChange(null)}
         onOpenFile={onOpenFile}
         comments={lineComments}
@@ -1319,7 +1330,7 @@ function DiffView({
       path={view.path}
       subtitle={t('app.diff.fromBase', { ref: branchChanges.base.ref })}
       load={() => window.tanacode.git.branchDiffSides(sessionId, mergeBase, view.path)}
-      reloadKey={JSON.stringify([change ?? null, mergeBase])}
+      reloadKey={JSON.stringify([change ?? null, mergeBase, revision])}
       onClose={() => onChange(null)}
       onOpenFile={change?.kind === 'deleted' ? null : onOpenFile}
       comments={change?.kind === 'deleted' ? undefined : lineComments}

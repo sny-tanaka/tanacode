@@ -190,6 +190,25 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
       expect(screen.getByRole('button', { name: '最新バージョンです' }).className).toContain('confirmed');
     });
 
+    // 直す前: 失敗の印は、次に押すまで消えなかった（そのあとのふだんの確認で確かめられても、「確かめられませんでした」のまま）
+    it('失敗の印は、そのあとふだんの確認で確かめられたら消す。確かめている途中・確かめたあとの印は変えない', async () => {
+      render(<AppUpdateMark update={LATEST} />);
+      fireEvent.click(screen.getByRole('button', { name: '最新バージョンです' }));
+      await act(async () => answer(false));
+      expect(screen.getByRole('button', { name: '新しいバージョンを確かめられませんでした（オフラインなど）' })).toBeTruthy();
+      act(() => api.emit('appUpdate.onChecked', undefined));
+      const button = screen.getByRole('button', { name: '最新バージョンです' });
+      expect(button.className).not.toContain('failed');
+      expect(button.dataset.tip).toBe('最新バージョンです\n押すと、今すぐ確かめます');
+      // 押して確かめている途中に、ふだんの確認が通っても、ぐるぐるのまま（押した確かめの返事を待つ）
+      fireEvent.click(button);
+      act(() => api.emit('appUpdate.onChecked', undefined));
+      expect(button.querySelector('.spinner')).not.toBeNull();
+      await act(async () => answer(true));
+      act(() => api.emit('appUpdate.onChecked', undefined));
+      expect(button.className).toContain('confirmed');
+    });
+
     it('main に聞けなかったときも、確かめられなかったことにする', async () => {
       api = mockApi({ 'appUpdate.check': () => Promise.reject(new Error('応答なし')) });
       api.install();

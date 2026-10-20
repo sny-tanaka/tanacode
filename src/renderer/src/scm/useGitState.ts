@@ -42,6 +42,19 @@ export function useGitState(sessionId: string | null, root: string | null): { st
   return { state, refresh };
 }
 
+// root（セッションのフォルダ）の中の path（root からの相対）が、ディスク上で変わった回数。差分の画面が、Claude・ターミナル・
+// ほかのエディタが変えたファイルを読み直すのに使う（git の状態の印や増減の行数は、変えても同じことがあるので、それだけでは気づけない）
+export function useFileRevision(root: string | null, path: string): number {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!root) return;
+    return window.tanacode.workspace.onFilesChanged((p) => {
+      if (p.root === root && p.paths.includes(path)) setRevision((n) => n + 1);
+    });
+  }, [root, path]);
+  return revision;
+}
+
 // エクスプローラーに出す git の状態（ファイル名の色）
 export type GitMark = 'modified' | 'added' | 'untracked' | 'deleted' | 'conflict';
 
