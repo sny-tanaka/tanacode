@@ -5,6 +5,10 @@ import type { PermissionMode } from '@shared/screen';
 import type { ClaudeProcess } from './leftover-claude';
 import type { SavedInit } from './stream/protocol';
 
+// 起動を待って送る発言（SessionManager.submitWhenReady）の本文。子への最初の指示は、送る直前に、worktree の準備でうまくいかなかったことを
+// 本文に添えて、親の指示の囲みに入れる（parent: 親の ID / body: 指示の本文。記録に残すときも、この形のまま残す）
+export type WaitingText = string | { parent: string; body: string; setupNote: true };
+
 export type SessionRecord = {
   id: string;
   // /clear で変わるため、アプリ側の id とは別に持つ
@@ -55,6 +59,15 @@ export type SessionRecord = {
   // claude を動かしたままアプリを終了したときに、送ったがまだ会話に出ていなかった発言（送信中・順番待ち）。次のアプリが claude を
   // 引き継いだら戻す（順番待ちの発言の文は stream-json の行に無く、そのターンが始まるまで戻ってこない。実測）。shown: チャットに出すもの
   unsent?: (UnsentPrompt & { shown: boolean })[] | null;
+  // 起動を待って送る親の指示のうち、送る前にアプリを終えたもの（keep。子への最初の指示・起動の途中や止まっていた子への指示）。
+  // 次にそのセッションを起動したら（引き継いだときも）、待ち始めた順に送り直す（timeoutMs: 待つ上限。送り直すときから数える）
+  waiting?: { text: WaitingText; timeoutMs: number }[] | null;
+  // worktree の準備（Claude Code が作るのを待つ・node_modules の用意）の途中。終わる前にアプリを終えたら、次に起動したとき
+  // （引き継いだときも）に node_modules の用意をやり直す（install はアプリのターミナルで動くので、アプリを終えると止まる）
+  worktreePreparing?: boolean;
+  // アプリから Claude への知らせ（session-notices.ts）のうち、このセッションに送る前にアプリを終えたもの（列の名前 → [キー, 中身]）。
+  // 次のアプリが戻し、手が空いたら送る
+  notices?: Record<string, [string, unknown][]> | null;
   createdAt: number;
   updatedAt: number;
 };

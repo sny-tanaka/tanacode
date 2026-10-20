@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
+import type { SessionStore } from '../src/main/session-store';
 import { prepareNodeModules, type NodeModulesResult } from '../src/main/worktree';
 import { INIT_RESPONSE, ScriptedApp, type ScriptedOptions, type ScriptedPipe } from './helpers/scripted-claude';
 
@@ -210,6 +211,48 @@ describe('createInWorktree', () => {
     initialized(app.pipe(id));
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle', 3000);
     expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+  });
+
+  it('node_modules を用意している途中でアプリを終えたら、次のアプリが引き継いだときに用意をやり直し、終わってから受け付けて、送る前だった最初の指示を送る', async () => {
+    start();
+    prepare.mockResolvedValueOnce(EMPTY);
+    const { creating, pipe, session } = await begin();
+    createWorktree(session);
+    const id = await creating;
+    // 用意している間は、記録に「準備の途中」を残す（終わる前にアプリを終えたら、次のアプリがやり直す）
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    expect(store.get(id)?.worktreePreparing).toBe(true);
+    initialized(pipe);
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+    expect(store.get(id)?.worktreePreparing).toBe(false);
+    // 前のアプリが、用意の途中で、最初の指示を送る前に終えた（install はアプリのターミナルで動くので、アプリを終えると止まる）。
+    // そのときの記録にして、動き続けている claude を今のアプリで引き継ぐ
+    const parent = '0f8c2a1e-0000-4000-8000-000000000001';
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    store.update(id, { worktreePreparing: true, waiting: [{ text: { parent, body: '登録画面を作って', setupNote: true }, timeoutMs: 60_000 }] });
+    let release!: (result: NodeModulesResult) => void;
+    prepare.mockImplementationOnce(async (_root, _path, hooks) => {
+      hooks.onStep('installing');
+      return new Promise<NodeModulesResult>((resolve) => (release = resolve));
+    });
+    app.host.hosted = [{ kind: 'pipe', id: `pipe-${id}`, tag: id, pid: 100, startedAt: Date.now() - 60_000, exitCode: null, lastSeq: 0, firstSeq: 1, retained: [], pending: [], ended: false, stderr: '' }];
+    await app.manager.adopt();
+    const adopted = app.pipe(id);
+    adopted.replayed();
+    // 直す前は、引き継いだら用意をやり直さずに受け付けていた（最初の指示も、アプリの終了で消えていた）
+    await app.waitFor('やり直し', () => release !== undefined);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(app.manager.stateOf(id)).toBe('starting');
+    expect(adopted.prompts).toEqual([]);
+    release({ cloned: [], failed: [], installs: [{ dir: '', command: 'npm install', exitCode: 1 }] });
+    await app.waitFor('最初の指示', () => adopted.prompts.length === 1);
+    const sent = String(adopted.prompts[0].message.content);
+    expect(sent).toContain('登録画面を作って');
+    // やり直した用意でうまくいかなかったことを添える
+    expect(sent).toContain('npm install');
+    expect(store.get(id)?.worktreePreparing).toBe(false);
+    expect(store.get(id)?.waiting).toBeNull();
   });
 
   it('アプリが手を離せない間に、終わりが届いても、標準エラーを添えて失敗する', async () => {

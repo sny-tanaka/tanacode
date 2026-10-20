@@ -83,6 +83,8 @@ export class ChecklistControl {
         return checklistEventText([...refs.values()], message);
       },
       delayMs: deps.notifyDelayMs,
+      // 送り先が忙しくて預かっている間にアプリを終えても、次のアプリが戻して、手が空いたら送る
+      channel: 'checklist',
     });
   }
 

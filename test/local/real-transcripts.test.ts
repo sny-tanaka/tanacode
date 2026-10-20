@@ -64,6 +64,11 @@ describe(`Claude Code ${VERSION} が書いた手元の会話ログ（${DAYS} 日
     expect(samples(found)).toEqual([]);
   });
 
+  it('親セッションからの指示の本文に、囲みのタグが文字で残らない（順番待ちの発言をまとめた行も、送った発言ごとに分けて読む）', () => {
+    const found = checks.flatMap(({ file, check }) => check.parentTags.map((line) => where(file, line)));
+    expect(samples(found)).toEqual([]);
+  });
+
   it('裏で起動したもの（サブエージェント・Bash・ワークフロー）は、完了の知らせまで実行中のまま', () => {
     const found = checks.flatMap(({ file, check }) => check.earlyFinish.map((e) => `${e.kind} ${e.toolUseId}（${e.state}）: ${where(file, e.line)}`));
     expect(samples(found)).toEqual([]);
