@@ -1,20 +1,32 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Block } from '../cli/mock-api';
 import { E2EApp } from './app';
 
 // チャットの一覧のスクロール。一覧は最下部に張り付いて新しい行を追いかけ、人の操作でない上へのスクロールは最下部へ送り直す（ClaudePane）。
 // Tab でフォーカスを移したときにブラウザが動かすスクロールと、その知らせの順（focusin より先に一覧が動く）は、画面の部品のテスト（jsdom）に
 // 無いので、本物の画面で確かめる。
 // 直す前: Tab（Shift+Tab）で上の見えていない要素へフォーカスを移すと、ブラウザは一覧を上へ送って見せたが、一覧がそれを最下部へ送り直し、
-// フォーカスした要素が見えなくなった
+// フォーカスした要素が見えなくなった。
+// 「最新のメッセージへ」のボタンと、カードの選択肢の重なりも、本物の配置とホイールのスクロールで確かめる
 
 const PROMPT = 'あいさつしてください';
 const DONE = 'こんにちは';
+const CARD_PROMPT = '確かめのコマンドを動かしてください';
+const CARD_DONE = 'コマンドを動かしました';
+// 許可を聞くコマンド（echo だけなら、聞かずに動く）
+const bash: Block[] = [{ type: 'tool_use', id: 'toolu_scroll', name: 'Bash', input: { command: 'mkdir scrolled && echo scrolled-$((40+2))', description: '確かめのコマンド' } }];
 
 describe('チャットの一覧のスクロール', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
-    app = await E2EApp.launch({ conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: DONE }]] }] });
+    app = await E2EApp.launch({
+      trusted: true,
+      conversations: () => [
+        { match: PROMPT, steps: [[{ type: 'text', text: DONE }]] },
+        { match: CARD_PROMPT, steps: [bash, [{ type: 'text', text: CARD_DONE }]] },
+      ],
+    });
   });
 
   afterEach(async ({ task }) => {
@@ -66,6 +78,53 @@ describe('チャットの一覧のスクロール', () => {
     await nextFrames();
     expect(await state()).toMatchObject({ focused: 'e2e-focus-target', visible: true });
     await app.page.getByRole('button', { name: '最新のメッセージへ' }).waitFor();
+  });
+
+  // 直す前: 少し上へスクロールして、カードの選択肢が一覧の下端に来ると、その上に「最新のメッセージへ」が重なった
+  // （選択肢を押したつもりが、ボタンを押してしまう）
+  it('許可の確認のカードが見えている間は、少し上へスクロールしても「最新のメッセージへ」を出さず、カードが見えなくなるまで上へ送ると出す', async () => {
+    await app.startSession(CARD_PROMPT, { mode: 'manual' });
+    const card = await app.menuCard('permission');
+    // 一覧をスクロールさせる背の高い行を、一覧の頭に置く
+    await app.page.evaluate(() => {
+      const filler = document.createElement('div');
+      filler.style.flex = 'none';
+      filler.style.height = '1500px';
+      document.querySelector('.chat-list')?.prepend(filler);
+    });
+    await nextFrames();
+    const jump = app.page.getByRole('button', { name: '最新のメッセージへ' });
+    // 最下部からの距離と、カードの上端が一覧の下端よりどれだけ上にあるか（正なら見えている）。スクロールが止まるまで待って読む
+    const settled = async () => {
+      let last = '';
+      for (let i = 0; i < 100; i++) {
+        await nextFrames();
+        const now = await app.page.evaluate(() => {
+          const list = document.querySelector('.chat-list')!;
+          const top = document.querySelector('.chat-list > .menu-card')!.getBoundingClientRect().top;
+          return { gap: Math.round(list.scrollHeight - list.scrollTop - list.clientHeight), cardShown: Math.round(list.getBoundingClientRect().bottom - top) };
+        });
+        if (JSON.stringify(now) === last) return now;
+        last = JSON.stringify(now);
+      }
+      throw new Error(`一覧のスクロールが止まりません（${last}）`);
+    };
+    const box = (await app.page.locator('.chat-list').boundingBox())!;
+    await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await app.page.mouse.wheel(0, -70);
+    const near = await settled();
+    // 最下部から離れた（ボタンを出す距離）が、カードはまだ見えている
+    expect(near.gap).toBeGreaterThanOrEqual(40);
+    expect(near.cardShown).toBeGreaterThan(0);
+    expect(await jump.isVisible()).toBe(false);
+    await app.page.mouse.wheel(0, -(near.cardShown + 200));
+    expect((await settled()).cardShown).toBeLessThan(0);
+    await jump.waitFor();
+    // ボタンで最下部へ戻ると、カードの選択肢を押せる
+    await jump.click();
+    await card.locator('.menu-option', { hasText: /^許可する/ }).first().click();
+    await app.byText('.chat-list', CARD_DONE).waitFor();
+    expect(app.api.toolResults.some((r) => r.includes('scrolled-42'))).toBe(true);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
