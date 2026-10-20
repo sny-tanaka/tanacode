@@ -12,7 +12,7 @@ import type { HostedInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
 import { TranscriptFollower } from './transcript-follower';
-import type { EntryHandler, RemovedHandler } from './transcript-tail';
+import type { EntryHandler, MissingParentHandler, RemovedHandler } from './transcript-tail';
 import { projectLogDir } from './claude-config';
 import { StreamClient, type StreamEvents } from './stream/client';
 import { endSession } from './stream/internal';
@@ -81,6 +81,8 @@ type Handlers = {
   onHistoryLoaded: () => void;
   // 会話ログから、もう出した行が消えた（取り消された応答。TranscriptTail を参照）
   onRemoved?: RemovedHandler;
+  // 親の行がまだ届いていない行を読んだ。親がもう来ないなら true（TranscriptTail を参照）
+  onMissingParent?: MissingParentHandler;
   onSwitch: (claudeSessionId: string) => void;
 };
 
@@ -123,6 +125,7 @@ export class ClaudeSession {
         onEntry: this.handlers.onEntry,
         onHistoryLoaded: this.handlers.onHistoryLoaded,
         onRemoved: this.handlers.onRemoved,
+        onMissingParent: this.handlers.onMissingParent,
         onSwitch: (file) => this.handlers.onSwitch(basename(file, '.jsonl')),
       },
       // 引き継いだときは、アプリが見ていない間の /clear にも追従できるよう、claude が起動した時刻から探す

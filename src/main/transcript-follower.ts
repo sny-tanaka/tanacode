@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { TranscriptTail, type EntryHandler, type RemovedHandler } from './transcript-tail';
+import { TranscriptTail, type EntryHandler, type MissingParentHandler, type RemovedHandler } from './transcript-tail';
 
 const HEAD_BYTES = 16 * 1024;
 
@@ -10,6 +10,8 @@ type Handlers = {
   onHistoryLoaded: () => void;
   // 会話ログから、もう出した行が消えた（取り消された応答。TranscriptTail を参照）
   onRemoved?: RemovedHandler;
+  // 親の行がまだ届いていない行を読んだ。親がもう来ないなら true（TranscriptTail を参照）
+  onMissingParent?: MissingParentHandler;
   // /clear などで Claude Code が別の会話ログファイルに切り替えたとき
   onSwitch: (file: string) => void;
 };
@@ -77,6 +79,7 @@ export class TranscriptFollower {
         if (this.tail === tail) this.loaded();
       },
       this.handlers.onRemoved,
+      this.handlers.onMissingParent,
     );
     this.tail = tail;
     tail.start();

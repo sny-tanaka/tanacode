@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from '@shared/chat';
+import { handbackOf, handbackOfMessage } from '@shared/handback';
 import type { KnownEntry } from '@shared/transcript-line';
 import type { BashTaskTracker } from './bash-task-tracker';
 import type { SubagentTracker } from './subagent-tracker';
@@ -65,6 +66,9 @@ export class TaskRouter {
         else bashTasks.startMonitor(block.tool_use_id!, call.input, entry.toolUseResult, isHistory);
       }
     }
+    // サブエージェントが SubagentHandback で返した報告（完了通知の <result> は、報告の代わりの文になる）
+    const handback = handbackFrom(entry);
+    if (handback) subagents.handback(handback.agentId, handback.report);
     const launch = workflowLaunchOf(entry, this.workflowScripts);
     if (launch) workflows.add(launch, isHistory);
 
@@ -79,6 +83,15 @@ export class TaskRouter {
       bashTasks.event(notice.taskId, notice.event);
     }
   }
+}
+
+// サブエージェントの報告の行（src/shared/handback.ts の 3 つの形）
+function handbackFrom(entry: KnownEntry) {
+  if (entry.type === 'user' && entry.isMeta) return handbackOf(entry.origin);
+  if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') return handbackOf(entry.attachment.origin);
+  const e = entry as { type: string; operation?: string; content?: unknown };
+  if (e.type === 'queue-operation' && e.operation === 'enqueue') return handbackOfMessage(e.content);
+  return null;
 }
 
 // run_in_background は真偽値のほか、文字列の "true" で来ることもある

@@ -244,3 +244,42 @@ describe('断られた応答の取り直し（system/model_refusal_fallback）',
     expect(app.manager.snapshot(id).partial).toEqual([]);
   });
 });
+
+// ツールの呼び出しの形が壊れた応答などを、Claude Code が取り消して取り直す（tombstone）。取り消した応答の行は、会話ログに書いたあとで
+// 消す。読む前に消されると、その行を親にする取り直しの行だけが届く（2.1.302 で実測。test/cli/errors.test.ts の malformed）
+describe('会話ログに書かれたあと、読む前に消された応答（tombstone）', () => {
+  // 直す前: 取り直しの行は、来ない親を 1 秒待ってから出た。その間、取り消された応答の書きかけが、取り直した応答の書きかけと並んで
+  // 残り（取り直した応答が会話ログから届くと、一緒に外れた）、取り直した応答とターンの終わりも 1 秒遅れた
+  it('その応答の行を親にする行が届いたら、待たずに出し、取り消された応答の書きかけを、取り直した応答が出る前に外す', async () => {
+    const { id, pipe } = await started();
+    pipe.emit(stream.messageStart('msg_t'));
+    pipe.emit(stream.blockStart('text', null, 0));
+    pipe.emit(stream.delta(0, '取り消される文'));
+    pipe.emit(stream.blockStop(0));
+    // stream には出るが、会話ログからは読む前に消える
+    const tombstoned = reply('msg_t', 0, '取り消される文');
+    pipe.emit(stream.assistant(tombstoned));
+    pipe.emit(stream.messageStart('msg_b'));
+    pipe.emit(stream.blockStart('text', null, 0));
+    pipe.emit(stream.delta(0, '取り直した文'));
+    pipe.emit(stream.blockStop(0));
+    const answer = reply('msg_b', 0, '取り直した文');
+    pipe.emit(stream.assistant(answer));
+    await app.waitFor('2 つの書きかけ', () => lastPartial(id)?.length === 2);
+
+    // 取り直しの行（消された応答の行を親にする）と、取り直した応答
+    const retry = {
+      ...line.user('The previous response failed to produce a valid tool call. Please retry the tool call now.'),
+      origin: undefined,
+      isMeta: true,
+      parentUuid: tombstoned.uuid,
+    };
+    app.append(id, retry, { ...answer, parentUuid: retry.uuid });
+    await app.waitFor('取り直した応答', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === '取り直した文'));
+    const shown = app.batches.findIndex((b) => b.events.some((e) => e.type === 'assistant-text' && e.text === '取り直した文'));
+    // 取り直した応答が出る前に、取り消された応答の書きかけだけが外れている
+    expect(app.batches.slice(0, shown).some((b) => b.partial?.length === 1 && b.partial[0].text === '取り直した文')).toBe(true);
+    expect(app.events(id).some((e) => e.type === 'assistant-text' && e.text === '取り消される文')).toBe(false);
+    expect(app.manager.snapshot(id).partial).toEqual([]);
+  });
+});

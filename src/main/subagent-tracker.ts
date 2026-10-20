@@ -11,6 +11,9 @@ const POLL_MS = 1000;
 const RECENT_TOOLS = 5;
 // 結果をこの文字数で切る
 const MAX_RESULT = 3000;
+// サブエージェントが SubagentHandback で報告したときの、完了通知の <result> の文（報告の代わりに書かれる。2.1.303 の本体にある 4 通り:
+// 報告は知らせで届けた・auto モードの警告付きで届けた・まだ報告していない（自分の裏の作業を待っている）・報告せずに終わった）。結果にはしない
+const HANDBACK_PLACEHOLDER = /^(?:This agent's report was delivered to you as a message from "|This agent has not reported yet: |The subagent ended without delivering a report through SubagentHandback)/;
 
 type Tracked = { run: SubagentRun; subagentsDir: string; offset: number };
 
@@ -18,6 +21,8 @@ type Tracked = { run: SubagentRun; subagentsDir: string; offset: number };
 // <セッション>/subagents/agent-<id>.meta.json に起動元の toolUseId が書かれるので、それで会話ログを見つけて読む
 export class SubagentTracker {
   private readonly runs = new Map<string, Tracked>();
+  // SubagentHandback で届いた報告（エージェントの ID ごと。SendMessage で再開したものは同じ ID なので、新しい報告で置き換える）
+  private readonly reports = new Map<string, string>();
   private timer: NodeJS.Timeout | null = null;
   private polling = false;
 
@@ -163,9 +168,26 @@ export class SubagentTracker {
       durationMs: usage?.durationMs ?? t.run.durationMs ?? (t.run.startedAt ? Date.now() - t.run.startedAt : null),
       tokens: usage?.totalTokens ?? t.run.tokens,
       toolCalls: usage?.toolUses ?? t.run.toolCalls,
-      result: clipResult(result),
+      result: clipResult(this.resultOf(t.run.agentId, result)),
     };
     this.onChange(this.all());
+  }
+
+  // SubagentHandback で届いた報告。ふつうは完了通知より先に届く（会話ログの並び）ので、覚えておいて完了通知の結果にする。
+  // 完了通知のあとに届いたとき（報告より先に、まだ報告していない・報告せずに終わったと知らせたもの）は、そのエージェントの結果を置き換える
+  handback(agentId: string, report: string): void {
+    this.reports.set(agentId, report);
+    const runs = [...this.runs.values()].filter((t) => t.run.agentId === agentId);
+    const t = runs.find((r) => r.run.state === 'running') ?? runs.at(-1);
+    if (!t || t.run.state === 'running' || (t.run.result !== null && !HANDBACK_PLACEHOLDER.test(t.run.result))) return;
+    t.run = { ...t.run, result: clipResult(report) };
+    this.onChange(this.all());
+  }
+
+  // 完了通知の結果。報告の代わりの文なら、届いた報告（無ければ null）
+  private resultOf(agentId: string | null, result: string | null): string | null {
+    if (result === null || !HANDBACK_PLACEHOLDER.test(result)) return result;
+    return agentId ? (this.reports.get(agentId) ?? null) : null;
   }
 
   // Claude Code が終了すると実行中のサブエージェントも止まる
@@ -238,6 +260,13 @@ export class SubagentTracker {
       if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
       for (const block of e.message.content) {
         if (block.type !== 'tool_use' || !block.name) continue;
+        // フォーク（subagent_type: fork）の会話ログは、そのエージェントを起こした Agent の呼び出しから始まる（その前に、親の会話の写しが
+        // 並ぶこともある。サブエージェントからのフォーク）。そこまでは親の作業なので数えない（Claude Code の数え方と同じ）
+        if (block.id === t.run.toolUseId) {
+          toolCalls = 0;
+          recent = [];
+          continue;
+        }
         toolCalls++;
         recent = [...recent, { name: block.name, target: toolTarget(block.input ?? {}, this.cwd) }].slice(-RECENT_TOOLS);
       }

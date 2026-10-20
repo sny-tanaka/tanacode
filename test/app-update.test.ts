@@ -67,6 +67,25 @@ describe('AppUpdateMonitor', () => {
     failing.stop();
   });
 
+  // タイトルバーの、押して確かめられなかった印を、そのあと確かめられたら消すため（結果が前と同じで onChange が来なくても）
+  it('確かめられるたびに onChecked を呼ぶ（結果が前と同じでも）。確かめられなかったときは呼ばない', async () => {
+    let checked = 0;
+    const changes: unknown[] = [];
+    const monitor = new AppUpdateMonitor('0.1.5', (u) => changes.push(u), reply(200, { tag_name: 'v0.1.5' }), () => checked++);
+    monitor.start();
+    await monitor.refresh();
+    await monitor.refresh();
+    expect(checked).toBe(2);
+    expect(changes).toHaveLength(1);
+    monitor.stop();
+    let failed = 0;
+    const failing = new AppUpdateMonitor('0.1.5', () => {}, () => Promise.reject(new Error('offline')), () => failed++);
+    failing.start();
+    await failing.refresh();
+    expect(failed).toBe(0);
+    failing.stop();
+  });
+
   it('確かめている途中に頼まれたら、新しく問い合わせずに、その結果を返す', async () => {
     let asked = 0;
     let answer: (res: Response) => void = () => {};

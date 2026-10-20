@@ -464,7 +464,9 @@
     },
     "target": {
       "cardCount": "{count} 枚",
-      "stepCount": "{count} ステップ"
+      "stepCount": "{count} ステップ",
+      "inSession": "「{session}」の{target}",
+      "session": "「{session}」"
     },
     "notice": {
       "untitledSession": "新しいセッション",
@@ -740,6 +742,7 @@
       "compactResume": "最適化圧縮: 会話を消して、チェックリストから再開しました",
       "compactHandoffAuto": "最適化圧縮（自動・コンテキスト {percent}%）: 続きに要ることを、チェックリストに書くよう頼みました",
       "compactResumeAuto": "最適化圧縮（自動・コンテキスト {percent}%）: 会話を消して、チェックリストから再開しました",
+      "agentReport": "サブエージェント「{name}」の報告",
       "taskFinished": "バックグラウンドのタスクが終わりました",
       "ciEnabled": "有効になりました",
       "ciNewComments": "新しいレビューコメント {count} 件",

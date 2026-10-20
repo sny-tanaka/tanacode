@@ -1634,6 +1634,12 @@ describe('Homebrew での更新', () => {
     expect(options.current).toBe('9.8.7');
   });
 
+  it('確かめられたら（結果が前と同じでも）、画面に知らせる', async () => {
+    await bootWith(updater());
+    fnArg('AppUpdateMonitor', 3)();
+    expect(sentToRenderer(IpcChannel.AppUpdateChecked)).toEqual([undefined]);
+  });
+
   it('新しいバージョンが出たら用意を頼み、画面には用意の様子を足して知らせる（新しくなければ足さない）', async () => {
     await bootWith(updater());
     fnArg('AppUpdateMonitor', 1)({ latest: '9.9.0', available: true, url: 'u' });

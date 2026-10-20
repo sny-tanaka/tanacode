@@ -13,6 +13,9 @@ const CHECK_BYTES = 1024;
 export type EntryHandler = (entry: unknown, isHistory: boolean) => void;
 // もう出した行のうち、会話ログから消えた行の uuid（Claude Code が取り消した応答の行。TranscriptTail を参照）
 export type RemovedHandler = (uuids: string[]) => void;
+// 親（parent）の行がまだ届いていない行を読んだ。その親が、もう来ないと分かっている（会話ログに書かれたあと、読む前に消された
+// 取り消された応答の行など）なら true を返す。その行と、同じ親の行は待たずに出す
+export type MissingParentHandler = (parent: string) => boolean;
 
 type Held = { entry: unknown; isHistory: boolean; parent: string; since: number };
 type Read = { entry: unknown; isHistory: boolean };
@@ -21,7 +24,8 @@ type ReadLine = { hash: string; uuid: string | null };
 
 // 書き込み途中の行やマルチバイト文字の分断に備え、改行までをバイト列のまま溜めてから parse する。
 // 最初の応答の行が発言の行より先に書かれ（parentFirst を参照）、発言の行があとの読み込みで届くこともあるので、
-// 親（parentUuid）の行がまだ届いていない行は、親が届くまで（長くても HOLD_MS）出さずに待つ。
+// 親（parentUuid）の行がまだ届いていない行は、親が届くまで（長くても HOLD_MS）出さずに待つ。ただし、親がもう来ないと
+// 分かっている（onMissingParent。書かれたあと、読む前に消された応答の行）なら待たない。
 // Claude Code は、取り消した応答（tombstone。形の壊れたツールの呼び出しを取り直すときなど）の行を、会話ログに書いたあとで消す
 // （2.1.302 の removeMessageByUuid。その行の頭で切り詰め、後ろの行を詰めて書き戻す）。消したあとすぐ次の行を書き足すので、
 // 大きさだけでは書き直しに気づけず、前の位置から読むと、消えた行の長さの分だけ後ろの行を読み落とす。そこで、読み終えたところの
@@ -55,6 +59,7 @@ export class TranscriptTail {
     // 既存の行（再開したセッションの過去ログ）を読み終えたとき。既存の行が無ければ呼ばれない
     private readonly onHistoryLoaded?: () => void,
     private readonly onRemoved?: RemovedHandler,
+    private readonly onMissingParent?: MissingParentHandler,
   ) {}
 
   start(): void {
@@ -248,20 +253,27 @@ export class TranscriptTail {
   }
 
   // 追跡を始めた時点で既にあった行（過去ログ）は全部そろっているので待たない。親が届いていない行と、待っている行の子孫は待たせる
+  // もう来ないと分かった親（onMissingParent）は、出した行と同じく扱い、その親を待っていた行を先に出してから、この行を出す
   private accept(entry: unknown, isHistory: boolean): void {
     const parent = parentUuidOf(entry);
     if (!isHistory && parent !== null && !this.seen.has(parent)) {
-      this.held.push({ entry, isHistory, parent, since: Date.now() });
-      return;
+      if (!this.onMissingParent?.(parent)) {
+        this.held.push({ entry, isHistory, parent, since: Date.now() });
+        return;
+      }
+      this.release(parent);
     }
     this.emit(entry, isHistory);
   }
 
-  // 出した行を親にして待っていた行も、続けて出す
   private emit(entry: unknown, isHistory: boolean): void {
     this.onEntry(entry, isHistory);
     const uuid = uuidOf(entry);
-    if (uuid === null) return;
+    if (uuid !== null) this.release(uuid);
+  }
+
+  // uuid の行を出した（か、もう来ないと分かった）。その行を親にして待っていた行も、続けて出す
+  private release(uuid: string): void {
     this.seen.add(uuid);
     const children = this.held.filter((h) => h.parent === uuid);
     if (children.length === 0) return;
