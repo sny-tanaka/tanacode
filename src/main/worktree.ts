@@ -9,6 +9,19 @@ import type { WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc
 import { defaultBranch, git, userGit } from './git';
 import { type PullRequest, pullRequestsOf } from './github';
 
+// worktree を作れない・消せない理由。message は画面の言語の文（画面に出す）。Claude に返すときは、reason と detail から英語の文を作る
+// （sessions-control.ts。Claude に返す文は英語で書く決まり）。detail: ロックの理由など、添える言葉（人やツールが書いたもの）
+export type WorktreeFailure = 'notRepo' | 'noCommit' | 'noName' | 'locked' | 'closedWhileCreating';
+export class WorktreeError extends Error {
+  constructor(
+    readonly reason: WorktreeFailure,
+    message: string,
+    readonly detail: string | null = null,
+  ) {
+    super(message);
+  }
+}
+
 // claude --worktree <名前> で始めるセッション。worktree は Claude Code が作る（元のフォルダへの書き込みや git の操作を止める、
 // Claude Code の隔離のチェックを生かすため）。場所は、リポジトリのいちばん上の .claude/worktrees/<名前>、ブランチは worktree-<名前>。
 // アプリは名前を決め、node_modules を用意し、アーカイブ・一覧からの削除のときに消す（Claude Code の終了時の確認は、
@@ -52,12 +65,12 @@ export async function planWorktree(cwd: string): Promise<WorktreePlan> {
     (out) => out.trim(),
     () => null,
   );
-  if (!root) throw new Error(t('main.worktree.notRepo'));
+  if (!root) throw new WorktreeError('notRepo', t('main.worktree.notRepo'));
   const hasHead = await git(root, ['rev-parse', '--verify', '-q', 'HEAD']).then(
     () => true,
     () => false,
   );
-  if (!hasHead) throw new Error(t('main.worktree.noCommit'));
+  if (!hasHead) throw new WorktreeError('noCommit', t('main.worktree.noCommit'));
   for (let i = 0; i < 20; i++) {
     const name = worktreeName();
     const path = worktreePath(root, name);
@@ -65,7 +78,7 @@ export async function planWorktree(cwd: string): Promise<WorktreePlan> {
     if (existsSync(path) || (await branchExists(root, branch))) continue;
     return { name, branch, root, path };
   }
-  throw new Error(t('main.worktree.noName'));
+  throw new WorktreeError('noName', t('main.worktree.noName'));
 }
 
 // 名前は月日と短い乱数（例: tc-1002-k3x9）。ブランチ名にもなるので、英小文字と数字だけにする
@@ -471,7 +484,7 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
   if (listed && existsSync(path)) {
     if (listed.locked !== null) {
       if (!CLAUDE_LOCK.test(listed.locked)) {
-        throw new Error(listed.locked ? t('main.worktree.lockedWithReason', { reason: listed.locked }) : t('main.worktree.locked'));
+        throw new WorktreeError('locked', listed.locked ? t('main.worktree.lockedWithReason', { reason: listed.locked }) : t('main.worktree.locked'), listed.locked || null);
       }
       await git(ref.root, ['worktree', 'unlock', path]);
     }

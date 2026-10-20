@@ -37,6 +37,7 @@ import type { ScheduledMessages } from './scheduled-messages';
 import { SEND_FAILURE, SendError } from './send-error';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
+import { WorktreeError, type WorktreeFailure } from './worktree';
 
 // Claude による、ほかのセッションの扱い（MCP サーバー tanacode-sessions のツールの実行）。中継からの呼び出しを、ソケットで受けて答える。
 // 呼び出し元のセッションは中継の env で渡ってくるので、親子の関係や見えるセッションは、アプリの記録（SessionSummary.parentId）で判断する。
@@ -77,7 +78,11 @@ export type SessionsHost = {
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
   switchingTerminal(id: string): boolean;
-  interrupt(id: string): void;
+  // 作業を中断する。止めるターンが開いていたら true（ターンの合間は、状態が作業中でも止めるものが無い）
+  interrupt(id: string): boolean;
+  // 今のターンを始めた送った発言が、まだ会話（conversation）に入っていなければ、その送り主（親の ID。人の発言なら null）。
+  // 入っていれば・分からなければ null
+  unseenTurnPrompt(id: string): { parent: string | null } | null;
   // 答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
   pendingQuestion(id: string): PendingQuestion | null;
   answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null;
@@ -169,6 +174,18 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 // 子セッションは人に通知しないので、人が答える許可の確認・アプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
 const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'terminal', 'browser', 'exited']);
 
+// worktree を作れない・消せない理由の英語の文（WorktreeError の message は画面の言語なので、Claude には返さない）
+const WORKTREE_FAILURE: Record<WorktreeFailure, string> = {
+  notRepo: 'the folder is not in a git repository',
+  noCommit: 'the repository has no commits yet',
+  noName: 'no unused name for a new worktree could be found',
+  locked: 'the worktree is locked',
+  closedWhileCreating: 'the session was archived or removed from the session list while its worktree was being created',
+};
+
+// ターンが終わった状態（親が止めた印を片付ける）
+const TURN_ENDED_STATES = new Set<SessionState>(['idle', 'background', 'exited', 'archived']);
+
 // end_session で終えられる状態。手が空いている・Claude Code が動いていない・裏のタスクの完了待ち（ターンは終わっている）・アーカイブ済み（残った worktree を消す）
 const ENDABLE_STATES = new Set<SessionState>(['idle', 'exited', 'background', 'archived']);
 // 終えられない状態ごとの、断る理由と次にできること（子の名前に続ける）
@@ -217,7 +234,7 @@ export class SessionsControl {
   private readonly observedAt = new Map<string, number>();
   // 最適化圧縮の流れが進んだ子（流れが始まってから、再開の文のターンが終わるまで）
   private readonly compacted = new Set<string>();
-  // 親が止めた子。止めてターンが終わったことは、親に知らせない
+  // 親が止めた子（止めるターンが開いていたもの）。止めて終わったターンは、親に知らせない
   private readonly stopped = new Set<string>();
   // 裏のタスクが動いたままターンを終えたことを、親に知らせた子（`親:子`）。裏のタスクの知らせ（Monitor の途中の知らせなど）で
   // 始まったターンが、また完了待ちで終わっても、知らせ直さない
@@ -298,7 +315,7 @@ export class SessionsControl {
           return textResult(`Unknown tool: ${name}`, true);
       }
     } catch (error) {
-      return textResult(error instanceof Error ? error.message : String(error), true);
+      return textResult(errorText(error), true);
     }
   }
 
@@ -449,7 +466,11 @@ export class SessionsControl {
       capMode: true,
     };
     const parentId = independent ? null : caller.id;
-    const id = options.worktree ? await host.createInWorktree(folder, options, parentId) : host.create(folder, options, parentId);
+    const id = options.worktree
+      ? await host.createInWorktree(folder, options, parentId).catch((error: unknown) => {
+          throw error instanceof WorktreeError ? new ToolError(`Could not start the session in a new worktree: ${errorText(error)}.`) : error;
+        })
+      : host.create(folder, options, parentId);
     const name = stringArg(args.name);
     if (name) host.rename(id, name);
     this.lastState.set(id, host.stateOf(id));
@@ -725,9 +746,16 @@ export class SessionsControl {
     if (raw !== 'working') {
       return json({ session_id: child.id, state, note: raw === 'background' ? 'Its turn has finished, and it is waiting for background tasks to finish.' : 'It is not working.' });
     }
-    // 止めて手が空いたことは、親に知らせない（親が止めたので）
+    // 止めて手が空いたことは、親に知らせない（親が止めたので）。止めるターンが開いていなかったら（最適化圧縮の流れのすき間・
+    // ターンの終わりの間際・送った指示がまだ始まっていない）、何も止めていないので印を付けない（付けると、あとの作業の知らせを捨てる）
+    if (!host.interrupt(child.id)) {
+      return json({
+        session_id: child.id,
+        state: host.stateOf(child.id),
+        note: 'It was between turns (for example, finishing a turn, being switched to a new conversation by optimized compaction, or about to start a message), so nothing was interrupted. Check it with get_session, and call stop_session again if it is still working.',
+      });
+    }
     this.stopped.add(child.id);
-    host.interrupt(child.id);
     return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Interrupted.' });
   }
 
@@ -757,7 +785,7 @@ export class SessionsControl {
     try {
       removal = await this.deps.archive(child.id, { removeWorktree });
     } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
+      failure = errorText(error);
     }
     // worktree を消せなかったときも、アーカイブは済んでいる。アーカイブもできていなければ、そのまま失敗として返す
     if (host.stateOf(child.id) !== 'archived') throw new ToolError(`Could not archive ${who}: ${failure ?? 'unknown error'}`);
@@ -914,14 +942,22 @@ export class SessionsControl {
     const busy = !!state && isBusy(state);
     if (parentId && busy && !this.compacted.has(id)) this.notices.remove(parentId, id);
     if (!busy) this.compacted.delete(id);
-    // 作業していた子のターンが終わったとき（起動中から手が空いたのは、作業を終えたのではない。アプリを起動し直して引き継いだときなど）
-    if (parentId && before === 'working' && state && NOTIFY_STATES.has(state)) void this.queueNotice(id, parentId, state);
+    // 作業していた子のターンが終わったとき（起動中から手が空いたのは、作業を終えたのではない。アプリを起動し直して引き継いだときなど）。
+    // 裏のタスクの完了待ちの子が、人の対応待ちになったとき（裏のサブエージェントが、ブラウザでの操作・許可・質問を頼んだ）も知らせる
+    const asked = before === 'background' && (state === 'browser' || state === 'permission' || state === 'question');
+    if (parentId && (before === 'working' || asked) && state && NOTIFY_STATES.has(state)) void this.queueNotice(id, parentId, state);
+    // ターンが終わったのに知らせを作らなかったとき（ブラウザでの操作待ちから手が空いた・ターミナルモードを通ったなど）は、止めた印を片付ける
+    else if (!state || TURN_ENDED_STATES.has(state)) this.stopped.delete(id);
   }
 
   private async queueNotice(childId: string, parentId: string, state: SessionState): Promise<void> {
     const at = Date.now();
-    if (this.stopped.delete(childId)) return;
+    // 今のターンを始めた発言が、まだ会話に入っていないか（許可の確認・質問・ブラウザでの操作の頼みは、会話ログの発言の行より先に届くことがある）
+    const unseen = this.deps.host.unseenTurnPrompt(childId);
     const events = await this.deps.host.conversation(childId);
+    // 親が止めたターンの終わりは知らせない。止めた印は、ターンが終わった知らせで片付ける（印のあとに親が出した指示の作業や、
+    // 止まらずに続いた作業の終わりは知らせる。最後のターンの終わりが中断かで見分ける）
+    if (TURN_ENDED_STATES.has(state) && this.stopped.delete(childId) && lastOf(events, (e): e is Extract<ChatEvent, { type: 'turn-end' }> => e.type === 'turn-end')?.interrupted) return;
     // /clear のあとの会話だけを見る（最後の指示が親のものでも、/clear で会話を始め直していれば、親の作業ではない）。
     // 最適化圧縮の切り替え（アプリが打った /clear）は、区切りにしない（会話を消しても、だれの作業かは変わらない。手動も自動も同じ）
     const reset = lastOf(events, (e): e is Extract<ChatEvent, { type: 'reset' }> => e.type === 'reset' && !e.compact);
@@ -929,7 +965,7 @@ export class SessionsControl {
     // アプリが打った /clear（新しい会話に、コマンドの発言として残る）は、人の発言に数えない
     const user = lastOf(withoutCompaction(after), isUser);
     // アプリを起動し直したあとは、切り替える前の会話が手元に無い。再開の文に入っている発言の原文で見分ける
-    const fromParent = user ? user.parent === parentId : (carriedMessages(after).at(-1)?.fromParent ?? false);
+    const fromParent = unseen ? unseen.parent === parentId : user ? user.parent === parentId : (carriedMessages(after).at(-1)?.fromParent ?? false);
     if (!fromParent) return;
     // 利用枠に当たって止まったのは、作業の終わりではない。いつ再開するかと一緒に知らせる。
     // 最適化圧縮のターン（仕上げ・再開）で止まったときも知らせる（枠が戻ったら再開のメッセージが届き、子はそこから動き出す）
@@ -943,9 +979,10 @@ export class SessionsControl {
     if (!limit && last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactMidTurn(detailOf(last)))) return;
     // 裏のタスクが動いたままターンを終えたことは、知らせてあれば知らせ直さない。人の発言でないもの（裏のタスクの知らせ・予約など）で
     // 始まったターンが、また完了待ちで終わったとき（Monitor は、途中の知らせのたびにターンを始める）。
-    // 終わりは、裏のタスクが無くなって手が空いたターンの終わりに知らせる
+    // 終わりは、裏のタスクが無くなって手が空いたターンの終わりに知らせる。送った発言で始まったターンは、その発言がまだ会話に
+    // 入っていなくても（unseen）、発言のターン
     const key = `${parentId}:${childId}`;
-    if (!limit && state === 'background' && last?.type !== 'user' && !(last?.type === 'notice' && last.compact) && this.backgroundTold.has(key)) return;
+    if (!limit && state === 'background' && !unseen && last?.type !== 'user' && !(last?.type === 'notice' && last.compact) && this.backgroundTold.has(key)) return;
     if (state !== 'background') this.backgroundTold.delete(key);
     this.notices.add(parentId, childId, { state, at, ...(limit ? { limit } : {}) });
   }
@@ -1570,6 +1607,12 @@ function intArg(value: unknown, min: number, max: number, fallback: number): num
 
 function json(value: unknown): ToolResult {
   return textResult(JSON.stringify(value, null, 2));
+}
+
+// 失敗を Claude に返す文。worktree の失敗は、画面の言語の文の代わりに英語の文にする（ロックの理由など、添える言葉はそのまま）
+function errorText(error: unknown): string {
+  if (error instanceof WorktreeError) return error.detail ? `${WORKTREE_FAILURE[error.reason]} (${error.detail})` : WORKTREE_FAILURE[error.reason];
+  return error instanceof Error ? error.message : String(error);
 }
 
 function lastOf<T, S extends T>(list: T[], match: (item: T) => item is S): S | undefined {

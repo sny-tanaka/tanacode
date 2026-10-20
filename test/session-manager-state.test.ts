@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
 import type { TurnStarter } from '../src/main/compact-notice';
 import { handoffText, resumeText } from '../src/shared/optimized-compact';
+import { parentMessageText } from '../src/shared/session-tools';
 import type { ChatEvent } from '../src/shared/chat';
 import { readChatLog } from '../src/main/chat-log';
 import { QUESTION } from './scenario';
@@ -696,11 +697,42 @@ describe('最適化圧縮を自動で始めるか（セッションごと）', (
 });
 
 describe('中断', () => {
-  it('interrupt: interrupt の要求を送る', async () => {
+  it('interrupt: interrupt の要求を送る。止めるターンが開いていたかを返す（ターンの合間は、作業中に見えても止めるものが無い）', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
-    app.manager.interrupt(id);
+    expect(app.manager.interrupt(id)).toBe(false);
     await app.waitFor('中断', () => pipe.requests('interrupt').length === 1);
+    await app.prompt(id, '調べて');
+    expect(app.manager.interrupt(id)).toBe(true);
+    // ターンは終わったが、会話ログが追いつくのを待っている間（状態は作業中のまま）
+    app.say(id, line.text('途中です'));
+    app.finish(id);
+    expect(app.manager.stateOf(id)).toBe('working');
+    expect(app.manager.interrupt(id)).toBe(false);
+  });
+});
+
+describe('まだ会話に入っていない発言', () => {
+  it('ターンを始めた送った発言が会話ログに出るまでは、その送り主を返す（親の指示か、人の発言か）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    expect(app.manager.unseenTurnPrompt(id)).toBeNull();
+    const parent = '11111111-0000-4000-8000-000000000001';
+    const uuid = await app.send(id, parentMessageText(parent, '調べてください'));
+    // 送っただけ（まだターンに取り込まれていない）
+    expect(app.manager.unseenTurnPrompt(id)).toBeNull();
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    await app.waitFor('ターンの始まり', () => app.manager.unseenTurnPrompt(id) !== null);
+    expect(app.manager.unseenTurnPrompt(id)).toEqual({ parent });
+    // 発言の行が会話ログに出たら、会話を読めばよい
+    app.append(id, { ...line.user(parentMessageText(parent, '調べてください')), uuid, origin: undefined });
+    await app.waitFor('発言の行', () => app.manager.unseenTurnPrompt(id) === null);
+    app.finish(id);
+    // 人の発言
+    const human = await app.send(id, '人の発言です');
+    pipe.emit(stream.lifecycle(human, 'started'));
+    await app.waitFor('人の発言のターン', () => app.manager.unseenTurnPrompt(id) !== null);
+    expect(app.manager.unseenTurnPrompt(id)).toEqual({ parent: null });
   });
 });
 

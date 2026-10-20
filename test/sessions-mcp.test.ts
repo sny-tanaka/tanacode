@@ -45,6 +45,7 @@ import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-mess
 import { usageResumeText } from '../src/shared/usage-limit';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
+import { WorktreeError } from '../src/main/worktree';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 
 // ほかのセッションを扱う MCP（tanacode-sessions）。中継・起動の引数・会話ログの見分け・ツールの実行（親子・見える範囲・知らせ）
@@ -355,7 +356,15 @@ class FakeHost implements SessionsHost {
   // チャットとターミナルモードを切り替えている途中のセッション
   switching = new Set<string>();
   switchingTerminal = (id: string) => this.switching.has(id);
-  interrupt = (id: string) => void this.interrupted.push(id);
+  // 止めるターンが開いていないセッション（ターンの合間。中断は送るが、止めるものが無い）
+  betweenTurns = new Set<string>();
+  interrupt = (id: string) => {
+    this.interrupted.push(id);
+    return !this.betweenTurns.has(id);
+  };
+  // 今のターンを始めた、まだ会話に入っていない送った発言の送り主
+  unseenPrompts = new Map<string, { parent: string | null }>();
+  unseenTurnPrompt = (id: string) => this.unseenPrompts.get(id) ?? null;
   // 答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
   questions = new PendingQuestions((id) => this.listeners.forEach((l) => l(id)));
   pendingQuestion = (id: string) => this.questions.first(id);
@@ -535,6 +544,15 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(await note({ worktree: true })).toContain('the child needs no setup for the worktree itself.');
     expect(await note({ worktree: true, independent: true })).toContain('the session needs no setup for the worktree itself.');
     for (const independent of [false, true]) expect(await note({ worktree: false, independent })).not.toContain('worktree');
+  });
+
+  it('start_session: worktree を作れなかった理由は、画面の言語の文でなく英語で返す', async () => {
+    host.createInWorktree = async () => {
+      throw new WorktreeError('notRepo', 'worktree で始めるには、リポジトリのフォルダを選んでください');
+    };
+    const result = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe('Could not start the session in a new worktree: the folder is not in a git repository.');
   });
 
   it('start_session: independent なら、親のないセッションとして始める。Remote Control は呼び出し元に合わせ、権限モードは強くできない。指示も待つこともできない', async () => {
@@ -1466,6 +1484,14 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(await end({ remove_worktree: false }))).toBe('Could not archive "s-22": unknown error');
     });
 
+    it('worktree を消せなかった理由は、画面の言語の文でなく英語で返す（ロックの理由はそのまま添える）', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = leftovers();
+      host.removal = new WorktreeError('locked', 'worktree がロックされているため、消しませんでした（外付けのディスク）', '外付けのディスク');
+      const ended = jsonOf<{ worktree: { error: string } }>(await end());
+      expect(ended.worktree).toMatchObject({ folder: 'not_removed', error: 'the worktree is locked (外付けのディスク)' });
+    });
+
     it('worktree を消せなかったとき（ユーザーが付けたロックなど）: アーカイブはしたうえで、理由を返す', async () => {
       host.set(CHILD, 'idle');
       host.leftovers = leftovers();
@@ -1769,9 +1795,90 @@ describe('ツールの実行（SessionsControl）', () => {
 
     it('親が止めた子のターンの終わりは、知らせない', async () => {
       await control.handle(PARENT, 'stop_session', { session_id: CHILD });
+      // 止めたターンは、中断の印の付いたターンの終わりで終わる
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }, { type: 'turn-end', interrupted: true }]);
       host.set(CHILD, 'idle');
       await settle();
       expect(host.submitted).toEqual([]);
+    });
+
+    it('止めたすぐあとに次の指示を出したら、その作業の終わりは知らせる（止めた印で、次の作業の知らせを捨てない）', async () => {
+      await control.handle(PARENT, 'stop_session', { session_id: CHILD });
+      await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '代わりにこちらを' });
+      // 送った指示が順番待ちなので、止めたターンが終わっても作業中のまま、次の指示のターンが続く
+      host.events.set(CHILD, [
+        { type: 'user', id: '1', text: 'x', parent: PARENT },
+        { type: 'turn-end', interrupted: true },
+        { type: 'user', id: '2', text: '代わりにこちらを', parent: PARENT },
+        { type: 'assistant-text', id: 'a2', text: 'できました' },
+        { type: 'turn-end' },
+      ]);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted.filter((m) => m.id === PARENT)).toHaveLength(1);
+      expect(host.submitted.find((m) => m.id === PARENT)?.text).toContain('作業が終わりました');
+    });
+
+    it('止めるターンが開いていなければ（ターンの合間）、止めていないと返し、あとの作業の終わりは知らせる', async () => {
+      host.betweenTurns.add(CHILD);
+      const result = jsonOf<{ note: string }>(await control.handle(PARENT, 'stop_session', { session_id: CHILD }));
+      expect(result.note).toContain('nothing was interrupted');
+      expect(host.interrupted).toEqual([CHILD]);
+      // 子はそのまま作業を続けて終える
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }, { type: 'assistant-text', id: 'a1', text: 'できました' }, { type: 'turn-end' }]);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+    });
+
+    it('止めた印が残っても（ブラウザでの操作待ちのまま止まった）、ターンが終わったら片付け、次の作業の知らせを捨てない', async () => {
+      host.askInBrowser(CHILD, true);
+      await settle();
+      host.submitted.length = 0;
+      await control.handle(PARENT, 'stop_session', { session_id: CHILD });
+      // 頼みを取り消す前にターンが終わった（ブラウザでの操作待ち → 手が空いた。知らせは作らない）
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }, { type: 'turn-end', interrupted: true }]);
+      host.set(CHILD, 'idle');
+      host.askInBrowser(CHILD, false);
+      await settle();
+      expect(host.submitted).toEqual([]);
+      // 親の次の指示の作業が、途中で人の許可を待つ（前のターンの終わりは中断だが、今のターンは終わっていない）
+      host.events.set(CHILD, [
+        { type: 'user', id: '1', text: 'x', parent: PARENT },
+        { type: 'turn-end', interrupted: true },
+        { type: 'user', id: '2', text: '続けて', parent: PARENT },
+      ]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'permission');
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+    });
+
+    it('許可の確認が、会話ログの発言の行より先に届いても、送った指示の送り主で見分けて知らせる', async () => {
+      // 新しい子の最初のターン: 会話にはまだ何も無い
+      host.events.set(CHILD, []);
+      host.unseenPrompts.set(CHILD, { parent: PARENT });
+      host.set(CHILD, 'permission');
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+    });
+
+    it('人が子に直接打った発言のターンは、会話に前の親の指示があっても、親に知らせない（まだ会話ログに出ていない発言で見分ける）', async () => {
+      host.unseenPrompts.set(CHILD, { parent: null });
+      host.set(CHILD, 'permission');
+      await settle();
+      expect(host.submitted).toEqual([]);
+    });
+
+    it('裏のタスクの完了待ちの子が、人の対応待ち（ブラウザでの操作・許可の確認）になったら知らせる', async () => {
+      host.set(CHILD, 'background');
+      await settle();
+      host.submitted.length = 0;
+      // 裏のサブエージェントが、ブラウザでの操作を頼んだ
+      host.askInBrowser(CHILD, true);
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+      expect(host.submitted[0].text).toContain('アプリ内ブラウザ');
     });
 
     it('/clear で会話を始め直したあとは、前の親の指示の作業とみなさない', async () => {
