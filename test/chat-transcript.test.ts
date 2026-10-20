@@ -620,6 +620,36 @@ describe('toChatEvents: 発言の行', () => {
     expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
   });
 
+  // Claude Code は、順番待ちの発言をまとめて 1 つの発言の行にする。本文は送った順に改行 1 つでつなぎ、行の uuid は最後に送ったもの、
+  // mergedSendUuids はそれより前に送ったもの（送った順）（2.1.303 で実測。3 通を 1 行にしたもの）
+  it('順番待ちの発言をまとめた行（mergedSendUuids）は、送った発言ごとに分ける。親の指示は 1 つずつの発言、知らせは 1 つずつのお知らせ', () => {
+    const parent = '0f8c2a1e-0000-4000-8000-000000000001';
+    const child = '1a2b3c4d-0000-4000-8000-000000000002';
+    const three = [parentMessageText(parent, '指示 A'), parentMessageText(parent, '指示 B\n2 行目'), parentMessageText(parent, '指示 C')].join('\n');
+    // 直す前は、1 つの発言として読み、本文の途中に閉じタグと開きタグが文字で出ていた
+    expect(events(user(three, { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual([
+      { type: 'user', id: 'u1', text: '指示 A', at, parent },
+      { type: 'user', id: 'u2', text: '指示 B\n2 行目', at, parent },
+      { type: 'user', id: 'u3', text: '指示 C', at, parent },
+    ]);
+    // 親の指示と子の知らせ・予約が混ざっていても分ける
+    const mixed = [sessionEventText([child], '子の作業が終わりました'), parentMessageText(parent, '次はこれ'), wakeupText('予約の本文')].join('\n');
+    expect(events(user(mixed, { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual([
+      { type: 'notice', id: 'u1', text: '子の作業が終わりました', sessions: [child] },
+      { type: 'user', id: 'u2', text: '次はこれ', at, parent },
+      { type: 'notice', id: 'u3', text: 'Claude の予約の時刻になりました', detail: '予約の本文' },
+    ]);
+    // 囲みの無い発言どうし（人が書いた予約）は分けられない。分けた最後の部分が、行の uuid
+    expect(events(user(['人の予約 1', '人の予約 2', parentMessageText(parent, '指示')].join('\n'), { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual([
+      { type: 'user', id: 'u1', text: '人の予約 1\n人の予約 2', at },
+      { type: 'user', id: 'u3', text: '指示', at, parent },
+    ]);
+    // まとめた行でなければ分けない（1 つの発言の中の囲みのタグは、そのまま）
+    expect(events(user(`前置き\n${parentMessageText(parent, '指示')}`))).toEqual([{ type: 'user', id: 'u1', text: `前置き\n${parentMessageText(parent, '指示')}`, at }]);
+    // 一覧の名前は、はじめに送った発言から
+    expect(transcriptTitle(user(three, { uuid: 'u3', mergedSendUuids: ['u1', 'u2'] }))).toEqual({ title: '指示 A', priority: 1 });
+  });
+
   it('unsentView: 送信中・順番待ちには、会話に出たときと同じ形で出す。親の指示は囲みを外して親の ID を付け、知らせは出さない', () => {
     const parent = 'abcd1234-0000-0000-0000-000000000000';
     expect(unsentView('ログインを直して')).toEqual({ text: 'ログインを直して', pastes: [] });

@@ -3338,15 +3338,15 @@ export class SessionManager {
       // 再開の文のターンで、チェックリスト以外のツールを使った。報告して待ったのではなく、作業を続けたターン（終わりは作業の完了）
       if (rt.turnStarter === 'resume' && events.some(continuesWork)) rt.turnStarter = 'other';
     }
-    // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
-    const arrived = rt && !past && conversation ? sentUuidOf(conversation) : null;
+    // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid（順番待ちの発言をまとめた行は、まとめた全部）
+    const arrived = rt && !past && conversation ? sentUuidsOf(conversation) : [];
     // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
     if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
     // 発言のときのフックは、その発言の行（送った uuid。作業中に送ったものは attachment）のあとに付ける。違う形で出たとき（uuid の違う
     // 本体の発言の行）もそのあとに、発言の行より先に応答・ツールの行が出たらその前に付ける（応答の全部のあとまで待たせない）
     const promptLine = rt && !past ? rt.promptLine : null;
     if (rt && promptLine) {
-      if (arrived === promptLine || events.some((e) => e.type === 'user')) {
+      if (arrived.includes(promptLine) || events.some((e) => e.type === 'user')) {
         events = [...events, ...this.takeHeld(rt, promptLine)];
         rt.promptLine = null;
       } else if (events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) {
@@ -3366,29 +3366,33 @@ export class SessionManager {
       }
     }
     // 送った発言が会話に出たら、送信中の表示から外す（発言を出してから外す。先に外すと、一瞬どちらにも出ない）
-    if (rt && arrived) {
-      rt.arrivedPrompts.add(arrived);
-      if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
+    if (rt) {
+      for (const uuid of arrived) {
+        rt.arrivedPrompts.add(uuid);
+        if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
+      }
     }
-    if (rt && arrived && rt.unsent.delete(arrived)) {
+    // まとめた行では、まとめた発言のどれも外す（行の uuid だけを外すと、ほかの発言は、ターンの終わりの completed まで順番待ちに残り、
+    // チャットの発言と二重に見えていた）
+    if (rt && arrived.filter((uuid) => rt.unsent.delete(uuid)).length > 0) {
       this.emitQueue(id, rt);
       this.changed(id);
     }
     // 再起動で送り直すのを待っている発言が、起動し直した claude が読み直した会話ログに出ていた（止める直前に取り込まれていた）。送り直さない
-    const replayed = rt && past && conversation ? sentUuidOf(conversation) : null;
-    if (rt && replayed && rt.unsent.get(replayed)?.carried) {
-      rt.unsent.delete(replayed);
+    const replayed = rt && past && conversation ? sentUuidsOf(conversation).filter((uuid) => rt.unsent.get(uuid)?.carried) : [];
+    if (rt && replayed.length > 0) {
+      for (const uuid of replayed) rt.unsent.delete(uuid);
       this.emitQueue(id, rt);
       this.changed(id);
     }
     // ターンの最後の応答（応答の前に終わったターンは、始めた発言）が会話ログに出たら、待っていたターンの終わりを出す
     const waitFor = rt?.turnEnding?.waitFor;
-    if (rt && waitFor && (entry.uuid === waitFor || arrived === waitFor)) this.flushTurnEnd(id, rt);
+    if (rt && waitFor && (entry.uuid === waitFor || arrived.includes(waitFor))) this.flushTurnEnd(id, rt);
     // 待つ時間が切れて、ターンの終わりのあとに出た行（応答の前に終わったターンの発言など）。そのあとにもう一度ターンの終わりを出す
     // （チャットで、終わりを行より前に残さない。最適化圧縮は、仕上げの頼みのあとの終わりを待つ）。次のターンが始まったら印を捨てるので、
     // 出すのはターンの外だけ。完了の知らせ・タイトルの頼みは、もう済んでいるので繰り返さない
     const late = rt?.lateTurnEnd;
-    if (rt && late && (entry.uuid === late.waitFor || arrived === late.waitFor)) {
+    if (rt && late && (entry.uuid === late.waitFor || arrived.includes(late.waitFor))) {
       rt.lateTurnEnd = null;
       // 失敗の理由も出し直す（同じ id。画面は、前の行を外して今の位置に出す）
       this.pushEvents(id, [...(late.error ? [late.error] : []), late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
@@ -3468,12 +3472,16 @@ function hasCarried(rt: Runtime): boolean {
   return false;
 }
 
-// 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）
-function sentUuidOf(entry: ConversationEntry): string | null {
-  if (entry.isSidechain) return null;
-  if (entry.type === 'user' && entry.uuid) return entry.uuid;
+// 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）。
+// Claude Code が順番待ちの発言をまとめた行（mergedSendUuids）は、まとめた発言の全部（@shared/chat の mergedParts）
+function sentUuidsOf(entry: ConversationEntry): string[] {
+  if (entry.isSidechain) return [];
+  if (entry.type === 'user' && entry.uuid) {
+    const merged = Array.isArray(entry.mergedSendUuids) ? entry.mergedSendUuids.filter((uuid): uuid is string => typeof uuid === 'string' && uuid !== '') : [];
+    return [...merged, entry.uuid];
+  }
   const source = entry.type === 'attachment' ? entry.attachment?.source_uuid : undefined;
-  return typeof source === 'string' ? source : null;
+  return typeof source === 'string' ? [source] : [];
 }
 
 // 添えた画像のファイルを、発言の image のブロックにする。送れない（Claude に送れる形式でない・読めない）なら、そのファイルの名前。

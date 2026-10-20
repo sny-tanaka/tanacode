@@ -222,6 +222,8 @@ export type TranscriptEntry = {
   retractedMessageUuids?: unknown;
   // memory_saved: 保存したメモリのファイル（絶対パス）
   writtenPaths?: unknown;
+  // Claude Code が、順番待ちの発言をまとめて 1 つにした発言の行の、行の uuid より前に送った発言の uuid（送った順。mergedParts）
+  mergedSendUuids?: unknown;
 };
 
 const INTERRUPTED_PREFIX = '[Request interrupted by user';
@@ -669,6 +671,9 @@ function memoryEvents(entry: TranscriptEntry, paths: unknown, key: 'chat.transcr
 }
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
+  // 順番待ちの発言をまとめた 1 行は、送った発言ごとに分けて読む（親の指示を 1 つずつの発言に、知らせを 1 つずつのお知らせにする）
+  const parts = mergedParts(entry, text);
+  if (parts) return parts.flatMap((part) => userTextEvents({ ...entry, uuid: part.id, mergedSendUuids: undefined }, part.text));
   if (entry.interruptedMessageId || text.startsWith(INTERRUPTED_PREFIX)) return [{ type: 'turn-end', interrupted: true }];
   // 親セッションの Claude からの指示。人の発言と見分けて出す
   const fromParent = parseParentMessage(text);
@@ -718,6 +723,24 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   }
   return [{ type: 'user', id: entry.uuid ?? '', ...pastedParts(text), at: timeOf(entry) }];
 }
+
+// Claude Code は、順番待ちの発言（priority: later で送った親の指示・知らせ・予約など）が、ターンの終わりにいくつも待っていると、
+// まとめて 1 つの発言の行にする。本文は送った順に改行 1 つでつなぎ、行の uuid は最後に送った発言のもの、mergedSendUuids はそれより
+// 前に送った発言のもの（送った順）（2.1.302・2.1.303 で実測）。そのまま読むと、親の指示の本文の途中に、閉じタグと開きタグが文字で出る。
+// 送った発言ごとの本文と uuid に分ける。分けるのは tanacode の囲み（<tanacode-…>…</tanacode-…>）の切れ目だけ（囲みの本文には、囲みの
+// タグが入らない。neutralizeTags）。囲みの無い発言どうし（人が書いた予約など）は分けられないので、分けた数が送った数より少なければ、
+// 分けた最後の部分に行の uuid を、ほかには送った順の uuid を当てる。まとめた行でない・分けられない・分けた数が送った数より多い（人の
+// 発言の中に、囲みのタグがあった）ときは null（1 つの発言のまま読む）
+function mergedParts(entry: TranscriptEntry, text: string): { id: string; text: string }[] | null {
+  const merged = Array.isArray(entry.mergedSendUuids) ? entry.mergedSendUuids.filter((uuid): uuid is string => typeof uuid === 'string' && uuid !== '') : [];
+  if (merged.length === 0 || !entry.uuid) return null;
+  const texts = text.split(MERGED_BOUNDARY);
+  if (texts.length < 2 || texts.length > merged.length + 1) return null;
+  return texts.map((part, i) => ({ id: i === texts.length - 1 ? entry.uuid! : merged[i], text: part }));
+}
+
+// まとめた発言の切れ目: 囲みの閉じタグのあとの改行と、囲みの開きタグの前の改行
+const MERGED_BOUNDARY = /(?<=<\/tanacode-[a-z-]+>)\n|\n(?=<tanacode-[a-z-]+[ >])/;
 
 // user イベントに入れる形（札が無ければ pastes を持たない）
 function pastedParts(raw: string): { text: string; pastes?: string[]; pasted?: true } {
@@ -980,7 +1003,8 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     !entry.isCompactSummary &&
     typeof entry.message?.content === 'string'
   ) {
-    const text = entry.message.content;
+    // 順番待ちの発言をまとめた行は、はじめに送った発言で決める
+    const text = mergedParts(entry, entry.message.content)?.[0].text ?? entry.message.content;
     if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseWakeup(text) || parseUsageResume(text)) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
     const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];

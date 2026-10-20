@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import { parentMessageText } from '@shared/session-tools';
 import { checkTranscript, type NumberedEntry } from './transcript-checks';
 
 // 本物の会話ログで確かめる決まり（test/transcript-checks.ts。npm run check:transcripts が、手元の会話ログに流す）。
@@ -34,7 +35,7 @@ const NOTICE: TranscriptEntry = {
 describe('checkTranscript', () => {
   it('ふつうの会話ログ（控えの行つき）では、決まりを破らない。控えの行のツールの写しは、意図して捨てる行として知らせる', () => {
     const check = checkTranscript(numbered(...LINES, NOTICE), { cwd: CWD, agentLog: false });
-    expect(check).toMatchObject({ lines: 7, unknown: new Map(), duplicateResults: [], earlyFinish: [] });
+    expect(check).toMatchObject({ lines: 7, unknown: new Map(), duplicateResults: [], earlyFinish: [], parentTags: [] });
     expect(check.toolBlocksOutside).toEqual(new Map([['api-request-blob', { count: 2, line: 4, ignored: true }]]));
   });
 
@@ -67,6 +68,14 @@ describe('checkTranscript', () => {
       ]),
     );
     expect(check.toolBlocksOutside).toEqual(new Map([['brand-new', { count: 1, line: 3, ignored: false }]]));
+  });
+
+  it('親セッションからの指示の本文に、囲みのタグが文字で残った行を見つける（順番待ちの発言をまとめた行は、分けて読めば残らない）', () => {
+    const parent = '0f8c2a1e-0000-4000-8000-000000000001';
+    const two = [parentMessageText(parent, '指示 A'), parentMessageText(parent, '指示 B')].join('\n');
+    // まとめた行の印（mergedSendUuids）が無いと、1 つの発言として読み、本文にタグが残る
+    expect(checkTranscript(numbered({ type: 'user', uuid: 'u2', message: { content: two } }), { cwd: CWD, agentLog: false }).parentTags).toEqual([1]);
+    expect(checkTranscript(numbered({ type: 'user', uuid: 'u2', mergedSendUuids: ['u1'], message: { content: two } }), { cwd: CWD, agentLog: false }).parentTags).toEqual([]);
   });
 
   it('エージェントの会話ログ: サイドチェーンの行もチャットに組み立てて見る。裏のタスクの追跡には渡さない', () => {
