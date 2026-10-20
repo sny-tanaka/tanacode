@@ -323,6 +323,8 @@ export class ChecklistControl {
         // to_list を省くと、同じリストの中で並べ替える（番号はそのまま）
         const toName = optionalString(args.to_list)?.trim() || null;
         const found = toName === null ? list : store.findList(id, toName);
+        // 決定事項から外へ移そうとしたら、移す先のリストを作る前に断る
+        if (found?.id !== list.id) store.checkMoveOut('claude', list);
         const anchor = this.beforeArg(found, toName, args.before, cards);
         const to = found ?? store.createList(id, 'claude', toName ?? '', '');
         const from = cards.map((c) => c.number);

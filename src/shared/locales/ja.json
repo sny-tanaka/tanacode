@@ -464,7 +464,9 @@
     },
     "target": {
       "cardCount": "{count} 枚",
-      "stepCount": "{count} ステップ"
+      "stepCount": "{count} ステップ",
+      "inSession": "「{session}」の{target}",
+      "session": "「{session}」"
     },
     "notice": {
       "untitledSession": "新しいセッション",
