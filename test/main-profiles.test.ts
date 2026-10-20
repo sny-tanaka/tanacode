@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import { allOf, boot, cleanup, fakeEvent, invoke, invokeFrom, mainWindow, sendWith, state, type Fake, type FakeView, type FakeWebContents } from './helpers/main-app';
+import { allOf, boot, cleanup, fakeEvent, invoke, invokeFrom, mainWindow, menuItem, sendWith, state, type Fake, type FakeView, type FakeWebContents } from './helpers/main-app';
 
 // プロファイル（Claude Code のアカウントごとの環境）を複数開いたとき（src/main/index.ts）。
 // 足したプロファイルは、それぞれの pty ホスト・データ・Claude Code の設定のフォルダを持ち、画面はウインドウに重ねて出し分ける
@@ -19,6 +19,8 @@ type Listeners = { onSessionsChanged: (sessions: unknown[]) => void; onTurnCompl
 const listenersOf = (index: number) => managers()[index]!.args[4] as Listeners;
 // SessionManager に渡す、プロファイルの Claude Code の設定のフォルダ（index.ts の new SessionManager(...) の 13 番目の引数）
 const claudeDirOf = (index: number) => managers()[index]!.args[12];
+// SessionManager に渡す、セッションの MCP サーバーの材料（10 番目の引数）
+const sessionsLaunchOf = (index: number) => (managers()[index]!.args[9] as () => { noAskFile?: string } | null)();
 const view = () => state.views[0] as FakeView;
 const sentTo = (contents: { sent: [string, unknown][] }, channel: string) => contents.sent.filter(([c]) => c === channel).map(([, payload]) => payload);
 
@@ -69,6 +71,24 @@ describe('足したプロファイルを開く', () => {
     // 開いていないプロファイルには変えない
     await invoke(IpcChannel.ProfilesSwitch, 'nope');
     expect(view().visible).toBe(false);
+  });
+
+  it('「Claude がセッションを始める前に許可を求める」はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のファイルを見て、見ているプロファイルによらず同じ設定を切り替える', async () => {
+    await boot({ profiles: PROFILES });
+    const noAskFile = join(state.userData, 'sessions-start-no-ask');
+    expect(sessionsLaunchOf(0)).toMatchObject({ noAskFile });
+    expect(sessionsLaunchOf(1)).toMatchObject({ noAskFile });
+    await invoke(IpcChannel.ProfilesSwitch, 'p2');
+    const item = menuItem('Claude がセッションを始める前に許可を求める');
+    expect(item.checked).toBe(true);
+    item.checked = false;
+    item.click?.(item);
+    expect(existsSync(noAskFile)).toBe(true);
+    // アプリ全体の設定（既定のプロファイルと同じファイル）に保存し、足したプロファイルの設定には書かない
+    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ sessionsStartConfirm: false });
+    expect(existsSync(join(state.userData, 'profiles', 'p2', 'settings.json'))).toBe(false);
+    await invoke(IpcChannel.ProfilesSwitch, 'default');
+    expect(menuItem('Claude がセッションを始める前に許可を求める').checked).toBe(false);
   });
 
   it('アプリ内ブラウザの webview は、プロファイルごとのセッション（Cookie）を使わせる', async () => {

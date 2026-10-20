@@ -4,7 +4,7 @@ import type { Step } from '../cli/mock-api';
 import { NUMBERED_PROMPT } from '../scenarios/input';
 import { E2EApp } from './app';
 
-// Claude がセッションの MCP で子セッションを始める。始める前に許可の確認がカードで出て、答えると、
+// Claude がセッションの MCP で子セッションを始める。始める前に許可の確認がカードで出て（既定）、答えると、
 // 子はアプリのふつうのセッションとして一覧に並び（親の下）、最初の指示で動き出す。親は子の一覧を読める。
 // 番号付きの手順が続く長い指示（NUMBERED_PROMPT）でも、子に全文が届き、子は動き出す
 
@@ -83,6 +83,96 @@ describe('Claude がセッションの MCP で子セッションを始める', (
     await app.byText('.claude-header .claude-title', NUMBERED_NAME).waitFor();
     await app.byText('.chat-list', NUMBERED_REPLY).waitFor();
     expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
+  });
+
+  it('画面のコンソールにエラーが出ていない', () => {
+    expect(app.consoleErrors).toEqual([]);
+  });
+});
+
+// メニューの「Claude がセッションを始める前に許可を求める」をオフにすると、manual の親でも、許可の確認を出さずに子が始まる。
+// オンに戻すと、動いている親（Claude Code を起動し直さない）でも、次の起動からまた確認が出る（フックが呼ばれるたびに印のファイルを見る）
+const NO_ASK_LABEL = 'Claude がセッションを始める前に許可を求める';
+const NO_ASK_PARENT = '確認なしで別のセッションを始めてください';
+const NO_ASK_CHILD = '確認なしで始めた子の作業として、返事だけしてください';
+const NO_ASK_CHILD_NAME = '確認なしの子';
+const NO_ASK_CHILD_REPLY = '確認なしの子の返事です';
+const NO_ASK_DONE = '確認なしで子を始めました';
+const ASK_AGAIN = 'もう一度、別のセッションを始めてください';
+const ASK_AGAIN_CHILD = '確認を戻したあとの子の作業として、返事だけしてください';
+const ASK_AGAIN_CHILD_NAME = '確認を戻したあとの子';
+const ASK_AGAIN_DONE = '確認を戻したあとに子を始めました';
+
+describe('「Claude がセッションを始める前に許可を求める」の切り替え', () => {
+  let app: E2EApp;
+
+  beforeAll(async () => {
+    app = await E2EApp.launch({
+      trusted: true,
+      conversations: () => [
+        {
+          match: NO_ASK_PARENT,
+          steps: [
+            [{ type: 'tool_use', id: 'toolu_no_ask', name: sessionToolId('start_session'), input: { prompt: NO_ASK_CHILD, worktree: false, name: NO_ASK_CHILD_NAME } }],
+            [{ type: 'text', text: NO_ASK_DONE }],
+            [{ type: 'tool_use', id: 'toolu_ask_again', name: sessionToolId('start_session'), input: { prompt: ASK_AGAIN_CHILD, worktree: false, name: ASK_AGAIN_CHILD_NAME } }],
+            [{ type: 'text', text: ASK_AGAIN_DONE }],
+          ],
+        },
+        { match: NO_ASK_CHILD, steps: [[{ type: 'text', text: NO_ASK_CHILD_REPLY }]] },
+        { match: ASK_AGAIN_CHILD, steps: [[{ type: 'text', text: '確認を戻したあとの子の返事です' }]] },
+      ],
+    });
+  });
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state === 'fail') await app?.keepEvidence(`sessions-no-ask-${task.name}`);
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  // メニューの「tanacode」の項目を押す（人が押したときと同じく、チェックを切り替えてから押した処理を動かす）。押したあとのチェックを返す
+  const toggleMenu = (label: string) =>
+    app.app.evaluate(({ Menu }, label) => {
+      type Item = { label: string; checked: boolean; click(): void; submenu?: { items: Item[] } | null };
+      const find = (items: Item[]): Item | null => {
+        for (const item of items) {
+          if (item.label === label) return item;
+          const found = item.submenu ? find(item.submenu.items) : null;
+          if (found) return found;
+        }
+        return null;
+      };
+      const item = find((Menu.getApplicationMenu()?.items ?? []) as unknown as Item[]);
+      if (!item) throw new Error(`メニューに「${label}」がありません`);
+      item.click();
+      return item.checked;
+    }, label);
+
+  it('オフにすると、manual の親でも、許可の確認を出さずに子が始まる', async () => {
+    expect(await toggleMenu(NO_ASK_LABEL)).toBe(false);
+    await app.startSession(NO_ASK_PARENT, { mode: 'manual' });
+    await app.byText('.chat-list', NO_ASK_DONE).waitFor();
+    expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
+    await app.byText('.session-list .session-row', NO_ASK_CHILD_NAME).click();
+    await app.byText('.chat-list', NO_ASK_CHILD_REPLY).waitFor();
+  });
+
+  it('オンに戻すと、動いている親でも（起動し直さずに）、次の起動から許可の確認が出る', async () => {
+    const running = await app.claudePids();
+    expect(await toggleMenu(NO_ASK_LABEL)).toBe(true);
+    await app.byText('.session-list .session-row', NO_ASK_PARENT).click();
+    await app.byText('.chat-list', NO_ASK_DONE).waitFor();
+    await app.send(ASK_AGAIN);
+    const card = await app.menuCard('permission');
+    expect(await card.textContent()).toContain(ASK_AGAIN_CHILD);
+    await app.choose(card, /^許可する/);
+    await app.byText('.chat-list', ASK_AGAIN_DONE).waitFor();
+    await app.byText('.session-list .session-row', ASK_AGAIN_CHILD_NAME).waitFor();
+    // 親と前の子の Claude Code は、動き続けている
+    expect(await app.claudePids()).toEqual(expect.arrayContaining(running));
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
