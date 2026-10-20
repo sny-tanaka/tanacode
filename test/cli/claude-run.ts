@@ -556,7 +556,18 @@ export class ClaudeRun {
   // （本体の会話ログ・サブエージェントとワークフローのエージェントの会話ログ。/clear・worktree で増えたものも）と、stream-json の行
   private survey(): { inventory: InventoryBuilder; problems: string[] } {
     const inventory = new InventoryBuilder();
-    for (const file of transcriptFiles(join(this.home, '.claude', 'projects'))) inventory.addTranscript(readTranscript(file), this.cwd);
+    // フックの失敗の記録（アプリが足したフックが、ときどき失敗していないかの手がかり。台本では出ないはずなので、出たら中身をログに残す）
+    const hookErrors: string[] = [];
+    for (const file of transcriptFiles(join(this.home, '.claude', 'projects'))) {
+      const entries = readTranscript(file);
+      inventory.addTranscript(entries, this.cwd);
+      for (const entry of entries) {
+        const a = entry.attachment;
+        if (entry.type !== 'attachment' || (a?.type !== 'hook_non_blocking_error' && a?.type !== 'hook_error_during_execution')) continue;
+        hookErrors.push(`${String(a.type)} ${String(a.hookEvent)}（${String(a.hookName)}・終了コード ${String(a.exitCode)}）: ${String(a.stderr ?? a.content ?? '').slice(0, 500)}`);
+      }
+    }
+    if (hookErrors.length > 0) console.warn(`フックの失敗が会話ログに書かれました:\n${hookErrors.join('\n')}`);
     const lines = this.streamLines();
     inventory.addStream(lines);
     const allowed = new Set(this.options.unknown ?? []);
