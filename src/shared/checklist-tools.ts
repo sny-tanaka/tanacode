@@ -367,14 +367,37 @@ export function cardOfTool(name: string, input: string): { list: string; number:
   }
 }
 
-// チャットのツールの行に出す対象（「やること #3」「確認事項 #2〜4 → 別のセッション」など）。チェックリストのツールでなければ null
-export function checklistTarget(name: string, input: Record<string, unknown>): string | null {
+// チャットのツールの行に出す対象（「やること #3」「やること #2 → 人のやること」「「画面の直し」のやること #3」など）。チェックリストのツールでなければ null。
+// ほかのセッションのリスト（session_id・from_session・to_session）には、そのセッションの名前（nameOf。分からなければ ID の頭 8 文字）を添える
+// （親が子のリストを触ったのを、自分のリストを触ったのと見分けられるように）
+export function checklistTarget(name: string, input: Record<string, unknown>, nameOf: (id: string) => string | null = () => null): string | null {
   if (!name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`)) return null;
   const str = (key: string) => (typeof input[key] === 'string' ? (input[key] as string).trim() : '');
+  const session = (key: string) => {
+    const id = str(key);
+    return id ? (nameOf(id) ?? id.slice(0, 8)) : null;
+  };
   const listName = str('list') || str('from_list') || str('name');
   const raw = input.number ?? input.numbers;
   const nums = typeof raw === 'number' ? `#${raw}` : typeof raw === 'string' && raw.trim() ? `#${raw.trim().replace(/^#/, '')}` : '';
   const cards = Array.isArray(input.cards) ? t('tools.target.cardCount', { count: input.cards.length }) : '';
-  const to = str('to_list') ? ` → ${str('to_list')}` : '';
-  return [listName, nums, cards].filter(Boolean).join(' ') + to;
+  const target = [listName, nums, cards].filter(Boolean).join(' ');
+  // セッションの名前を添える（リストを決めないツールは、セッションの名前だけ）
+  const inSession = (where: string | null, what: string) =>
+    !where ? what : what ? t('tools.target.inSession', { session: where, target: what }) : t('tools.target.session', { session: where });
+  const from = inSession(session('session_id') ?? session('from_session'), target);
+  // 移す・コピーする先。cards_copy は、to_list を省くと同じ名前のリスト
+  const to = inSession(session('to_session'), str('to_list'));
+  return to ? `${from} → ${to}` : from;
+}
+
+// チャットのツールの行（入力は JSON の文字）に出す、チェックリストのツールの対象。読めなければ null
+export function checklistTargetOfTool(name: string, input: string, nameOf: (id: string) => string | null): string | null {
+  if (!name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`)) return null;
+  try {
+    const args: unknown = JSON.parse(input);
+    return args && typeof args === 'object' && !Array.isArray(args) ? checklistTarget(name, args as Record<string, unknown>, nameOf) : null;
+  } catch {
+    return null;
+  }
 }

@@ -345,6 +345,30 @@ describe('ツールのカード（ToolCard）', () => {
     expect(onSelectSession).toHaveBeenLastCalledWith(CHILD);
   });
 
+  // 直す前: 親が子のリストを触っても「やること #3」とだけ出て、自分のリストを触ったのと見分けられなかった
+  it('ほかのセッションのチェックリストを触ったツールは、そのセッションの名前を添えて出す', () => {
+    const sessions = [
+      { id: LOGIN, title: 'ログインの改修' },
+      { id: CHILD, title: '画面の直し' },
+    ];
+    const check = tool({
+      name: 'mcp__tanacode-checklist__card_check',
+      target: '「cccccccc」のやること #3',
+      input: JSON.stringify({ list: 'やること', numbers: '3', session_id: CHILD.slice(0, 8) }),
+    });
+    const { rerender, container } = render(<ToolCard {...toolProps(check, { sessions })} />);
+    expect(container.querySelector('.tool-target')!.textContent).toBe('「画面の直し」のやること #3');
+    // 列が狭くて省略されても、マウスを乗せると名前の入った全文が読める
+    expect(container.querySelector('.tool-target')!.getAttribute('title')).toBe('「画面の直し」のやること #3');
+    // 一覧に無いセッションは、ID の頭 8 文字のまま
+    rerender(<ToolCard {...toolProps(check, { sessions: sessions.slice(0, 1) })} />);
+    expect(container.querySelector('.tool-target')!.textContent).toBe('「cccccccc」のやること #3');
+    // 自分のリストは、これまでどおり
+    const own = tool({ name: 'mcp__tanacode-checklist__card_check', target: 'やること #3', input: JSON.stringify({ list: 'やること', numbers: '3' }) });
+    rerender(<ToolCard {...toolProps(own, { sessions })} />);
+    expect(container.querySelector('.tool-target')!.textContent).toBe('やること #3');
+  });
+
   it('チェックリストのツールは対象のカードを、ウォークスルーのツールは示した場所を、カードを押して開く', () => {
     const cards: CardTarget[] = [];
     const walks: WalkthroughToolTarget[] = [];
