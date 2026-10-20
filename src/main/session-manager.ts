@@ -119,6 +119,7 @@ import {
   restoreWorktree,
   waitForWorktree,
   worktreeLeftovers,
+  WorktreeError,
   type NodeModulesResult,
 } from './worktree';
 
@@ -256,6 +257,8 @@ type Runtime = {
   // 今のターンに取り込まれた（command_lifecycle の started）、送った発言の uuid（いちばん新しいもの）と、会話ログに出た送った発言の uuid
   // （新しい 50 個まで）。応答の前に終わったターンの終わりを、その発言が会話ログに出てから出す
   turnPrompt: string | null;
+  // turnPrompt の送り主（親の ID。人の発言なら null）。送った発言の控え（unsent）から写す。控えに無い発言（スマホから届いたものなど）では null
+  turnPromptFrom: { parent: string | null } | null;
   // 今のターンに取り込まれた（started）送った発言のうち、まだ会話ログに出ていないもの。発言のときのフックを、その発言の行のあとまで
   // 待たせる鍵（出たとき・ターンの終わりに消す）
   promptLine: string | null;
@@ -568,7 +571,7 @@ export class SessionManager {
   // 作れなかった理由を、ツールの結果として返せるように）
   async createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null = null): Promise<string> {
     const { id, created } = await this.startInWorktree(cwd, options, parentId);
-    if (!(await created)) throw new Error(t('main.worktree.closedWhileCreating'));
+    if (!(await created)) throw new WorktreeError('closedWhileCreating', t('main.worktree.closedWhileCreating'));
     return id;
   }
 
@@ -1735,10 +1738,22 @@ export class SessionManager {
     }
   }
 
-  // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）
-  interrupt(id: string): void {
-    const client = this.runtimes.get(id)?.process?.client;
+  // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）。
+  // 止めるターンが開いていたら true。ターンの合間（最適化圧縮の流れのすき間・ターンの終わりを会話ログが追いつくまで待っている間・
+  // 送った発言がまだターンに取り込まれていない間）は、状態は作業中でも止めるターンが無いので false（中断は、今までどおり送る）
+  interrupt(id: string): boolean {
+    const rt = this.runtimes.get(id);
+    const client = rt?.process?.client;
     void client?.request('interrupt').catch(() => {});
+    return !!client && !!rt?.turnOpen;
+  }
+
+  // 今のターンを始めた送った発言が、まだ会話（conversation）に入っていなければ、その送り主（親の ID。人の発言なら null）。
+  // 許可の確認・質問は、会話ログの発言の行より先に届くことがある（新しい会話の最初のターンなど）。入っていれば・分からなければ null
+  unseenTurnPrompt(id: string): { parent: string | null } | null {
+    const rt = this.runtimes.get(id);
+    if (!rt?.turnPrompt || rt.arrivedPrompts.has(rt.turnPrompt)) return null;
+    return rt.turnPromptFrom;
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -1930,6 +1945,7 @@ export class SessionManager {
         turnOpen: false,
         lastTurnLine: null,
         turnPrompt: null,
+        turnPromptFrom: null,
         promptLine: null,
         arrivedPrompts: new Set(),
         turnEnding: null,
@@ -2018,6 +2034,7 @@ export class SessionManager {
     runtime.heldHooks.clear();
     runtime.hookStarts.clear();
     runtime.turnPrompt = null;
+    runtime.turnPromptFrom = null;
     runtime.promptLine = null;
     runtime.starterSeen = false;
     runtime.titleRequested = false;
@@ -2633,12 +2650,13 @@ export class SessionManager {
 
   // 送った発言の受け付けの知らせ。queued: 順番待ちに入った / started: ターンに取り込まれた / completed・cancelled・discarded: 終わった
   private handleLifecycle(id: string, rt: Runtime, message: CommandLifecycleMessage, past: boolean): void {
+    const unsent = rt.unsent.get(message.command_uuid);
     if (message.state === 'started') {
       this.openTurn(id, rt, past);
       rt.turnPrompt = message.command_uuid;
+      rt.turnPromptFrom = unsent ? { parent: unsent.parent ?? null } : null;
       if (!past) rt.promptLine = message.command_uuid;
     }
-    const unsent = rt.unsent.get(message.command_uuid);
     if (!unsent) return;
     if (message.state === 'queued' && unsent.state === 'sending') {
       unsent.state = 'queued';
@@ -2659,6 +2677,7 @@ export class SessionManager {
     rt.lateTurnEnd = null;
     rt.lastTurnLine = null;
     rt.turnPrompt = null;
+    rt.turnPromptFrom = null;
     rt.starterSeen = false;
     rt.turnLimit = null;
     rt.limitResult = false;
