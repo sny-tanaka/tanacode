@@ -198,10 +198,18 @@ export const ClaudePane = memo(function ClaudePane({
     stop: () => void;
   } | null>(null);
   // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）。
-  // 押している間は送らずに、押した要素の位置を保つ（離したあとで送る）
+  // 押している間は送らずに、押した要素の位置を保つ（離したあとで送る）。
+  // 人が上へ動かした位置の知らせ（scroll）は、次に描くときに届く。その前に行が増えて追いかけると、人が動かした位置を打ち消して
+  // 最下部へ戻してしまう（ホイールで上へ送った直後に、会話ログから行が届いたときなど）。人が上へ動かしたあとなら送らずに、
+  // 知らせが届いたときと同じく、動かした位置で最下部から離れたかを決める
   const toBottom = (list: HTMLElement) => {
     if (pressed.current) {
       keepPressed(list);
+      return;
+    }
+    if (userScrollingUp.current && list.scrollTop < lastScrollTop.current - 1) {
+      lastScrollTop.current = list.scrollTop;
+      updateBottom(list);
       return;
     }
     list.scrollTop = list.scrollHeight;
