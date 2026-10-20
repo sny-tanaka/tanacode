@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
+import { defaultPrompt } from '@shared/prompts';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
@@ -806,6 +807,21 @@ describe('通知・モデル・翻訳', () => {
     await invoke(IpcChannel.NotificationsSet, true);
     await expect(invoke(IpcChannel.NotificationsGet)).resolves.toBe(true);
     expect(savedSettings().notifications).toBe(true);
+  });
+
+  it('Claude に送る文は、アプリ全体の設定に、変えた欄だけを保存する（既定の文と同じ欄・空の欄・知らない欄は持たない）。予約と最適化圧縮は、送るたびにそれを読む', async () => {
+    await boot();
+    await expect(invoke(IpcChannel.PromptsGet)).resolves.toEqual({});
+    const saved = { usageResume: '枠が戻りました。報告して待ってください。' };
+    await expect(invoke(IpcChannel.PromptsSet, { ...saved, handoff: defaultPrompt('handoff'), resume: '  ', other: '知らない欄' })).resolves.toEqual(saved);
+    await expect(invoke(IpcChannel.PromptsGet)).resolves.toEqual(saved);
+    expect(savedSettings().prompts).toEqual(saved);
+    const prompts = (argsOf('UsageLimitResume')[0] as { prompts: () => unknown }).prompts;
+    expect(prompts()).toEqual(saved);
+    // 既定に戻す
+    await expect(invoke(IpcChannel.PromptsSet, {})).resolves.toEqual({});
+    expect(prompts()).toEqual({});
+    await expect(invoke(IpcChannel.PromptsSet, '壊れた値')).resolves.toEqual({});
   });
 
   it('モデルの一覧。読めなければ null', async () => {

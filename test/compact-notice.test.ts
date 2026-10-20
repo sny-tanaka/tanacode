@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '../src/shared/chat';
-import { autoHandoffText, handoffText, resumeText } from '../src/shared/optimized-compact';
+import { autoHandoffText, handoffText, parseCompactMessage, resumeText } from '../src/shared/optimized-compact';
 import { CompactNotice, continuesWork, resumeContinued, turnStarterOf } from '../src/main/compact-notice';
 
 // 最適化圧縮の流れの間の、人への完了の通知（main の CompactNotice）。流れの途中のターンの終わりでは鳴らさず、
@@ -17,7 +17,11 @@ beforeEach(() => {
 });
 
 describe('turnStarterOf', () => {
-  const compact = (kind: 'handoff' | 'resume', detail: string): ChatEvent => ({ type: 'notice', id: 'n1', text: '最適化圧縮', detail, compact: kind });
+  // 会話ログから作る知らせと同じく、全文（囲みの中）と、囲みの属性から読んだ始まり方を持たせる
+  const compact = (kind: 'handoff' | 'resume', text: string): ChatEvent => {
+    const { body, trigger } = parseCompactMessage(text)!;
+    return { type: 'notice', id: 'n1', text: '最適化圧縮', detail: body, compact: kind, trigger };
+  };
   const RESUME = { lists: [], messages: [], tasks: [] };
 
   it('仕上げの頼みは handoff（手動も、自動も、ターンの途中で止めたものも）', () => {

@@ -39,8 +39,8 @@ describe('最適化圧縮を自動で始める', () => {
   };
   // タイトルを作る裏の呼び出し（<session> で囲んだ発言）は数えない
   const prompts = (mark: string) => app.api.lastPrompts.filter((p) => p.includes(mark) && !p.includes('<session>'));
-  const handoffs = () => prompts(`<${HANDOFF_TAG}>`);
-  const resumes = () => prompts(`<${RESUME_TAG}>`);
+  const handoffs = () => prompts(`<${HANDOFF_TAG} `);
+  const resumes = () => prompts(`<${RESUME_TAG} `);
   const steps = () => app.api.toolResults.filter((r) => /step-\d/.test(r)).length;
   const button = () => app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
   const toggle = () => app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"]');
@@ -89,14 +89,14 @@ describe('最適化圧縮を自動で始める', () => {
 
   // 何番目の応答かが決まらない（どのツールの切れ目で止まるかは、そのときしだい）ので、最後の発言の中身で応答を決める
   const respond = (prompt: string, results: string[]): Block[] | null => {
-    if (prompt.includes(`<${HANDOFF_TAG}>`) && skipTools) return [{ type: 'text', text: NOT_WRITTEN }];
-    if (prompt.includes(`<${HANDOFF_TAG}>`)) {
+    if (prompt.includes(`<${HANDOFF_TAG} `) && skipTools) return [{ type: 'text', text: NOT_WRITTEN }];
+    if (prompt.includes(`<${HANDOFF_TAG} `)) {
       stateCards += 1;
       return [{ type: 'tool_use', id: `toolu_state_${stateCards}`, name: checklistToolId('card_add'), input: { list: 'いまの状態', list_description: '変わったら書き換える', list_kind: 'state', cards: [{ title: `状態 ${stateCards}`, body: '手順の途中' }] } }];
     }
     // 会話を消したあとは、コンテキストが小さくなる（lowAfterReset のとき。モックは、言われた量をそのまま返すため）
-    if (prompt.includes(`<${RESUME_TAG}>`) && lowAfterReset) use(1);
-    if (prompt.includes(`<${RESUME_TAG}>`)) return [{ type: 'tool_use', id: `toolu_overview_${resumes().length}`, name: checklistToolId('checklist_overview'), input: {} }];
+    if (prompt.includes(`<${RESUME_TAG} `) && lowAfterReset) use(1);
+    if (prompt.includes(`<${RESUME_TAG} `)) return [{ type: 'tool_use', id: `toolu_overview_${resumes().length}`, name: checklistToolId('checklist_overview'), input: {} }];
     // 再開の文のあとの会話では、何番目の応答かが変わるので、ふつうの発言にも、中身で答える
     if (prompt.includes(SMALL)) return [{ type: 'text', text: SMALL_REPLY }];
     if (prompt.includes(OFF)) return [{ type: 'text', text: OFF_REPLY }];

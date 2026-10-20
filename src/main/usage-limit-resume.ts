@@ -1,3 +1,4 @@
+import type { CustomPrompts } from '@shared/prompts';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { USAGE_RESUME_DELAY_MS, USAGE_RESUME_STAGGER_MS, usageResumeText, type UsageLimitStop } from '@shared/usage-limit';
 import type { ScheduledMessages } from './scheduled-messages';
@@ -14,6 +15,8 @@ type Deps = {
   parentOf: (id: string) => string | null;
   // ターミナルモードのセッションか（予約しても、送るときに断られる）
   terminal: (id: string) => boolean;
+  // 利用者が変えた、Claude に送る文（メニューの「Claude に送る文…」。無ければ既定の文）。予約を入れるときの文を、予約の本文にする
+  prompts?: () => CustomPrompts;
   now?: () => number;
 };
 
@@ -87,7 +90,7 @@ export class UsageLimitResume {
     this.cancelResumes(scheduled, id);
     let added: ScheduledMessage;
     try {
-      added = scheduled.add(id, usageResumeText(), [], resetsAt + USAGE_RESUME_DELAY_MS, [], 'usage-limit', resetsAt);
+      added = scheduled.add(id, usageResumeText(this.deps.prompts?.() ?? {}), [], resetsAt + USAGE_RESUME_DELAY_MS, [], 'usage-limit', resetsAt);
     } catch {
       // アーカイブしたセッションなど、予約を受け付けない
       return null;

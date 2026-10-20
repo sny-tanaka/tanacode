@@ -3,7 +3,7 @@ import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
 import { handbackOf, type Handback } from './handback';
 import { modelName } from './model-name';
-import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
+import { isCompactMessage, parseCompactMessage, type AutoCompactTrigger } from './optimized-compact';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
 import { classifyLine, isIgnoredAssistantBlock, isIgnoredAttachment, isIgnoredSystem, type ConversationEntry, type SideEntry, type TranscriptLine } from './transcript-line';
@@ -67,7 +67,17 @@ export type ChatEvent =
   // Claude はこれを受けて作業を始める。detail: 開くと読める全文 / sessions: 子セッションからの知らせなら、その子の ID（チャットから移れる）/
   // cards: チェックリストの返信・コピーの知らせなら、そのカード（チャットから開ける）/
   // compact: 最適化圧縮でアプリが送った文（handoff: 仕上げの頼み / resume: 再開の文。全文は detail）
-  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[]; compact?: 'handoff' | 'resume' }
+  | {
+      type: 'notice';
+      id: string;
+      text: string;
+      detail?: string;
+      sessions?: string[];
+      cards?: CardRef[];
+      compact?: 'handoff' | 'resume';
+      // 最適化圧縮の知らせの始まり方（囲みの属性から読んだもの。手動なら null）。compactTriggerOf で読む
+      trigger?: AutoCompactTrigger | null;
+    }
   // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
@@ -693,12 +703,12 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   const compact = parseCompactMessage(text);
   if (compact) {
     // 自動で始めたものは、そのときのコンテキストの割合と一緒に出して、手動と見分けられるようにする
-    const percent = autoPercentOf(compact.body);
+    const { trigger } = compact;
     const notice =
-      percent === null
+      trigger === null
         ? t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume')
-        : t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoffAuto' : 'chat.transcript.compactResumeAuto', { percent });
-    return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind }];
+        : t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoffAuto' : 'chat.transcript.compactResumeAuto', { percent: trigger.percent });
+    return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind, trigger }];
   }
   const special = specialUserText(entry.uuid ?? '', text.trimStart());
   if (special) return [special];

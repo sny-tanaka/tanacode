@@ -1,4 +1,5 @@
 import { t } from './i18n';
+import { promptOf, type CustomPrompts } from './prompts';
 import { formatScheduleTime } from './scheduled';
 import { unwrapWholePaste } from './session-tools';
 
@@ -38,19 +39,11 @@ export function usageLimitText(stop: UsageLimitStop): string | null {
 }
 
 // 再開のメッセージ。予約の行と、送ったあとのチャットの知らせで人にも見えるので、画面の言語で書く（英語に決め打ちしない）。
-// tanacode が送ったものだと分かるよう、囲みに入れる（見分けるのは囲みだけなので、どの言語で書いたものも読める）。
-// 続けるか待つかは、最適化圧縮の再開の文と同じく、チェックリスト（いまの状態）と会話から Claude に決めさせる
-export function usageResumeText(): string {
-  return [
-    `<${USAGE_RESUME_TAG}>`,
-    t('schedule.usageResume.intro'),
-    t('schedule.usageResume.check'),
-    t('schedule.usageResume.waiting'),
-    t('schedule.usageResume.continue'),
-    t('schedule.usageResume.ask'),
-    t('schedule.usageResume.verify'),
-    `</${USAGE_RESUME_TAG}>`,
-  ].join('\n');
+// tanacode が送ったものだと分かるよう、囲みに入れる（見分けるのは囲みだけなので、どの言語で書いたものも、利用者が変えた文も読める）。
+// 既定の文は、続けるか待つかを、最適化圧縮の再開の文と同じく、チェックリスト（いまの状態）と会話から Claude に決めさせる。
+// prompts: 利用者が変えた文（メニューの「Claude に送る文…」。変えていなければ既定の文）
+export function usageResumeText(prompts: CustomPrompts = {}): string {
+  return [`<${USAGE_RESUME_TAG}>`, promptOf(prompts, 'usageResume'), `</${USAGE_RESUME_TAG}>`].join('\n');
 }
 
 const USAGE_RESUME = new RegExp(`^<${USAGE_RESUME_TAG}>([\\s\\S]*)</${USAGE_RESUME_TAG}>\\s*$`);

@@ -2,7 +2,7 @@ import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
-import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
+import { carriedMessages, compactTriggerOf, lastReplyIn } from '@shared/optimized-compact';
 import { t, type MessageKey } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/paste';
@@ -997,7 +997,7 @@ export class SessionsControl {
     let lastAt = after.length - 1;
     while (lastAt >= 0 && !startsTurn(after[lastAt])) lastAt--;
     const last = after[lastAt];
-    if (!limit && last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactMidTurn(detailOf(last)))) return;
+    if (!limit && last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactTriggerOf(last)?.midTurn)) return;
     // 裏のタスクが動いたままターンを終えたことは、知らせてあれば知らせ直さない。人の発言でないもの（裏のタスクの知らせ・予約など）で
     // 始まったターンが、また完了待ちで終わったとき（Monitor は、途中の知らせのたびにターンを始める）。
     // 終わりは、裏のタスクが無くなって手が空いたターンの終わりに知らせる。送った発言で始まったターンは、その発言がまだ会話に
@@ -1522,7 +1522,7 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
     } else if (cleared && e.type === 'user' && e.command) {
       current = null;
     } else if (e.type === 'notice' && e.compact === 'handoff') {
-      const auto = autoPercentOf(detailOf(e));
+      const auto = compactTriggerOf(e)?.percent ?? null;
       current = {
         who: 'Notice',
         text: `tanacode asked this session to bring its checklists up to date for an optimized compaction${auto === null ? '' : ` (automatic at ${auto}% of the context)`}. The conversation was not reset after this: the compaction was cancelled, or is still in progress.`,
@@ -1535,10 +1535,11 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
     } else if (e.type === 'notice' && e.compact === 'resume') {
       // 再開の文は長いので、切り替えたことだけを書く
       cleared = false;
-      const auto = autoPercentOf(detailOf(e));
+      const trigger = compactTriggerOf(e);
+      const auto = trigger?.percent ?? null;
       const text = [
         `tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction${auto === null ? '' : `, automatic at ${auto}% of the context`}).`,
-        compactMidTurn(detailOf(e))
+        trigger?.midTurn
           ? 'The reset was made in the middle of a turn, and the session then continued the same work: what follows is the rest of that work.'
           : continuedAt(events, i)
             ? 'After the reset, the session continued the work that was in progress: what follows is the rest of that work.'

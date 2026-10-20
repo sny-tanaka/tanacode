@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionState } from '@shared/session-tools';
 import { setLanguage } from '@shared/i18n';
+import type { CustomPrompts } from '@shared/prompts';
 import { parseUsageResume, USAGE_RESUME_TAG, usageResumeText } from '@shared/usage-limit';
 import { ScheduledMessages } from '../src/main/scheduled-messages';
 import { UsageLimitResume } from '../src/main/usage-limit-resume';
@@ -148,6 +149,18 @@ describe('UsageLimitResume', () => {
       expect(text.endsWith(`\n</${USAGE_RESUME_TAG}>`)).toBe(true);
       expect(parseUsageResume(text)?.body).toBe(text.split('\n').slice(1, -1).join('\n'));
     }
+  });
+
+  it('利用者が文を変えていれば、予約を入れるときの文（囲みごと）を本文にする。既定に戻したら、次の予約から既定の文', () => {
+    let prompts: CustomPrompts = { usageResume: '枠が戻りました。止まったところを報告して、指示を待ってください。' };
+    const custom = new UsageLimitResume({ scheduled: () => scheduled, enabled: () => true, parentOf: () => null, terminal: () => false, prompts: () => prompts });
+    custom.turnEnded('parent', stop());
+    const text = scheduled.list()[0].text;
+    expect(text).toBe(`<${USAGE_RESUME_TAG}>\n枠が戻りました。止まったところを報告して、指示を待ってください。\n</${USAGE_RESUME_TAG}>`);
+    expect(parseUsageResume(text)?.body).toBe('枠が戻りました。止まったところを報告して、指示を待ってください。');
+    prompts = {};
+    custom.turnEnded('parent', stop());
+    expect(scheduled.list().map((m) => m.text)).toEqual([usageResumeText()]);
   });
 
   it('予約の置き場がまだ無ければ、何もしない', () => {

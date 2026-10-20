@@ -1,6 +1,7 @@
 import type { ChatEvent } from './chat';
 import { activeCards, liveCards, liveLists, progressOf, traitsOf, type Card, type Checklist } from './checklist';
-import { language, locale, t, tFor, type Language } from './i18n';
+import { fill, language, locale, t, tFor, type Language } from './i18n';
+import { promptOf, type CustomPrompts } from './prompts';
 import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // 最適化圧縮。会話を要約にせず、会話を消して（/clear）、チェックリストから再開する。
@@ -9,8 +10,10 @@ import { neutralizeTags, unwrapWholePaste } from './session-tools';
 // 2. 切り替え: /clear を送る
 // 3. 再開の文: 新しい会話の最初の発言として送る（resumeText）。決定事項と「いまの状態」の中身・ユーザーの発言の原文・裏で動いているタスク
 // どちらも、チャットのお知らせの行を開くと全文が人に見えるので、画面の言語で書く（chat.compactPrompt.*。英語に決め打ちしない）。
-// 会話ログから読み戻すときの目印（自動の印・途中で止めた印・発言の原文の見出し・落とした件数）は、どの言語の文も見分ける。
-// 前のバージョンが英語で書いた会話ログも、英語の文言が前と同じなので読める
+// 指示の文（1 と 3 の、データでないところ）は、利用者が変えられる（メニューの「Claude に送る文…」。shared/prompts.ts）。
+// そのため、自動か・ターンの途中で止めたかは、本文ではなく囲みの属性に書いて見分ける（tagAttributes）。
+// 会話ログから読み戻すときの目印（発言の原文の見出し・落とした件数）と、属性の無い前のバージョンの文の目印（自動の印・途中で止めた印）は、
+// どの言語の文も見分ける。前のバージョンが英語で書いた会話ログも、英語の文言が前と同じなので読める
 
 // 仕上げの頼みと、再開の文の囲み。チェックリストの MCP サーバーの説明に、この囲みは tanacode が送るものだと書いてある
 export const HANDOFF_TAG = 'tanacode-handoff';
@@ -81,7 +84,8 @@ function numberPatterns(key: 'chat.compactPrompt.handoff.triggerAuto' | 'chat.co
 // 落とした発言の数の行の、英語の単数形と複数形（前のバージョンの文と同じ）
 const ENGLISH_OMITTED = /^\((\d+) older messages? (?:is|are) not shown\.\)$/m;
 
-// 仕上げの頼み・再開の文が、自動の切り替えのものなら、そのときのコンテキストの割合。手動なら null
+// 前のバージョンの仕上げの頼み・再開の文（囲みに属性が無い）が、自動の切り替えのものなら、そのときのコンテキストの割合。手動なら null。
+// 今の文は、囲みの属性で見分ける（parseCompactMessage・compactTriggerOf）
 export function autoPercentOf(body: string): number | null {
   for (const pattern of numberPatterns('chat.compactPrompt.handoff.triggerAuto', 'percent')) {
     const m = pattern.exec(body);
@@ -96,8 +100,7 @@ const MID_TURN_HANDOFF = 'tanacode stopped your turn between tool calls';
 const MID_TURN_RESUME = 'This reset happened in the middle of your turn';
 const midTurnMarks = (key: 'chat.compactPrompt.handoff.autoMidTurn' | 'chat.compactPrompt.resume.midTurn', legacy: string) => [legacy, ...LANGUAGES.map((lang) => tFor(lang, key))];
 
-// 仕上げの頼み・再開の文が、ターンの途中で止めた切り替えのものか（止めたターンは作業の途中なので、再開のあとは必ず作業の続き）。
-// 人への通知とほかのセッションに状態を返すとき（main の compact-notice.ts・sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける。
+// 前のバージョンの仕上げの頼み・再開の文（囲みに属性が無い）が、ターンの途中で止めた切り替えのものか。今の文は、囲みの属性で見分ける。
 // カードや発言に同じ文が書かれていても拾わないよう、アプリが書くところ（再開の文は最初の見出しの前・仕上げの頼みは終わり）だけを見る
 export function compactMidTurn(body: string): boolean {
   const head = body.indexOf('\n\n# ');
@@ -109,14 +112,41 @@ export function compactMidTurn(body: string): boolean {
   );
 }
 
-// 自動のときの、仕上げの頼み。アプリの仕上げの頼み（handoffText）の書き出しを「自動で始めた」に替え（「ボタンが押された」と書いたまま、
+// 仕上げの頼み・再開の文の囲みの属性。自動か・そのときのコンテキストの割合・ターンの途中で止めたかを、本文ではなくここに書く
+// （本文は利用者が変えられるので、本文の文では見分けられない）。手動にも trigger="manual" を書いて、属性の無い前のバージョンの文と分ける
+function tagAttributes(auto: AutoCompactTrigger | null): string {
+  if (!auto) return ' trigger="manual"';
+  return ` trigger="auto" percent="${Math.round(auto.percent)}"${auto.midTurn ? ' mid-turn="true"' : ''}`;
+}
+
+const ATTRIBUTE = /([\w-]+)="([^"]*)"/g;
+
+// 囲みの属性から読んだ、始まり方（手動なら null）
+function triggerOfAttributes(attributes: string): AutoCompactTrigger | null {
+  const values = new Map([...attributes.matchAll(ATTRIBUTE)].map((m) => [m[1], m[2]] as const));
+  const percent = Number(values.get('percent'));
+  if (values.get('trigger') !== 'auto' || !Number.isFinite(percent)) return null;
+  return { percent, midTurn: values.get('mid-turn') === 'true' };
+}
+
+// 属性の無い前のバージョンの文の始まり方。本文の目印の文で見分ける
+function legacyTrigger(body: string): AutoCompactTrigger | null {
+  const percent = autoPercentOf(body);
+  return percent === null ? null : { percent, midTurn: compactMidTurn(body) };
+}
+
+// 知らせ（仕上げの頼み・再開の文）の始まり方（手動なら null）。chat.ts が会話ログの囲みから読んで付けたもの（trigger）を使う。
+// 付いていない知らせ（会話ログから作っていないもの）は、本文の文で見分ける。
+// 再開の文の始まり方がターンの途中で止めた自動なら、再開のあとは必ず作業の続き（止めたターンは作業の途中）。人への通知と、
+// ほかのセッションに状態を返すとき（main の compact-notice.ts・sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける
+export function compactTriggerOf(notice: { detail?: string; trigger?: AutoCompactTrigger | null }): AutoCompactTrigger | null {
+  return notice.trigger !== undefined ? notice.trigger : legacyTrigger(notice.detail ?? '');
+}
+
+// 自動のときの、仕上げの頼み。本文の始まり方（{trigger}）を「自動で始めた」にし（「ボタンが押された」と書いたまま、
 // 終わりで「誰も押していない」と言うと、食い違う）、終わりに、自動であることと、途中で止めたときに書いておくことを足す
-export function autoHandoffText(auto: AutoCompactTrigger): string {
-  const note = t(auto.midTurn ? 'chat.compactPrompt.handoff.autoMidTurn' : 'chat.compactPrompt.handoff.autoTurnEnd');
-  const closing = `</${HANDOFF_TAG}>`;
-  const text = handoffText(autoMark(auto.percent));
-  const at = text.lastIndexOf(closing);
-  return `${text.slice(0, at)}${note}\n${closing}`;
+export function autoHandoffText(auto: AutoCompactTrigger, prompts: CustomPrompts = {}): string {
+  return buildHandoff(prompts, auto);
 }
 
 // 再開の文の長さの上限（全体・カード・発言）と、1 つずつの長さ。
@@ -124,8 +154,8 @@ export function autoHandoffText(auto: AutoCompactTrigger): string {
 export const RESUME_MAX_CHARS = 40_000;
 const CARDS_CHARS = 24_000;
 const CARD_BODY_CHARS = 4000;
-// 仕上げの頼みで、1 枚のカードをこの長さまでにして、超えるなら分けるよう伝える（CARD_BODY_CHARS より小さく）
-const HANDOFF_CARD_CHARS = 3000;
+// 仕上げの頼みで、1 枚のカードをこの長さまでにして、超えるなら分けるよう伝える（CARD_BODY_CHARS より小さく。本文の {chars}）
+export const HANDOFF_CARD_CHARS = 3000;
 const MESSAGES_CHARS = 12_000;
 const MESSAGE_CHARS = 3000;
 const MAX_TASKS = 20;
@@ -140,23 +170,23 @@ const TASK_CHARS = 200;
 //   （再開の文にそのまま入るのは、決定事項と「いまの状態」のカードの本文だけなので、別のリストにはしない）
 // - 長さの上限は無いと伝える。長くなる話題は、削らずにカードを分けさせる（再開の文は、カードの本文を CARD_BODY_CHARS で切るため）
 // - ツールの呼び出しは少なく（呼び出しのたびに、長い会話を読み直す）。card_add は 1 回で何枚も足せる
-// trigger: 何で始まったか（手動はボタン。自動は autoHandoffText が、そのときのコンテキストの割合の目印に替える）
-export function handoffText(trigger = t('chat.compactPrompt.handoff.triggerManual')): string {
+// 上は既定の文（prompts.ts の defaultPrompt）。利用者が変えた文（prompts）なら、それを送る。変えた文でリストが最新にならなくても、
+// Claude がチェックリストのツールを 1 回も使わなければ、会話は消さない（main の OptimizedCompact の not-used）
+export function handoffText(prompts: CustomPrompts = {}): string {
+  return buildHandoff(prompts, null);
+}
+
+// 仕上げの頼みを組み立てる。本文の {trigger} は何で始まったか（手動はボタン・自動はそのときのコンテキストの割合）、{chars} は 1 枚のカードの長さの目安
+function buildHandoff(prompts: CustomPrompts, auto: AutoCompactTrigger | null): string {
+  const trigger = auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual');
   return [
-    `<${HANDOFF_TAG}>`,
-    t('chat.compactPrompt.handoff.intro', { trigger }),
-    t('chat.compactPrompt.handoff.start'),
-    t('chat.compactPrompt.handoff.calls'),
-    t('chat.compactPrompt.handoff.decisions'),
-    t('chat.compactPrompt.handoff.stateList'),
-    t('chat.compactPrompt.handoff.state'),
-    t('chat.compactPrompt.handoff.waiting'),
-    t('chat.compactPrompt.handoff.tried'),
-    t('chat.compactPrompt.handoff.pointers'),
-    t('chat.compactPrompt.handoff.todos'),
-    t('chat.compactPrompt.handoff.closing', { chars: HANDOFF_CARD_CHARS.toLocaleString(locale()) }),
+    `<${HANDOFF_TAG}${tagAttributes(auto)}>`,
+    fill(promptOf(prompts, 'handoff'), { trigger, chars: HANDOFF_CARD_CHARS.toLocaleString(locale()) }),
+    ...(auto ? [promptOf(prompts, auto.midTurn ? 'handoffAutoMidTurn' : 'handoffAutoTurnEnd')] : []),
     `</${HANDOFF_TAG}>`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 // 引き継ぐ発言。fromParent: 親セッションの Claude からの指示
@@ -303,7 +333,8 @@ export function carriedOmitted(events: ChatEvent[]): number {
 // omitted: これまでの切り替えで、もう落とした発言の数 /
 // auto: 自動で切り替えたとき（無ければ手動）。auto.midTurn なら、止めた場所（stopped）を足す /
 // reply: 切り替える前の最後の応答（ターンの終わりの切り替え・手動のとき。途中で止めたときは stopped に入っている）/
-// handoffSkipped: 仕上げができなかった（上限に当たったあとなど）ので、リストは切り替えの前のまま
+// handoffSkipped: 仕上げができなかった（上限に当たったあとなど）ので、リストは切り替えの前のまま /
+// prompts: 利用者が変えた指示の文（変えていなければ既定の文。prompts.ts）。データ（カード・発言の原文など）と囲みは、いつも tanacode が足す
 export function resumeText({
   lists,
   messages,
@@ -313,6 +344,7 @@ export function resumeText({
   stopped,
   reply = '',
   handoffSkipped = false,
+  prompts = {},
 }: {
   lists: Checklist[];
   messages: CarriedMessage[];
@@ -322,30 +354,15 @@ export function resumeText({
   stopped?: StoppedAt;
   reply?: string;
   handoffSkipped?: boolean;
+  prompts?: CustomPrompts;
 }): string {
   const live = liveLists(lists);
   const midTurn = !!auto?.midTurn;
+  const trigger = auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual');
   const parts = [
-    [
-      t('chat.compactPrompt.resume.intro', { trigger: auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual') }),
-      ...(handoffSkipped ? [t('chat.compactPrompt.resume.skipped')] : []),
-      t('chat.compactPrompt.resume.truth'),
-      t('chat.compactPrompt.resume.permission'),
-      t('chat.compactPrompt.resume.read'),
-      ...(midTurn ? [t('chat.compactPrompt.resume.midTurn')] : []),
-      // 続けるか待つかは、この文で一律に決めない。仕上げで「いまの状態」に書かせた、ユーザーの答えを待っているかで決めさせる。
-      // 続けるときの歯止め（進めていた作業だけ・許可が要るなら聞く・はっきりしなければ待つ）は、どの場合も同じ
-      t('chat.compactPrompt.resume.decide'),
-      // 待つときに、ほかのツール（ファイルの確かめなど）を使わせない。使うと、tanacode が作業を続けたターンと見分けられない（compact-notice.ts）
-      t('chat.compactPrompt.resume.waiting'),
-      t(midTurn ? 'chat.compactPrompt.resume.continueMidTurn' : 'chat.compactPrompt.resume.continue'),
-      t('chat.compactPrompt.resume.underWay'),
-      t('chat.compactPrompt.resume.ask'),
-      t('chat.compactPrompt.resume.unclear'),
-      t(midTurn ? 'chat.compactPrompt.resume.verifyMidTurn' : 'chat.compactPrompt.resume.verify'),
-      // 報告の言語。英語で書いていた頃、何も言わないと、日本語の会話なのに英語で報告することがあった（Haiku で起きた）
-      t('chat.compactPrompt.resume.language'),
-    ].join('\n'),
+    // 指示の文。ターンの途中で止めたときは、止めた場所（下の stoppedSection）を見させる文に替える。
+    // 仕上げができなかったときは、リストが古いかもしれないことを終わりに足す
+    [fill(promptOf(prompts, midTurn ? 'resumeMidTurn' : 'resume'), { trigger }), handoffSkipped ? promptOf(prompts, 'resumeSkipped') : ''].filter(Boolean).join('\n'),
     cardsSection(live),
     otherListsSection(live),
     messagesSection(messages, omitted),
@@ -353,8 +370,10 @@ export function resumeText({
     midTurn && stopped ? stoppedSection(stopped) : '',
     tasksSection(tasks),
   ].filter(Boolean);
-  const body = clipEnd(parts.join('\n\n'), RESUME_MAX_CHARS - RESUME_TAG.length * 2 - 10);
-  return `<${RESUME_TAG}>\n${body}\n</${RESUME_TAG}>`;
+  const open = `<${RESUME_TAG}${tagAttributes(auto ?? null)}>`;
+  const close = `</${RESUME_TAG}>`;
+  const body = clipEnd(parts.join('\n\n'), RESUME_MAX_CHARS - open.length - close.length - 2);
+  return `${open}\n${body}\n${close}`;
 }
 
 // 決定事項と「いまの状態」のカード（題名と本文）。収まらなければ、古いカードから題名だけにする
@@ -505,19 +524,23 @@ function line(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
-const COMPACT_MESSAGE = new RegExp(`^<(${HANDOFF_TAG}|${RESUME_TAG})>([\\s\\S]*)</\\1>$`);
+const COMPACT_MESSAGE = new RegExp(`^<(${HANDOFF_TAG}|${RESUME_TAG})((?: [\\w-]+="[^"]*")*)>([\\s\\S]*)</\\1>$`);
+const COMPACT_OPEN = new RegExp(`^<(?:${HANDOFF_TAG}|${RESUME_TAG})[ >]`);
 
-// 会話ログの発言が、仕上げの頼みか再開の文なら、どちらかと中身。
+// 会話ログの発言が、仕上げの頼みか再開の文なら、どちらかと中身と始まり方（trigger。手動なら null）。
+// 始まり方は囲みの属性から読む。属性の無い前のバージョンの文は、本文の目印の文で見分ける。
 // 前のアプリは長い文を丸ごと貼り付けで送っていたので、前の会話ログでは、目印のタグごと貼り付けの囲み（<pasted_content>）に
 // 入っている。先に外す（今は stream-json の発言として送るので、囲みは付かない）
-export function parseCompactMessage(text: string): { kind: 'handoff' | 'resume'; body: string } | null {
+export function parseCompactMessage(text: string): { kind: 'handoff' | 'resume'; body: string; trigger: AutoCompactTrigger | null } | null {
   const m = unwrapWholePaste(text).trim().match(COMPACT_MESSAGE);
-  return m ? { kind: m[1] === HANDOFF_TAG ? 'handoff' : 'resume', body: m[2].trim() } : null;
+  if (!m) return null;
+  const body = m[3].trim();
+  return { kind: m[1] === HANDOFF_TAG ? 'handoff' : 'resume', body, trigger: m[2] ? triggerOfAttributes(m[2]) : legacyTrigger(body) };
 }
 
 // Claude Code の入力欄に残った文字が、仕上げの頼みか再開の文か（順番待ちの行・入力欄の下書きで、人の発言として扱わないため）
 export function isCompactMessage(text: string): boolean {
   // 入力欄や順番待ちでは、閉じる側が無いこともあるので、開く側だけを外す
   const head = text.trimStart().replace(/^<pasted_content(?: id="[^"]*")?>\s*/, '');
-  return head.startsWith(`<${HANDOFF_TAG}>`) || head.startsWith(`<${RESUME_TAG}>`);
+  return COMPACT_OPEN.test(head);
 }

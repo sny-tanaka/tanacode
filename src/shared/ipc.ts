@@ -23,6 +23,7 @@ import type { CompactStatus } from './optimized-compact';
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
+import type { CustomPrompts } from './prompts';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 
 export const IpcChannel = {
@@ -162,6 +163,11 @@ export const IpcChannel = {
   PrefsChanged: 'prefs:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
+  // tanacode が人の代わりに Claude に送る文（利用者が変えた欄。shared/prompts.ts）。読む・保存する /
+  // メニューの「Claude に送る文…」から。文のダイアログを開かせる（main → 画面）
+  PromptsGet: 'prompts:get',
+  PromptsSet: 'prompts:set',
+  PromptsOpen: 'prompts:open',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -587,6 +593,13 @@ export type TanacodeApi = {
     get(): Promise<boolean>;
     set(on: boolean): Promise<void>;
   };
+  // tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。無い欄は既定の文）。
+  // set: 保存して、保存したもの（既定の文と同じ欄・空の欄は外す）を返す
+  prompts: {
+    get(): Promise<CustomPrompts>;
+    set(prompts: CustomPrompts): Promise<CustomPrompts>;
+    onOpen(listener: () => void): () => void;
+  };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
   prefs: {
     // 起動したときにそろえる。この画面が持っている値を渡し、main がまだ覚えていないものはそれを採って、そろえた値を返す
@@ -866,6 +879,8 @@ export type IpcInvoke = {
   [IpcChannel.PrefsSync]: Api['prefs']['sync'];
   [IpcChannel.NotificationsGet]: Api['notifications']['get'];
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
+  [IpcChannel.PromptsGet]: Api['prompts']['get'];
+  [IpcChannel.PromptsSet]: Api['prompts']['set'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];
@@ -986,6 +1001,7 @@ export type IpcEvent = {
   [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
   [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
   [IpcChannel.BrowserHostsOpen]: undefined;
+  [IpcChannel.PromptsOpen]: undefined;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };

@@ -57,6 +57,7 @@ import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, use
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
+import { PromptsDialog } from './prompts/PromptsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
 import { useAppUpdate } from './layout/AppUpdate';
@@ -165,6 +166,8 @@ export function App() {
   const [diffView, setDiffView] = useState<CenterView | null>(null);
   // アプリ内ブラウザで Claude に許す先のダイアログ（メニューから開く）
   const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
+  // メニューの「Claude に送る文…」
+  const [promptsOpen, setPromptsOpen] = useState(false);
   // ウォークスルーを GitHub の PR に載せる下見のダイアログ（どのセッションのものか）
   const [commenting, setCommenting] = useState<string | null>(null);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
@@ -433,9 +436,11 @@ export function App() {
       else browsedUnseen.current.add(sessionId);
     });
     const offHosts = window.tanacode.browser.onHostsOpen(() => setBrowserHostsOpen(true));
+    const offPrompts = window.tanacode.prompts.onOpen(() => setPromptsOpen(true));
     return () => {
       offActivity();
       offHosts();
+      offPrompts();
     };
   }, []);
 
@@ -1146,6 +1151,7 @@ export function App() {
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
         {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
+        {promptsOpen && <PromptsDialog onClose={() => setPromptsOpen(false)} />}
         {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
           <WorktreeDialog

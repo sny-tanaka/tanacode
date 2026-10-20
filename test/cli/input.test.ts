@@ -251,11 +251,11 @@ describe(`Claude Code ${version} に、上限いっぱいの再開の文を送�
     const attentions = run.attentions.length;
     await run.manager.submitWhenReady(run.sessionId!, text, 10_000);
     // 会話の呼び出し（発言で終わる）を見る。タイトル作りの呼び出しにも、発言の文が入っている（あとに頼みの文が続く）
-    const sent = () => api.lastPrompts.find((prompt) => prompt.includes(`<${RESUME_TAG}>`) && prompt.trimEnd().endsWith(`</${RESUME_TAG}>`));
+    const sent = () => api.lastPrompts.find((prompt) => prompt.includes(`<${RESUME_TAG} `) && prompt.trimEnd().endsWith(`</${RESUME_TAG}>`));
     await run.waitUntil('Claude に届く', () => sent() !== undefined, 60_000);
     // Claude（モックの API）が受け取った発言。送った文と 1 文字も違わない
     const got = sent()!;
-    const received = got.slice(got.indexOf(`<${RESUME_TAG}>`));
+    const received = got.slice(got.indexOf(`<${RESUME_TAG} `));
     // 違うときは、全文（4 万文字）ではなく、はじめに違うところの前後を出す
     let diff = 0;
     while (diff < text.length && text[diff] === received[diff]) diff++;
@@ -270,7 +270,7 @@ describe(`Claude Code ${version} に、上限いっぱいの再開の文を送�
         .filter((e) => e.type === 'user')
         .map((e) => e.message?.content)
         .map((content) => (typeof content === 'string' ? content : (content ?? []).map((block) => (block.type === 'text' ? (block.text ?? '') : '')).join('')))
-        .filter((content) => content.includes(`<${RESUME_TAG}>`));
+        .filter((content) => content.includes(`<${RESUME_TAG} `));
     await run.waitUntil('会話ログに出る', () => logged().length > 0, 30_000);
     expect(logged()).toEqual([text]);
     expect(eventsOf(run).filter((e) => e.type === 'notice' && e.compact === 'resume')).toHaveLength(1);

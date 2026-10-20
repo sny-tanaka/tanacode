@@ -12,7 +12,7 @@ import type { AskQuestion, PermissionMode } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
 import type { WorkflowRun } from '../src/shared/workflow';
-import { HANDOFF_TAG, RESUME_TAG, autoHandoffText, handoffText, resumeText, type AutoCompactTrigger, type CarriedMessage } from '../src/shared/optimized-compact';
+import { autoHandoffText, handoffText, parseCompactMessage, resumeText, type AutoCompactTrigger, type CarriedMessage } from '../src/shared/optimized-compact';
 import { outwardHost, outwardState } from '../src/main/outward-state';
 import {
   SESSIONS_MCP,
@@ -2070,14 +2070,18 @@ describe('ツールの実行（SessionsControl）', () => {
     let flowing: Set<string>;
     let flow: SessionsControl;
     let n = 0;
-    const strip = (text: string, tag: string) => text.slice(`<${tag}>`.length, -`</${tag}>`.length).trim();
-    const handoffNotice = (auto: AutoCompactTrigger | null): ChatEvent => ({ type: 'notice', id: `h${n++}`, text: '仕上げ', compact: 'handoff', detail: strip(auto ? autoHandoffText(auto) : handoffText(), HANDOFF_TAG) });
+    // 会話ログから作る知らせと同じく、全文（囲みの中）と、囲みの属性から読んだ始まり方を持たせる
+    const parsed = (text: string) => {
+      const { body, trigger } = parseCompactMessage(text)!;
+      return { detail: body, trigger };
+    };
+    const handoffNotice = (auto: AutoCompactTrigger | null): ChatEvent => ({ type: 'notice', id: `h${n++}`, text: '仕上げ', compact: 'handoff', ...parsed(auto ? autoHandoffText(auto) : handoffText()) });
     const resumeNotice = (auto: AutoCompactTrigger | null, over: { messages?: CarriedMessage[]; reply?: string } = {}): ChatEvent => ({
       type: 'notice',
       id: `r${n++}`,
       text: '再開',
       compact: 'resume',
-      detail: strip(resumeText({ lists: [], messages: over.messages ?? [], tasks: [], reply: over.reply, ...(auto ? { auto } : {}) }), RESUME_TAG),
+      ...parsed(resumeText({ lists: [], messages: over.messages ?? [], tasks: [], reply: over.reply, ...(auto ? { auto } : {}) })),
     });
     const said = (text: string): ChatEvent => ({ type: 'assistant-text', id: `a${n++}`, text });
     const push = (...events: ChatEvent[]) => host.events.set(CHILD, [...(host.events.get(CHILD) ?? []), ...events]);

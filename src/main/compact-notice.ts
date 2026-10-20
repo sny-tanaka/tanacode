@@ -1,6 +1,6 @@
 import type { ChatEvent } from '@shared/chat';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
-import { compactMidTurn, type CompactFailure } from '@shared/optimized-compact';
+import { compactTriggerOf, type CompactFailure } from '@shared/optimized-compact';
 
 // ターンが終わったときに、人に出す通知の種類。work: 「作業が完了しました」/ compact: 「コンテキストの最適化が完了しました」
 export type TurnNotice = 'work' | 'compact';
@@ -13,7 +13,7 @@ export type TurnStarter = 'handoff' | 'resume' | 'other';
 export function turnStarterOf(event: ChatEvent): TurnStarter {
   if (event.type !== 'notice' || !event.compact) return 'other';
   if (event.compact === 'handoff') return 'handoff';
-  return compactMidTurn(event.detail ?? '') ? 'other' : 'resume';
+  return compactTriggerOf(event)?.midTurn ? 'other' : 'resume';
 }
 
 // 再開のターンで使っても、作業を続けたことにならないツール。引き継ぎを読む・直すもの（チェックリスト）と、
@@ -32,7 +32,7 @@ export function continuesWork(event: ChatEvent): boolean {
 // 再開の文（知らせ）のあとのイベント（turn。そのターンのぶん）から、そのターンで作業を続けたか。
 // ターンの途中で止めた自動の再開は、止めたターンの続きなので、いつも続けたものとする
 export function resumeContinued(resume: Extract<ChatEvent, { type: 'notice' }>, turn: ChatEvent[]): boolean {
-  return compactMidTurn(resume.detail ?? '') || turn.some(continuesWork);
+  return !!compactTriggerOf(resume)?.midTurn || turn.some(continuesWork);
 }
 
 // 最適化圧縮の流れ（仕上げ → /clear → 再開の文）の間の、人への完了の通知。
