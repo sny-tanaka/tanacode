@@ -120,7 +120,7 @@ const api: TanacodeApi = {
   },
   prompts: {
     get: () => invoke(IpcChannel.PromptsGet),
-    set: (prompts) => invoke(IpcChannel.PromptsSet, prompts),
+    update: (changes) => invoke(IpcChannel.PromptsUpdate, changes),
     onOpen: (listener) => subscribe(IpcChannel.PromptsOpen, () => listener()),
   },
   system: {

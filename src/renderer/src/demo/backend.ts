@@ -482,7 +482,7 @@ export class DemoBackend {
         },
       },
       // デモにはメニューが無いので、Claude に送る文のダイアログは開かない
-      prompts: { get: () => ok({}), set: (prompts) => ok(prompts), onOpen: () => () => {} },
+      prompts: { get: () => ok({}), update: () => ok({}), onOpen: () => () => {} },
       system: {
         onStats: (l) => {
           const tick = () =>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defaultPrompt, type CustomPrompts } from '@shared/prompts';
+import { applyPromptChanges, defaultPrompt, type CustomPrompts, type PromptChanges } from '@shared/prompts';
 import { PromptsDialog } from '../../src/renderer/src/prompts/PromptsDialog';
 import './dom';
 import { mockApi } from './mock-api';
@@ -15,9 +15,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function open(saved: CustomPrompts = {}, set: (next: CustomPrompts) => Promise<CustomPrompts> = (next) => Promise.resolve(next)) {
+async function open(saved: CustomPrompts = {}, update: (changes: PromptChanges) => Promise<CustomPrompts> = (changes) => Promise.resolve(applyPromptChanges(saved, changes))) {
   const onClose = vi.fn();
-  api = mockApi({ 'prompts.get': () => Promise.resolve(saved), 'prompts.set': set as never });
+  api = mockApi({ 'prompts.get': () => Promise.resolve(saved), 'prompts.update': update as never });
   api.install();
   render(<PromptsDialog onClose={onClose} />);
   await screen.findByLabelText('本文');
@@ -30,7 +30,7 @@ const tab = (name: string) => screen.getByRole('tab', { name: new RegExp(name) }
 const type = (label: string, text: string) => fireEvent.change(field(label), { target: { value: text } });
 
 describe('PromptsDialog', () => {
-  it('欄には既定の文が入っている。変えて保存すると、変えた欄だけを保存して閉じる（変えるまでは保存できない）', async () => {
+  it('欄には既定の文が入っている。変えて保存すると、変えた欄だけを送って閉じる（変えるまでは保存できない。触っていない欄は送らないので、ほかの窓で変えた欄を消さない）', async () => {
     const onClose = await open();
     expect(field('本文').value).toBe(defaultPrompt('usageResume'));
     expect(button('保存').disabled).toBe(true);
@@ -43,7 +43,7 @@ describe('PromptsDialog', () => {
     expect(button('保存').disabled).toBe(false);
     fireEvent.click(button('保存'));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(api.argsOf('prompts.set')).toEqual([[{ usageResume: '枠が戻りました。続けてください。' }]]);
+    expect(api.argsOf('prompts.update')).toEqual([[{ usageResume: '枠が戻りました。続けてください。' }]]);
   });
 
   it('文の種類を切り替えると、その文の欄が出る。仕上げの頼みには注意と差し込みの印の説明、再開の文には {trigger} の説明', async () => {
@@ -51,6 +51,8 @@ describe('PromptsDialog', () => {
     expect(tab('利用枠からの再開').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('<tanacode-usage-limit-reset>')).toBeTruthy();
     expect(screen.queryByText('差し込みの印（送るときに、tanacode が値に置き換えます）')).toBeNull();
+    // 利用枠からの再開は、ツールの使い方で見分けていないので、注意は出さない
+    expect(screen.queryByText(/待つときにほかのツールを使わせる/)).toBeNull();
 
     fireEvent.click(tab('最適化圧縮の仕上げの頼み'));
     expect(tab('最適化圧縮の仕上げの頼み').getAttribute('aria-selected')).toBe('true');
@@ -64,6 +66,8 @@ describe('PromptsDialog', () => {
 
     fireEvent.click(tab('最適化圧縮のあとの再開'));
     expect(field('本文（手動・ターンの終わりの自動）').value).toBe(defaultPrompt('resume'));
+    expect(screen.getByText(/待つときにほかのツールを使わせる文にすると、報告して待っただけでも作業を続けたものとして扱い/)).toBeTruthy();
+    expect(screen.queryByText(/会話を消したあとに残るのは/)).toBeNull();
     expect(field('本文（ターンの途中で止めた自動）').value).toBe(defaultPrompt('resumeMidTurn'));
     expect(field('仕上げができなかったときに足す文').value).toBe(defaultPrompt('resumeSkipped'));
     expect(screen.getByText('ターンの途中で止めて切り替えたときは、上の本文の代わりに、この文を送ります。')).toBeTruthy();
@@ -71,7 +75,7 @@ describe('PromptsDialog', () => {
     expect(screen.queryByText(/1 枚のカードの長さの目安/)).toBeNull();
   });
 
-  it('変えた欄には「既定の文」が出て見比べられる。「既定に戻す」で既定の文に戻し、保存すると、その欄は保存から外れる', async () => {
+  it('変えた欄には「既定の文」が出て見比べられる。「既定に戻す」で既定の文に戻し、保存すると、その欄だけを既定に戻す（null を送る）', async () => {
     const onClose = await open({ resume: '報告して待ってください。{trigger}', usageResume: '続けてください。' });
     fireEvent.click(tab('最適化圧縮のあとの再開'));
     expect(field('本文（手動・ターンの終わりの自動）').value).toBe('報告して待ってください。{trigger}');
@@ -87,16 +91,28 @@ describe('PromptsDialog', () => {
     expect((screen.getAllByRole('button', { name: '既定に戻す' })[0] as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button('保存'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    // ほかの文で変えた欄は、そのまま
-    expect(api.argsOf('prompts.set')).toEqual([[{ usageResume: '続けてください。' }]]);
+    // ほかの文で変えた欄は、送らない（main が今の保存の値に重ねるので、そのまま残る）
+    expect(api.argsOf('prompts.update')).toEqual([[{ resume: null }]]);
   });
 
-  it('既定の文と同じに打ち直した欄は、保存しない', async () => {
+  it('既定の文と同じに打ち直した欄は、既定に戻す', async () => {
     const onClose = await open({ usageResume: '続けてください。' });
     type('本文', `${defaultPrompt('usageResume')}\n`);
     fireEvent.click(button('保存'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(api.argsOf('prompts.set')).toEqual([[{}]]);
+    expect(api.argsOf('prompts.update')).toEqual([[{ usageResume: null }]]);
+  });
+
+  it('保存した文を読めなかったら、欄を出さずに理由を出す（保存もできない。キャンセルで閉じられる）', async () => {
+    const onClose = vi.fn();
+    api = mockApi({ 'prompts.get': () => Promise.reject(new Error("Error invoking remote method 'prompts:get': Error: 読めません")) });
+    api.install();
+    render(<PromptsDialog onClose={onClose} />);
+    expect(await screen.findByText('保存した文を読めませんでした: 読めません')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(button('保存').disabled).toBe(true);
+    fireEvent.click(button('キャンセル'));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('欄を空にすると、理由を出して保存できない', async () => {
@@ -110,7 +126,7 @@ describe('PromptsDialog', () => {
   });
 
   it('保存に失敗したら理由を出し、開いたまま（打った文も残る）', async () => {
-    const onClose = await open({}, () => Promise.reject(new Error("Error invoking remote method 'prompts:set': Error: 書き込めません")));
+    const onClose = await open({}, () => Promise.reject(new Error("Error invoking remote method 'prompts:update': Error: 書き込めません")));
     type('本文', '続けて');
     fireEvent.click(button('保存'));
     expect(await screen.findByText('保存できませんでした: 書き込めません')).toBeTruthy();
@@ -134,7 +150,7 @@ describe('PromptsDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
     fireEvent.click(button('キャンセル'));
     expect(onClose).toHaveBeenCalledTimes(3);
-    expect(api.argsOf('prompts.set')).toEqual([]);
+    expect(api.argsOf('prompts.update')).toEqual([]);
   });
 
   it('保存していない変更があるときは、閉じる前に捨ててよいかを聞く。断ったら開いたまま', async () => {
@@ -147,7 +163,7 @@ describe('PromptsDialog', () => {
     confirm.mockReturnValue(true);
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(api.argsOf('prompts.set')).toEqual([]);
+    expect(api.argsOf('prompts.update')).toEqual([]);
   });
 
   it('保存の返事を待つあいだは、閉じられない', async () => {

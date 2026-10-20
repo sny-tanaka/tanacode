@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { locale, t, type MessageKey } from '@shared/i18n';
 import { HANDOFF_CARD_CHARS, HANDOFF_TAG, RESUME_TAG } from '@shared/optimized-compact';
-import { changedPrompts, defaultPrompt, PROMPT_GROUPS, PROMPT_KEYS, PROMPT_MAX_CHARS, PROMPT_PLACEHOLDERS, type CustomPrompts, type PromptKey } from '@shared/prompts';
+import { defaultPrompt, PROMPT_GROUPS, PROMPT_KEYS, PROMPT_MAX_CHARS, PROMPT_PLACEHOLDERS, type CustomPrompts, type PromptChanges, type PromptKey } from '@shared/prompts';
 import { USAGE_RESUME_TAG } from '@shared/usage-limit';
 import { errorMessage } from '../errorMessage';
 import { tx } from '../i18n';
@@ -27,7 +27,8 @@ const isDefault = (key: PromptKey, text: string) => text.trim() === defaultPromp
 
 // tanacode が人の代わりに Claude に送る文（利用枠からの再開・最適化圧縮の仕上げの頼みと再開の文）を変える。メニューから開く。
 // 欄には、変えた文か既定の文が入っていて、そこから直す。変えた欄は「既定の文」を開いて見比べられ、「既定に戻す」で戻せる。
-// 保存するまでは送る文は変わらない。保存では、既定の文と同じ欄は持たない（あとで既定の文が変わったら、それに付いていく）
+// 保存するまでは送る文は変わらない。保存では、このダイアログで変えた欄だけを送り（既定の文と同じにした欄は、既定に戻す）、
+// main が今の保存の値に重ねる。2 つの窓で開いて保存しても、片方で変えた欄を、もう片方の保存で消さない
 export function PromptsDialog({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState<CustomPrompts | null>(null);
   const [drafts, setDrafts] = useState<Record<PromptKey, string>>(() => draftsOf({}));
@@ -39,11 +40,17 @@ export function PromptsDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     // 片付けたあとに届いた返事は使わない（打ち始めた欄を、あとから届いた返事で上書きしないように）
     let alive = true;
-    void window.tanacode.prompts.get().then((prompts) => {
-      if (!alive) return;
-      setSaved(prompts);
-      setDrafts(draftsOf(prompts));
-    });
+    void window.tanacode.prompts.get().then(
+      (prompts) => {
+        if (!alive) return;
+        setSaved(prompts);
+        setDrafts(draftsOf(prompts));
+      },
+      // 読めなければ、欄を出さずに理由を出す（保存した文が分からないまま直させると、保存で上書きしてしまう）
+      (e: unknown) => {
+        if (alive) setError(t('prompts.loadFailed', { error: errorMessage(e) }));
+      },
+    );
     // Escape で閉じるには、ダイアログの中にフォーカスが要る。閉じたら、開く前にいた場所に戻す
     const before = document.activeElement;
     dialog.current?.focus();
@@ -54,7 +61,9 @@ export function PromptsDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   const loaded = draftsOf(saved ?? {});
-  const dirty = PROMPT_KEYS.some((key) => drafts[key] !== loaded[key]);
+  // 開いたときから変えた欄
+  const edited = PROMPT_KEYS.filter((key) => drafts[key] !== loaded[key]);
+  const dirty = edited.length > 0;
   const empty = PROMPT_KEYS.filter((key) => !drafts[key].trim());
 
   const close = () => {
@@ -66,7 +75,8 @@ export function PromptsDialog({ onClose }: { onClose: () => void }) {
   const save = async () => {
     setSaving(true);
     try {
-      await window.tanacode.prompts.set(changedPrompts(drafts));
+      const changes: PromptChanges = Object.fromEntries(edited.map((key) => [key, isDefault(key, drafts[key]) ? null : drafts[key]]));
+      await window.tanacode.prompts.update(changes);
       onClose();
     } catch (e) {
       setError(t('prompts.saveFailed', { error: errorMessage(e) }));
@@ -113,6 +123,7 @@ export function PromptsDialog({ onClose }: { onClose: () => void }) {
           <div className="prompts-pane" role="tabpanel" aria-label={t(`prompts.group.${group}`)}>
             <p className="prompts-about">{tx(`prompts.about.${group}`, { tag: <code>{`<${TAGS[group]}>`}</code> })}</p>
             {group === 'handoff' && <p className="prompts-warning">{t('prompts.handoffWarning')}</p>}
+            {group === 'resume' && <p className="prompts-warning">{t('prompts.resumeWarning')}</p>}
             {/* 保存した文を読むまでは、欄を出さない（読む前に打った文が、読んだ文で消えないように） */}
             {saved !== null && current.keys.map((key) => <PromptField key={key} name={key} text={drafts[key]} onChange={(text) => set(key, text)} />)}
           </div>

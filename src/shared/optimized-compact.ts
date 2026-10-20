@@ -176,13 +176,14 @@ export function handoffText(prompts: CustomPrompts = {}): string {
   return buildHandoff(prompts, null);
 }
 
-// 仕上げの頼みを組み立てる。本文の {trigger} は何で始まったか（手動はボタン・自動はそのときのコンテキストの割合）、{chars} は 1 枚のカードの長さの目安
+// 仕上げの頼みを組み立てる。本文の {trigger} は何で始まったか（手動はボタン・自動はそのときのコンテキストの割合）、{chars} は 1 枚のカードの長さの目安。
+// 利用者が書いた文の囲みのタグ（<tanacode-…>）は打ち消す（囲みの本文に囲みのタグは入らない、という見分けの前提を崩さない。chat.ts）
 function buildHandoff(prompts: CustomPrompts, auto: AutoCompactTrigger | null): string {
   const trigger = auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual');
   return [
     `<${HANDOFF_TAG}${tagAttributes(auto)}>`,
-    fill(promptOf(prompts, 'handoff'), { trigger, chars: HANDOFF_CARD_CHARS.toLocaleString(locale()) }),
-    ...(auto ? [promptOf(prompts, auto.midTurn ? 'handoffAutoMidTurn' : 'handoffAutoTurnEnd')] : []),
+    fill(neutralizeTags(promptOf(prompts, 'handoff')), { trigger, chars: HANDOFF_CARD_CHARS.toLocaleString(locale()) }),
+    ...(auto ? [neutralizeTags(promptOf(prompts, auto.midTurn ? 'handoffAutoMidTurn' : 'handoffAutoTurnEnd'))] : []),
     `</${HANDOFF_TAG}>`,
   ]
     .filter(Boolean)
@@ -361,8 +362,10 @@ export function resumeText({
   const trigger = auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual');
   const parts = [
     // 指示の文。ターンの途中で止めたときは、止めた場所（下の stoppedSection）を見させる文に替える。
-    // 仕上げができなかったときは、リストが古いかもしれないことを終わりに足す
-    [fill(promptOf(prompts, midTurn ? 'resumeMidTurn' : 'resume'), { trigger }), handoffSkipped ? promptOf(prompts, 'resumeSkipped') : ''].filter(Boolean).join('\n'),
+    // 仕上げができなかったときは、リストが古いかもしれないことを終わりに足す。
+    // 利用者が書いた文の、囲みのタグと、発言の原文・最後の応答の目印（囲みと見出し）は、カードと同じく打ち消す（inert）。
+    // 打ち消さないと、そのあとのデータが囲みの外に見えたり、次の切り替えで、利用者の文が発言の原文や最後の応答として読まれたりする
+    [fill(inert(promptOf(prompts, midTurn ? 'resumeMidTurn' : 'resume')), { trigger }), handoffSkipped ? inert(promptOf(prompts, 'resumeSkipped')) : ''].filter(Boolean).join('\n'),
     cardsSection(live),
     otherListsSection(live),
     messagesSection(messages, omitted),

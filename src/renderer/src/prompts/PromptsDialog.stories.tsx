@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fireEvent, userEvent, within } from 'storybook/test';
 import { t } from '@shared/i18n';
-import type { CustomPrompts } from '@shared/prompts';
+import { applyPromptChanges, type CustomPrompts, type PromptChanges } from '@shared/prompts';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { PromptsDialog } from './PromptsDialog';
 
@@ -10,14 +10,16 @@ import { PromptsDialog } from './PromptsDialog';
 
 const noop = () => {};
 
-function registry(initial: CustomPrompts, fail = false) {
+// fail: 保存できない（save）・読めない（load）
+function registry(initial: CustomPrompts, fail?: 'save' | 'load') {
   let saved = initial;
   mockApi({
-    'prompts.get': () => Promise.resolve(saved),
-    'prompts.set': (next) => {
-      // main の失敗は「Error invoking remote method '…': Error: <本文>」の形で届く
-      if (fail) return Promise.reject(new Error("Error invoking remote method 'prompts:set': Error: EACCES: permission denied, open 'settings.json.tmp'"));
-      saved = next as CustomPrompts;
+    // main の失敗は「Error invoking remote method '…': Error: <本文>」の形で届く
+    'prompts.get': () =>
+      fail === 'load' ? Promise.reject(new Error("Error invoking remote method 'prompts:get': Error: EACCES: permission denied, open 'settings.json'")) : Promise.resolve(saved),
+    'prompts.update': (changes) => {
+      if (fail === 'save') return Promise.reject(new Error("Error invoking remote method 'prompts:update': Error: EACCES: permission denied, open 'settings.json.tmp'"));
+      saved = applyPromptChanges(saved, changes as PromptChanges);
       return Promise.resolve(saved);
     },
   });
@@ -46,7 +48,7 @@ type Story = StoryObj<typeof meta>;
 // 何も変えていない。欄には既定の文（画面の言語）が入っていて、そこから直す
 export const 既定のまま: Story = { beforeEach: () => registry({}) };
 
-// 仕上げの頼み。会話を消したあとに残るものの注意と、差し込みの印（{trigger}・{chars}）の説明が出る
+// 仕上げの頼み。会話を消したあとに残るものの注意と、差し込みの印（{trigger}・{chars}）の説明が出る（再開の文のタブにも、待ち方の注意が出る）
 export const 仕上げの頼み: Story = {
   beforeEach: () => registry({}),
   play: async ({ canvasElement }) => {
@@ -78,10 +80,13 @@ export const 空の欄: Story = {
 
 // 保存できなかった（設定のファイルに書けない）。理由を出し、ダイアログは開いたまま
 export const 保存に失敗: Story = {
-  beforeEach: () => registry({}, true),
+  beforeEach: () => registry({}, 'save'),
   play: async ({ canvasElement }) => {
     const field = await within(canvasElement).findByLabelText<HTMLTextAreaElement>(t('prompts.label.usageResume'));
     fireEvent.change(field, { target: { value: `${field.value}\n- 続ける前に、変更が残っていないか確かめてください。` } });
     await userEvent.click(within(canvasElement).getByRole('button', { name: t('common.save') }));
   },
 };
+
+// 保存した文を読めなかった。欄は出さずに理由を出す（分からないまま直させると、保存で上書きしてしまう）
+export const 読めない: Story = { beforeEach: () => registry({}, 'load') };

@@ -23,7 +23,7 @@ import type { CompactStatus } from './optimized-compact';
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
-import type { CustomPrompts } from './prompts';
+import type { CustomPrompts, PromptChanges } from './prompts';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 
 export const IpcChannel = {
@@ -163,10 +163,10 @@ export const IpcChannel = {
   PrefsChanged: 'prefs:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
-  // tanacode が人の代わりに Claude に送る文（利用者が変えた欄。shared/prompts.ts）。読む・保存する /
+  // tanacode が人の代わりに Claude に送る文（利用者が変えた欄。shared/prompts.ts）。読む・変えた欄を保存の値に重ねる /
   // メニューの「Claude に送る文…」から。文のダイアログを開かせる（main → 画面）
   PromptsGet: 'prompts:get',
-  PromptsSet: 'prompts:set',
+  PromptsUpdate: 'prompts:update',
   PromptsOpen: 'prompts:open',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
@@ -594,10 +594,11 @@ export type TanacodeApi = {
     set(on: boolean): Promise<void>;
   };
   // tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。無い欄は既定の文）。
-  // set: 保存して、保存したもの（既定の文と同じ欄・空の欄は外す）を返す
+  // update: 変えた欄だけ（null は既定に戻す）を、今の保存の値に重ねて保存し、保存したもの（既定の文と同じ欄・空の欄は外す）を返す。
+  // ダイアログで触っていない欄は送らないので、2 つの窓で開いて保存しても、片方の変更を消さない
   prompts: {
     get(): Promise<CustomPrompts>;
-    set(prompts: CustomPrompts): Promise<CustomPrompts>;
+    update(changes: PromptChanges): Promise<CustomPrompts>;
     onOpen(listener: () => void): () => void;
   };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
@@ -880,7 +881,7 @@ export type IpcInvoke = {
   [IpcChannel.NotificationsGet]: Api['notifications']['get'];
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
   [IpcChannel.PromptsGet]: Api['prompts']['get'];
-  [IpcChannel.PromptsSet]: Api['prompts']['set'];
+  [IpcChannel.PromptsUpdate]: Api['prompts']['update'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];

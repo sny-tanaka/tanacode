@@ -110,6 +110,34 @@ export function changedPrompts(custom: CustomPrompts): CustomPrompts {
   return out;
 }
 
+// 画面から送る、変えた欄（null は既定に戻す）。ダイアログで変えた欄だけを送り、main が今の保存の値に重ねる
+// （2 つの窓でダイアログを開いて保存しても、片方で変えた欄を、もう片方の保存で消さない）
+export type PromptChanges = Partial<Record<PromptKey, string | null>>;
+
+// 今の保存の値に、変えた欄を重ねる。空の文は既定に戻す。既定の文と同じになった欄は持たない
+export function applyPromptChanges(current: CustomPrompts, changes: PromptChanges): CustomPrompts {
+  const next: CustomPrompts = { ...current };
+  for (const key of PROMPT_KEYS) {
+    if (!Object.hasOwn(changes, key)) continue;
+    const text = changes[key];
+    if (typeof text === 'string' && text.trim()) next[key] = text.slice(0, PROMPT_MAX_CHARS);
+    else delete next[key];
+  }
+  return changedPrompts(next);
+}
+
+// 画面から受け取った、変えた欄。知っている欄の、文字列か null だけにする
+export function promptChangesOf(value: unknown): PromptChanges {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const out: PromptChanges = {};
+  for (const key of PROMPT_KEYS) {
+    const text = record[key];
+    if (typeof text === 'string' || text === null) out[key] = text;
+  }
+  return out;
+}
+
 // 設定のファイル・画面から受け取った値を、知っている欄の、空でない文だけにする（長すぎる文は上限で切る）
 export function customPromptsOf(value: unknown): CustomPrompts {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};

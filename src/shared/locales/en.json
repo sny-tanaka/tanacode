@@ -1052,6 +1052,7 @@
       "resume": "Sent as the first message after the conversation is cleared. tanacode wraps it in {tag} and adds, after it, the cards of the decisions and state lists, the other lists, the user’s original messages from the previous conversation, Claude’s last reply (or, when the turn was stopped midway, where it stopped) and the background tasks."
     },
     "handoffWarning": "After the conversation is cleared, only what Claude wrote on the checklists here and the user’s original messages remain. Keep asking Claude to bring the checklists up to date. If Claude doesn’t use the checklist tools at all in this turn, tanacode doesn’t clear the conversation.",
+    "resumeWarning": "The default message has Claude use no tools other than the checklist tools while it waits for an answer. tanacode tells whether Claude continued the work by whether it used any other tool (such as reading a file) in the resume turn. If your message has Claude use other tools while it waits, a turn that only reported and waited counts as continued work: the notification says “Finished working,” and the parent session is told that the work is done.",
     "label": {
       "usageResume": "Message",
       "handoff": "Message (Manual and Automatic)",
@@ -1077,6 +1078,7 @@
     "showDefault": "Default message",
     "empty": "This can’t be empty. To go back to the default, click Reset to Default.",
     "saveFailed": "Couldn’t save: {error}",
+    "loadFailed": "Couldn’t load the saved messages: {error}",
     "confirmDiscard": "Discard your unsaved changes and close?"
   },
   "translate": {
