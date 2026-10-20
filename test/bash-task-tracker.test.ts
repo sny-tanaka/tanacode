@@ -174,6 +174,27 @@ describe('BashTaskTracker の起動・完了・出力', () => {
     expect(tasks.some((t) => t.toolUseId === 'toolu_unknown')).toBe(false);
   });
 
+  it('Monitor の見張りは、途中の知らせを出力に足し、終わりの知らせの出力ファイルを読んで終わる', async () => {
+    tracker.startMonitor('toolu_mon', { command: 'gh pr checks 1 --watch', description: 'CI の結果' }, { taskId: 'bmon', timeoutMs: 1800000, persistent: false }, false);
+    expect(find('toolu_mon')).toMatchObject({ taskId: 'bmon', command: 'gh pr checks 1 --watch', description: 'CI の結果', state: 'running', output: '' });
+    tracker.event('bmon', 'build: pass\nunit: pass');
+    tracker.event('bmon', 'cli: pass\n');
+    // 知らないタスクの知らせは捨てる
+    tracker.event('bother', 'x');
+    expect(find('toolu_mon')?.output).toBe('build: pass\nunit: pass\ncli: pass\n');
+    const file = join(dir!, 'bmon.output');
+    writeFileSync(file, 'build: pass\nunit: pass\ncli: pass\ncheck: pass\n\n[exited with code 0]\n');
+    tracker.notified('toolu_mon', 'completed', null, file);
+    await waitFor(() => find('toolu_mon')?.state === 'completed');
+    expect(find('toolu_mon')).toMatchObject({ state: 'completed', exitCode: 0, output: 'build: pass\nunit: pass\ncli: pass\ncheck: pass\n' });
+    // 出力ファイルを読んだあとの知らせは、出力に足さない（ファイルが正）
+    tracker.event('bmon', 'late');
+    expect(find('toolu_mon')?.output).not.toContain('late');
+    // taskId の無い結果（見張りを始められなかった）は加えない
+    tracker.startMonitor('toolu_ng', { command: 'x' }, 'Error: …', false);
+    expect(find('toolu_ng')).toBeUndefined();
+  });
+
   it('過去の会話から読んだものは止まったものとして加え、時刻は分からない。完了通知が来ても終わりの時刻は付けない', async () => {
     const file = join(dir!, 'old.output');
     writeFileSync(file, 'old\n');
@@ -270,5 +291,5 @@ it('完了通知の要約に書かれた終了コード（exit code N）を読�
     sessionDir: () => '/home/me/.claude/projects/-work-app/s1',
   });
   router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: BASH_NOTICE } }, false);
-  expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_bg', 'completed', 0);
+  expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_bg', 'completed', 0, '/tmp/claude-0/-work-app/s1/tasks/blktx4qxr.output');
 });

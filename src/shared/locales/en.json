@@ -477,6 +477,7 @@
       "childPermission": "Child session “{name}” ({id}) is waiting for permission. Read the prompt with get_session and answer it with answer_permission, or ask the user if you can't decide.",
       "childBrowser": "Child session “{name}” ({id}) is waiting for the user to act in the in-app browser. Let the user know.",
       "childExited": "Child session “{name}” ({id}) has exited.",
+      "childBackground": "Child session “{name}” ({id}) has finished its turn, but its background tasks are still running (get_session lists them in background_tasks).",
       "childDone": "Child session “{name}” ({id}) has finished its work.",
       "childUsageLimit": "Child session “{name}” ({id}) stopped at the usage limit. A message asking it to continue is scheduled at {time} (no need to check on it before then).",
       "childUsageLimitNoResume": "Child session “{name}” ({id}) stopped at the usage limit (it resets at {time}). No message is scheduled to resume it.",
