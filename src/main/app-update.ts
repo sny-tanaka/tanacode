@@ -32,6 +32,8 @@ export class AppUpdateMonitor {
     private readonly version: string,
     private readonly onChange: (update: AppUpdate | null) => void,
     private readonly fetcher: Fetcher = fetch,
+    // 確かめられたとき（結果が前と同じで onChange を呼ばないときも）。タイトルバーの、押して確かめられなかった印を消すのに使う
+    private readonly onChecked: () => void = () => {},
   ) {}
 
   start(): void {
@@ -74,6 +76,7 @@ export class AppUpdateMonitor {
     // 問い合わせのあいだに止めたら、結果を捨てる
     if (!latest || !this.timer) return false;
     this.set(appUpdateOf(this.version, latest));
+    this.onChecked();
     return true;
   }
 
