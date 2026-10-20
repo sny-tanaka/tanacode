@@ -3232,7 +3232,7 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     const at = Date.now() + 90 * 60_000;
     expect(Date.parse(jsonOf<{ at: string }>(await schedule({ message: 'x', at: iso(at) })).at)).toBe(at);
     // +00:00 の形も
-    expect((await schedule({ message: 'x', at: iso(at).replace('Z', '+00:00') })).isError).toBeFalsy();
+    expect((await schedule({ message: 'x', at: iso(at).replace('Z', '+00:00'), even_if_scheduled: true })).isError).toBeFalsy();
     // 時差の無い時刻は、どこの時刻か分からない
     expect(textOf(await schedule({ message: 'x', at: iso(at).replace('Z', '') }))).toContain('with a time zone offset');
     expect(textOf(await schedule({ message: 'x', at: 'あした' }))).toContain('It is now');
@@ -3247,8 +3247,8 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
 
   it('schedule_wakeup: 待っている Claude の予約は、セッションごとに 3 つまで。人の予約・ほかのセッションの予約は数えない', async () => {
     scheduled!.add(PARENT, '人の予約', [], Date.now() + 10 * 60_000);
-    for (let i = 0; i < 3; i++) expect((await schedule({ message: `${i + 1} つめ`, in_minutes: 10 + i })).isError).toBeFalsy();
-    const refused = await schedule({ message: '4 つめ', in_minutes: 20 });
+    for (let i = 0; i < 3; i++) expect((await schedule({ message: `${i + 1} つめ`, in_minutes: 10 + i, even_if_scheduled: true })).isError).toBeFalsy();
+    const refused = await schedule({ message: '4 つめ', in_minutes: 20, even_if_scheduled: true });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toContain('3 of your wake-ups are already waiting in this session');
     expect(textOf(refused)).toContain('cancel_wakeup');
@@ -3256,7 +3256,73 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect((await schedule({ message: 'ほか', in_minutes: 10 }, PEER)).isError).toBeFalsy();
     // 1 つ取り消せば、また入れられる
     await control.handle(PARENT, 'cancel_wakeup', { id: scheduled!.claudeWakeups(PARENT)[0]!.id });
-    expect((await schedule({ message: '4 つめ', in_minutes: 20 })).isError).toBeFalsy();
+    expect((await schedule({ message: '4 つめ', in_minutes: 20, even_if_scheduled: true })).isError).toBeFalsy();
+  });
+
+  // Issue #277: 親が子の見回りの予約を、前の予約が残っているのに重ねて入れ、古い文面のほうが先に届いていた
+  describe('schedule_wakeup: Claude の予約がすでに待っているとき', () => {
+    type Waiting = { scheduled: false; waiting: { id: string; state: string; at: string; local_time: string; text: string }[]; note: string };
+
+    it('入れずに、待っている予約（ID・時刻・本文の頭）と、どうするかを決めるための文を返す', async () => {
+      const first = jsonOf<{ id: string; at: string }>(await schedule({ message: '子を見に行く（14:08）', in_minutes: 5 }));
+      const second = await schedule({ message: '子を見に行く（14:38）', in_minutes: 30 });
+      // 断ったのではなく、判断を求めている（エラーにしない）
+      expect(second.isError).toBeFalsy();
+      const result = jsonOf<Waiting>(second);
+      expect(result.scheduled).toBe(false);
+      expect(result.waiting).toEqual([{ id: first.id, state: 'scheduled', at: first.at, local_time: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), text: '子を見に行く（14:08）' }]);
+      // 重ねる・前のものを消して入れ直す・そのままにする、のどれかを Claude が決められる
+      expect(result.note).toContain('Not scheduled');
+      expect(result.note).toContain('cancel_wakeup');
+      expect(result.note).toContain('even_if_scheduled: true');
+      expect(result.note).toContain('outdated');
+      // 予約は増えていない
+      expect(scheduled!.claudeWakeups(PARENT).map((m) => m.text)).toEqual(['子を見に行く（14:08）']);
+    });
+
+    it('本文の長い予約は、頭だけを返す。待っているものは時刻の順に、すべて返す', async () => {
+      await schedule({ message: `あとの予約${'あ'.repeat(400)}`, in_minutes: 30 });
+      await schedule({ message: '先の予約', in_minutes: 5, even_if_scheduled: true });
+      const result = jsonOf<Waiting>(await schedule({ message: '3 つめ', in_minutes: 10 }));
+      expect(result.waiting.map((m) => m.text.slice(0, 5))).toEqual(['先の予約', 'あとの予約']);
+      expect(result.waiting[1]!.text).toContain('characters omitted');
+      expect(result.waiting[1]!.text.length).toBeLessThan(360);
+    });
+
+    it('even_if_scheduled: true を付けたら、今までどおり入れる', async () => {
+      await schedule({ message: '1 つめ', in_minutes: 5 });
+      const added = jsonOf<{ id: string; note: string }>(await schedule({ message: '2 つめ', in_minutes: 30, even_if_scheduled: true }));
+      expect(added.note).toContain('Scheduled.');
+      expect(scheduled!.claudeWakeups(PARENT).map((m) => m.text)).toEqual(['1 つめ', '2 つめ']);
+      // true でなければ、付けていないのと同じ
+      expect(jsonOf<Waiting>(await schedule({ message: '3 つめ', in_minutes: 30, even_if_scheduled: 'true' })).scheduled).toBe(false);
+      expect(scheduled!.claudeWakeups(PARENT)).toHaveLength(2);
+    });
+
+    it('上限（3 つ）まで待っていれば、付けても入らないことも伝える', async () => {
+      for (let i = 0; i < 3; i++) await schedule({ message: `${i + 1} つめ`, in_minutes: 10 + i, even_if_scheduled: true });
+      const result = jsonOf<Waiting>(await schedule({ message: '4 つめ', in_minutes: 20 }));
+      expect(result.waiting).toHaveLength(3);
+      expect(result.note).toContain('maximum of 3');
+    });
+
+    it('人の予約・利用枠の再開の予約・ほかのセッションの予約・待っていない予約は数えない。人の予約があることは伝える', async () => {
+      scheduled!.add(PARENT, '人の予約', [], Date.now() + 10 * 60_000);
+      scheduled!.add(PARENT, usageResumeText(), [], Date.now() + 60 * 60_000, [], 'usage-limit', Date.now() + 59 * 60_000);
+      await schedule({ message: 'ほかのセッションの予約', in_minutes: 5 }, PEER);
+      await schedule({ message: '子の予約', in_minutes: 5 }, CHILD);
+      const added = jsonOf<{ id: string; note: string }>(await schedule({ message: '子を見に行く', in_minutes: 5 }));
+      expect(added.id).toBeTruthy();
+      expect(scheduled!.claudeWakeups(PARENT)).toHaveLength(1);
+      // 待っている Claude の予約があるときは、人の予約もあることを添える（数えない・Claude は消せない）
+      const result = jsonOf<Waiting>(await schedule({ message: 'もう一度', in_minutes: 10 }));
+      expect(result.waiting.map((m) => m.text)).toEqual(['子を見に行く']);
+      expect(result.note).toContain('The user also scheduled 1 message in this session');
+      // 送れなかった Claude の予約は、もう待っていない
+      const failed = scheduled!.claudeWakeups(PARENT)[0]!;
+      scheduled!['update'](failed.id, { state: 'failed', error: 'x' });
+      expect(jsonOf<{ id: string }>(await schedule({ message: '入れ直す', in_minutes: 10 })).id).toBeTruthy();
+    });
   });
 
   it('時刻になったら、囲みに入れて、このセッションに送る', async () => {
@@ -3326,7 +3392,7 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(jsonOf<{ note: string }>(await schedule({ message: '見に行く', in_minutes: 5 })).note).toContain(note);
     // 同じセッションには繰り返さない（Claude が呼ぶたびに人へ伝え直さないように。画面にも出ている）
     expect(jsonOf<{ note?: string }>(await control.handle(PARENT, 'list_wakeups', {}))).not.toHaveProperty('note');
-    expect(jsonOf<{ note: string }>(await schedule({ message: 'もう一度', in_minutes: 5 })).note).not.toContain(note);
+    expect(jsonOf<{ note: string }>(await schedule({ message: 'もう一度', in_minutes: 5, even_if_scheduled: true })).note).not.toContain(note);
     // ほかのセッションには 1 回
     expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toContain(note);
     expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toBe('No messages are scheduled in this session.');
@@ -3483,6 +3549,11 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(SESSIONS_MCP.instructions).toContain('schedule a wake-up with schedule_wakeup');
     expect(SESSIONS_MCP.instructions).toContain('When <tanacode-wakeup> arrives');
     expect(SESSIONS_MCP.instructions).not.toContain('sleep 300');
+    // 見回りの予約は 1 つにし、重ねようとしたら前のものを見て決める（Issue #277）
+    expect(SESSIONS_MCP.instructions).toContain('Keep one wake-up for checking on children');
+    const wakeup = SESSIONS_MCP_FOR_CHILD.tools.find((t) => t.name === 'schedule_wakeup');
+    expect(wakeup?.description).toContain('If one of your wake-ups is already waiting in this session, it is not scheduled');
+    expect(wakeup?.inputSchema.properties).toHaveProperty('even_if_scheduled', expect.objectContaining({ type: 'boolean' }));
     expect(SESSIONS_MCP.instructions).toContain('call report_result as your last tool call');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('report_result');
     expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).toContain('schedule_wakeup');
