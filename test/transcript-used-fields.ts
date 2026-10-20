@@ -13,6 +13,8 @@ import type { Inventory } from './transcript-inventory';
 // - toolUseResult/TaskCreate の task.id（API キーでは ToDo のツールが出ない）・SendMessage の resumedAgentId・前で動かした Agent の
 //   totalToolUseCount・totalDurationMs・totalTokens、user.content/image（画像の添付）、user の interruptedMessageId・sourceToolUseID
 // - attachment/queued_command の origin・usage（作業中に届いた人の発言・完了通知。台本の並びによる）
+// - permission-mode の行の permissionMode（2.1.302 までは、チャット（-p）の起動でも書かれていたが、2.1.303 の台本では
+//   どこにも書かれない。権限モードは user の行の permissionMode でも読む）
 export const USED_FIELDS: Record<string, string[]> = {
   // 会話の行。巻き戻しの見分け（uuid・parentUuid）・今の claude の行か（timestamp）・サブエージェントの行か（isSidechain）・
   // チャットの組み立て（chat.ts）・作業の書き出しのブランチ（gitBranch）・会話の一覧のフォルダ（cwd）・未知のイベントのバージョン（version）
@@ -84,7 +86,6 @@ export const USED_FIELDS: Record<string, string[]> = {
   'custom-title': ['customTitle'],
   'ai-title': ['aiTitle'],
   'queue-operation': ['operation', 'content'],
-  'permission-mode': ['permissionMode'],
   // content のブロック
   'user.content/text': ['type', 'text'],
   'user.content/tool_result': ['type', 'tool_use_id', 'content', 'is_error'],
