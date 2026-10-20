@@ -23,7 +23,7 @@ import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
-import { modeWithin, type SessionState } from '@shared/session-tools';
+import { modeWithin, parentMessageText, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -76,7 +76,7 @@ import { TaskRouter } from './task-router';
 import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
-import type { SessionRecord, SessionStore } from './session-store';
+import type { SessionRecord, SessionStore, WaitingText } from './session-store';
 import { SendError } from './send-error';
 import type { WorkspaceWatchers } from './workspace-watcher';
 import { disableRemoteControl, enableRemoteControl, generateTitle, rewindConversation, type RewindResult } from './stream/internal';
@@ -122,6 +122,7 @@ import {
   setupTroubleOf,
   waitForWorktree,
   worktreeLeftovers,
+  withSetupNote,
   WorktreeError,
   type NodeModulesResult,
   type WorktreeSetupTrouble,
@@ -165,6 +166,10 @@ const PARTIAL_INTERVAL_MS = 50;
 
 // ターミナルモードで Claude Code の画面を見ていないときの pty サイズ（ターミナルモードで見ているあいだだけ、ペインの大きさに合わせる）
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
+
+export type { WaitingText };
+// 起動を待っている送信（待ち始めた順）。keep: アプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す
+type Waiting = { text: WaitingText; timeoutMs: number; keep: boolean };
 
 // 送ったが、まだ会話に出ていない発言。at: 送った時刻 / shown: チャットに出す（発言。親セッション・子セッションの知らせや
 // 最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）/ input: 送った user の行（引き継いだ claude の分は無い）/
@@ -345,8 +350,11 @@ type Runtime = {
   watched: string | null;
   // 見張っている、ワークスペースに追加したフォルダ
   watchedFolders: string[];
-  // 起動を待って送る発言の数（ツールで返す状態で、作業中として扱う）
-  pendingSubmits: number;
+  // 起動を待って送る発言（待ち始めた順。ツールで返す状態で、作業中として扱う）
+  waiting: Waiting[];
+  // 受け付けられるようになった（initialize の返事・引き継いだ claude の確かめ・TUI の起動）が、worktree の準備の途中なので待たせている
+  // （準備が終わったら受け付ける。prepareWorktree）
+  readyAfterPrep: boolean;
   // チェックリストの MCP サーバーを足して起動したか（引き継いだ claude は分からないので null）
   checklistMcp: boolean | null;
   // 最後に終わった claude の標準エラーの末尾（worktree を作れなかった理由など）
@@ -833,7 +841,7 @@ export class SessionManager {
     if (!rt.ready || rt.preparing) return 'starting';
     // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
     // 送信中・順番待ちの発言が残っていれば、ターンとターンの間も作業中（作業中の始まりは、送った発言の queued・started。設計書 7 節）
-    if (rt.pendingSubmits > 0 || rt.turnOpen || rt.turnEnding || rt.unsent.size > 0) return 'working';
+    if (rt.waiting.length > 0 || rt.turnOpen || rt.turnEnding || rt.unsent.size > 0) return 'working';
     if (rt.background > 0) return 'background';
     return 'idle';
   }
@@ -1070,7 +1078,7 @@ export class SessionManager {
 
   // チャットの手が空いている（ターン・答え待ちの要求・送る予定の発言が無い）
   private chatIdle(id: string, rt: Runtime): boolean {
-    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.elicitations.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
+    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.elicitations.size === 0 && rt.unsent.size === 0 && rt.waiting.length === 0 && !this.questions.first(id);
   }
 
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null。
@@ -1759,20 +1767,23 @@ export class SessionManager {
   // 起動が終わる（入力を受け付けられる）のを待ってから、ターンが終わってから届く発言（priority: later）として送る
   // （子セッションへの指示・親への知らせ・予約）。作業中に送っても、作業中のターンには入らない（Claude Code が順番待ちにする。実測）。
   // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する。
-  // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し）
+  // 待っている送信がいくつもあるときは、待ち始めた順に送る（先のものが送り終えるまで、あとのものは送らない。見直しの間合いで、
+  // あとから待ち始めたもの（起動の途中の子に親が送った指示）が、先のもの（その子への最初の指示）を追い越さないように）。
+  // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し）/
+  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す（親の指示。closeAll・start）
   async submitWhenReady(
     id: string,
-    // 関数なら、送る直前に呼んで文を作る（待っている間に分かったこと（worktree の準備の結果）を添えるため）
-    text: string | (() => string),
+    text: WaitingText,
     timeoutMs: number,
-    { attachments = [], pastes = [], signal }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal } = {},
+    { attachments = [], pastes = [], signal, keep = false }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal; keep?: boolean } = {},
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     let process = rt?.process ?? null;
     if (!rt || (!process && !rt.restarting)) throw new SendError('notRunning');
     // ターミナルモードの間に来た親の指示・予約・知らせは、預からずに断る（決めたこと）
     if (rt.terminal || rt.switching) throw new SendError('terminalMode');
-    rt.pendingSubmits += 1;
+    const waiting: Waiting = { text, timeoutMs, keep };
+    rt.waiting.push(waiting);
     this.changed(id);
     try {
       const deadline = Date.now() + timeoutMs;
@@ -1788,16 +1799,55 @@ export class SessionManager {
         }
         if (rt.process !== process) throw new SendError('exited');
         if (signal?.aborted) throw new SendError('cancelled');
-        // 再起動で捨てられた発言の送り直し（resendCarried）が済むまでは送らない（追い越さない）
-        if (rt.ready && !rt.preparing && !hasCarried(rt)) break;
+        // 待ち始めた順に送る（先のものが送り終えるまで、あとのものは送らない）。再起動で捨てられた発言の送り直し（resendCarried）が
+        // 済むまでも送らない（追い越さない）
+        if (rt.ready && !rt.preparing && !hasCarried(rt) && rt.waiting[0] === waiting) break;
         if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
-      await this.submit(id, typeof text === 'function' ? text() : text, attachments, pastes, 'later');
+      await this.submit(id, this.waitingText(id, text), attachments, pastes, 'later');
     } finally {
-      rt.pendingSubmits -= 1;
+      const at = rt.waiting.indexOf(waiting);
+      if (at !== -1) rt.waiting.splice(at, 1);
       this.changed(id);
     }
+  }
+
+  // 起動を待って送る発言の、送る文。子への最初の指示は、worktree の準備でうまくいかなかったこと（install の失敗など）を本文に添えて、
+  // 親の指示の囲みに入れる（子の Claude が、依存が足りないことを知るため。囲みの外に足すと、親からの指示と読めなくなる）
+  private waitingText(id: string, text: WaitingText): string {
+    return typeof text === 'string' ? text : parentMessageText(text.parent, withSetupNote(text.body, this.setupTrouble.get(id) ?? null));
+  }
+
+  // 送る前にアプリを終えた親の指示（記録の waiting）を、起動を待って、待ち始めた順に送り直す。送れなかったら、チャットに知らせる
+  // （送った親には、もう知らせる先が無い）
+  private resumeWaiting(id: string, kept: { text: WaitingText; timeoutMs: number }[]): void {
+    this.store.update(id, { waiting: null });
+    for (const { text, timeoutMs } of kept) {
+      void this.submitWhenReady(id, text, timeoutMs, { keep: true }).catch((error: unknown) => {
+        console.error('アプリを終える前に送るはずだった親の指示を送れませんでした', error);
+        const reason = error instanceof Error ? error.message : String(error);
+        this.pushEvents(id, [{ type: 'info', id: `waiting-failed:${randomUUID()}`, text: t('main.send.keptFailed', { reason }), warning: true }]);
+      });
+    }
+  }
+
+  // アプリから Claude への知らせ（session-notices.ts）のうち、送る前にアプリを終えたもの（channel: 知らせの列の名前）。送り先の記録から読む
+  savedNotices(channel: string): { target: string; items: [string, unknown][] }[] {
+    return this.store.all().flatMap((record) => {
+      const items = record.notices?.[channel];
+      return Array.isArray(items) && items.length > 0 ? [{ target: record.id, items }] : [];
+    });
+  }
+
+  // 送り先にまだ送っていない知らせ（items）を、送り先の記録に残す（空なら消す）。次のアプリが戻す（savedNotices）
+  saveNotices(channel: string, target: string, items: [string, unknown][]): void {
+    const record = this.store.get(target);
+    if (!record) return;
+    const notices = { ...(record.notices ?? {}) };
+    if (items.length > 0) notices[channel] = items;
+    else delete notices[channel];
+    this.store.update(target, { notices: Object.keys(notices).length > 0 ? notices : null });
   }
 
   // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）。
@@ -1866,6 +1916,10 @@ export class SessionManager {
     if (this.closed) return;
     this.closed = true;
     for (const [id, rt] of this.runtimes) {
+      // 起動を待っていて、まだ送っていない親の指示（keep）は、次にそのセッションを起動したら（引き継いだときも）送り直せるよう残す
+      // （止めて終えるときも。子は指示を受け取らないまま止まっていて、親は送られるものとして待っている）
+      const waiting = [...(this.store.get(id)?.waiting ?? []), ...rt.waiting.filter((w) => w.keep).map(({ text, timeoutMs }) => ({ text, timeoutMs }))];
+      this.store.update(id, { waiting: waiting.length > 0 ? waiting : null });
       if (stop) {
         rt.process?.kill();
         this.settingsFiles?.release(id);
@@ -2045,7 +2099,8 @@ export class SessionManager {
         worktreeCreated: null,
         watched: null,
         watchedFolders: [],
-        pendingSubmits: 0,
+        waiting: [],
+        readyAfterPrep: false,
         checklistMcp: null,
         stderr: '',
       };
@@ -2123,8 +2178,14 @@ export class SessionManager {
     // 前の起動が worktree を作ったあと、起動が終わる前に終わって（起動し直して）いたら、その「作成中」は戻す
     // （戻さないと、起動が終わっても受け付けない。node_modules の用意の途中なら、終わるまで待たせたまま）
     const creating = !!record.worktree && !resume && !adopted && !existsSync(record.cwd);
-    if (creating) runtime.preparing = 'creating';
-    else if (runtime.preparing === 'creating') runtime.preparing = null;
+    if (creating) {
+      runtime.preparing = 'creating';
+      this.store.update(id, { worktreePreparing: true });
+    } else if (runtime.preparing === 'creating') runtime.preparing = null;
+    // 前の起動の準備の途中にアプリを終えていた（次のアプリが引き継いだ・止めて終えたあとに開き直した）。この起動で node_modules の用意を
+    // やり直す（このアプリで準備を続けているとき（起動の途中に起動し直したなど）は、それを待つ）
+    const resumePreparing = !creating && !!record.worktreePreparing && !!record.worktree && !runtime.preparing && existsSync(record.cwd);
+    runtime.readyAfterPrep = false;
 
     const process: ClaudeSession = new ClaudeSession(
       this.host,
@@ -2273,6 +2334,10 @@ export class SessionManager {
       this.emitQueue(id, runtime);
       for (const prompt of runtime.unsent.values()) if (prompt.state === 'sending') this.expireSending(id, runtime, prompt.id);
     }
+    // 準備をやり直すなら、受け付けられるようになる前に始める（準備が終わるまで、最初の指示を送らない）
+    if (resumePreparing) void this.prepareWorktree(id, 'created');
+    // 送る前にアプリを終えた親の指示（keep）を、待ち始めた順に送り直す（ターミナルモードでは送れないので、記録に残したまま）
+    if (!tui && record.waiting?.length) this.resumeWaiting(id, record.waiting);
     if (tui) {
       // TUI には initialize を送らない（人が画面で操作する）。起動したら受け付けたことにする
       this.markReady(id, runtime);
@@ -2417,7 +2482,7 @@ export class SessionManager {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
       this.reconcileRemote(id, rt);
-    }
+    } else if (rt.preparing) rt.readyAfterPrep = true;
     this.resendCarried(id, rt);
     this.emitSessions();
   }
@@ -2451,8 +2516,10 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (!record?.worktree || !rt) return;
     const { root, name, branch } = record.worktree;
-    // 起動した Claude Code が先に起動を終えても、準備が終わるまで待たせる（await より前に決める）
+    // 起動した Claude Code が先に起動を終えても、準備が終わるまで待たせる（await より前に決める）。終わる前にアプリを終えたら、
+    // 次に起動したときにやり直す（記録の worktreePreparing）
     rt.preparing = 'copying';
+    this.store.update(id, { worktreePreparing: true });
     this.emitSessions();
     const step = (preparing: WorktreePreparing) => {
       if (this.runtimes.get(id) !== rt) return;
@@ -2470,6 +2537,7 @@ export class SessionManager {
     });
     if (this.runtimes.get(id) !== rt) return;
     rt.preparing = null;
+    this.store.update(id, { worktreePreparing: false });
     // うまくいかなかったことは、親（get_session）と、子への最初の指示に伝える（sessions-control.ts）。チャットでは注意の行にする
     const trouble = setupTroubleOf(result, failure);
     if (trouble) this.setupTrouble.set(id, trouble);
@@ -2480,12 +2548,15 @@ export class SessionManager {
       ...(failure ? [t('main.worktree.prepareFailed', { error: failure })] : []),
     ];
     this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: sentences(notes), ...(trouble ? { warning: true } : {}) }]);
-    // 準備の間に起動を終えていたら、ここで受け付けられるようになったことにする
-    if (!rt.ready && rt.init && rt.process) {
+    // 準備の間に起動を終えていたら、ここで受け付けられるようになったことにする（引き継いだ claude は initialize を送り直さないので、
+    // 起動の確かめが済んだか（readyAfterPrep）で見る）
+    if (!rt.ready && (rt.init || rt.readyAfterPrep) && rt.process) {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
       this.reconcileRemote(id, rt);
     }
+    // 準備の間に再起動して、止めた claude が捨てた発言があれば、受け付けられるようになったここで送り直す
+    this.resendCarried(id, rt);
     this.emitSessions();
   }
 
