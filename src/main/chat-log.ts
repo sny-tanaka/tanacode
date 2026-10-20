@@ -60,7 +60,36 @@ export async function readEntries(file: string): Promise<TranscriptEntry[]> {
 
 // サブエージェントの会話ログをチャットのイベントにする（タスクの中身の表示用）
 export async function readAgentLog(file: string, cwd: string): Promise<ChatEvent[]> {
-  return (await readEntries(file)).flatMap((entry) => toChatEvents(entry, cwd, true, rememberImage));
+  const entries = withoutForkContext(await readEntries(file), await forkToolUseId(file));
+  return entries.flatMap((entry) => toChatEvents(entry, cwd, true, rememberImage));
+}
+
+// フォーク（subagent_type: fork）なら、そのエージェントを起こした Agent の呼び出しの ID（会話ログの隣の agent-<ID>.meta.json）。
+// フォークでない・読めなければ null
+async function forkToolUseId(file: string): Promise<string | null> {
+  const meta = await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')
+    .then((text) => JSON.parse(text) as { isFork?: unknown; agentType?: unknown; toolUseId?: unknown })
+    .catch(() => null);
+  if (!meta || (meta.isFork !== true && meta.agentType !== 'fork')) return null;
+  return typeof meta.toolUseId === 'string' && meta.toolUseId ? meta.toolUseId : null;
+}
+
+// フォークの会話ログは、親の作業から始まる: 親の会話の写し（サブエージェントからのフォークだけ。本体からのフォークは fork-context-ref の 1 行）
+// → そのエージェントを起こした Agent の呼び出し → その結果と、Claude Code がフォークに渡す決まりの文（<fork-boilerplate>）と指示
+// （「Your directive: …」）の発言。フォーク自身の会話は、その発言の指示から始める（決まりの文と、起動の結果は出さない）
+export function withoutForkContext(entries: TranscriptEntry[], toolUseId: string | null): TranscriptEntry[] {
+  if (!toolUseId) return entries;
+  const at = entries.findIndex((e) => e.type === 'assistant' && Array.isArray(e.message?.content) && e.message.content.some((b) => b.type === 'tool_use' && b.id === toolUseId));
+  if (at === -1) return entries;
+  return entries.slice(at + 1).map((entry) => {
+    const content = entry.type === 'user' && Array.isArray(entry.message?.content) ? entry.message.content : null;
+    if (!content?.some((b) => b.type === 'tool_result' && b.tool_use_id === toolUseId)) return entry;
+    const kept = content
+      .filter((b) => !(b.type === 'tool_result' && b.tool_use_id === toolUseId))
+      .map((b) => (b.type === 'text' && typeof b.text === 'string' && b.text.includes('<fork-boilerplate>') ? { ...b, text: b.text.split('Your directive: ').slice(1).join('Your directive: ').trim() } : b))
+      .filter((b) => !(b.type === 'text' && !b.text));
+    return { ...entry, message: { ...entry.message, content: kept } };
+  });
 }
 
 // 会話ログ全体をチャットのイベントにする（アーカイブ済みセッションを再開せずに見るため）

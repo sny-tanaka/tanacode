@@ -168,6 +168,56 @@ describe('SubagentTracker', () => {
     expect(runs.length).toBe(before);
   });
 
+  it('SubagentHandback で報告したものは、完了通知の代わりの文ではなく、届いた報告を結果にする', () => {
+    tracker.start('toolu_agent', sessionDir, true, '調べもの');
+    tracker.finish('toolu_agent', LAUNCHED, false, false);
+    // 2.1.302: 報告（別の Claude からの知らせ）が、完了通知より先に届く
+    tracker.handback(AGENT_ID, '終わった');
+    expect(run('toolu_agent')).toMatchObject({ state: 'running', result: null });
+    tracker.notified('toolu_agent', 'completed', `This agent's report was delivered to you as a message from "${AGENT_ID}" (its SubagentHandback call). Read it there; it is not repeated here.`);
+    expect(run('toolu_agent')).toMatchObject({ state: 'done', result: '終わった' });
+    // 報告の入った結果は、あとの報告で置き換えない（SendMessage で再開したものの報告は、再開した実行の結果になる）
+    tracker.handback(AGENT_ID, 'あとの報告');
+    expect(run('toolu_agent')!.result).toBe('終わった');
+  });
+
+  it('報告より先に、まだ報告していない・報告せずに終わったと知らせたら、結果は空にし、あとで届いた報告を入れる', () => {
+    tracker.start('toolu_wait', sessionDir, true, null);
+    tracker.finish('toolu_wait', { ...LAUNCHED, agentId: 'a-wait' }, false, false);
+    tracker.notified('toolu_wait', 'completed', 'This agent has not reported yet: it is waiting on its own background work and will deliver its report through SubagentHandback when that finishes.');
+    expect(run('toolu_wait')).toMatchObject({ state: 'done', result: null });
+    tracker.handback('a-wait', '裏の作業も終わりました');
+    expect(run('toolu_wait')!.result).toBe('裏の作業も終わりました');
+
+    tracker.start('toolu_none', sessionDir, true, null);
+    tracker.finish('toolu_none', { ...LAUNCHED, agentId: 'a-none' }, false, false);
+    tracker.notified('toolu_none', 'completed', 'The subagent ended without delivering a report through SubagentHandback, so no report was delivered. Its unsent text is not shown.');
+    expect(run('toolu_none')).toMatchObject({ state: 'done', result: null });
+
+    // 報告の代わりの文でない結果は、あとで報告が届いても置き換えない。知らないエージェントの報告は覚えるだけ
+    tracker.start('toolu_plain', sessionDir, true, null);
+    tracker.finish('toolu_plain', { ...LAUNCHED, agentId: 'a-plain' }, false, false);
+    tracker.notified('toolu_plain', 'completed', 'ふつうの結果');
+    tracker.handback('a-plain', '別の報告');
+    tracker.handback('a-unknown', '知らないもの');
+    expect(run('toolu_plain')!.result).toBe('ふつうの結果');
+  });
+
+  it('フォーク（subagent_type: fork）は、そのエージェントを起こした Agent の呼び出しより前（親の会話の写し）を、ツールの回数に数えない', async () => {
+    tracker.start('toolu_fork', sessionDir, true, '調べもの');
+    meta(AGENT_ID, { agentType: 'fork', isFork: true, toolUseId: 'toolu_fork', spawnDepth: 2 });
+    // サブエージェントからのフォーク: 親の会話の写し（親のツールの呼び出し）→ フォークを起こした呼び出し → フォーク自身の作業
+    writeFileSync(
+      log(AGENT_ID),
+      toolUseLine('toolu_parent1', 'Read', { file_path: '/work/app/a.ts' }) +
+        toolUseLine('toolu_parent2', 'Grep', { pattern: 'x' }) +
+        toolUseLine('toolu_fork', 'Agent', { subagent_type: 'fork', description: '調べもの', prompt: '調べて' }) +
+        toolUseLine('toolu_own', 'Bash', { command: 'ls' }),
+    );
+    await poll();
+    expect(run('toolu_fork')).toMatchObject({ toolCalls: 1, recent: [{ name: 'Bash', target: 'ls' }] });
+  });
+
   it('終わったあとに数値の付いた通知が届いたら、数値だけ埋める。数値の無い通知は無視する', () => {
     tracker.start('toolu_agent', sessionDir, true, null);
     // 順番待ちの形（数値の無いもの）が先に届く

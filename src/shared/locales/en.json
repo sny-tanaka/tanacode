@@ -765,6 +765,7 @@
       "compactResume": "Optimized compact: cleared the conversation and resumed from the checklists",
       "compactHandoffAuto": "Optimized compact (automatic, context {percent}%): asked Claude to write what’s needed to continue on the checklists",
       "compactResumeAuto": "Optimized compact (automatic, context {percent}%): cleared the conversation and resumed from the checklists",
+      "agentReport": "Report from subagent “{name}”",
       "taskFinished": "Background task finished",
       "ciEnabled": "Enabled",
       "ciNewComments": "{count} new review comments",
