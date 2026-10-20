@@ -6,7 +6,9 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
-import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions } from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
+import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
+import { readInstructions } from './project-instructions';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
@@ -601,6 +603,7 @@ function registerIpc(): void {
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
+  handle(IpcChannel.FolderParentInstructions, (_e, cwd: string) => readInstructions(PARENT_INSTRUCTIONS_FILE, [String(cwd)])?.path ?? null);
   handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
   handle(IpcChannel.FolderCommands, (e, cwd: string) => listCommands(cwd, null, P(e).claudeDir));
   handle(IpcChannel.FolderOpen, async (e, cwd: string) => {
@@ -620,9 +623,11 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsUnarchive, (e, id: string) => P(e).manager.unarchive(id));
   handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));
   const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
-  handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[], pastes?: string[]) =>
-    P(e).manager.submit(id, String(text ?? ''), strings(attachments), strings(pastes)),
-  );
+  handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[], pastes?: string[], options?: SubmitOptions) => {
+    const manager = P(e).manager;
+    const body = String(text ?? '');
+    return manager.submit(id, options?.asParent === true ? manager.withParentRole(id, body) : body, strings(attachments), strings(pastes));
+  });
   listen(IpcChannel.SessionsInterrupt, (e, id: string) => P(e).manager.interrupt(id));
   handle(IpcChannel.ScheduledList, (e) => P(e).scheduled.list());
   handle(IpcChannel.ScheduledAdd, (e, sessionId: string, text: string, attachments: string[], at: number, pastes?: string[]) => {
@@ -664,6 +669,8 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsConfigure, (e, id: string, options: SessionOptions) => P(e).manager.configure(id, options));
   handle(IpcChannel.SessionsModels, (e, id: string) => P(e).manager.modelsOf(id));
   handle(IpcChannel.SessionsRestart, (e, id: string) => P(e).manager.restart(id));
+  handle(IpcChannel.SessionsParentInstructions, (e, id: string) => P(e).manager.parentInstructions(id)?.path ?? null);
+  handle(IpcChannel.SessionsBecomeParent, (e, id: string) => P(e).manager.becomeParent(id));
   // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
   handle(IpcChannel.ChecklistGet, (e, id: string) => (P(e).manager.summary(id) ? P(e).checklists.lists(id) : []));
   handle(IpcChannel.ChecklistApply, (e, id: string, op: unknown) => {

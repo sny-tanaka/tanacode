@@ -375,6 +375,7 @@ PR で、次のものを流します。develop への push では流しません
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
 | `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる。ターミナルモードのまま「動かしたまま終了」で起動し直すと、ターミナルモードのまま引き継ぎ、チャットに戻すと（書きかけが消える確かめのあと）同じ会話が続く |
 | `restart-queue.test.ts` | 作業中に送って順番待ちになった発言は、チャットの見出しの「再起動」で起動し直しても消えず、起動し直した Claude Code に届いて返事が出る（Claude Code が `end_session` で捨てた発言を、アプリが送り直す） |
+| `project-instructions.test.ts` | 作業フォルダに TANACODE.md と TANACODE_PARENT.md を置き、新規セッションの画面の「親として始める」で始めると、最初の指示と一緒に TANACODE_PARENT.md が、会話の始まりに TANACODE.md が（`.app` の Helper が動かす `instructions-hook.js` で）Claude に渡るか。チャットには知らせと最初の指示が出て、フックの行は出ないか。ヘッダーの「親にする」で、もう一度渡るか。`/clear` のあとは TANACODE.md だけが渡るか |
 | `start-then-switch.test.ts` | 新規セッションの画面で、セッションを始めている途中（worktree で始める前の git の確かめの間）にフォルダを変えると、変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から移らないか。変えた先で送ると、そのフォルダでセッションが始まるか |
 | `worktree-start.test.ts` | worktree で始めると、Claude Code が worktree を作っている間（合図があるまで `git worktree add` を待たせる）でも、送ってすぐセッションの画面に移るか。できるまで、チャット・エクスプローラー・ソース管理・ターミナルが準備の段階を出して待ち（ターミナルはシェルを開かない）、できたら預かっていた指示を送って worktree を開くか。作れなかったときは、新規セッションの画面に戻って、指示が入力欄に戻り、理由が出るか。worktree なしで送り直せるか |
 | `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
@@ -402,7 +403,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）と、そのほかの API のブロック（`raw`。そのまま送る）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。文のブロックを書き終える前に止めておくこともできます（`holdText`。書いている途中の文がアプリから配信されてから、会話ログに出るようにする）。ツールの呼び出しのブロックを書き終えたあと、次を送る前に止めておくこともできます（`holdTool`。Claude Code は書き終えた呼び出しから動かすので、本物のモデルのように、並べて呼ぶ次の呼び出しより先に、前の呼び出しの結果ができる）。
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 21 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 24 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -421,6 +422,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `sessions.test.ts` | ほかのセッションを扱う MCP。アプリと同じ起動の引数（`--mcp-config` の `timeout` も・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`src/main/sessions-mcp.ts`）がアプリの代わりのソケットまで呼び出しを運ぶか。読むだけのツールと子への指示・質問への回答・許可の確認への回答・子の片付け・自分への予約・人への報告は確認なし・子の中断と起動は確認あり。bypassPermissions でも、子の起動だけはフックで確認が出て、確認に「利用枠」が出る。親からの指示（囲みと、複数行の本文。40 行の長いものも）は会話ログから親の ID と本文の発言として読め、順番待ちにも本文だけが出る。子の知らせと予約の知らせ（`<tanacode-wakeup>`）は「Claude への知らせ」として読め、Claude が続きを始める。作業中に頼んだ親の指示は、ターンが終わってから送る。子が出した AskUserQuestion に、親（`SessionsControl` の `answer_question`。本物の `SessionManager` で）が答えると、子が続きを始める（1 問ずつ続けて出す質問では、1 問めに答えた結果に 2 問めが入って返る。番号付きの項目が続く複数行の自由記述も、そのまま届く）。子が出した許可の確認に、親（`answer_permission`）が答える（`can_use_tool` のツールの入力の全文を読める。許すと動き、許可は覚えないので次の確認が出る。断ると動かず、理由が確認への答えとして届いて、子が続きを始める。歯止めの確認にも答えられる。親が読んだあとで人が答えて別の確認に変わっていたら、答えない）。worktree の子で裏の Bash を動かし、親が `end_session` で終える（作業中は断る。裏のタスクの完了待ちなら、裏の Bash も止まり、アーカイブして worktree とブランチを消し、未追跡のファイルは控えに残る。もう一度呼ぶと、片付いていることを返す） |
     | `checklist.test.ts` | チェックリストの MCP。アプリと同じ起動の引数で起動し、ビルドした中継（`src/main/checklist-mcp.ts`）が、アプリの代わりのソケットの先の `ChecklistControl` まで呼び出しを運ぶか。書き換えるツールも確認なしに通る。サーバーの説明が Claude に渡り、`/compact` で圧縮したあとも渡り続ける。人がスレッドに「Claude に通知する」で返信すると、手の空いた Claude Code（本物の `SessionManager` で）に知らせが届き、会話ログからカードの場所を持つ「Claude への知らせ」として読める |
     | `checklist-hooks.test.ts` | チェックリストを使い続けさせる hooks。アプリと同じ起動の引数（`--settings` の hooks）と環境変数で起動し、ビルドした中継を `--hook` で動かしたフックが、アプリの代わりのソケットの先の `ChecklistControl` に聞いて Claude Code に返すか。人の発言で今のチェックリストが Claude に渡る。ツールを使ってチェックリストに触れずに終えようとすると、1 回だけ止まって理由が Claude に渡り、続きが始まる（止めたあとの続きは止まらない）。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない。チェックリストに触れたターン・ツールを使っていないターンは止まらない。`/compact` のあとにも渡る（有効な決定事項も。取り消したものは渡らない）。どれもチャットのフックの一覧に出ない。モックの API はすぐに応答を返すので、フックが動いた時点では会話ログに最後の応答がまだ無く、フックがそろうのを待ってから数えることも確かめる（`settled`。Claude Code がフックに渡す `last_assistant_message` と、会話ログの最後の応答が同じ文であること）。止めた記録がチャットの目印（`checklist-stop`）になる |
+    | `instructions.test.ts` | TANACODE.md を渡す `SessionStart` のフックと「親にする」。アプリと同じ起動の引数（`--settings` の hooks）と環境変数で起動し、ビルドした入口（`src/main/instructions-hook.ts`）を Node で動かす。新しい会話の始まりに TANACODE.md が Claude に渡り、チャットのフックの一覧には出ない（同じ記録にまとめられたユーザーの `SessionStart` のフックの文は出る）。読んだファイル・コンテキストの中身に出る。書き換えてから `/clear` すると新しい中身が渡る。`--resume` では、同じ中身なら渡し直さず、書き換えていれば渡す。`/compact` のあとに 1 つだけ渡る。`becomeParent` で TANACODE_PARENT.md が渡り、チャットには知らせとして出る |
     | `terminal.test.ts` | 人のターミナルの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）と環境変数で起動し、ビルドした中継（`src/main/terminal-mcp.ts`）が、アプリの代わりのソケットの先の本物の `TerminalControl`（`/bin/sh` を開く `ShellTerminals`）まで呼び出しを運ぶか。読むツールは確認なしに届き、人が打った出力を読める。打つツールは確認が出て（理由と入力に打つ文字）、許すと、フックが控えさせた印で打てる（Claude Code がフックに渡す `tool_input` と、ツールの呼び出しの引数から、同じ印の鍵ができる）。「次から聞かない」を選んでも、次も確認が出る。bypassPermissions でも確認が出る。フックがアプリに聞けない（答えが返らない）ときも確認が出て、許しても、印が無いので何も打たずに断る |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備が終わってから入力を受け付け、会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでも、確かめずに始まる（`-p` はフォルダの信頼を確かめない）。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
     | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。発言は、チャットと同じく `SessionManager.submit` で送る。`--effort` で起動したときのエフォートとモデル → 会話の最初の `/context` → 複数行の発言（そのまま 1 つの発言になり、起動したエフォートで API を呼ぶ）→ `/`・`@`・`!`・`#` で始まる行を含む長い複数行・改行なしで 2,000 文字ほどの 1 行・1,500 文字ほどの行を含む複数行・30 行の発言（どれも欠けずに 1 つの発言になり、コマンドとして動かない）→ 札（長い貼り付け）を添えた発言（文と札の中身が 1 つの発言として届く）→ `!` で始まる発言（シェルで動かず、そのまま Claude への発言になる）→ 番号付きの手順が続く長い親セッションからの指示（手が空くのを待つ送り方で、親からの発言として全文届く）→ `/rename` と AI のタイトル → セッションの一覧。上限いっぱい（4 万文字）の再開の文が、手が空くのを待つ送り方で、1 文字も欠けず・囲みなしで届く。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
@@ -581,6 +583,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - statusLine: Claude Code は応答のたびに JSON を渡してきます。中身はモデル・エフォート・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。statusLine は TUI でしか動かない（`-p` では動かない）ので、使うのはターミナルモードの間だけです。
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。チャットの間は、ユーザーの statusLine も動きません（決めたこと）。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
 - チェックリストを Claude に扱わせるときは、`--settings` に、今のチェックリストを Claude に渡すフック（`UserPromptSubmit`・`Stop`・`SessionStart`）も足します（下の「チェックリスト」）。どれも `-p` で動きます（2.1.301 で実測）。
+- `--settings` に、TANACODE.md を Claude に渡す `SessionStart` のフックを、いつも足します（下の「TANACODE.md と「親にする」」）。
 - 書くだけのフック（何も決めない）: 許可の確認を出す直前（`PermissionRequest`）のツールの名前と入力、Claude Code の知らせ（`Notification`）、ターンの終わり（`Stop`）を、`statusline/<id>.permission.json`・`<id>.notification.json`・`<id>.idle.json` に書かせます（`PERMISSION_FILE_COMMAND`・`NOTIFICATION_FILE_COMMAND`・`IDLE_FILE_COMMAND`。いつも足す）。
   - ターミナルモードの間に、確認待ちと、手が空いたことを知るためです（下の「ターミナルモード」。`Notification` のファイルは、今は読んでいません）。チャットでは使いません（`can_use_tool` と `result` で分かる）。
   - 何も決めない（決める欄の無い `{"suppressOutput":true}` だけを書く）ので、`can_use_tool` と競いません（実測: フックが何も決めなければ、Claude Code はアプリの返事を待つ）。
@@ -914,7 +917,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面は、パネルが見えている間だけ取りに行き（`context:get`）、使用量が変わったら（`knowledge:changed`）取り直します。
   - 巻き戻し（`/rewind`）は、チャットと同じく `branchCut` で、外れた枝のものを捨てます。同じ uuid の行が 2 回書かれたとき（デスクトップ版の会話ログは圧縮のたびに最初から書き直す・圧縮でそのまま残した行の書き直し）は、前のものを使います。巻き戻しの検出（`branchCut`）より先に見ます。
 - 並べるものと、まとめ方
-  - ファイル: Read の結果・Edit や Write の入力（書いた中身）・`@` や圧縮のあとの添付（`file`）・変更に気づいた知らせ（`edited_text_file`）・CLAUDE.md や記憶（`instructions`・前の Claude Code の `nested_memory`）。同じファイルは 1 行に足します。
+  - ファイル: Read の結果・Edit や Write の入力（書いた中身）・`@` や圧縮のあとの添付（`file`）・変更に気づいた知らせ（`edited_text_file`）・CLAUDE.md や記憶（`instructions`・前の Claude Code の `nested_memory`）・アプリのフックが渡した TANACODE.md と「親にする」で読ませた TANACODE_PARENT.md（上の「TANACODE.md と「親にする」」）。同じファイルは 1 行に足します。
   - ツールの結果: 1,000 トークン以上のものだけ 1 行にし、小さいものはやりとりに足します。スキルの本文（`Skill` のすぐあとの isMeta の行。`sourceToolUseID` でつながる）は、そのツールの行に入れます。
   - 画像: ツールの結果と発言の添付。画像のファイルを Read したときは、そのファイルの行に入れます。発言の添付は、一覧でどれか分かるよう、発言の冒頭と何枚目かを名前にします。
   - サブエージェント: Agent の結果と、完了の知らせ（`<task-notification>` の `<tool-use-id>`）・報告（`<agent-message from>` のサブエージェントの ID）を、起動した行にまとめます。
@@ -1368,6 +1371,26 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - アーカイブ: `SessionManager.archive` が、子も一緒にアーカイブします（`childrenOf`。子の worktree は消さない）。一覧から削除できるのはアーカイブ済みのセッションだけで（子は、親をアーカイブしたときに一緒にアーカイブ済み）、削除（`remove`）は子をアーカイブし直さずに `archive` を通します。親を消しても子は残り、戻しておいた子は動き続けます（アプリ内ブラウザも、消えた子とアーカイブ済みの子のものだけを閉じる）。作業中の子がいるときの確認は、画面が出します。
 - オン・オフ: メニューの「tanacode → Claude にほかのセッションを扱わせる」（`settings.json` の `sessionsControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断り（`SessionsControl.handle`）、親への知らせも止めます。待ち受けを始められなかったときも足しません。アプリが引き継いだ Claude Code には、起動の引数を足せません。機能を足す前のアプリが起動したものは、起動し直すまで使えません（ブラウザと同じ）。
 
+### TANACODE.md と「親にする」
+
+- 2 つのファイル（`src/shared/project-instructions.ts`）。どちらも、セッションのフォルダの直下に置きます。worktree のセッションでそこに無ければ、元のフォルダ（`SessionWorktree.root`）の直下を見ます（コミットしていない自分用のファイルも、worktree の子に渡るように。`instructionDirs`）。中身は書かれたまま渡します（Claude に送る文は英語、ファイルの中身は訳さない。決めたこと）。
+  - `TANACODE.md`: tanacode が起動するすべてのセッション（親にも子にも）に、自動で渡します。tanacode の外の `claude` には渡りません（`CLAUDE.md` とは別のもの）。
+  - `TANACODE_PARENT.md`: 自動では渡しません。人が「親にする」（新規セッションの画面では「親として始める」）を押したときに 1 回だけ読ませます。親の状態は覚えません（会話を消すと忘れるので、もう一度押す。決めたこと）。
+- TANACODE.md の渡し方: `--settings` の `SessionStart`（`startup|resume|clear|compact`）のフック（`instructions-launch.ts` の `instructionsHooks`）。その都度ファイルを読み、`additionalContext` で渡します（`project-instructions.ts` の `runInstructionsHook`）。書き換えたら、次にどれかが起きたときから効きます。
+  - 入口は `src/main/instructions-hook.ts`（`out/main/instructions-hook.js`）。チェックリストのフックと同じく、tanacode 本体を Node として動かします。実行ファイル・スクリプト・探すフォルダ（JSON の配列）は、起動する Claude Code の環境変数で渡します（`TANACODE_INSTRUCTIONS_COMMAND`・`TANACODE_INSTRUCTIONS_SCRIPT`・`TANACODE_INSTRUCTIONS_DIRS`。`instructionsHookEnv`）。アプリには聞かないので、アプリが止まっていても渡せます。メニューでの切り替えはありません（ファイルが無ければ何も渡さない）。
+  - `SessionStart` のフックは、`-p`（stream-json）でも、新しい会話・`--resume`・`/clear`（最適化圧縮の `/clear` も）・圧縮のあとのどれでも動き、文が Claude に渡ります（2.1.303 で実測。`test/cli/instructions.test.ts`）。
+  - `--resume`（起動し直し・チャットとターミナルモードの切り替え・モデルの切り替えなどでも起きる）でも、Claude Code は文を会話に足します。毎回渡すと同じ中身が重なるので、今の会話に最後に渡したものと同じなら渡しません。会話ログを後ろから読み、Claude に渡った記録（`hook_additional_context`）の囲みの印（中身の sha256 の頭 12 桁。`sum`）と比べます。それより後に圧縮の境目（`compact_boundary`）があれば、渡していないものとします（`lastDeliveredSum`）。同じ文は、フックの記録（`hook_success` の `stdout`）・リクエストの控え（`api-request-blob`）・読んだファイルの中にも出るので、`hook_additional_context` のほかは読みません。
+  - 渡す文は `<tanacode-instructions path="…" sum="…">` で囲み、英語の短い前書き（tanacode が渡す、CLAUDE.md と同じく従う、`/clear` と圧縮のあとにも渡す）を付けます（`instructionsContext`）。囲みを閉じるタグは効かないようにします（ほかの `tanacode-` のタグは中身のまま）。Claude Code が hooks から受け取れる文は 1 万文字までなので、9,000 文字（`MAX_INSTRUCTIONS_CHARS`）を超えるときは、中身の代わりに Read で読むよう頼み、囲みに `omitted="true"` を付けます（読んだファイルの印は付けない）。1MB を超えるファイルは読みません。
+  - 同じ出来事で動いたフックの文を、Claude Code は 1 つの `hook_additional_context`（`content` の配列）にまとめます（ユーザーの `SessionStart` のフックと一緒になる。2.1.303 で実測）。チャットでは、アプリのフックの文（TANACODE.md・チェックリストの知らせ）だけを除いて、残りをフックの行として出します（`chat.ts` の `hookRunOf`・`isAppText`）。フックの記録（`hook_success`）は、コマンドの目印 `TANACODE_INSTRUCTIONS_HOOK` で除きます。
+  - Claude が知っている範囲: コンテキストの中身では、CLAUDE.md と同じくファイルの行にします（`ContextTracker`。まとめられた記録は、要素ごとに分ける）。読んだファイルの印も付けます（`KnowledgeTracker`。セッションのフォルダの外のもの、つまり worktree の元のフォルダから読んだものは、ほかのファイルと同じく付かない）。
+- 「親にする」（チャットのヘッダー。子のセッションには出さない。子は `start_session` を使えないため）: `sessions.becomeParent` で、main が TANACODE_PARENT.md を読み、`<tanacode-parent-role path="…">` で囲んだ発言を送ります（`SessionManager.becomeParent`）。囲みの中には、画面の言語の短い前書き（`chat.parentRole.intro`。チャットの知らせを開くと人にも見えるため）とファイルの中身を入れます（`parentRoleText`）。
+  - ふつうの発言と同じく `submit` で送るので、作業中なら Claude Code が順番待ちにします。順番待ちには「親にする（TANACODE_PARENT.md を読ませる）」と出します（`unsentView`。ほかのアプリの知らせと違い、人がボタンで頼んだもののため）。ターミナルモードでは、TUI の入力欄に貼ります（Enter は人。`pasteIntoTerminal`）。メニューを出している間は貼れないので、理由を返します。
+  - ボタンを押せるかは、`sessions.parentInstructions`（パスだけを返す。中身は画面に渡さない）で調べます。セッションを替えたとき・そのファイルが変わったとき（`workspace.onFilesChanged`）・ウインドウに戻ったとき（見張っていない元のフォルダに置いたときのため）に調べ直します（`chat/parentRole.ts`）。
+  - チャットでは、「TANACODE_PARENT.md を読ませて、親のセッションにしました」の知らせ（開くと前書きと中身）にします。一覧のタイトルにはしません。
+- 新規セッションの画面の「親として始める」: フォルダの直下に TANACODE_PARENT.md があるときだけ選べます（`folders.parentInstructions`）。選んだものは覚えません（セッションごとに決めるもの。決めたこと）。送るときは `sessions.submit` の `asParent` を付け、main が最初の指示の前に囲みを付けます（`SessionManager.withParentRole`。worktree のセッションでは、作り終えたあとの worktree のフォルダから探す）。起動を待つ間の預かり（`pendingSends`）は `asParent` を持ち越し、始められずに新規セッションの画面へ戻したときは、チェックも戻します。始めるまでにファイルが無くなっていたら、指示だけを送り、読ませられなかったことをチャットに出します。
+  - チャットでは、知らせ（ID は `<uuid>:parent-role`）のあとに、最初の指示を人の発言（ID は行の uuid のまま。巻き戻しのため）として出します。一覧のタイトルと順番待ちも、最初の指示から作ります。
+- コンテキストの中身では、TANACODE_PARENT.md をファイルの行に、「親として始める」の最初の指示をやりとりにします。読んだファイルの印も付けます。
+
 ### チェックリスト
 
 - 人と Claude が一緒に見て、書き換えるリスト。セッションの中に名前の付いたリスト（`Checklist`）を持ち、リストはカード（`Card`。タイトル・説明文・チェック・スレッド）を並べます。型と、main・画面・MCP で使う読み方は `src/shared/checklist.ts`。
@@ -1513,6 +1536,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | GitHub の PR（`gh pr list`。`gh` のログインを使う） | worktree のブランチから作った PR がマージ済みか（アーカイブ・一覧から削除するときの確認と、worktree の削除） |
 | Claude が読むセッションのフォルダ（`git diff`・`git ls-files`・未追跡のファイルの中身） | ほかのセッションのブランチの変更（`get_session_diff`。見える範囲のセッションだけ） |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
+| セッションのフォルダ（worktree なら元のフォルダも）の直下の `TANACODE.md`・`TANACODE_PARENT.md` | TANACODE.md は、Claude Code が動かすアプリのフックが読み、Claude に渡す（会話ログの最後に渡したものの印も、後ろから読む）。TANACODE_PARENT.md は、「親にする」を押したときにアプリが読んで送る（あるかどうかは、ボタンを出すときに見る） |
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
 | `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと・タイトルバーのチェックを押したとき。メニューの「新しいバージョンが出たら通知する」で止められる） |
 | Homebrew（`brew info`・`brew update`・`brew fetch`・`brew upgrade`。tap と GitHub の Releases） | Homebrew で入れたか、新しいバージョンのダウンロードと入れ替え（Homebrew で入れたときだけ。入れ替えはアプリが終わってから） |
@@ -1598,6 +1622,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `checklist-hook.ts`: Claude にチェックリストを使い続けさせる hooks（中継の入り口を `--hook` で動かす。会話ログからツールを数えて、アプリに聞く）
+  - `project-instructions.ts` / `instructions-hook.ts` / `instructions-launch.ts`: TANACODE.md・TANACODE_PARENT.md を探して読む・会話ログに最後に渡した TANACODE.md の印と、TANACODE.md を渡す `SessionStart` のフックの入り口、フックの設定と環境変数（上の「TANACODE.md と「親にする」」）
   - `walkthrough-control.ts`: Claude から届いたウォークスルーのツールを実行する（手順とファイルの範囲の確かめ・寄り道・今の場所・PR への投稿）・画面からのステップの移動と閉じる（メモリの上だけで持つ。閉じても残す）
   - `walkthrough-mcp.ts` / `walkthrough-bridge.ts`: ウォークスルーの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `terminal-control.ts`: Claude から届いた人のターミナルのツールを実行する（呼び出し元と子の解決・打つ前の確認済みの印・打ったあとの出力を待つ）
@@ -1641,7 +1666,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
-  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン・巻き戻しの確かめのカード `RewindCard`・作業中と起動中の進み具合 `WorkingNote`）
+  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン・巻き戻しの確かめのカード `RewindCard`・作業中と起動中の進み具合 `WorkingNote`・「親にする」で読ませる TANACODE_PARENT.md があるかを調べる `parentRole.ts`）
   - `screen/`: Claude Code が答えを待っている要求のカード。質問のカード（`QuestionCard`）と、許可の確認・プランの承認のカード（`MenuCard`）と、MCP サーバーの質問のカード（`ElicitationCard`）。待っている質問（`useSessionQuestions`）と、許可の確認（`useSessionPermissions`）と、MCP サーバーの質問（`useSessionElicitations`）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
@@ -1665,7 +1690,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）と、カバレッジの下限（`coverage-thresholds.json`。上の「テストと CI」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
-  - `cli/`: 本物の `claude` を動かす確認（上の「Claude Code との互換性の確かめ方」の 17 個の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・常駐のホストの代わり（`fake-pty-host.ts`。パイプは `child_process`、pty は node-pty を直に使う）・アプリ内ブラウザとセッションとチェックリストの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
+  - `cli/`: 本物の `claude` を動かす確認（上の「Claude Code との互換性の確かめ方」の 24 個の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・常駐のホストの代わり（`fake-pty-host.ts`。パイプは `child_process`、pty は node-pty を直に使う）・アプリ内ブラウザとセッションとチェックリストの中継と TANACODE.md のフックを 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/<バージョン>/`: 本物の Claude Code から取った控え（会話ログと statusLine の JSON・stream-json の行・行の目録）と、どのバージョンの控えも読めるかの確認（`statusline.test.ts`・`context.test.ts` も、動作確認済のバージョンのものを読む）
   - `transcript-inventory.ts` / `transcript-used-fields.ts`: Claude Code が書いた行の目録の作り方（`test/cli` が作る）と、tanacode が読むフィールドの一覧
   - `transcript-checks.ts` / `local/`: 本物の会話ログで確かめる決まりと、手元の会話ログに流す入口（`npm run check:transcripts`。CI では流さない）
@@ -1685,6 +1710,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
   - `checklist-decisions.test.ts`: 決定事項（リストの種類と性質・Claude ができること（足す・理由つきで取り消してゴミ箱に入れる・取り消したカードを消す）と断ること・人ができること・承認したカードを決定事項に移す・知らせにいつも出すことと長さの上限・MCP のツール・種類の無いデータの読み方）
+  - `project-instructions.test.ts` / `instructions-hook-entry.test.ts` / `session-manager-parent-role.test.ts`: TANACODE.md と「親にする」（渡す文と囲み・探すフォルダ・会話ログに最後に渡したもの・フックの答え・入口・`SessionManager` の送り方）
   - `checklist-reminder.test.ts` / `checklist-hook.test.ts` / `checklist-mcp-entry.test.ts`: チェックリストを使い続けさせる hooks（どの時点で何を渡すか・ターンの終わりを止める条件・会話ログからのツールの数え方・アプリへの聞き方と Claude Code への返し方・中継の入り口）
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所・PR への投稿と載せ直し・載せられない理由）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）

@@ -24,6 +24,7 @@ import { SessionStore, type SessionRecord } from '../../src/main/session-store';
 import { StatusLineWatcher } from '../../src/main/statusline';
 import type { UsageReport } from '../../src/main/stream/state';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
+import type { InstructionsLaunch } from '../../src/main/instructions-launch';
 
 
 // 本物の claude を起動せずに、本物の SessionManager を動かす部品（npm test 用。速く、決まった結果になる）。
@@ -324,6 +325,8 @@ export type ScriptedOptions = {
   walkthroughMcp?: () => McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（無ければ既定のプロファイル）
   claudeDir?: string | null;
+  // TANACODE.md を渡すフックを足すときの材料（無ければ足さない）
+  instructionsHook?: () => InstructionsLaunch | null;
   // 前のアプリが残したセッションの記録（アプリを起動し直したときの sessions.json。cwd は、このアプリの作業フォルダに置き換える）
   records?: SessionRecord[];
 };
@@ -428,6 +431,8 @@ export class ScriptedApp {
       options.checklistMcp,
       options.walkthroughMcp,
       options.claudeDir ?? null,
+      undefined,
+      options.instructionsHook,
     );
     this.claudeDir = options.claudeDir ?? null;
   }

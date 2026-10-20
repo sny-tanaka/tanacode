@@ -20,6 +20,7 @@ import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHE
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { CLASSIFIER_SUMMARY_ENV, FILE_CHECKPOINTING_ENV, transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
+import { INSTRUCTIONS_COMMAND_ENV, INSTRUCTIONS_DIRS_ENV, INSTRUCTIONS_SCRIPT_ENV, type InstructionsLaunch } from '../../src/main/instructions-launch';
 import { SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
@@ -70,6 +71,8 @@ type Options = {
   checklist?: McpLaunch;
   // 人のターミナルの MCP サーバー（中継）を足すときの材料（SessionManager の terminalMcp）。無ければ足さない
   terminal?: McpLaunch;
+  // TANACODE.md を渡すフックを足すときの材料（SessionManager の instructionsHook）。無ければ足さない
+  instructions?: InstructionsLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -194,6 +197,9 @@ export class ClaudeRun {
       TERMINAL_SESSION_ENV,
       TERMINAL_COMMAND_ENV,
       TERMINAL_SCRIPT_ENV,
+      INSTRUCTIONS_COMMAND_ENV,
+      INSTRUCTIONS_SCRIPT_ENV,
+      INSTRUCTIONS_DIRS_ENV,
     ]);
   }
 
@@ -402,6 +408,7 @@ export class ClaudeRun {
       undefined,
       null,
       () => this.options.terminal ?? null,
+      () => this.options.instructions ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

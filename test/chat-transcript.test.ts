@@ -19,6 +19,8 @@ import {
 import { checklistEventText } from '@shared/checklist-tools';
 import { formatScheduleTime, wakeupText } from '@shared/scheduled';
 import { usageLimitOf, usageResumeText } from '@shared/usage-limit';
+import { instructionsContext, parentRoleText } from '@shared/project-instructions';
+import { INSTRUCTIONS_HOOK_COMMAND } from '../src/main/instructions-launch';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
 
 // 会話ログの行をチャットの出来事に変える（toChatEvents）と、そのまわりの読み取り（shared/chat.ts）。
@@ -281,6 +283,15 @@ describe('toChatEvents: attachment の行', () => {
     // ユーザーの Stop のフックが止めたとき・Stop でないときは、目印にしない
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
+    // TANACODE.md を渡すフック。フックの記録（コマンドの目印）も、Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）も出さない。2.1.303
+    const instructions = instructionsContext(`${CWD}/TANACODE.md`, '# 決まり', '0123456789ab');
+    expect(events(attachment({ type: 'hook_success', hookName: 'SessionStart:startup', hookEvent: 'SessionStart', command: INSTRUCTIONS_HOOK_COMMAND, stdout: '{}' }))).toEqual([]);
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [instructions] }))).toEqual([]);
+    // ユーザーの SessionStart のフックが渡した文は出す。アプリのフックの文と 1 つの記録にまとまっていても、ユーザーの文だけを出す（2.1.303）
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: ['今日の予定'] }))[0]).toMatchObject({ type: 'hook' });
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: ['今日の予定', instructions, reminder, '明日の予定'] }))).toMatchObject([
+      { type: 'hook', run: { event: 'SessionStart', outcome: 'context', message: '今日の予定\n明日の予定' } },
+    ]);
     // hooks でない attachment
     expect(events(attachment({ type: 'file', filename: `${CWD}/notes.txt` }))).toEqual([]);
     // 中身の無い attachment は、形の違う行として、未知のイベントにする
@@ -654,6 +665,28 @@ describe('toChatEvents: 発言の行', () => {
     expect(usageLimitOf({ isApiErrorMessage: true, apiError: 'overloaded' })).toBeNull();
     expect(usageLimitOf({ apiError: 'usage_limit_reached' })).toBeNull();
     expect(usageLimitOf({ isApiErrorMessage: true, apiError: 'usage_limit_reached', apiErrorParams: { rate_limit_info: { resetsAt: 'soon', rateLimitType: '' } } })).toEqual({ resetsAt: null, window: null });
+  });
+
+  it('「親にする」の発言は、「親のセッションにしました」の知らせにし、開くと前書きと TANACODE_PARENT.md が読める。一覧のタイトルにしない。順番待ちには出す', () => {
+    const text = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり\n子に任せる');
+    const body = text.replace(/^<[^>]+>\n/, '').replace(/\n<\/[^>]+>$/, '');
+    const notice = { type: 'notice', id: 'u1', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: body };
+    expect(events(user(text))).toEqual([notice]);
+    expect(events(user(`<pasted_content id="7">\n${text}\n</pasted_content id="7">`))).toEqual([notice]);
+    expect(transcriptTitle(user(text))).toBeNull();
+    expect(unsentView(text)).toEqual({ text: '親にする（TANACODE_PARENT.md を読ませる）', pastes: [] });
+    // 囲みの前に文があるもの（人が打った文）は、人の発言のまま
+    expect(events(user(`これは人の発言 ${text}`))[0]).toMatchObject({ type: 'user' });
+  });
+
+  it('「親として始める」の発言は、「親のセッションにしました」の知らせのあとに、最初の指示を人の発言として出す。タイトル・順番待ちも指示から', () => {
+    const text = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり', 'ログイン画面を作って\n\n<pasted_content id="1">\nログ\n</pasted_content id="1">');
+    expect(events(user(text))).toEqual([
+      { type: 'notice', id: 'u1:parent-role', text: 'TANACODE_PARENT.md を読ませて、親のセッションにしました', detail: expect.stringContaining('# 親の決まり') },
+      { type: 'user', id: 'u1', text: 'ログイン画面を作って', pastes: ['ログ'], at: expect.any(Number) },
+    ]);
+    expect(transcriptTitle(user(text))).toEqual({ title: 'ログイン画面を作って', priority: 1 });
+    expect(unsentView(text)).toEqual({ text: 'ログイン画面を作って', pastes: ['ログ'] });
   });
 
   it('利用枠が戻ったのでアプリが送った再開のメッセージは、「利用枠が戻ったので、続きを頼みました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {

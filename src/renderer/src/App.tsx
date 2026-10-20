@@ -694,11 +694,11 @@ export function App() {
   // 最後に worktree で始めたセッションと、そのときの新規セッションの画面の戻り先（作れなかったときに、画面を元に戻す）
   const worktreeStart = useRef<{ id: string; back: string | null } | null>(null);
   const startSession = useCallback(
-    async (dir: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[] = []) => {
+    async (dir: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[] = [], asParent = false) => {
       // 新規セッションの画面でワークスペースに追加したフォルダも、一緒に渡す
       const added = draftRef.current?.cwd === dir ? draftRef.current.added : [];
       const id = await window.tanacode.sessions.create(dir, added.length > 0 ? { ...options, addedFolders: added } : options);
-      pendingSends.send(id, text, attachments, pastes);
+      pendingSends.send(id, text, attachments, pastes, asParent);
       if (options.worktree) worktreeStart.current = { id, back: composingRef.current?.back ?? null };
       // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）。
       // worktree で始めたセッションのフォルダは、worktree のフォルダ（エディタのフォルダが変わる）

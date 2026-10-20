@@ -6,6 +6,7 @@ import type { TranscriptEntry } from '@shared/chat';
 import type { ConversationEntry } from '@shared/transcript-line';
 import type { ContextItem } from '@shared/context';
 import { ContextTracker, estimateTokens, imageTokens, readContext } from '../src/main/context-tracker';
+import { instructionsContext, parentRoleText } from '@shared/project-instructions';
 
 // コンテキストの中身（ContextTracker）の、test/context.test.ts で確かめていないところ。
 // 行の形は、Claude Code 2.1.292 の控えと、同じバージョンをモックの API で動かして取った会話ログ（@ の添付・サブフォルダの CLAUDE.md・
@@ -193,6 +194,37 @@ describe('ContextTracker（続き）', () => {
     ])
       tracker.handle(e);
     expect(tracker.current().items.map((i) => [i.label, i.tokens])).toEqual([['x', 0]]);
+  });
+
+  it('アプリのフックが渡した TANACODE.md は、CLAUDE.md と同じくファイルの行にする。同じ記録のユーザーのフックの文は、やりとりに入れる', () => {
+    last = null;
+    const rules = '# 決まり\n'.repeat(20);
+    const context = instructionsContext(`${CWD}/TANACODE.md`, rules, '0123456789ab');
+    const root = instructionsContext('/work/repo/TANACODE.md', 'worktree の元', '0123456789ab');
+    const items = track([
+      attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [context, 'ユーザーのフックの文'] }),
+      prompt('始めます'),
+      // worktree のセッションで、元のリポジトリの直下から読んだもの
+      attachment({ type: 'hook_additional_context', hookName: 'SessionStart', hookEvent: 'SessionStart', content: [root] }),
+    ]);
+    expect(find(items, 'TANACODE.md')).toMatchObject({ kind: 'file', tokens: Math.round(estimateTokens(context)) });
+    expect(find(items, '/work/repo/TANACODE.md')).toMatchObject({ kind: 'file', tokens: Math.round(estimateTokens(root)) });
+    expect(find(items, '会話の始まり')!.tokens).toBe(Math.round(estimateTokens('ユーザーのフックの文')));
+  });
+
+  it('「親にする」で読ませた TANACODE_PARENT.md はファイルの行に、「親として始める」の最初の指示はやりとりにする', () => {
+    last = null;
+    const alone = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり');
+    const withFirst = parentRoleText(`${CWD}/TANACODE_PARENT.md`, '# 親の決まり', 'ログイン画面を作って');
+    const items = track([prompt(withFirst), reply('m1', 10, 100, [{ type: 'text', text: 'はい' }]), prompt(alone)]);
+    expect(items.map((i) => [i.kind, i.label])).toEqual([
+      ['topic', 'ログイン画面を作って'],
+      ['file', 'TANACODE_PARENT.md'],
+      ['topic', '親にする（TANACODE_PARENT.md）'],
+    ]);
+    const rest = estimateTokens('ログイン画面を作って');
+    expect(find(items, 'ログイン画面を作って')!.tokens).toBe(Math.round(rest + 10));
+    expect(find(items, 'TANACODE_PARENT.md')!.tokens).toBe(Math.round(estimateTokens(withFirst) - rest + estimateTokens(alone)));
   });
 
   it('作業中に送った人の発言はやりとりを区切り、作業中に届いた完了通知・別の Claude からの知らせは区切らない', () => {

@@ -207,6 +207,7 @@
       "notice": "Notice: {summary}",
       "taskFinished": "Background task finished",
       "answer": "Answered: {answer}",
+      "parentRole": "Make parent ({file})",
       "noAnswer": "(no answer)"
     },
     "hooks": {
@@ -286,6 +287,11 @@
       "tuiExited": "Claude Code in terminal mode exited before it finished starting (code {code}). Resume to start it again, or switch back to the chat with the terminal mode button",
       "chatExited": "Claude Code for the chat exited while starting (code {code}), so the session is back in terminal mode",
       "startFailedStopped": "Couldn't start it either way ({reason}). Fix the settings, then reopen it with Resume"
+    },
+    "parentRole": {
+      "missing": "{file} not found. Put it in the session folder to use this",
+      "cannotPaste": "Can't paste into the input while Claude Code is showing a prompt. Answer it, then try again",
+      "missingOnStart": "{file} wasn't found, so only the first instruction was sent (not started as a parent)"
     }
   },
   "commands": {
@@ -552,6 +558,10 @@
       "restartTip": "Restart Claude Code and continue the same conversation. Picks up changes to skills, CLAUDE.md, settings, MCP servers, and more.",
       "confirmRestart": "Any turn in progress and background tasks will stop. Restart Claude Code?",
       "restartFailed": "Couldn't restart: {error}",
+      "becomeParent": "Make Parent",
+      "becomeParentTip": "Make this session a parent: Claude reads {file} once (queued while Claude is working). After the conversation is cleared (/clear, optimized compaction), press it again",
+      "becomeParentMissing": "Put {file} (the rules for working as a parent) in the session folder to use this",
+      "becomeParentFailed": "Couldn't make this session a parent: {error}",
       "export": "Export session…",
       "exportTip": "Export this session's history to a single HTML file",
       "terminal": "Terminal mode",
@@ -789,6 +799,7 @@
       "scheduledTaskNamed": "Scheduled task “{name}” started",
       "wakeup": "Claude's wake-up time has come",
       "usageLimitResume": "The usage limit has reset, so tanacode asked Claude to continue",
+      "parentRole": "Made this the parent session with {file}",
       "modelFallback": "Switched the model from {from} to {to}",
       "modelFallbackUnknown": "Switched the model",
       "modelRefusalFallback": "{from} declined to respond, so {to} answered instead",
@@ -899,6 +910,10 @@
         "shortened_one": "[… {count} character cut …]",
         "cutEnd": "… (cut)"
       }
+    },
+    "parentRole": {
+      "intro": "“Make Parent” was pressed. For the rest of this conversation, act as the parent session and follow {file} below.",
+      "queued": "Make parent (read {file})"
     }
   },
   "composer": {
@@ -1271,6 +1286,9 @@
       "switchDefault": "Switch to latest default branch",
       "worktreeAbout": "Starts the session in its own worktree (a separate working folder and branch) with claude --worktree.\nSessions running in parallel in the same folder won't conflict.\nLocation: .claude/worktrees/ in the folder; branch: worktree-<name>",
       "useWorktree": "Use worktree",
+      "asParent": "Start as Parent",
+      "asParentAbout": "Claude reads {file} along with the first instruction and starts as a parent that runs child sessions",
+      "asParentMissing": "Put {file} (the rules for working as a parent) in the folder to use this",
       "folderMissing": "Folder not found",
       "placeholder": "Your first prompt (⌘Enter to send · @ for files and sessions · / for commands)",
       "placeholderNoFolder": "Choose a working folder first",

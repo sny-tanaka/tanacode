@@ -360,8 +360,9 @@ export class E2EApp {
     return this.page.locator(selector, { hasText: text });
   }
 
-  // 新しいセッションを、作業フォルダで始める（最初の指示を送る）。mode: 新規セッションの画面で選ぶ権限モード
-  async startSession(prompt: string, { mode }: { mode?: PermissionMode } = {}): Promise<void> {
+  // 新しいセッションを、作業フォルダで始める（最初の指示を送る）。mode: 新規セッションの画面で選ぶ権限モード /
+  // asParent: 「親として始める」を選ぶ（作業フォルダに TANACODE_PARENT.md を置いておく）
+  async startSession(prompt: string, { mode, asParent = false }: { mode?: PermissionMode; asParent?: boolean } = {}): Promise<void> {
     const page = this.page;
     await page.click('nav.sidebar .new-session-button');
     // 最近のフォルダがあればメニューが開くので「別のフォルダを選ぶ…」を押す。無ければすぐにダイアログを開く
@@ -373,6 +374,7 @@ export class E2EApp {
     if (await other.isVisible()) await other.click();
     await chosen.waitFor();
     if (mode) await page.selectOption('.chat-options select[title^="権限モード"]', mode);
+    if (asParent) await page.getByRole('checkbox', { name: '親として始める' }).check();
     // Remote Control は使わない（パッケージしたアプリでは既定でオン。モックの API ではつながらない）
     const remote = page.locator('.claude-header [role="switch"][aria-label="Remote Control"]');
     if ((await remote.count()) > 0 && (await remote.getAttribute('aria-checked')) === 'true') await remote.click();

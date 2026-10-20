@@ -528,6 +528,16 @@ export const MonitorIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 親にする（子のセッションを動かす親として振る舞わせる）: 上の箱から、下の 2 つの箱へ線が分かれる（組織図。フロー図とは向きが違う）
+export const ParentIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <rect x="8" y="3" width="8" height="6" rx="1.2" />
+    <rect x="3" y="15" width="6" height="5.5" rx="1.2" />
+    <rect x="15" y="15" width="6" height="5.5" rx="1.2" />
+    <path d="M12 9v3M6 15v-1.5A1.5 1.5 0 0 1 7.5 12h9a1.5 1.5 0 0 1 1.5 1.5V15" />
+  </Svg>
+);
+
 // ワークフローの概要（フロー図）: 左の箱から右の 2 つの箱へ線が分かれる
 export const FlowIcon: IconComponent = (p) => (
   <Svg {...p}>

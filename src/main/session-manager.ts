@@ -24,6 +24,7 @@ import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
 import { modeWithin, type SessionState } from '@shared/session-tools';
+import { PARENT_INSTRUCTIONS_FILE, parentRoleText } from '@shared/project-instructions';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -61,6 +62,8 @@ import { blockedByPreCompact } from './auto-compact';
 import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
+import type { InstructionsLaunch } from './instructions-launch';
+import { instructionDirs, readInstructions } from './project-instructions';
 import { PendingQuestions } from './pending-questions';
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
@@ -414,6 +417,8 @@ export class SessionManager {
     private readonly claudeDir: string | null = null,
     // 起動する Claude Code に、人のターミナルの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly terminalMcp: () => McpLaunch | null = () => null,
+    // 起動する Claude Code に、TANACODE.md を渡すフックを足すときの材料。null なら足さない
+    private readonly instructionsHook: () => InstructionsLaunch | null = () => null,
   ) {}
 
   // 答えを待っている AskUserQuestion（セッションごと。stream-json の can_use_tool の要求）
@@ -927,6 +932,38 @@ export class SessionManager {
     if (!rt?.terminal || rt.switching || !rt.process || rt.tuiAsk) return false;
     rt.process.write(bracketedPaste(stripControlChars(text)));
     return true;
+  }
+
+  // 「親にする」で読ませる TANACODE_PARENT.md（セッションのフォルダの直下。worktree のセッションでそこに無ければ、元のリポジトリの直下）。
+  // 子のセッション（子は start_session を使えない）・一覧に無いセッション・ファイルが無いときは null
+  parentInstructions(id: string): { path: string; content: string } | null {
+    const record = this.store.get(id);
+    if (!record || record.parentId) return null;
+    return readInstructions(PARENT_INSTRUCTIONS_FILE, instructionDirs(record.cwd, record.worktree?.root));
+  }
+
+  // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（親の状態は覚えない。会話を消すと忘れるので、もう一度押す）。
+  // 作業中なら、ふつうの発言と同じく順番待ちに入る。ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。
+  // 読ませられなければ、理由を投げる
+  async becomeParent(id: string): Promise<void> {
+    const found = this.parentInstructions(id);
+    if (!found) throw new Error(t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE }));
+    const text = parentRoleText(found.path, found.content);
+    const rt = this.runtimes.get(id);
+    if (rt?.terminal && !rt.switching) {
+      if (!this.pasteIntoTerminal(id, text)) throw new Error(t('main.parentRole.cannotPaste'));
+      return;
+    }
+    await this.submit(id, text);
+  }
+
+  // 新規セッションの画面の「親として始める」: 最初の指示の前に、TANACODE_PARENT.md を付けた発言にする。
+  // 始めるまでにファイルが無くなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
+  withParentRole(id: string, text: string): string {
+    const found = this.parentInstructions(id);
+    if (found) return parentRoleText(found.path, found.content, text);
+    this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE }), warning: true }]);
+    return text;
   }
 
   // 書くだけの Stop のフックが、TUI のターンの終わりを知らせた（ターミナルモード）。input: フックの入力（permission_mode）
@@ -1558,6 +1595,7 @@ export class SessionManager {
     sessions: boolean,
     checklist: boolean,
     terminal: boolean,
+    instructions: boolean,
   ): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
@@ -1565,7 +1603,7 @@ export class SessionManager {
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal, instructions);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -1907,10 +1945,11 @@ export class SessionManager {
     const checklist = adopted ? null : this.checklistMcp();
     const walkthrough = adopted ? null : this.walkthroughMcp();
     const terminalLaunch = adopted ? null : this.terminalMcp();
+    const instructions = adopted ? null : this.instructionsHook();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child);
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child, !!instructions);
     // 引き継ぐ claude は起動しないので、渡すモードは使わない（前のアプリが渡したモードのまま動いている）
     const permissionMode = adopted ? (record.knownMode ?? 'manual') : this.startMode(record, mode, settings);
 
@@ -2133,6 +2172,7 @@ export class SessionManager {
         checklist,
         walkthrough,
         terminal,
+        instructions,
         claudeDir: this.claudeDir,
         // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
         addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),

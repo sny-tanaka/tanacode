@@ -49,6 +49,7 @@ export const IpcChannel = {
   SessionsNew: 'sessions:new',
   FolderPick: 'folders:pick',
   FolderInfo: 'folders:info',
+  FolderParentInstructions: 'folders:parent-instructions',
   FolderFiles: 'folders:files',
   FolderCommands: 'folders:commands',
   FolderOpen: 'folders:open',
@@ -62,6 +63,8 @@ export const IpcChannel = {
   SessionsConfigure: 'sessions:configure',
   SessionsModels: 'sessions:models',
   SessionsRestart: 'sessions:restart',
+  SessionsParentInstructions: 'sessions:parent-instructions',
+  SessionsBecomeParent: 'sessions:become-parent',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
   SessionsSetTerminalMode: 'sessions:set-terminal-mode',
   SessionsSetAutoCompact: 'sessions:set-auto-compact',
@@ -373,6 +376,8 @@ export type SessionOptions = { model: string | null; effort: string | null; sett
 // worktree: claude --worktree で、新しい worktree に分けて始める
 // addedFolders: 新規セッションの画面でワークスペースに追加したフォルダ（SessionSummary.addedFolders）。無いものは追加なし
 // capMode: 起動のモードを、開き直すときの上限として残す（Claude が start_session で始めたセッション。子は親があれば残す）
+// 発言の送り方。asParent: 新規セッションの画面の「親として始める」（最初の指示の前に、TANACODE_PARENT.md を付ける）
+export type SubmitOptions = { asParent?: boolean };
 export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[]; capMode?: boolean };
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
@@ -460,7 +465,8 @@ export type TanacodeApi = {
     // 発言を送る（stream-json の user の行）。画像（attachments はパス）は image のブロックに入れる。
     // 同じセッションへの送信（親セッションからの指示を含む）は、送った順に届ける
     // pastes: 入力欄に貼り付けた長い文（札）。pasted_content で渡す（Claude Code が、打った文のあとに <pasted_content> の囲みに入れて足す）
-    submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
+    // options.asParent: 新規セッションの画面の「親として始める」。TANACODE_PARENT.md を付けて送る
+    submit(id: string, text: string, attachments: string[], pastes?: string[], options?: SubmitOptions): Promise<void>;
     // 作業を中断する（interrupt の要求）
     interrupt(id: string): void;
     // チャットとターミナルモードを切り替える（今の Claude Code を止めて、もう片方で --resume する）。手が空いているときだけ。
@@ -472,6 +478,10 @@ export type TanacodeApi = {
     models(id: string): Promise<SessionModel[] | null>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
     restart(id: string): Promise<void>;
+    // 「親にする」で読ませる TANACODE_PARENT.md のパス。子のセッション・ファイルが無いときは null
+    parentInstructions(id: string): Promise<string | null>;
+    // 「親にする」: TANACODE_PARENT.md を Claude に読ませる（作業中なら順番待ち、ターミナルモードなら入力欄に貼る）。できなければ理由を添えて失敗する
+    becomeParent(id: string): Promise<void>;
     // このセッションの Remote Control を切り替える。動いていればその場でつなぐ・切る。切り替えられなかったら理由を返す
     setRemoteControl(id: string, on: boolean): Promise<string | null>;
     // このセッションで、最適化圧縮を自動で始めるかを切り替える
@@ -695,6 +705,8 @@ export type TanacodeApi = {
     pick(): Promise<string | null>;
     // フォルダが無ければ null
     info(cwd: string): Promise<WorkspaceInfo | null>;
+    // フォルダの直下の TANACODE_PARENT.md のパス（新規セッションの画面の「親として始める」）。無ければ null
+    parentInstructions(cwd: string): Promise<string | null>;
     listFiles(cwd: string): Promise<string[]>;
     commands(cwd: string): Promise<SlashCommand[]>;
     // フォルダを右パネル（エクスプローラー・ソース管理・検索）とエディタで開き、workspace・git に渡す id を返す。
@@ -824,6 +836,8 @@ export type IpcInvoke = {
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
   [IpcChannel.SessionsModels]: Api['sessions']['models'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
+  [IpcChannel.SessionsParentInstructions]: Api['sessions']['parentInstructions'];
+  [IpcChannel.SessionsBecomeParent]: Api['sessions']['becomeParent'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
   [IpcChannel.SessionsSetTerminalMode]: Api['sessions']['setTerminalMode'];
   [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
@@ -892,6 +906,7 @@ export type IpcInvoke = {
   [IpcChannel.ShellAttach]: Api['shell']['attach'];
   [IpcChannel.FolderPick]: Api['folders']['pick'];
   [IpcChannel.FolderInfo]: Api['folders']['info'];
+  [IpcChannel.FolderParentInstructions]: Api['folders']['parentInstructions'];
   [IpcChannel.FolderFiles]: Api['folders']['listFiles'];
   [IpcChannel.FolderCommands]: Api['folders']['commands'];
   [IpcChannel.FolderOpen]: Api['folders']['open'];

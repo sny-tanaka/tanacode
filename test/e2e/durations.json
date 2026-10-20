@@ -19,6 +19,7 @@
   "test/e2e/press-card.test.ts": 12,
   "test/e2e/press-chat.test.ts": 8,
   "test/e2e/press-preview.test.ts": 7,
+  "test/e2e/project-instructions.test.ts": 12,
   "test/e2e/reload.test.ts": 8,
   "test/e2e/restart-queue.test.ts": 25,
   "test/e2e/restart.test.ts": 17,

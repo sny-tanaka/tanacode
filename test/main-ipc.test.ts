@@ -125,6 +125,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SessionsConfigure, ['s1', { model: 'opus', effort: null, settingsFile: null }], call('manager.configure', 's1', { model: 'opus', effort: null, settingsFile: null })],
     [IpcChannel.SessionsModels, ['s1'], call('manager.modelsOf', 's1')],
     [IpcChannel.SessionsRestart, ['s1'], call('manager.restart', 's1')],
+    [IpcChannel.SessionsBecomeParent, ['s1'], call('manager.becomeParent', 's1')],
     [IpcChannel.SessionsSetRemoteControl, ['s1', true], call('manager.setRemoteControl', 's1', true)],
     [IpcChannel.SessionsSetTerminalMode, ['s1', true, { stopTasks: true }], call('manager.setTerminalMode', 's1', true, { stopTasks: true })],
     [IpcChannel.SessionsSetTerminalMode, ['s1', false], call('manager.setTerminalMode', 's1', false, { stopTasks: false })],
@@ -330,6 +331,15 @@ describe('フォルダ（新規セッションの画面）', () => {
     mainWindow().emit('closed');
     await expect(invoke(IpcChannel.FolderPick)).rejects.toThrow('アプリの画面からの呼び出しではありません');
     expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it('「親にする」で読ませる TANACODE_PARENT.md は、パスだけを返す（中身は画面に渡さない）。フォルダは、その直下を探す', async () => {
+    await boot();
+    await expect(invoke(IpcChannel.SessionsParentInstructions, 'parent')).resolves.toBe('/work/parent/TANACODE_PARENT.md');
+    await expect(invoke(IpcChannel.SessionsParentInstructions, 's1')).resolves.toBeNull();
+    await expect(invoke(IpcChannel.FolderParentInstructions, state.root)).resolves.toBeNull();
+    writeFileSync(join(state.root, 'TANACODE_PARENT.md'), '# 親の決まり');
+    await expect(invoke(IpcChannel.FolderParentInstructions, state.root)).resolves.toBe(join(state.root, 'TANACODE_PARENT.md'));
   });
 
   it('フォルダの情報は、フォルダがあるときだけ読む', async () => {
@@ -597,6 +607,19 @@ describe('送信と予約', () => {
       ['s1', 'こんにちは', ['/a.png', '/b.png'], ['ログ\n2 行目']],
       ['s2', '', [], []],
       ['s3', '', [], []],
+    ]);
+  });
+
+  it('送信: 「親として始める」（asParent が true のときだけ）は、TANACODE_PARENT.md を付けた本文にして渡す', async () => {
+    await boot();
+    await invoke(IpcChannel.SessionsSubmit, 's1', '画面を作って', [], [], { asParent: true });
+    await invoke(IpcChannel.SessionsSubmit, 's2', '画面を作って', [], [], { asParent: 'yes' });
+    await invoke(IpcChannel.SessionsSubmit, 's3', '画面を作って', [], [], { asParent: false });
+    expect(manager().withParentRole.mock.calls).toEqual([['s1', '画面を作って']]);
+    expect(manager().submit.mock.calls).toEqual([
+      ['s1', '<role of s1>画面を作って', [], []],
+      ['s2', '画面を作って', [], []],
+      ['s3', '画面を作って', [], []],
     ]);
   });
 
