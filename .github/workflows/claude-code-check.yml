@@ -4,7 +4,10 @@
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しいバージョンへの追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
-# 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ）
+# - 行の目録（行の種類とフィールド。test/transcript-inventory.ts）が、動作確認済のバージョンの目録と違えば、PR は作るがマージしない。
+#   差分を PR の本文に載せる（人が仕分けてからマージする）。tanacode が使うフィールドが目録から消えていたら、確認が落ちて Issue が立つ
+# 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ。
+# どの台本でも、アプリの知らない種類の行が出たら落ちる）
 # アプリは macOS 専用なので、macOS のランナーで確かめる
 name: claude-code-check
 
@@ -60,7 +63,8 @@ jobs:
       # update のジョブと同じ単体テストを、取った控えで流す（動作確認済のバージョンを上げたつもりで、作業ツリーだけを書き換える。
       # このジョブの権限は読むだけのまま）。basic.test.ts が確かめるのはその時点までに届いた stream-json の行で、控えには終わりまでの
       # 行が入る（recorded.test.ts が読む）。statusline.test.ts・context.test.ts は、動作確認済のバージョンの控え（モデル・エフォート・
-      # コンテキストの上限）を読む。ここで落ちれば Issue が立つ（update のジョブの npm test で初めて落ちると、Issue が立たない）
+      # コンテキストの上限）を読む。recorded.test.ts は、tanacode が使うフィールドが、取った目録にあるかも見る。
+      # ここで落ちれば Issue が立つ（update のジョブの npm test で初めて落ちると、Issue が立たない）
       - name: 取った控えで単体テストを流す
         env:
           VERSION: ${{ steps.claude.outputs.version }}
@@ -87,6 +91,7 @@ jobs:
 
           - 失敗した実行: $RUN_URL
           - 失敗したテストのログに、そのときの Claude Code の標準エラーの末尾が出ています
+          - 台本で、アプリの知らない種類の行が出たとき（ClaudeRun の stop）・tanacode が使うフィールドが目録から消えたとき（recorded.test.ts）も落ちます
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
   # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。
@@ -138,6 +143,8 @@ jobs:
           BASE: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # 書き換える前の、動作確認済のバージョン（目録を比べる相手）
+          verified=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
           action=$(node scripts/update-verified-version.mjs "$VERSION")
           echo "することは: $action"
           if [ "$action" = skip ]; then exit 0; fi
@@ -146,14 +153,28 @@ jobs:
             echo "$branch の PR はもうあります"
             exit 0
           fi
+          # 控えだけを足すときは、もうコミットしてある控えは書き換えない（足りないもの（目録など）だけを足す）
+          if [ "$action" = fixtures ]; then git checkout HEAD -- "test/fixtures/claude-code/$VERSION" 2> /dev/null || true; fi
           # 書き換えたあとも、控えで読み取りを確かめる（動作確認済のバージョンの控えがあるかも見る）
           npm test
+          # 行の目録を、動作確認済のバージョンの目録と比べる（バージョンを上げるときだけ）。差があれば（前の目録が無いときも）、PR は作るがマージしない
+          inventory=same
+          diff_file="$RUNNER_TEMP/inventory-diff.md"
+          if [ "$action" = bump ]; then
+            inventory=$(node scripts/inventory-diff.mjs "test/fixtures/claude-code/$verified/inventory.json" "test/fixtures/claude-code/$VERSION/inventory.json" "$diff_file")
+            echo "目録は: $inventory"
+          fi
           if [ "$action" = bump ]; then
             title="chore: 動作確認済の Claude Code を $VERSION にする"
             summary="毎日の互換性の確認が Claude Code $VERSION で通ったので、動作確認済のバージョンを上げます。ステータスバーは、このバージョンと同じならチェックマークを出します。"
           else
             title="test: Claude Code $VERSION の控えを足す"
-            summary="動作確認済のバージョン（$VERSION）の控えがまだ無いので、毎日の互換性の確認で取った控えを足します。"
+            summary="動作確認済のバージョン（$VERSION）の控え（か、その目録）がまだ無いので、毎日の互換性の確認で取った控えを足します。"
+          fi
+          if [ "$inventory" = changed ]; then
+            merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違うので、**自動ではマージしません**。下の差分を仕分けて（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ）、手元の本物の会話ログでも確かめてから、マージしてください（CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
+          else
+            merge_note="- PR の CI が通ったら、そのまま squash マージします"
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -161,12 +182,25 @@ jobs:
           git add src/shared/claude-code.ts README.md README.en.md GUIDE.md "test/fixtures/claude-code/$VERSION"
           git commit -m "$title"
           git push -u origin "$branch"
-          gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$summary
+          body="$summary
 
           - 確かめた実行: $RUN_URL（\`npm test\` と、本物の claude での \`npm run test:cli\` が通っています）
           - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
-          - PR の CI が通ったら、そのまま squash マージします
+          $merge_note
           - マージしたあと、アプリのリリースで利用者に届きます"
+          if [ "$inventory" = changed ]; then
+            body="$body
+
+          ## 行の目録の差分（$verified → $VERSION）
+
+          $(cat "$diff_file")"
+          fi
+          gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$body"
+          # 目録に差があれば、PR を開いたままにして終える（人が仕分けてからマージする）
+          if [ "$inventory" = changed ]; then
+            echo "::warning::行の目録が $verified と違うので、$branch の PR は自動ではマージしません。差分を仕分けてから、手でマージしてください"
+            exit 0
+          fi
           # PR の CI（必須のチェックを出す ci と demo-site）が動き始めるのを待ってから、終わるまで待つ。
           # 通らなかったときは、マージせずにジョブを失敗させる（PR は開いたまま残るので、人が見て直す）
           for workflow in ci.yml demo-site.yml; do

@@ -137,7 +137,8 @@ export function unreadableStreamLines(lines: string[]): { malformed: number; unk
     onReplayed: () => {},
     detach: () => {},
   } as PipeHandle;
-  const client = new StreamClient(pipe, { onMessage: () => {}, onPermission: () => {}, onCancel: () => {}, onExit: () => {} });
+  // アプリ（ClaudeSession）と同じく、MCP サーバーの質問（elicitation）にも答える読み取りにする
+  const client = new StreamClient(pipe, { onMessage: () => {}, onPermission: () => {}, onElicitation: () => {}, onCancel: () => {}, onExit: () => {} });
   client.start();
   lines.forEach((line, i) => listener?.(line, i + 1));
   return { malformed: client.malformed, unknown: Object.fromEntries(client.unknown) };

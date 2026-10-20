@@ -33,7 +33,8 @@ describe(`Claude Code ${version} の、アプリの知らない行`, () => {
         ],
       },
     ];
-    run = new ClaudeRun(await api.start());
+    // この台本は、知らないブロックをわざと出させる（終わるときの、知らない種類の確かめで数えない）
+    run = new ClaudeRun(await api.start(), { unknown: ['assistant/server_tool_use', 'assistant/web_search_tool_result'] });
     await run.open();
     await run.send(PROMPT);
     await run.waitUntil('返事', () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === '調べました'), 30_000);

@@ -134,5 +134,8 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     await run.waitUntil('圧縮のあとの一覧', () => resultOf('toolu_after'), 30_000);
     expect(api.systems.slice(before).every((s) => s.includes('## tanacode-checklist') && s.includes('checklist_overview'))).toBe(true);
     expect(resultOf('toolu_after')).toContain('## 完了前チェック (1/2 checked)');
+    // ターンが終わる（Stop のフックが済む）まで待つ。待たずに片付けると、フックがアプリ（ChecklistControl）に聞いている途中で
+    // 片付いて、フックの失敗（hook_non_blocking_error）が会話ログに書かれることがある
+    await run.waitUntil('最後の返事', () => run.idle && run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === '圧縮のあとも読めます'), 30_000);
   });
 });

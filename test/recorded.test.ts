@@ -6,6 +6,8 @@ import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import { transcriptPath } from '../src/main/claude-session';
 import { parseStatusLine } from '../src/main/statusline';
 import { FIXTURE_ROOT, checkChat, checkStatusLine, fixtureLines, unreadableStreamLines } from './scenario';
+import type { Inventory } from './transcript-inventory';
+import { missingUsedFields } from './transcript-used-fields';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<バージョン>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る（会話ログは basic.test.ts、statusLine は
@@ -38,6 +40,15 @@ it('控えに残す行を選ぶ: 書いている途中の文・アプリが読�
 if (versions.length === 0) it.skip('控えがまだありません（TANACODE_RECORD=1 npm run test:cli で取る）', () => {});
 // ステータスバーで「動作確認済のバージョン」とするもの（VERIFIED_CLAUDE_CODE_VERSION）は、控えで確かめられるバージョンにする
 else it('動作確認済のバージョンの控えがある', () => expect(versions).toContain(VERIFIED_CLAUDE_CODE_VERSION));
+
+// 行の目録（test/transcript-inventory.ts。2.1.303 から）。動作確認済のバージョンの目録に、tanacode が読むフィールド
+// （test/transcript-used-fields.ts）がどれもある。毎日の確認は、確かめたバージョンを動作確認済にしたつもりでこれを流すので、
+// Claude Code の更新で読むフィールドが消えたら落ちる
+it.runIf(versions.length > 0)('動作確認済のバージョンの目録に、tanacode が読むフィールドがどれもある', () => {
+  const file = join(DIR, VERIFIED_CLAUDE_CODE_VERSION, 'inventory.json');
+  expect(existsSync(file), `${file} がありません（TANACODE_RECORD=1 npm run test:cli で全部の台本を流すと書かれる）`).toBe(true);
+  expect(missingUsedFields(JSON.parse(readFileSync(file, 'utf8')) as Inventory)).toEqual([]);
+});
 
 describe.each(versions)('Claude Code %s の控え', (version) => {
   const dir = join(DIR, version);
