@@ -490,6 +490,21 @@ describe('toChatEvents: ツールの結果', () => {
   });
 
   it('AskUserQuestion の答えと、TaskCreate で作った番号を出す', () => {
+    // 2.1.305 の、選択肢と補足（annotations の notes）で答えた結果。補足は答えに付けて出す（空白だけのもの・文字でないものは出さない）
+    const noted = result('toolu_noted', 'The user answered: "どれ?"="B 案" notes: 余白を広めに.', {
+      questions: [
+        { question: 'どれ?', header: '案' },
+        { question: '色は?', header: '色' },
+        { question: '形は?', header: '形' },
+      ],
+      answers: { 'どれ?': 'B 案', '色は?': '緑', '形は?': '丸' },
+      annotations: { 'どれ?': { preview: 'B の図', notes: '余白を広めに\n2 列で' }, '色は?': { notes: ' ' }, '形は?': { notes: 3 } },
+    });
+    expect((events(noted)[0] as Extract<ChatEvent, { type: 'tool-result' }>).answers).toEqual([
+      { header: '案', question: 'どれ?', answer: 'B 案', notes: '余白を広めに\n2 列で' },
+      { header: '色', question: '色は?', answer: '緑' },
+      { header: '形', question: '形は?', answer: '丸' },
+    ]);
     // 2.1.292 の AskUserQuestion の結果
     const ask = result('toolu_ask', 'Your questions have been answered: "どちらの書き方にしますか？"="です・ます".', {
       questions: [

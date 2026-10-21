@@ -291,7 +291,7 @@ export const PartialRow = memo(function PartialRow({ block }: { block: PartialBl
   );
 });
 
-// AskUserQuestion の質問と、選んだ答え。作業の書き出しでも使う
+// AskUserQuestion の質問と、選んだ答え（選択肢と一緒に送った補足があれば、その下に）。作業の書き出しでも使う
 export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {
   return (
     <div className="chat-answers">
@@ -303,6 +303,7 @@ export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {
             {a.question}
           </div>
           <div className="chat-answer-value">→ {a.answer}</div>
+          {a.notes && <div className="chat-answer-notes">{t('chat.row.answerNotes', { text: a.notes })}</div>}
         </div>
       ))}
     </div>

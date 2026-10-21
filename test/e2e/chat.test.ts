@@ -4,6 +4,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOOK_COMMAND, PROMPT, QUESTION, SETTINGS, stepsFor } from '../scenario';
 import { BACKGROUND, E2EApp } from './app';
 
+// 質問のカードの入力欄に書いてから選択肢を押し、選択肢と一緒に送る補足
+const NOTE = '語尾は\nやわらかく';
+
 // 基本の台本（test/scenario.ts）を、アプリの画面から動かす。信頼していないフォルダで新しいセッションを始め、チャットに出るカードで
 // Bash の許可・質問・Write の許可に答えて、返事がチャットに出るまで。
 // 答えが Claude まで届いたかは、モックの API が受け取ったツールの結果で確かめる
@@ -31,12 +34,13 @@ describe('チャットから Claude Code を動かす', () => {
     await app.choose(card, /^許可する/);
   });
 
-  it('AskUserQuestion の質問に、カードの選択肢で答えられる（カードは、Claude Code が答えを待つ要求（can_use_tool）の質問から描く。画面は読まない）', async () => {
+  it('AskUserQuestion の質問に、カードの入力欄に補足を書いてから選択肢で答えられる（カードは、Claude Code が答えを待つ要求（can_use_tool）の質問から描く。画面は読まない）', async () => {
     const card = await app.menuCard('question');
     expect(await card.locator('.menu-title').textContent()).toBe(QUESTION.question);
-    // 「その他（自由に入力）」はあり、「この質問について話す（Chat about this）」は出さない（その他に書けば足りる。決めたこと）
-    await card.getByText('その他（自由に入力）').waitFor();
+    // 自由入力の欄は 1 つだけ（「その他」は無い）。「この質問について話す（Chat about this）」は出さない（書けば足りる。決めたこと）
+    expect(await card.locator('textarea').count()).toBe(1);
     expect(await card.getByText('この質問について話す（Chat about this）').count()).toBe(0);
+    await card.getByLabel('補足（選択肢を押すと一緒に送ります）').fill(NOTE);
     await app.choose(card, 'です・ます');
   });
 
@@ -50,14 +54,16 @@ describe('チャットから Claude Code を動かす', () => {
 
   it('答えとコマンドの結果が Claude まで届いている', () => {
     expect(app.api.toolResults.some((r) => r.includes('tanacode-check'))).toBe(true);
-    expect(app.api.toolResults.some((r) => r.includes('です・ます'))).toBe(true);
+    // 補足は、選択肢と分けて届く（annotations の notes）
+    expect(app.api.toolResults.some((r) => r.includes(`"${QUESTION.question}"="です・ます" notes: ${NOTE}`))).toBe(true);
   });
 
   it('チャットに、発言・ツール・フック・返事が並び、ツールのまとまりを開ける', async () => {
     const chat = app.page.locator('.chat-list');
     for (const text of [PROMPT, 'コマンドを実行します。', 'チェック完了']) await chat.getByText(text).first().waitFor();
-    // 質問への回答は、カードとしてチャットに残る
+    // 質問への回答は、カードとしてチャットに残る。補足は答えの下に出る
     await chat.getByText('→ です・ます').waitFor();
+    await chat.locator('.chat-answer-notes', { hasText: `補足: ${NOTE}` }).waitFor();
     // ツールはまとまりに畳まれている。開くと、Bash のカード（説明と、あとに動いたフック）と Write のカードが出る
     const heads = chat.locator('.tool-group-head');
     expect(await heads.count()).toBe(2);

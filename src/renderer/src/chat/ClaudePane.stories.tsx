@@ -298,6 +298,29 @@ export const プレビュー付きの質問を待っている長い会話: Story
   },
 };
 
+// 質問に答えたあと。答えはカードとして会話に残る。選択肢と一緒に送った補足（会話ログの annotations の notes）は、答えの下に出す。
+// 2 問めは、選択肢に無い答え（入力だけで答えた）
+export const 質問への回答: Story = {
+  args: {
+    items: [
+      { kind: 'user', id: 'u1', text: '設定の画面を作り直してください。' },
+      {
+        kind: 'tool',
+        id: 'ask1',
+        name: 'AskUserQuestion',
+        target: '',
+        status: 'done',
+        input: '{}',
+        answers: [
+          { header: '並べ方', question: '設定の画面の並べ方はどうしますか？', answer: '縦に並べる', notes: '余白は広めに\n2 列で並べたい' },
+          { header: '色', question: '画面の色はどうしますか？', answer: '目に優しい緑' },
+        ],
+      },
+      { kind: 'text', id: 't1', text: '縦に並べ、余白を広めにして 2 列で作ります。' },
+    ],
+  },
+};
+
 const LITELLM = { id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' };
 
 // 設定ファイルの選択欄は、登録が 0 件でも入力欄の下に出る（「管理…」から最初の 1 件を登録する）。標準のままなら、色は付かない

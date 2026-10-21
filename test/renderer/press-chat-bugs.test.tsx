@@ -137,7 +137,7 @@ describe('セッションを切り替えたときの、前のセッションの�
     expect(document.querySelector('.todo-item.completed .check-mark')!.classList.contains('animate')).toBe(false);
   });
 
-  it('同じ質問を出している別のセッションへ移ると、前のセッションで打ちかけた自由記述の答えは、移った先のカードに残らない', () => {
+  it('同じ質問を出している別のセッションへ移ると、前のセッションで入力欄に書きかけた文は、移った先のカードに残らない', () => {
     api = mockApi();
     api.install();
     const asking: PendingQuestion = {
@@ -146,10 +146,9 @@ describe('セッションを切り替えたときの、前のセッションの�
       answered: {},
     };
     const view = render(<ClaudePane {...props({ question: asking })} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText(/^回答を入力/), { target: { value: 'A 案を少し変えて' } });
+    const field = () => screen.getByLabelText('補足（選択肢を押すと一緒に送ります）') as HTMLTextAreaElement;
+    fireEvent.change(field(), { target: { value: 'A 案を少し変えて' } });
     view.rerender(<ClaudePane {...props({ session: S2, question: asking })} />);
-    expect(screen.queryByPlaceholderText(/^回答を入力/)).toBeNull();
-    expect(screen.getByText('その他（自由に入力）')).toBeTruthy();
+    expect(field().value).toBe('');
   });
 });

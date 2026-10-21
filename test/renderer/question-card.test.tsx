@@ -28,6 +28,10 @@ const pending = (...questions: AskQuestion[]): PendingQuestion => ({ id: 'q1', q
 const replies = () => api.argsOf('question.reply');
 // 送り終えるのを待つ
 const sent = () => act(async () => {});
+// 自由入力の欄（1 つだけ。見出しで探す）と、「入力だけで答える」
+const field = () => screen.getByRole('textbox') as HTMLTextAreaElement;
+const write = (text: string) => fireEvent.change(field(), { target: { value: text } });
+const textOnly = () => screen.getByText('入力だけで答える') as HTMLButtonElement;
 
 describe('QuestionCard', () => {
   it('質問が 1 つで単一選択なら、選んだらすぐ送る', async () => {
@@ -40,6 +44,24 @@ describe('QuestionCard', () => {
     expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '書き方は？': 'だ・である' } }]]);
   });
 
+  it('入力欄に書いてから選択肢を押すと、選択肢と、書いた文を補足（annotations の notes）として一緒に送る', async () => {
+    render(<QuestionCard sessionId="s1" question={pending(style)} />);
+    expect(screen.getByLabelText('補足（選択肢を押すと一緒に送ります）')).toBe(field());
+    expect(field().placeholder).toBe('選択肢に無い答えは、書いて「入力だけで答える」');
+    write('  語尾は\nやわらかく  ');
+    fireEvent.click(screen.getByText('だ・である'));
+    await sent();
+    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '書き方は？': 'だ・である' }, annotations: { '書き方は？': { notes: '語尾は\nやわらかく' } } }]]);
+  });
+
+  it('空白だけを書いて選択肢を押しても、補足は付けない', async () => {
+    render(<QuestionCard sessionId="s1" question={pending(style)} />);
+    write(' \n ');
+    fireEvent.click(screen.getByText('です・ます'));
+    await sent();
+    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '書き方は？': 'です・ます' } }]]);
+  });
+
   it('質問が複数あれば 1 問ずつ出し、答えると次へ進み、最後に回答の確認を出してから、まとめて送る', async () => {
     render(<QuestionCard sessionId="s1" question={pending(style, languages, color)} />);
     const tabs = () => [...document.querySelectorAll('.menu-tab')].map((t) => `${t.textContent}${t.classList.contains('answered') ? '✓' : ''}${t.classList.contains('current') ? '*' : ''}`);
@@ -48,23 +70,30 @@ describe('QuestionCard', () => {
     fireEvent.click(screen.getByText('です・ます'));
     expect(screen.getByText('言語は？')).toBeTruthy();
     expect(tabs()).toEqual(['書き方✓', '言語*', '3 問め']);
-    // 複数選択: チェックを付け外しし、自由記述も足して、次の質問へ
+    // 複数選択: チェックを付け外しし、補足も書いて、次の質問へ。補足の見出しは、チェックと一緒に送ることを言う
     fireEvent.click(screen.getByText('Go'));
     fireEvent.click(screen.getByText('TypeScript'));
     fireEvent.click(screen.getByText('TypeScript'));
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）'), { target: { value: 'Zig\nと Rust' } });
-    fireEvent.click(screen.getByText('決定'));
-    expect(screen.getByText('その他: Zig\nと Rust', { normalizer: (s) => s })).toBeTruthy();
+    expect(screen.getByLabelText('補足（チェックと一緒に送ります）')).toBe(field());
+    write('Zig\nも少し');
     fireEvent.click(screen.getByText('次の質問へ →'));
+    // 入力欄は質問ごと（次の質問では空）
+    expect(field().value).toBe('');
     fireEvent.click(screen.getByText('暗い'));
-    // 回答の確認。画面で答えたときと同じ形（複数選択は選択肢の順に「, 」、自由記述は最後）
+    // 回答の確認。選択肢（複数選択は選択肢の順に「, 」）と、一緒に送る補足を分けて出す
     expect(screen.getByText('回答の確認')).toBeTruthy();
-    expect([...document.querySelectorAll('.menu-review dd')].map((d) => d.textContent)).toEqual(['です・ます', 'Go, Zig\nと Rust', '暗い']);
+    expect([...document.querySelectorAll('.menu-review dd')].map((d) => d.textContent)).toEqual(['です・ます', 'Go補足: Zig\nも少し', '暗い']);
+    expect(document.querySelector('.menu-review-notes')!.textContent).toBe('補足: Zig\nも少し');
     expect(replies()).toEqual([]);
     fireEvent.click(screen.getByText('回答を送る'));
     await sent();
-    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '書き方は？': 'です・ます', '言語は？': 'Go, Zig\nと Rust', '色は？': '暗い' } }]]);
+    expect(replies()).toEqual([
+      [
+        's1',
+        'q1',
+        { kind: 'answer', answers: { '書き方は？': 'です・ます', '言語は？': 'Go', '色は？': '暗い' }, annotations: { '言語は？': { notes: 'Zig\nも少し' } } },
+      ],
+    ]);
   });
 
   it('タブで前の質問に戻れ、選んだ答えが残っている。まだ答えていない質問があれば、確認で送れない', () => {
@@ -87,36 +116,68 @@ describe('QuestionCard', () => {
     expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '言語は？': 'TypeScript' } }]]);
   });
 
-  it('自由記述: 質問が 1 つで単一選択なら「送信」で送る。⌘+Enter で決め、Enter だけ・変換中・空では決めない。やめると入力欄を閉じる', async () => {
+  it('「入力だけで答える」は、選択肢を渡さず、書いた文だけを答えにして送る。空（空白だけ）では押せない。⌘+Enter でも同じで、Enter だけ・変換中では答えない', async () => {
     render(<QuestionCard sessionId="s1" question={pending(style)} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    const input = screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）');
-    fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
-    fireEvent.change(input, { target: { value: '1 行目\n2 行目' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    fireEvent.keyDown(input, { key: 'Enter', metaKey: true, isComposing: true });
-    fireEvent.keyDown(input, { key: 'Enter', metaKey: true, keyCode: 229 });
+    expect(textOnly().disabled).toBe(true);
+    write('  \n ');
+    expect(textOnly().disabled).toBe(true);
+    fireEvent.keyDown(field(), { key: 'Enter', metaKey: true });
+    write('1 行目\n2 行目');
+    expect(textOnly().disabled).toBe(false);
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    fireEvent.keyDown(field(), { key: 'Enter', metaKey: true, isComposing: true });
+    fireEvent.keyDown(field(), { key: 'Enter', metaKey: true, keyCode: 229 });
     expect(replies()).toEqual([]);
-    expect(screen.getByText('送信')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('やめる'));
-    expect(screen.queryByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）')).toBeNull();
-    // もう一度開くと、打ちかけの文は残らない（決めていないので）。打って ⌘+Enter で送る
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）'), { target: { value: '  別の案\nです  ' } });
-    fireEvent.keyDown(screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）'), { key: 'Enter', ctrlKey: true });
+    write('  別の案\nです  ');
+    fireEvent.keyDown(field(), { key: 'Enter', ctrlKey: true });
     await sent();
     expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '書き方は？': '別の案\nです' } }]]);
+    cleanup();
+    render(<QuestionCard sessionId="s1" question={{ ...pending(style), id: 'q2' }} />);
+    write('混ぜる');
+    fireEvent.click(textOnly());
+    await sent();
+    expect(replies()[1]).toEqual(['s1', 'q2', { kind: 'answer', answers: { '書き方は？': '混ぜる' } }]);
   });
 
-  it('質問が複数あるときの単一選択の自由記述は「決定」で次の質問へ進む（フォームの送信でも）', () => {
+  it('質問が複数あるとき: 単一選択は書いただけでは答えにせず、「入力だけで答える」で次の質問へ進む。戻ると書いた文が残り、欄に印が付く', () => {
     render(<QuestionCard sessionId="s1" question={pending(style, color)} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    const input = screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）');
-    fireEvent.change(input, { target: { value: '常体と敬体を混ぜる' } });
-    fireEvent.submit(input.closest('form')!);
+    const answeredTabs = () => [...document.querySelectorAll('.menu-tab.answered')].map((t) => t.textContent);
+    write('常体と敬体を混ぜる');
+    // 選択肢と一緒に送る補足かもしれないので、まだ答えにしない
+    expect(answeredTabs()).toEqual([]);
+    expect(document.querySelector('.menu-free')!.classList.contains('chosen')).toBe(false);
+    fireEvent.click(textOnly());
     expect(screen.getByText('色は？')).toBeTruthy();
+    expect(answeredTabs()).toEqual(['書き方']);
     fireEvent.click(screen.getByText('書き方'));
-    expect(screen.getByText('その他: 常体と敬体を混ぜる').closest('button')!.classList.contains('chosen')).toBe(true);
+    expect(field().value).toBe('常体と敬体を混ぜる');
+    expect(document.querySelector('.menu-free')!.classList.contains('chosen')).toBe(true);
+    expect(document.querySelector('.menu-option.chosen')).toBeNull();
+    // 選択肢を押し直すと、選択肢と補足の答えに変わる
+    fireEvent.click(screen.getByText('だ・である'));
+    fireEvent.click(screen.getByText('暗い'));
+    expect([...document.querySelectorAll('.menu-review dd')].map((d) => d.textContent)).toEqual(['だ・である補足: 常体と敬体を混ぜる', '暗い']);
+  });
+
+  it('複数選択の「入力だけで答える」は、チェックを渡さず、書いた文だけを答えにする。チェックが無ければ、書いた文だけで答えになる', async () => {
+    render(<QuestionCard sessionId="s1" question={pending(languages, color)} />);
+    fireEvent.click(screen.getByText('TypeScript'));
+    write('Zig だけ');
+    fireEvent.click(textOnly());
+    expect(screen.getByText('色は？')).toBeTruthy();
+    // 戻ると、チェックは外れていて、書いた文だけが答え（欄に印が付く）
+    fireEvent.click(screen.getByText('言語'));
+    expect(document.querySelectorAll('.menu-check.on')).toHaveLength(0);
+    expect(field().value).toBe('Zig だけ');
+    expect(document.querySelector('.menu-free')!.classList.contains('chosen')).toBe(true);
+    expect(screen.getByText('言語').classList.contains('answered')).toBe(true);
+    fireEvent.click(screen.getByText('次の質問へ →'));
+    fireEvent.click(screen.getByText('暗い'));
+    expect([...document.querySelectorAll('.menu-review dd')].map((d) => d.textContent)).toEqual(['Zig だけ', '暗い']);
+    fireEvent.click(screen.getByText('回答を送る'));
+    await sent();
+    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '言語は？': 'Zig だけ', '色は？': '暗い' } }]]);
   });
 
   it('右上のキャンセル・回答の確認のキャンセルは、キャンセルを送る', async () => {
@@ -240,19 +301,23 @@ describe('QuestionCard', () => {
       expect(shown()).toBe('横の図');
     });
 
-    it('「その他（自由に入力）」にマウスを乗せる・Tab で移ると、出ているプレビューを消す（プレビューの無い選択肢と同じ）', () => {
+    it('入力欄・「入力だけで答える」にマウスを乗せる・Tab で移ると、出ているプレビューを消す（プレビューの無い選択肢と同じ）', () => {
       render(<QuestionCard sessionId="s1" question={pending(layout)} />);
-      const other = screen.getByText('その他（自由に入力）').closest('button')!;
-      fireEvent.mouseEnter(option('横'));
-      expect(shown()).toBe('横の図');
-      fireEvent.mouseEnter(other);
-      expect(popup()).toBeNull();
-      // マウスはカードの上（「縦」）のまま、Tab で「その他」へ移る
-      fireEvent.mouseEnter(option('縦'));
-      expect(shown()).toBe('縦の図');
-      fireEvent.keyDown(document.body, { key: 'Tab' });
-      act(() => other.focus());
-      expect(popup()).toBeNull();
+      // 「入力だけで答える」は、書いていないと押せない（フォーカスできない）
+      write('格子に並べる');
+      for (const target of [field(), textOnly()]) {
+        fireEvent.mouseEnter(option('横'));
+        expect(shown()).toBe('横の図');
+        fireEvent.mouseEnter(target);
+        expect(popup()).toBeNull();
+        // マウスはカードの上（「縦」）のまま、Tab で移る
+        fireEvent.mouseEnter(option('縦'));
+        expect(shown()).toBe('縦の図');
+        fireEvent.keyDown(document.body, { key: 'Tab' });
+        act(() => target.focus());
+        expect(popup()).toBeNull();
+        act(() => target.blur());
+      }
     });
 
     // jsdom には大きさが無いので、カード（幅 400）と選択肢の枠を決める。ウインドウは 1024×768 なので、カードの右に場所がある
@@ -301,8 +366,9 @@ describe('QuestionCard', () => {
     });
   });
 
-  // 前は Claude Code の画面に合わせ、プレビュー付きの質問には自由記述を出さず、代わりにメモ欄を出していた。tanacode ではそろえた（決めたこと）
-  it('プレビュー付きの質問も、プレビューの無い質問と同じ形（「その他（自由に入力）」があり、メモ欄・Chat about this は無い）', () => {
+  // 前は Claude Code の画面に合わせ、プレビュー付きの質問には自由記述を出さず、代わりにメモ欄を出していた。tanacode ではそろえ（決めたこと）、
+  // メモと自由記述を 1 つの欄にまとめた（決めたこと）
+  it('プレビュー付きの質問も、プレビューの無い質問と同じ形（選択肢の下に自由入力の欄が 1 つだけあり、「その他」・Chat about this は無い）', () => {
     // 選択肢の下の行（選択肢の名前を除いたもの）
     const rest = () => [...document.querySelectorAll('.menu-options > *')].slice(withPreview.options.length).map((e) => e.textContent);
     render(<QuestionCard sessionId="s1" question={pending(style)} />);
@@ -310,12 +376,13 @@ describe('QuestionCard', () => {
     cleanup();
     render(<QuestionCard sessionId="s1" question={pending(withPreview)} />);
     expect(rest()).toEqual(plain);
-    expect(rest()).toEqual(['その他（自由に入力）']);
-    expect(document.querySelector('.menu-card textarea')).toBeNull();
+    expect(rest()).toEqual(['補足（選択肢を押すと一緒に送ります）入力だけで答える']);
+    expect(document.querySelectorAll('.menu-card textarea')).toHaveLength(1);
+    expect(screen.queryByText(/その他/)).toBeNull();
     expect(screen.queryByText('この質問について話す（Chat about this）')).toBeNull();
   });
 
-  it('プレビュー付きの質問: 選んだ案にプレビューがあれば添え書き（annotations）で渡す。プレビューの無い案・自由記述の答えには付けない', async () => {
+  it('プレビュー付きの質問: 選んだ案にプレビューがあれば添え書き（annotations）で渡す。プレビューの無い案・入力だけの答えには付けない', async () => {
     const { unmount } = render(<QuestionCard sessionId="s1" question={pending(withPreview)} />);
     fireEvent.click(screen.getByText('縦'));
     await sent();
@@ -327,10 +394,16 @@ describe('QuestionCard', () => {
     expect(replies()[1]).toEqual(['s1', 'q2', { kind: 'answer', answers: { '並べ方は？': '無し' } }]);
     cleanup();
     render(<QuestionCard sessionId="s1" question={{ ...pending(withPreview), id: 'q3' }} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）'), { target: { value: '格子に並べる\n2 列で' } });
-    fireEvent.click(screen.getByText('送信'));
+    write('格子に並べる\n2 列で');
+    fireEvent.click(textOnly());
     await sent();
     expect(replies()[2]).toEqual(['s1', 'q3', { kind: 'answer', answers: { '並べ方は？': '格子に並べる\n2 列で' } }]);
+    // 書いてからプレビューのある案を押すと、プレビューと補足の両方を添え書きで渡す
+    cleanup();
+    render(<QuestionCard sessionId="s1" question={{ ...pending(withPreview), id: 'q4' }} />);
+    write('余白を広めに');
+    fireEvent.click(screen.getByText('縦'));
+    await sent();
+    expect(replies()[3]).toEqual(['s1', 'q4', { kind: 'answer', answers: { '並べ方は？': '縦' }, annotations: { '並べ方は？': { preview: '縦の図', notes: '余白を広めに' } } }]);
   });
 });

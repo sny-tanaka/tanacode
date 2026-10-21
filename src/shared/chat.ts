@@ -135,8 +135,9 @@ export type SentFiles = { paths: string[]; caption: string | null };
 
 export type PullRequestLink = { number: number; url: string; repository: string };
 
-// AskUserQuestion の質問と、ユーザーが選んだ答え（複数選択は「, 」でつながる。「その他」は打った文字）
-export type QuestionAnswer = { header: string; question: string; answer: string };
+// AskUserQuestion の質問と、ユーザーが選んだ答え（複数選択は「, 」でつながる。選択肢に無い答えは打った文字）。
+// notes: 選んだ選択肢と一緒に送った補足（会話ログの annotations の notes。Claude Code の画面のメモも同じ形）
+export type QuestionAnswer = { header: string; question: string; answer: string; notes?: string };
 
 export type HookRun = {
   // PreToolUse / PostToolUse / Stop / SessionStart など
@@ -948,14 +949,20 @@ function toolInputDetail(name: string, input: Record<string, unknown>): string {
   return detail.length > INPUT_CHARS ? `${detail.slice(0, INPUT_CHARS)}\n${t('chat.transcript.omitted')}` : detail;
 }
 
-// AskUserQuestion の結果（toolUseResult の questions と、質問文から答えへの answers）
+// AskUserQuestion の結果（toolUseResult の questions と、質問文から答えへの answers。補足は、質問文から添え書きへの annotations の notes）
 function answersOf(result: unknown): QuestionAnswer[] | undefined {
-  const r = result as { questions?: { question?: unknown; header?: unknown }[]; answers?: Record<string, unknown> } | null;
+  const r = result as { questions?: { question?: unknown; header?: unknown }[]; answers?: Record<string, unknown>; annotations?: Record<string, unknown> } | null;
   if (!r || !Array.isArray(r.questions) || !r.answers || typeof r.answers !== 'object') return undefined;
   return r.questions.map((q) => {
     const question = typeof q?.question === 'string' ? q.question : '';
     const answer = r.answers![question];
-    return { header: typeof q?.header === 'string' ? q.header : '', question, answer: typeof answer === 'string' ? answer : t('chat.transcript.noAnswer') };
+    const notes = (r.annotations?.[question] as { notes?: unknown } | null | undefined)?.notes;
+    return {
+      header: typeof q?.header === 'string' ? q.header : '',
+      question,
+      answer: typeof answer === 'string' ? answer : t('chat.transcript.noAnswer'),
+      ...(typeof notes === 'string' && notes.trim() ? { notes } : {}),
+    };
   });
 }
 
