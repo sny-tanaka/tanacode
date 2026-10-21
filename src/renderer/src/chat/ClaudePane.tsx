@@ -279,13 +279,19 @@ export const ClaudePane = memo(function ClaudePane({
     const move = (e: PointerEvent) => {
       if (Math.hypot(e.clientX - x, e.clientY - y) > PRESS_SLOP_PX) leave();
     };
+    // ウインドウから離れたときだけ。capture で聞くので、要素の blur も届く。押した要素へフォーカスが移ると、入力欄などから外れた blur が
+    // 離す前に届くので、それではやめない（やめると、その場で最下部へ送り、押した要素が動いて click が届かない）。
+    // 要素（Node）の blur でないかで見分ける（jsdom では、ウインドウの blur の target がグローバルの window と同じものにならない）
+    const blur = (e: Event) => {
+      if (!(e.target instanceof Node)) leave();
+    };
     const listeners: [string, EventListener][] = [
       ['pointerup', up],
       ['pointercancel', up],
       ['pointermove', move as EventListener],
       ['wheel', leave],
       ['keydown', leave],
-      ['blur', leave],
+      ['blur', blur],
     ];
     for (const [type, listener] of listeners) window.addEventListener(type, listener, true);
     // 一覧の中のどこかが変わったら（行が増える・消える。行の中で、閉じたまとまりの下の終わったツールの行が消える・本文が描き直されるなど）、
