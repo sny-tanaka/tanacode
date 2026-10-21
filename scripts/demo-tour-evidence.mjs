@@ -1,7 +1,8 @@
 // ツアーが止まったときの証拠（npm run demo:check・demo:check:sp の --evidence <フォルダ>）。
 // 止まり方によっては手元で再現しにくいので、CI で止まったときに、そのときの画面の様子を残して原因を見分けられるようにする（CI の tour のジョブが artifact に残す）。
-// 書き出すもの: page.png（ページの写し）・app.html（アプリの画面の HTML）・state.json（止まり方・直前の説明・コンソールのエラー・台本の操作の足あとと、
-// 下の snapshot が返す画面の様子）
+// 書き出すもの: page.png（ページの写し）・app.html（アプリの画面の HTML）・state.json（止まり方・直前の説明・コンソールのエラー・台本の操作と
+// 描き直しの足あとと、下の snapshot が返す画面の様子）。スマホのほうは、WebKit の出力（webkit.log）も
+import { existsSync, readFileSync } from 'node:fs';
 
 // 台本の操作の足あと（src/renderer/src/demo/trace.ts）。確かめは、開く URL に TRACE_QUERY を付けて足あとを出させ、TRACE_PREFIX で始まる
 // コンソールの行を控える。ページの処理が固まって中を読めなくなっても、それまでに届いた足あとから、どの操作の途中で固まったかが分かる
@@ -14,23 +15,48 @@ export const TRACE_SHOWN = 10;
 
 // 足あとの控え。add は、足あとの行なら控えて true を返す（ほかのコンソールの行は false）。lines は、控えた足あと（古い順。確かめを始めてからの秒を添える）。
 // freeze のあとは控えない（止まったと決めたあとも、証拠を集める間に台本が進むことがある。止まったときの足あとを残す）
+// 描き直しの足あと（trace.ts の startFrameTrace）。描き直しごとに「前」「後」の 2 行が出るので、台本の足あととは分けて、新しいものだけを控える。
+// frames は、控えた描き直しの足あと（古い順）。最後の行が「前」なら描き直しの途中で、「後」なら描き直しの間のタスクで固まった
+export const FRAME_PREFIX = '[demo-frame]';
+const FRAME_KEEP = 6;
 export function traceLog() {
   const started = Date.now();
   const lines = [];
+  const frameLines = [];
   let frozen = false;
+  const keep = (list, max, text, prefix) => {
+    list.push(`${((Date.now() - started) / 1000).toFixed(1)}s ${text.slice(prefix.length).trim()}`);
+    if (list.length > max) list.shift();
+  };
   return {
     add(text) {
-      if (!text.startsWith(TRACE_PREFIX)) return false;
+      const prefix = [TRACE_PREFIX, FRAME_PREFIX].find((p) => text.startsWith(p));
+      if (!prefix) return false;
       if (frozen) return true;
-      lines.push(`${((Date.now() - started) / 1000).toFixed(1)}s ${text.slice(TRACE_PREFIX.length).trim()}`);
-      if (lines.length > TRACE_KEEP) lines.shift();
+      if (prefix === TRACE_PREFIX) keep(lines, TRACE_KEEP, text, prefix);
+      else keep(frameLines, FRAME_KEEP, text, prefix);
       return true;
     },
     freeze() {
       frozen = true;
     },
     lines: () => [...lines],
+    frames: () => [...frameLines],
   };
+}
+
+// WebKit（ページの処理のプロセスも）の標準出力・標準エラー。Playwright は、DEBUG に pw:browser があればそれを出し、DEBUG_FILE があれば
+// そのファイルに書く。ページの処理が固まったまま落ちたときに、WebKit が何を出していたか（落とした理由・警告）を残すため、
+// 確かめのジョブのログには出さずにファイルに書かせる。playwright を読み込む前に呼ぶ（読み込んだときの環境変数で決まる）
+export function keepBrowserLog(file) {
+  process.env.DEBUG = [process.env.DEBUG, 'pw:browser'].filter(Boolean).join(',');
+  process.env.DEBUG_FILE = file;
+}
+
+// keepBrowserLog で書かせたファイルの、最後の n 行（無ければ空）
+export function browserLogTail(file, n) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-n);
 }
 
 // 証拠を集める上限。ページの処理が応答しないまま止まったときも、ここで諦めて先へ進む（ジョブを止めたままにしない）

@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { git } from '../src/main/git';
+import { git, status, userGit } from '../src/main/git';
 import { SourceControl } from '../src/main/source-control';
 
 // ソース管理パネルの操作（ステージ・取り消し・変更を捨てる・コミット・プッシュ・ブランチの切り替え・差分の左右）。
@@ -317,4 +317,44 @@ describe('git', () => {
     // 空の内容のハッシュ。標準入力を閉じないと、入力を待ったまま返らない
     expect((await git(repo, ['hash-object', '--stdin'])).trim()).toBe('e69de29bb2d1d6434b8b29ae775ad8c2e48c5391');
   }, 5000);
+
+  // 直す前: パネルが状態を読み直す git（status・ブランチの変更を読む diff）は、作業ツリーのファイルの時刻が変わっているとインデックスを
+  // 書き直そうとして index.lock を取るので、その間に人がステージ・コミットを押すと「index.lock': File exists」で失敗した
+  // （E2E の scm.test.ts が、ファイルを書き換えた直後のステージ・コミットで落ちた）。
+  // 読む git は、終わるまでに時間のかかるもの（alias のシェルで待つ）にして、人の操作が終わる前に始まらないこと・終わったあとに始まることを見る
+  const slow = (done: string) => ['-c', `alias.slow=!sleep 0.4 && touch ${done}`, 'slow'];
+  const check = (done: string) => ['-c', `alias.check=!test -f ${done}`, 'check'];
+
+  it('人の操作（userGit）は、同じフォルダで動いている読む git が終わるのを待ってから動く', async () => {
+    const done = join(root, 'read-done');
+    const read = git(repo, slow(done));
+    await expect(userGit(repo, check(done))).resolves.toBe('');
+    await read;
+  }, 5000);
+
+  it('読む git は、同じフォルダで動いている人の操作が終わるのを待ってから動く', async () => {
+    const done = join(root, 'user-done');
+    const op = userGit(repo, slow(done));
+    await expect(git(repo, check(done))).resolves.toBe('');
+    await op;
+  }, 5000);
+
+  it('ほかのフォルダの git は待たない', async () => {
+    const other = join(root, 'other');
+    await init(other);
+    const done = join(root, 'other-done');
+    const read = git(other, slow(done));
+    await expect(userGit(repo, check(done))).rejects.toThrow();
+    await read;
+  }, 5000);
+
+  it('読む git の status は、インデックスを書き直さない（ターミナルや Claude の git と index.lock でぶつからない）', async () => {
+    const index = join(repo, '.git', 'index');
+    const before = readFileSync(index);
+    // 中身は同じで時刻だけ違う（ふつうの git status なら、控えの時刻を直してインデックスを書き直す）
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(repo, 'a.txt'), later, later);
+    expect(await status(repo)).toEqual([]);
+    expect(readFileSync(index).equals(before)).toBe(true);
+  });
 });

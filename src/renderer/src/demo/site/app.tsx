@@ -4,6 +4,7 @@ import '@fontsource/jetbrains-mono/500.css';
 import '../../global.css';
 import { CHAPTER_INFO } from '../story/chapterInfo';
 import { prepareStory } from '../story/story';
+import { startFrameTrace } from '../trace';
 import './app.css';
 import { installInputGuard } from './inputGuard';
 import { Stage } from './Stage';
@@ -16,4 +17,6 @@ const start = CHAPTER_INFO.findIndex((c) => c.id === id);
 const story = prepareStory();
 
 installInputGuard();
+// ツアーの確かめ（?demo-trace）のときだけ、描き直しの足あとも出す
+startFrameTrace();
 createRoot(document.getElementById('root')!).render(<Stage story={story} start={start} />);

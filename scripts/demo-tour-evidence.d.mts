@@ -5,4 +5,7 @@ export declare function snapshot(): unknown;
 export declare const TRACE_QUERY: string;
 export declare const TRACE_PREFIX: string;
 export declare const TRACE_SHOWN: number;
-export declare function traceLog(): { add(text: string): boolean; freeze(): void; lines(): string[] };
+export declare const FRAME_PREFIX: string;
+export declare function traceLog(): { add(text: string): boolean; freeze(): void; lines(): string[]; frames(): string[] };
+export declare function keepBrowserLog(file: string): void;
+export declare function browserLogTail(file: string, n: number): string[];
