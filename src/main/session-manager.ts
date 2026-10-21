@@ -56,7 +56,7 @@ import type { SessionModel } from '@shared/models';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import { checkedContent, type ElicitationReply, type PendingElicitation } from '@shared/elicitation';
 import { BashTaskTracker } from './bash-task-tracker';
-import { branchCut, readAgentLog, readChatLog, readExportLog, retract, type ChainEntry } from './chat-log';
+import { branchCut, readAgentLog, readChatLog, readExportLog, retract, withoutRepeatedState, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
@@ -3660,6 +3660,8 @@ export class SessionManager {
         rt.promptLine = null;
       }
     }
+    // 同じつながり・同じ PR の行（何度も書き直される）は、変わったときだけ積む
+    if (rt) events = withoutRepeatedState(rt.events, events);
     if (events.length === 0 && covered) this.emitPartial(id, rt!);
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');

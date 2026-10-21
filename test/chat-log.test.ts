@@ -140,6 +140,19 @@ describe('会話ログを読む', () => {
     expect(events.filter((e) => e.type === 'unknown-event')).toMatchObject([{ name: 'brand-new', id: 'unknown:n1' }]);
   });
 
+  it('readChatLog: 何度も書き直された同じつながり・同じ PR の行は、変わったときだけイベントにする', async () => {
+    const bridge = (bridgeSessionId: string, lastSequenceNum: number) => ({ type: 'bridge-session', bridgeSessionId, lastSequenceNum });
+    const pr = { type: 'pr-link', prNumber: 7, prUrl: 'https://github.com/o/r/pull/7', prRepository: 'o/r' };
+    const file = write('e.jsonl', user('u1', null, 'はじめ'), bridge('cse_a', 1), pr, bridge('cse_a', 2), pr, bridge('', 3), bridge('cse_a', 4), pr);
+    const events = await readChatLog(file, CWD);
+    expect(events.filter((e) => e.type === 'remote-control' || e.type === 'pr-link')).toEqual([
+      { type: 'remote-control', url: 'https://claude.ai/code/session_a' },
+      { type: 'pr-link', pr: { number: 7, url: 'https://github.com/o/r/pull/7', repository: 'o/r' } },
+      { type: 'remote-control', url: null },
+      { type: 'remote-control', url: 'https://claude.ai/code/session_a' },
+    ]);
+  });
+
   it('readAgentLog: サブエージェントの会話ログ（行はどれもサイドチェーン）をそのまま出す', async () => {
     const file = write('agent.jsonl', user('u1', null, '調べて', { isSidechain: true }), assistant('a1', 'u1', '調べました', { isSidechain: true }));
     expect(texts(await readAgentLog(file, CWD))).toEqual(['調べて', '調べました']);

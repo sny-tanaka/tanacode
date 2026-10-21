@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, inject } from 'vitest';
@@ -79,6 +79,8 @@ type Options = {
   git?: boolean;
   // フォルダの信頼の確認を済ませておく（claude --worktree は、信頼していないフォルダでは始まらない）
   trusted?: boolean;
+  // 作業フォルダを、実体を指すリンクで渡す（/tmp で始めたときのように、Claude Code の cwd が渡したパスと違う）
+  linkedCwd?: boolean;
   // 台本が、わざと出させる知らない種類（会話ログの未知のイベントの名前。モックの API が、アプリの読まないブロックを混ぜるなど）。
   // ほかの知らない種類が出たら、終わるとき（stop）に失敗にする
   unknown?: string[];
@@ -95,7 +97,8 @@ type Options = {
 export class ClaudeRun {
   readonly root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-cli-')));
   readonly home = join(this.root, 'home');
-  readonly cwd = join(this.root, 'work');
+  // 作業フォルダ（linkedCwd のときは、実体の work を指すリンク）
+  readonly cwd: string;
   // アプリの userData にあたるもの
   private readonly userData = join(this.root, 'userData');
   readonly seen: Seen[] = [];
@@ -136,7 +139,12 @@ export class ClaudeRun {
     private readonly options: Options = {},
   ) {
     mkdirSync(join(this.home, '.claude'), { recursive: true });
-    mkdirSync(this.cwd, { recursive: true });
+    mkdirSync(join(this.root, 'work'), { recursive: true });
+    this.cwd = join(this.root, 'work');
+    if (options.linkedCwd) {
+      this.cwd = join(this.root, 'link');
+      symlinkSync(join(this.root, 'work'), this.cwd);
+    }
     // 最初の案内（テーマの選択）と API キーの確認は済んだことにする。フォルダの信頼の確認は、アプリでも出るのでそのまま
     writeFileSync(
       join(this.home, '.claude.json'),
