@@ -16,10 +16,30 @@ export function traceEnabled(): boolean {
   }
 }
 
+// 描き直し（フレーム）の足あとの行の頭（scripts/demo-tour-evidence.mjs の FRAME_PREFIX と同じ）
+export const DEMO_FRAME_PREFIX = '[demo-frame]';
+
 const enabled = traceEnabled();
 
 export function trace(what: string): void {
   if (enabled) console.debug(`${DEMO_TRACE_PREFIX} ${Math.round(performance.now())}ms ${what}`);
+}
+
+// 描き直しのたびに、始まり（requestAnimationFrame）と、描き終えたあと（そのとき送ったメッセージを受けるタスク）を出す。
+// CI のスマホのツアーで、台本の操作が「済み」になったあと、次の操作の前にページの処理が固まった（台本のコードには、終わらない待ちも
+// ループも無かった）。最後の行が「前」なら描き直しの途中（スタイル・レイアウト・描画、ResizeObserver など）で、「後」なら描き直しの間の
+// タスク（タイマー・出来事・React の描き直し）で固まったと分かる
+export function startFrameTrace(): void {
+  if (!enabled) return;
+  const channel = new MessageChannel();
+  channel.port1.onmessage = (e: MessageEvent<number>) => console.debug(`${DEMO_FRAME_PREFIX} ${Math.round(performance.now())}ms ${e.data} 後`);
+  let n = 0;
+  const frame = () => {
+    console.debug(`${DEMO_FRAME_PREFIX} ${Math.round(performance.now())}ms ${++n} 前`);
+    channel.port2.postMessage(n);
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 // 台本の操作の相手（セレクタ・要素・要素を返す関数）の短い名前
