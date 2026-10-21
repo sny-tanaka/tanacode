@@ -642,7 +642,8 @@
       "shellOutput": "出力",
       "hooks": "フック",
       "thinking": "思考",
-      "answers": "質問への回答"
+      "answers": "質問への回答",
+      "answerNotes": "補足: {text}"
     },
     "unknown": {
       "summary": "未知のイベント: {name}",
@@ -2090,13 +2091,14 @@
       "sendFailed": "送れませんでした。もう一度押してください",
       "nextQuestion": "次の質問へ →",
       "reviewAnswers": "回答の確認へ →",
-      "otherTyped": "その他: {text}",
-      "other": "その他（自由に入力）",
-      "confirm": "決定",
+      "notesLabel": "補足（選択肢を押すと一緒に送ります）",
+      "notesLabelMulti": "補足（チェックと一緒に送ります）",
+      "textPlaceholder": "選択肢に無い答えは、書いて『入力だけで答える』",
+      "answerWithText": "入力だけで答える",
+      "reviewNotes": "補足: {text}",
       "send": "送信",
       "stopEditing": "やめる",
       "preview": "プレビュー: {label}",
-      "answerPlaceholderMultiline": "回答を入力（Enter で改行、⌘+Enter で決定）",
       "review": "回答の確認",
       "unanswered": "（未回答）",
       "submitAnswers": "回答を送る",

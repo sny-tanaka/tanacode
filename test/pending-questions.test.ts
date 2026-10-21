@@ -44,11 +44,13 @@ describe('返事の読み方（questionReplyOf）', () => {
   it('画面から届いた返事を読む。形の違うものは null', () => {
     expect(questionReplyOf({ kind: 'answer', answers: { a: 'b' } })).toEqual({ kind: 'answer', answers: { a: 'b' } });
     expect(questionReplyOf({ kind: 'cancel' })).toEqual({ kind: 'cancel' });
-    // 添え書きは、プレビューだけを読む
-    expect(questionReplyOf({ kind: 'answer', answers: { a: 'b' }, annotations: { a: { preview: '図', notes: 'メモ' }, c: { notes: 'メモ' }, d: 'x' } })).toEqual({
+    // 添え書きは、プレビューと、選択肢と一緒に送る補足（空白だけのものは読まない）を読む
+    expect(
+      questionReplyOf({ kind: 'answer', answers: { a: 'b' }, annotations: { a: { preview: '図', notes: 'メモ' }, c: { notes: 'メモ' }, d: 'x', e: { notes: ' \n' }, f: { notes: 1 } } }),
+    ).toEqual({
       kind: 'answer',
       answers: { a: 'b' },
-      annotations: { a: { preview: '図' } },
+      annotations: { a: { preview: '図', notes: 'メモ' }, c: { notes: 'メモ' } },
     });
     // 「Chat about this」はカードから消したので、受け取らない
     expect(questionReplyOf({ kind: 'chat' })).toBeNull();

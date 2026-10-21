@@ -648,7 +648,8 @@
       "shellOutput": "Output",
       "hooks": "Hooks",
       "thinking": "Thinking",
-      "answers": "Answers"
+      "answers": "Answers",
+      "answerNotes": "Note: {text}"
     },
     "unknown": {
       "summary": "Unknown event: {name}",
@@ -2160,13 +2161,14 @@
       "sendFailed": "Couldn't send. Click again.",
       "nextQuestion": "Next Question →",
       "reviewAnswers": "Review Answers →",
-      "otherTyped": "Other: {text}",
-      "other": "Other (type your own answer)",
-      "confirm": "OK",
+      "notesLabel": "Note (sent with the option you click)",
+      "notesLabelMulti": "Note (sent with the options you check)",
+      "textPlaceholder": "For an answer not in the options, write it and click “Answer with Text Only”",
+      "answerWithText": "Answer with Text Only",
+      "reviewNotes": "Note: {text}",
       "send": "Send",
       "stopEditing": "Stop editing",
       "preview": "Preview: {label}",
-      "answerPlaceholderMultiline": "Type your answer (Enter for a new line, ⌘+Enter to confirm)",
       "review": "Review your answers",
       "unanswered": "(Not answered)",
       "submitAnswers": "Submit answers",

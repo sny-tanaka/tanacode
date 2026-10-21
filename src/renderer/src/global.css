@@ -4061,6 +4061,39 @@ details[open] > summary > .disclosure {
   justify-content: flex-end;
   gap: 8px;
 }
+/* 質問のカードの自由入力の欄（選択肢と一緒に送る補足と、選択肢に無い答えを兼ねる）。選択肢の下に、見出し・欄・「入力だけで答える」を縦に並べる */
+.menu-free {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.menu-free-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.menu-free textarea {
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+.menu-free textarea::placeholder {
+  color: var(--text-tertiary);
+}
+.menu-free textarea:focus {
+  border-color: var(--border-focus);
+}
+/* 書いた文だけが答えになっているとき（選んだ選択肢と同じ色） */
+.menu-free.chosen textarea {
+  border-color: var(--ide);
+}
 /* タブを押して、その質問のページへ戻れる（フックで答える質問のカード） */
 button.menu-tab {
   background: transparent;
@@ -4095,6 +4128,12 @@ button.menu-tab:disabled {
 }
 .menu-review-item dd.unanswered {
   color: var(--warn);
+}
+/* 選択肢と一緒に送る補足。選択肢の下の行に出す */
+.menu-review-notes {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
 }
 
 .terminal-instance {
@@ -6731,6 +6770,12 @@ body.resizing-rows webview {
 .chat-answer-value {
   color: var(--text-primary);
   font-weight: 400;
+}
+/* 選択肢と一緒に送った補足。書いた改行をそのまま出す */
+.chat-answer-notes {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* アイコンだけのボタンの名前（TooltipLayer。ボタンに data-tip を付けると、ホバーで出る） */

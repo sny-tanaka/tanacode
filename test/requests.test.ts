@@ -140,11 +140,11 @@ describe('questionResult', () => {
   const QUESTIONS = [{ question: 'どちら?', header: '', multiSelect: false, options: [{ label: 'A', description: '', preview: 'A の図' }] }];
   const input = { questions: QUESTIONS };
 
-  it('答えは入力の answers に、添え書きがあれば annotations に入れて許す', () => {
+  it('答えは入力の answers に、添え書き（プレビュー・補足）があれば annotations に入れて許す', () => {
     expect(questionResult(input, { kind: 'answer', answers: { 'どちら?': 'A' } })).toEqual({ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' } } });
-    expect(questionResult(input, { kind: 'answer', answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図' } } })).toEqual({
+    expect(questionResult(input, { kind: 'answer', answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図', notes: '余白を広めに' } } })).toEqual({
       behavior: 'allow',
-      updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図' } } },
+      updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図', notes: '余白を広めに' } } },
     });
   });
 

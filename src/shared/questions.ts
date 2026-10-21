@@ -5,8 +5,9 @@ import type { AskQuestion } from './screen';
 // answered: 親が 1 問ずつ答えている途中の、答えた質問の答え（質問文 → 答え。カードは全部の答えを一度に返すので使わない）
 export type PendingQuestion = { id: string; questions: AskQuestion[]; answered: Record<string, string> };
 
-// 質問ごとの添え書き（質問文 → 添え書き）。preview: 選んだ選択肢のプレビュー
-export type QuestionAnnotations = Record<string, { preview: string }>;
+// 質問ごとの添え書き（質問文 → 添え書き）。preview: 選んだ選択肢のプレビュー / notes: 選んだ選択肢と一緒に送る、人が書いた補足
+// （Claude Code の画面のメモと同じ形。Claude には「"質問"="選択肢" notes: 補足」と届く）
+export type QuestionAnnotations = Record<string, { preview?: string; notes?: string }>;
 
 // 待っている質問への返事。
 // answer: 質問文 → 答え（annotations: 質問ごとの添え書き）/ cancel: キャンセル（画面の Esc と同じく、Claude の作業を止める）
@@ -54,7 +55,12 @@ export function questionReplyOf(value: unknown): QuestionReply | null {
   const answers = Object.entries(raw.answers).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
   const annotations: QuestionAnnotations = {};
   for (const [question, note] of Object.entries(isRecord(raw.annotations) ? raw.annotations : {})) {
-    if (isRecord(note) && typeof note.preview === 'string') annotations[question] = { preview: note.preview };
+    if (!isRecord(note)) continue;
+    const kept = {
+      ...(typeof note.preview === 'string' ? { preview: note.preview } : {}),
+      ...(typeof note.notes === 'string' && note.notes.trim() ? { notes: note.notes } : {}),
+    };
+    if (Object.keys(kept).length > 0) annotations[question] = kept;
   }
   return { kind: 'answer', answers: Object.fromEntries(answers), ...(Object.keys(annotations).length > 0 ? { annotations } : {}) };
 }

@@ -27,6 +27,10 @@ const SIMPLE: AskQuestion[] = [
 ];
 // プレビュー付きの質問に、選択肢に無い答えを書く
 const TYPED_LAYOUT = 'TYPED-格子に並べる\n2 列で';
+// 選択肢と一緒に送る補足（カードの入力欄に書いてから選択肢を押す・チェックして次へ進む）
+const NOTE_STYLE = 'NOTE-語尾は\nやわらかく';
+const NOTE_LANGUAGE = 'NOTE-Zig も少し';
+const NOTE_LAYOUT = 'NOTE-余白を広めに';
 const DENIED = 'DENY-代わりに echo で確かめてください';
 const PLAN = '# 計画\n\n1. 価格の表記を直す\n2. テストを足す';
 
@@ -34,7 +38,9 @@ const PLAN = '# 計画\n\n1. 価格の表記を直す\n2. テストを足す';
 const ask = (id: string, questions: AskQuestion[]): Block[] => [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }];
 const bash = (id: string, command: string): Block[] => [{ type: 'tool_use', id, name: 'Bash', input: { command, description: command } }];
 const SCRIPT: Record<string, Block[]> = {
+  'CARD-TABS-NOTES': ask('toolu_tabs_notes', ASK_TABS),
   'CARD-TABS': ask('toolu_tabs', ASK_TABS),
+  'CARD-PREVIEW-NOTES': ask('toolu_preview_notes', ASK_PREVIEW),
   'CARD-PREVIEW-TYPED': ask('toolu_preview_typed', ASK_PREVIEW),
   'CARD-PREVIEW': ask('toolu_preview', ASK_PREVIEW),
   'CARD-CANCEL': ask('toolu_cancel', SIMPLE),
@@ -95,6 +101,44 @@ describe(`Claude Code ${version} の、答えを待つ要求とカード`, () =>
     expect(resultOf('toolu_tabs')?.answers).toEqual(ASK_TABS.map((q, i) => ({ header: q.header, question: q.question, answer: TABS_ANSWERS[i] })));
     expect(api.toolResults.some((r) => r.includes(TYPED_COLOR))).toBe(true);
     expect(run.manager.pendingQuestion(run.sessionId!)).toBeNull();
+  });
+
+  // 選択肢と書いた文を一緒に送る形は、答えの文につなげず、annotations の notes にした。どちらの形も届くが、notes なら Claude に
+  // 「"質問"="選択肢" notes: 補足」と届き、選んだ案と書き足した文の区別がつく（答えの文につなげると「"質問"="選択肢, 補足"」になる）
+  it('選択肢と一緒に送る補足（annotations の notes）は、プレビューの無い質問・複数選択でも、選択肢と分かれて Claude に届き、会話ログにも残る', async () => {
+    const before = turnEnds().length;
+    await run.send('CARD-TABS-NOTES');
+    const question = await run.question('質問');
+    const [style, languages, color] = ASK_TABS;
+    run.replyQuestion(question, {
+      kind: 'answer',
+      answers: { [style.question]: 'だ・である', [languages.question]: 'TypeScript, Go', [color.question]: TYPED_COLOR },
+      annotations: { [style.question]: { notes: NOTE_STYLE }, [languages.question]: { notes: NOTE_LANGUAGE } },
+    });
+    await finished(before);
+    const result = api.toolResults.find((r) => r.includes(NOTE_LANGUAGE));
+    expect(result).toContain(`"${style.question}"="だ・である" notes: ${NOTE_STYLE}`);
+    expect(result).toContain(`"${languages.question}"="TypeScript, Go" notes: ${NOTE_LANGUAGE}`);
+    // 入力だけで答えた質問には、補足を付けない
+    expect(result).toContain(`"${color.question}"="${TYPED_COLOR}".`);
+    expect(resultOf('toolu_tabs_notes')?.answers).toEqual([
+      { header: style.header, question: style.question, answer: 'だ・である', notes: NOTE_STYLE },
+      { header: languages.header, question: languages.question, answer: 'TypeScript, Go', notes: NOTE_LANGUAGE },
+      { header: color.header, question: color.question, answer: TYPED_COLOR },
+    ]);
+  });
+
+  it('プレビュー付きの質問で選んだ案のプレビューと補足（annotations）が、答えと一緒に Claude に届く', async () => {
+    const before = turnEnds().length;
+    await run.send('CARD-PREVIEW-NOTES');
+    const question = await run.question('プレビュー付きの質問');
+    const [asked] = ASK_PREVIEW;
+    const picked = asked.options[0];
+    run.replyQuestion(question, { kind: 'answer', answers: { [asked.question]: picked.label }, annotations: { [asked.question]: { preview: picked.preview!, notes: NOTE_LAYOUT } } });
+    await finished(before);
+    const result = api.toolResults.find((r) => r.includes(NOTE_LAYOUT));
+    expect(result).toContain(`"${asked.question}"="${picked.label}" selected preview:\n${picked.preview} notes: ${NOTE_LAYOUT}`);
+    expect(resultOf('toolu_preview_notes')?.answers).toEqual([{ header: asked.header, question: asked.question, answer: picked.label, notes: NOTE_LAYOUT }]);
   });
 
   it('プレビュー付きの質問で選んだ案のプレビュー（annotations）も、答えと一緒に Claude に届く', async () => {

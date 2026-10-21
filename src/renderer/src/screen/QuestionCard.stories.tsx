@@ -4,7 +4,8 @@ import type { AskQuestion } from '@shared/screen';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { QuestionCard } from './QuestionCard';
 
-// Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。カードの形は、プレビューの有無で変わらない
+// Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。カードの形は、プレビューの有無で変わらない。
+// 選択肢の下に、自由入力の欄が 1 つある（書いてから選択肢を押すと補足として一緒に送る。「入力だけで答える」で、書いた文だけを答えにする）
 const pending = (...questions: AskQuestion[]): PendingQuestion => ({ id: '1', questions, answered: {} });
 
 const handling: AskQuestion = {
@@ -89,17 +90,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// 質問が 1 つで単一選択。選んだらすぐ送る
+// 質問が 1 つで単一選択。選んだらすぐ送る（入力欄に書いてあれば、補足として一緒に送る）
 export const 質問: Story = {};
 
 // 質問が 3 つ（単一選択・複数選択・単一選択）。タブで答えた質問が分かり、最後に回答の確認を出す
 export const 複数の質問: Story = { args: { question: pending(style, languages, color) } };
 
-// 複数選択だけの質問。チェックしてから、回答の確認へ
+// 複数選択だけの質問。チェックしてから、回答の確認へ（入力欄に書いてあれば、チェックと一緒に送る）
 export const 複数選択: Story = { args: { question: pending(languages) } };
 
 // 選択肢にマウスを乗せる（Tab で移る）と、比べるためのプレビューを、カードの右に選択肢の高さにそろえてポップアップで出す。
-// ほかは、プレビューの無い質問と同じ（「その他（自由に入力）」がある）
+// ほかは、プレビューの無い質問と同じ（選択肢の下に、自由入力の欄がある）
 export const プレビュー付き: Story = { args: { question: pending(layout) } };
 
 // 大きなプレビュー。右に出すときは、右の幅とウインドウの高さまで使い、入りきらない分は中でスクロールする

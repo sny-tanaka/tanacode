@@ -205,10 +205,14 @@ describe('そのまま渡す受け口', () => {
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'press-enter' })).resolves.toBe(false);
     // 「Chat about this」はカードから消したので、渡さない
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'chat' })).resolves.toBe(false);
-    // 添え書き（annotations）は、文字のプレビューだけを渡す
+    // 添え書き（annotations）は、文字のプレビューと補足（空白だけでないもの）だけを渡す
     await expect(
-      invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く', preview: 'A の図' }, 数: { preview: 1 } } }),
-    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { preview: 'A の図' } } }));
+      invoke(IpcChannel.QuestionReply, 's1', 'q1', {
+        kind: 'answer',
+        answers: { 'どちら?': 'A 案' },
+        annotations: { 'どちら?': { notes: '余白を広く', preview: 'A の図', ほか: 'x' }, 数: { preview: 1, notes: ' ' } },
+      }),
+    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { preview: 'A の図', notes: '余白を広く' } } }));
   });
 
   it('許可の確認のカードの返事も、形を確かめてから渡す（形の違う返事・理由の無い断りは渡さずに false）', async () => {
