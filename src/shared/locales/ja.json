@@ -96,7 +96,9 @@
     "session": {
       "untitled": "新しいセッション",
       "notFound": "セッションが見つかりません",
-      "notStopped": "Claude Code を止められなかったため、起動し直せませんでした。今の Claude Code はそのまま動いています（変えた設定は、次に起動したときに使われます）"
+      "notStopped": "Claude Code を止められなかったため、起動し直せませんでした。今の Claude Code はそのまま動いています（変えた設定は、次に起動したときに使われます）",
+      "bypassNotCarried": "Claude Code を起動し直したため、権限モードを「{to}」にしました（「すべて許可」は、起動し直すと引き継ぎません）",
+      "modeCapped": "Claude Code を起動し直したため、権限モードを「{from}」から、起動したときのモードの「{to}」に戻しました（ターミナルモードの画面や Remote Control で上げたモードは、起動し直すと引き継ぎません）"
     },
     "state": {
       "question": "質問への回答待ち",

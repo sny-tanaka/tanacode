@@ -83,8 +83,9 @@ export type ChatEvent =
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
   // 画面に出るだけのお知らせ（起動時の「AGENTS.md を読み込みました」・Claude Code の警告・モデルの切り替え・メモリなど）。ターンは始まらない。
-  // detail: 開くと読める全文（モデルの切り替えの Claude Code の説明・メモリのファイル名など）/ warning: 警告の色で出す
-  | { type: 'info'; id: string; text: string; detail?: string; warning?: true }
+  // detail: 開くと読める全文（モデルの切り替えの Claude Code の説明・メモリのファイル名など）/ warning: 警告の色で出す /
+  // screen: ターミナルモードの画面の下にも出す（起動し直したときの、下げた権限モード・チャットに戻せなかったわけ。チャットは隠れているため）
+  | { type: 'info'; id: string; text: string; detail?: string; warning?: true; screen?: true }
   // 入力欄で ! を付けて実行したシェルのコマンド（Claude には渡らない）
   | { type: 'shell'; id: string; command: string; output: string }
   // ! のコマンドの出力。今の Claude Code はコマンドと出力を別の行に書くので、直前の shell に付ける

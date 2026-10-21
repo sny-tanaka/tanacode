@@ -159,20 +159,7 @@ export const ChatRow = memo(function ChatRow({
       </details>
     );
   }
-  if (item.kind === 'info') {
-    const className = item.warning ? 'chat-info warning' : 'chat-info';
-    if (!item.detail) return <div className={className}>{item.text}</div>;
-    // 開くと全文（モデルの切り替えの Claude Code の説明・メモリのファイル名など）が読める
-    return (
-      <details className={`${className} expandable`}>
-        <summary>
-          <DisclosureIcon open={false} />
-          {item.text}
-        </summary>
-        <pre className="chat-notice-detail">{item.detail}</pre>
-      </details>
-    );
-  }
+  if (item.kind === 'info') return <InfoRow item={item} />;
   if (item.kind === 'shell') {
     return (
       <details className="chat-shell">
@@ -238,6 +225,22 @@ export const ChatRow = memo(function ChatRow({
 // Claude の応答の本文。日本語でない文なら、右上に翻訳のボタンを出しておき、押すと下に訳文を出す。
 // ボタンは本文より先に置いて右へ回り込ませる（本文はボタンをよけて折り返すので、文字が隠れない）
 // settled: 書いている途中の文から入れ替わった（出るときの動きを付けない）
+// お知らせの行。ターミナルモードの画面の下（ClaudePane）でも使う
+export function InfoRow({ item }: { item: Extract<ChatItem, { kind: 'info' }> }) {
+  const className = item.warning ? 'chat-info warning' : 'chat-info';
+  if (!item.detail) return <div className={className}>{item.text}</div>;
+  // 開くと全文（モデルの切り替えの Claude Code の説明・メモリのファイル名・標準エラーの末尾など）が読める
+  return (
+    <details className={`${className} expandable`}>
+      <summary>
+        <DisclosureIcon open={false} />
+        {item.text}
+      </summary>
+      <pre className="chat-notice-detail">{item.detail}</pre>
+    </details>
+  );
+}
+
 function ResponseBlock({ text, onRunCommand, settled }: { text: string; onRunCommand?: (command: string) => void; settled?: boolean }) {
   // 訳文のコードブロックには、実行ボタンを付けない（原文の方にある）
   const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} />);

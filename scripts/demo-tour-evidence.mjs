@@ -1,6 +1,37 @@
 // ツアーが止まったときの証拠（npm run demo:check・demo:check:sp の --evidence <フォルダ>）。
 // 止まり方によっては手元で再現しにくいので、CI で止まったときに、そのときの画面の様子を残して原因を見分けられるようにする（CI の tour のジョブが artifact に残す）。
-// 書き出すもの: page.png（ページの写し）・app.html（アプリの画面の HTML）・state.json（止まり方・直前の説明・コンソールのエラーと、下の snapshot が返す画面の様子）
+// 書き出すもの: page.png（ページの写し）・app.html（アプリの画面の HTML）・state.json（止まり方・直前の説明・コンソールのエラー・台本の操作の足あとと、
+// 下の snapshot が返す画面の様子）
+
+// 台本の操作の足あと（src/renderer/src/demo/trace.ts）。確かめは、開く URL に TRACE_QUERY を付けて足あとを出させ、TRACE_PREFIX で始まる
+// コンソールの行を控える。ページの処理が固まって中を読めなくなっても、それまでに届いた足あとから、どの操作の途中で固まったかが分かる
+export const TRACE_QUERY = '?demo-trace';
+export const TRACE_PREFIX = '[demo-trace]';
+// 控える足あとの数（新しいものから）
+const TRACE_KEEP = 40;
+// 止まったときに、確かめの出力に出す足あとの数
+export const TRACE_SHOWN = 10;
+
+// 足あとの控え。add は、足あとの行なら控えて true を返す（ほかのコンソールの行は false）。lines は、控えた足あと（古い順。確かめを始めてからの秒を添える）。
+// freeze のあとは控えない（止まったと決めたあとも、証拠を集める間に台本が進むことがある。止まったときの足あとを残す）
+export function traceLog() {
+  const started = Date.now();
+  const lines = [];
+  let frozen = false;
+  return {
+    add(text) {
+      if (!text.startsWith(TRACE_PREFIX)) return false;
+      if (frozen) return true;
+      lines.push(`${((Date.now() - started) / 1000).toFixed(1)}s ${text.slice(TRACE_PREFIX.length).trim()}`);
+      if (lines.length > TRACE_KEEP) lines.shift();
+      return true;
+    },
+    freeze() {
+      frozen = true;
+    },
+    lines: () => [...lines],
+  };
+}
 
 // 証拠を集める上限。ページの処理が応答しないまま止まったときも、ここで諦めて先へ進む（ジョブを止めたままにしない）
 export const EVIDENCE_TIMEOUT_MS = 10_000;

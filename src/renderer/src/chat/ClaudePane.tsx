@@ -24,7 +24,7 @@ import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatInput, CommentChips, listCompletionFiles, type CompletionSource } from './ChatInput';
-import { ChatRow, PartialRow } from './ChatRow';
+import { ChatRow, InfoRow, PartialRow } from './ChatRow';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
@@ -34,7 +34,7 @@ import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from './insertInput';
 import { DoneNote, StartingNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
-import { acceptsInput, type ChatState } from './chatState';
+import { acceptsInput, type ChatItem, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
 import { useParentInstructions } from './parentRole';
@@ -680,6 +680,13 @@ export const ClaudePane = memo(function ClaudePane({
       {preparing === 'installing' && <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />}
     </div>
   );
+  // 起動し直したときの知らせ（下げた権限モード・チャットに戻せなかったわけ）。ターミナルモードではチャットが隠れるので、画面の下にも出す。
+  // 閉じたものは、また出さない（チャットには残る）
+  const [dismissedNotes, setDismissedNotes] = useState<ReadonlySet<string>>(new Set());
+  const screenNotes = useMemo(
+    () => (screenMode ? chat.items.filter((i): i is Extract<ChatItem, { kind: 'info' }> => i.kind === 'info' && !!i.screen && !dismissedNotes.has(i.id)) : []),
+    [screenMode, chat.items, dismissedNotes],
+  );
   const exitedCallout = !session.archived && chat.status === 'exited' && (
     <div className="chat-callout">
       <span>{chat.exitReason ?? t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
@@ -769,8 +776,14 @@ export const ClaudePane = memo(function ClaudePane({
       {screenMode && (
         <>
           <ClaudeScreen sessionId={session.id} />
-          {(preparingNote || exitedCallout || comments.length > 0) && (
+          {(preparingNote || exitedCallout || comments.length > 0 || screenNotes.length > 0) && (
             <div className="claude-screen-notes">
+              {screenNotes.map((note) => (
+                <div key={note.id} className="claude-screen-note">
+                  <InfoRow item={note} />
+                  <IconButton size="sm" icon={CloseIcon} label={t('common.close')} onClick={() => setDismissedNotes((prev) => new Set(prev).add(note.id))} />
+                </div>
+              ))}
               {preparingNote}
               {/* ターミナルモードで Claude Code が終わっても、チャットには戻さず、ここに終了と「再開」を出す（再開もターミナルモードで起動する） */}
               {exitedCallout}

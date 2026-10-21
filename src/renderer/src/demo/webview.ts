@@ -1,6 +1,7 @@
 // デモ用の、Electron の <webview> の代わり。Storybook（ふつうのブラウザ）では webview が動かないので、
 // PreviewPane が document.createElement('webview') で作る要素を、iframe で作り物のページを出すこの要素に差し替える。
 // PreviewPane が使うメソッド（getURL・executeJavaScript・capturePage など）と出来事（did-start-loading など）だけを持つ
+import { describeTarget, trace } from './trace';
 
 export type DemoPage = { title: string; css: string; body: string };
 
@@ -123,7 +124,9 @@ class DemoWebview extends HTMLElement {
     const frame = this.frame.getBoundingClientRect();
     const init = { bubbles: true, cancelable: true, clientX: x - frame.left, clientY: y - frame.top, view: win };
     const target = doc.elementFromPoint(init.clientX, init.clientY) ?? doc.body;
+    trace(`ページへ ${type}: ${describeTarget(target)}`);
     target.dispatchEvent(new win.MouseEvent(type, init));
+    trace(`ページへ ${type}: 済み`);
   }
 }
 
