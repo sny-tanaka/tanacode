@@ -280,9 +280,10 @@ export const ClaudePane = memo(function ClaudePane({
       if (Math.hypot(e.clientX - x, e.clientY - y) > PRESS_SLOP_PX) leave();
     };
     // ウインドウから離れたときだけ。capture で聞くので、要素の blur も届く。押した要素へフォーカスが移ると、入力欄などから外れた blur が
-    // 離す前に届くので、それではやめない（やめると、その場で最下部へ送り、押した要素が動いて click が届かない）
+    // 離す前に届くので、それではやめない（やめると、その場で最下部へ送り、押した要素が動いて click が届かない）。
+    // 要素（Node）の blur でないかで見分ける（jsdom では、ウインドウの blur の target がグローバルの window と同じものにならない）
     const blur = (e: Event) => {
-      if (e.target === window) leave();
+      if (!(e.target instanceof Node)) leave();
     };
     const listeners: [string, EventListener][] = [
       ['pointerup', up],
