@@ -380,6 +380,13 @@ describe('部品から画面への知らせ', () => {
   it('ほかの部品の知らせ（ファイル・設定ファイル・チェックリスト・予約・ウォークスルー・使用量・バージョン・更新・負荷・シェル）', async () => {
     await boot();
     fnArg('WorkspaceWatchers', 0)('/work', ['a.ts']);
+    // エディタで開いている、フォルダの外のファイル（ファイルごとの見張り）も、同じ形で送る
+    fnArg('OpenFileWatchers', 1)('/outside', ['memo.md']);
+    // フォルダの監視が増えた・減ったら、ファイルごとに見張るタブを決め直させる。決め直すときは、今見張っているフォルダを聞く
+    fnArg('WorkspaceWatchers', 1)();
+    expect(the('OpenFileWatchers').rootsChanged).toHaveBeenCalledTimes(1);
+    fnArg('OpenFileWatchers', 0)();
+    expect(the('WorkspaceWatchers').roots).toHaveBeenCalledTimes(1);
     fnArg('SettingsFiles', 2)([{ id: 'f1' }]);
     fnArg('ChecklistStore', 1)('s1', [{ id: 'l1' }]);
     fnArg('ScheduledMessages', 2)([{ id: 'm1' }]);
@@ -397,6 +404,7 @@ describe('部品から画面への知らせ', () => {
     shells.onOpened('s1', 'shell-3', 'zsh', false);
     expect(sentToRenderer()).toEqual([
       [IpcChannel.FilesChanged, { root: '/work', paths: ['a.ts'] }],
+      [IpcChannel.FilesChanged, { root: '/outside', paths: ['memo.md'] }],
       [IpcChannel.SettingsFilesChanged, [{ id: 'f1' }]],
       [IpcChannel.ChecklistChanged, { sessionId: 's1', lists: [{ id: 'l1' }] }],
       [IpcChannel.ScheduledChanged, [{ id: 'm1' }]],
@@ -1507,6 +1515,8 @@ describe('終了', () => {
     const event = quitOnce();
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(manager().closeAll.mock.calls).toEqual([[false]]);
+    // エディタのタブのファイルごとの見張りもやめる
+    expect(the('OpenFileWatchers').closeAll).toHaveBeenCalledTimes(1);
   });
 
   it('「Claude Code も止めて終了」なら、止めてから終了する', async () => {

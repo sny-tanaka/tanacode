@@ -533,6 +533,12 @@ export function App() {
       setDiffView(null);
       if (!line && editorsRef.current[cwd]?.files.some((f) => f.path === path)) {
         updateEditor(cwd, (s) => ({ ...s, activePath: path }));
+        // 開いているファイルも、ディスクから読み直す（変更の知らせを取りこぼしていても、開き直せば今の中身になる）。
+        // 保存していない変更があれば、読み直さない
+        if (editorCwdRef.current === cwd && editorRef.current?.unsaved().includes(path)) return;
+        const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
+        if (!content) return;
+        updateEditor(cwd, (s) => (s.files.some((f) => f.path === path) ? { ...s, files: withFile(s.files, path, content) } : s));
         return;
       }
       const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
@@ -588,6 +594,15 @@ export function App() {
     () => window.tanacode.workspace.onFilesChanged(({ root, paths }) => reloadFiles(root, new Set(paths))),
     [reloadFiles],
   );
+
+  // 開いているタブを main に知らせる。フォルダの監視では知らせが来ないもの（フォルダの外・out などの監視しないフォルダ・リンク越し）は、
+  // main がファイルごとに見張る。タブを閉じたら、見張りもやめる
+  const openTabsKey = Object.entries(editors)
+    .map(([dir, s]) => [dir, ...s.files.map((f) => f.path)].join('\0'))
+    .join('\n');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const openTabs = useMemo(() => Object.fromEntries(Object.entries(editors).map(([dir, s]) => [dir, s.files.map((f) => f.path)])), [openTabsKey]);
+  useEffect(() => window.tanacode.workspace.watchOpenFiles(openTabs), [openTabs]);
 
   // ウォークスルーを始めたあとで、ステップのファイルがディスク側で変わった（ウォークスルーの id:パス）。示している位置がずれているかもしれない
   const [staleWalkFiles, setStaleWalkFiles] = useState<ReadonlySet<string>>(new Set());

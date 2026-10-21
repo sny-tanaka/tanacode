@@ -11,7 +11,16 @@ type Watch = { watcher: FSWatcher; refs: number; pending: Set<string>; timer: No
 export class WorkspaceWatchers {
   private readonly watches = new Map<string, Watch>();
 
-  constructor(private readonly onChange: (root: string, relPaths: string[]) => void) {}
+  // onRootsChanged: 見張るフォルダが増えた・減った（OpenFileWatchers が、ファイルごとに見張るタブを決め直す）
+  constructor(
+    private readonly onChange: (root: string, relPaths: string[]) => void,
+    private readonly onRootsChanged: () => void = () => {},
+  ) {}
+
+  // 今見張っているフォルダ
+  roots(): string[] {
+    return [...this.watches.keys()];
+  }
 
   retain(root: string): void {
     const existing = this.watches.get(root);
@@ -29,6 +38,7 @@ export class WorkspaceWatchers {
     }
     watcher.on('error', () => this.close(root));
     this.watches.set(root, { watcher, refs: 1, pending: new Set(), timer: null });
+    this.onRootsChanged();
   }
 
   release(root: string): void {
@@ -58,6 +68,7 @@ export class WorkspaceWatchers {
     if (w.timer) clearTimeout(w.timer);
     w.watcher.close();
     this.watches.delete(root);
+    this.onRootsChanged();
   }
 }
 

@@ -134,6 +134,7 @@ export const IpcChannel = {
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
   FilesChanged: 'fs:changed',
+  WatchOpenFiles: 'fs:watch-open-files',
   TasksBash: 'tasks:bash',
   TasksBashChanged: 'tasks:bash-changed',
   TasksAgentLog: 'tasks:agent-log',
@@ -748,6 +749,9 @@ export type TanacodeApi = {
     // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとのフォルダの一覧を返す
     removeFolder(sessionId: string, folder: string): Promise<string[]>;
     onFilesChanged(listener: (payload: FilesChanged) => void): () => void;
+    // エディタで開いているタブ（エディタのフォルダ → タブのパス）。main は、フォルダの監視では知らせが来ないもの（フォルダの外・
+    // 監視しないフォルダの中・リンク越し）をファイルごとに見張り、変わったら onFilesChanged で知らせる。開いているタブが変わるたびに送る
+    watchOpenFiles(tabs: Record<string, string[]>): void;
     // ワークスペースの全ファイル（フォルダからの相対パス）
     listFiles(sessionId: string): Promise<string[]>;
     search(sessionId: string, query: string, options: SearchOptions): Promise<SearchResult>;
@@ -979,6 +983,7 @@ export type IpcSend = {
   [IpcChannel.ShellResize]: Api['shell']['resize'];
   [IpcChannel.ShellKill]: Api['shell']['kill'];
   [IpcChannel.FolderClose]: Api['folders']['close'];
+  [IpcChannel.WatchOpenFiles]: Api['workspace']['watchOpenFiles'];
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];

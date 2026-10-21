@@ -864,6 +864,7 @@ function registerIpc(): void {
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
+  listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
     new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
   );

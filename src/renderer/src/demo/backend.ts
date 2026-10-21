@@ -575,6 +575,7 @@ export class DemoBackend {
           return ok({ ok: true as const });
         },
         onFilesChanged: (l) => this.ch.files.on(l),
+        watchOpenFiles: () => {},
         listFiles: () => ok(Object.keys(p.files).sort()),
         search: () => ok({ files: [], truncated: false }),
         // デモにはフォルダ選択のダイアログが無いので、追加は取りやめと同じ
