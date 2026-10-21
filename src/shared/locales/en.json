@@ -159,6 +159,7 @@
       "commandFailedAt": "{command} ({dir}, exit code {code})",
       "prepareFailed": "Couldn't set up node_modules ({error})",
       "installFailed": "{commands} failed. Check its tab in the Terminal panel",
+      "installWaiting": "{command} seems to be waiting for input. Answer it in its tab in the Terminal panel",
       "notRepo": "To start with a worktree, choose a folder in a git repository",
       "noCommit": "To start with a worktree, the repository needs at least one commit",
       "noName": "Couldn't choose a name for the worktree",

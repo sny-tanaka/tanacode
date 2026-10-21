@@ -125,7 +125,7 @@ export class Profile {
       {
         onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
         onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
-        onOpened: (owner, id, name, task) => send(IpcChannel.ShellOpened, { owner, id, name, task }),
+        onOpened: (owner, id, name, task, replay) => send(IpcChannel.ShellOpened, { owner, id, name, task, ...(replay ? { replay } : {}) }),
       },
       claudeDir,
     );
@@ -248,7 +248,7 @@ export class Profile {
       },
       this.options.remoteControl,
       this.settingsFiles,
-      (owner, cwd, command, name) => this.shells.run(owner, cwd, command, name),
+      (owner, cwd, command, name, onWaiting) => this.shells.run(owner, cwd, command, name, onWaiting),
       () => this.browserLaunch(),
       () => this.sessionsLaunch(),
       () => this.checklistLaunch(),

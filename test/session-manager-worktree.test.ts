@@ -108,7 +108,7 @@ describe('createInWorktree', () => {
     initialized(pipe);
     await app.waitFor('用意', () => release !== undefined);
     expect(prepare).toHaveBeenCalledWith(app.cwd, session.cwd, expect.anything());
-    // install は、アプリのターミナルのタブで実行する（場所が上でなければ、名前に添える）
+    // install は、アプリのターミナルで実行する（画面に出すときのタブの名前に、場所が上でなければ添える）
     expect(tasks).toEqual([
       { owner: id, cwd: session.cwd, command: 'npm install', name: 'npm install' },
       { owner: id, cwd: join(session.cwd, 'pkg'), command: 'yarn install', name: 'yarn install（pkg）' },
@@ -156,6 +156,35 @@ describe('createInWorktree', () => {
     expect(errors).toHaveBeenCalledWith('node_modules を用意できませんでした', expect.any(Error));
     expect(app.manager.worktreeSetup(id)).toEqual({ installsFailed: [], notCopied: [], error: 'git ls-files に失敗しました' });
     errors.mockRestore();
+  });
+
+  it('install が入力を待っているように見えたら（アプリはタブに出す）、チャットの注意の行と、親が読む準備の問題で知らせる。答えて終わったら問題から外す', async () => {
+    let answer: (code: number) => void = () => {};
+    start({
+      runTask: (_owner, _cwd, _command, _name, onWaiting) =>
+        new Promise<number>((resolve) => {
+          answer = resolve;
+          onWaiting?.();
+        }),
+    });
+    prepare.mockImplementationOnce(async (_root, path, hooks) => {
+      hooks.onStep('installing');
+      const exitCode = await hooks.install(path, '', 'pnpm install');
+      return { cloned: [], failed: [], installs: [{ dir: '', command: 'pnpm install', exitCode }] };
+    });
+    const { creating, pipe, session } = await begin();
+    createWorktree(session);
+    const id = await creating;
+    initialized(pipe);
+    await app.waitFor('入力待ちの知らせ', () => infos(id).length > 0);
+    expect(infos(id)).toEqual(['pnpm install（いちばん上） が入力を待っているようです。ターミナルのタブで答えてください']);
+    expect(app.manager.snapshot(id).events.find((e) => e.type === 'info')).toMatchObject({ warning: true });
+    expect(app.manager.worktreeSetup(id)).toEqual({ installsFailed: [], notCopied: [], error: null, waiting: { dir: '', command: 'pnpm install' } });
+    // 答えるまでは、最初の指示を受け付けない
+    expect(app.manager.stateOf(id)).toBe('starting');
+    answer(0);
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+    expect(app.manager.worktreeSetup(id)).toBeNull();
   });
 
   it('runTask を渡さなければ、install を画面に出さずに実行して、終了コードを返す', async () => {

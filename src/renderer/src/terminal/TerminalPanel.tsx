@@ -13,7 +13,8 @@ import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedP
 import { useRunInTerminal } from './runInTerminal';
 import { xtermOptions } from './xterm';
 
-// task: アプリが開いたコマンドのタブ（worktree の npm install・yarn install など）。終わってもタブは残し、exitCode に終了コードを入れる
+// task: アプリが動かしたコマンドのタブ（worktree の npm install・yarn install など。失敗した・入力を待っているように見える・人が見ると言ったときだけ
+// main が出す）。終わってもタブは残し、exitCode に終了コードを入れる
 type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
 type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
 
@@ -141,13 +142,22 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
       pending.current.delete(id);
       setShells((prev) => Object.fromEntries(Object.entries(prev).map(([owner, list]) => [owner, list.filter((t) => t.id !== id)])));
     });
-    // アプリがタブを開いた。そのセッションで選んでおく（「ターミナルで見る」で出す）。
-    // コマンドのタブ（task）のほかに、Claude が打つために開いたシェルがある。こちらは、人が開いたシェルと同じに扱う（終わったらタブを閉じる）
-    const offOpened = window.tanacode.shell.onOpened(({ owner, id, name, task }) => {
+    // アプリがタブを開いた。そのセッションで選んでおく（パネルを開くと見える）。
+    // コマンドのタブ（task）のほかに、Claude が打つために開いたシェルがある。こちらは、人が開いたシェルと同じに扱う（終わったらタブを閉じる）。
+    // 画面に出さずに動かしていたコマンドを出したとき（失敗した・入力を待っているように見える・「ターミナルで見る」）は、それまでの画面（replay）を
+    // 前と同じ大きさの xterm に書いてから、このあとの出力をつなぐ（画面を読み込み直して引き継ぐときと同じ）
+    const offOpened = window.tanacode.shell.onOpened(({ owner, id, name, task, replay }) => {
       if (task) taskIds.current.add(id);
-      const { term } = attachXterm(id);
+      let x: Xterm | undefined;
+      if (replay) {
+        x = makeXterm();
+        x.term.resize(replay.cols, replay.rows);
+        x.term.write(replay.screen);
+      }
+      const { term } = attachXterm(id, x);
       if (!task) followTitle(owner, id, term);
-      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null, ...(task ? { task: true } : {}) }] }));
+      const exited = replay && replay.exitCode !== null ? { exitCode: replay.exitCode } : {};
+      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null, ...(task ? { task: true } : {}), ...exited }] }));
       setActive((prev) => ({ ...prev, [owner]: id }));
     });
     const observer = new ResizeObserver(() => {

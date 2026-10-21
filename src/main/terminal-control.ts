@@ -228,9 +228,10 @@ export class TerminalControl {
     return input;
   }
 
-  // 打つ先。自分のパネルの、動いているターミナルだけ
+  // 打つ先。自分のパネルの、動いているターミナルだけ（画面に出していないコマンドには、人が見えないので打たない）
   private typeTarget(caller: string, id: string): TerminalInfo {
     const info = this.terminalOf(caller, id);
+    if (info.tab === null) throw new ToolError(`Terminal ${id} is a command tanacode runs without showing it in the terminal panel; it cannot take input.`);
     if (!info.running) throw new ToolError(`Terminal ${id} has exited${info.exitCode === null ? '' : ` with code ${info.exitCode}`}; it cannot take input. Use new_tab to open a new shell.`);
     return info;
   }
@@ -280,12 +281,13 @@ function markKey(caller: string, input: TypeInput): string {
   return createHash('sha256').update(JSON.stringify([caller, input.id, input.newTab, input.text, input.enter, input.key])).digest('hex');
 }
 
+// 画面に出していないコマンド（tab が null）にはタブの番号が無いが、名前はコマンドから作るので番号を使わない
 function labelOf(info: TerminalInfo): string {
-  return terminalLabel({ task: info.kind === 'command', name: info.name, title: info.title, exitCode: info.exitCode, position: info.tab });
+  return terminalLabel({ task: info.kind === 'command', name: info.name, title: info.title, exitCode: info.exitCode, position: info.tab ?? 0 });
 }
 
 function terminalName(info: TerminalInfo): string {
-  return `terminal ${info.id} (tab ${info.tab}, ${JSON.stringify(labelOf(info))})`;
+  return `terminal ${info.id} (${info.tab === null ? 'not shown in the terminal panel' : `tab ${info.tab}`}, ${JSON.stringify(labelOf(info))})`;
 }
 
 function stateOf(info: TerminalInfo): string {

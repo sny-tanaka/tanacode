@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/headless';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ShellReplay } from '../src/shared/ipc';
 import { ShellTerminals } from '../src/main/shell-terminals';
 
 // ユーザーが使うターミナル（右下のパネル）と、アプリがコマンドを動かすターミナルのタブ（worktree の npm install など）。
@@ -12,7 +13,7 @@ let dir: string;
 let shells: ShellTerminals;
 let data: Map<string, string>;
 let exits: Map<string, number>;
-let opened: { owner: string; id: string; name: string; task: boolean }[];
+let opened: { owner: string; id: string; name: string; task: boolean; replay?: ShellReplay }[];
 const oldShell = process.env.SHELL;
 const oldClaudeCode = process.env.CLAUDECODE;
 
@@ -26,7 +27,7 @@ beforeEach(() => {
   shells = new ShellTerminals({
     onData: (id, chunk) => mine.data.set(id, (mine.data.get(id) ?? '') + chunk),
     onExit: (id, code) => mine.exits.set(id, code),
-    onOpened: (owner, id, name, task) => mine.opened.push({ owner, id, name, task }),
+    onOpened: (owner, id, name, task, replay) => mine.opened.push({ owner, id, name, task, ...(replay ? { replay } : {}) }),
   });
 });
 afterEach(() => {
@@ -95,13 +96,114 @@ describe('ShellTerminals', () => {
     await waitFor('大きさ', () => (data.get(id) ?? '').includes('30 100'));
   });
 
-  it('run: コマンドをタブに出しながら実行し、終了コードを返す', async () => {
+  // 直す前: run はいつもタブに出し、終わってもタブが残った（子のターミナルを開くと、終わった install のタブだけがたまっていた）
+  it('run: コマンドを画面に出さずに実行し、終了コードを返す。通ったものはタブに出さず、引き継ぐ画面にも渡さないが、出力は控え、一覧に番号なしで出す', async () => {
+    const code = await shells.run('session-1', dir, 'echo installing; exit 0', 'npm install');
+    expect(code).toBe(0);
+    expect(opened).toEqual([]);
+    expect(data.size).toBe(0);
+    expect(exits.size).toBe(0);
+    const [task] = shells.list('session-1');
+    expect(task).toMatchObject({ id: expect.stringMatching(/^task-/), kind: 'command', tab: null, name: 'npm install', running: false, exitCode: 0 });
+    await shells.flush(task.id);
+    expect(shells.tail(task.id, 10)).toEqual(['installing']);
+    shells.detach();
+    expect(shells.attach()).toEqual([]);
+  });
+
+  it('run: 失敗したら、それまでの出力と終了コードごとタブに出す（終わりは、出したときの終了コードで伝える）', async () => {
     const code = await shells.run('session-1', dir, 'echo installing; exit 7', 'npm install');
     expect(code).toBe(7);
-    expect(opened).toEqual([{ owner: 'session-1', id: expect.stringMatching(/^task-/), name: 'npm install', task: true }]);
-    const id = opened[0].id;
-    expect(data.get(id)).toContain('installing');
-    expect(exits.get(id)).toBe(7);
+    expect(opened).toEqual([
+      { owner: 'session-1', id: expect.stringMatching(/^task-/), name: 'npm install', task: true, replay: { exitCode: 7, cols: 100, rows: 24, screen: expect.stringContaining('installing') } },
+    ]);
+    expect(exits.size).toBe(0);
+    expect(shells.list('session-1')).toMatchObject([{ id: opened[0].id, tab: 1, exitCode: 7 }]);
+  });
+
+  it('run: 出力が 5 秒止まり、カーソルが行の途中にある（問いを出して答えを待っている）ときだけ、タブに出して onWaiting で知らせる。出したあとの出力・終わりは画面に知らせる', async () => {
+    // 時計と、見張りのタイマーを手で進める
+    let now = 1_000;
+    const timers: (() => void)[] = [];
+    const manual = new ShellTerminals(
+      {
+        onData: (id, chunk) => data.set(id, (data.get(id) ?? '') + chunk),
+        onExit: (id, code) => exits.set(id, code),
+        onOpened: (owner, id, name, task, replay) => opened.push({ owner, id, name, task, ...(replay ? { replay } : {}) }),
+      },
+      null,
+      () => now,
+      (fn) => {
+        timers.push(fn);
+        return () => timers.splice(timers.indexOf(fn), 1);
+      },
+    );
+    const tick = (ms: number) => {
+      now += ms;
+      for (const fn of timers.splice(0)) fn();
+    };
+    // 控えに text が出て、カーソルの行が line になるまで待つ
+    const waitForCursor = async (id: string, text: string, line: string) => {
+      const until = Date.now() + 5000;
+      for (;;) {
+        await manual.flush(id);
+        if ((manual.tail(id, 10) ?? []).join('\n').includes(text) && manual.cursorLine(id)?.trimEnd() === line) return;
+        if (Date.now() > until) throw new Error(`「${text}」のあと、カーソルの行が「${line}」になりません（${manual.cursorLine(id)}）`);
+        await sleep(25);
+      }
+    };
+    try {
+      // 改行で終わって止まっているもの（仕事の途中）は出さない
+      let waited = 0;
+      void manual.run('session-1', dir, 'echo working; sleep 30', 'npm ci', () => waited++);
+      const working = manual.list('session-1')[0].id;
+      await waitForCursor(working, 'working', '');
+      tick(6_000);
+      tick(1_000);
+      expect(opened).toEqual([]);
+      manual.kill(working);
+
+      const answered = manual.run('session-1', dir, "printf 'Proceed? (Y/n) '; read answer; echo answered-$answer", 'pnpm install', () => waited++);
+      const asking = manual.list('session-1').at(-1)!.id;
+      await waitForCursor(asking, 'Proceed? (Y/n)', 'Proceed? (Y/n)');
+      // 止まって 4 秒では、まだ出さない
+      tick(4_000);
+      expect(opened).toEqual([]);
+      tick(1_000);
+      expect(waited).toBe(1);
+      expect(opened).toEqual([
+        { owner: 'session-1', id: asking, name: 'pnpm install', task: true, replay: { exitCode: null, cols: 100, rows: 24, screen: expect.stringContaining('Proceed? (Y/n)') } },
+      ]);
+      expect(manual.list('session-1').find((t) => t.id === asking)?.tab).toBe(1);
+      // 出したあとは、人がタブで答えた出力と終わりを画面に知らせる
+      manual.write(asking, 'y\r');
+      expect(await answered).toBe(0);
+      await waitFor('答えたあとの終わり', () => exits.get(asking) === 0);
+      expect(data.get(asking)).toContain('answered-y');
+      tick(10_000);
+      expect(waited).toBe(1);
+    } finally {
+      manual.killAll();
+    }
+  });
+
+  it('revealOwner: 持ち主の、動いていて画面に出していないコマンドを、それまでの出力ごとタブに出す（人が「ターミナルで見る」を押した）', async () => {
+    await shells.run('session-1', dir, 'exit 0', 'done');
+    void shells.run('session-1', dir, 'echo fetching; sleep 30', 'npm install');
+    void shells.run('session-2', dir, 'sleep 30', 'other');
+    const running = shells.list('session-1').find((t) => t.name === 'npm install')!.id;
+    await waitForLines('出力', running, (lines) => lines.includes('fetching'));
+    shells.revealOwner('session-1');
+    expect(opened).toEqual([
+      { owner: 'session-1', id: running, name: 'npm install', task: true, replay: { exitCode: null, cols: 100, rows: 24, screen: expect.stringContaining('fetching') } },
+    ]);
+    expect(shells.list('session-1').map((t) => [t.name, t.tab])).toEqual([
+      ['done', null],
+      ['npm install', 1],
+    ]);
+    // 出したものは、止めると終わりを画面に知らせる
+    shells.kill(running);
+    await waitFor('止めたものの終わり', () => exits.has(running));
   });
 
   it('killOwner: 一覧から消したセッションのシェルだけを閉じる', async () => {
@@ -146,7 +248,7 @@ describe('ShellTerminals', () => {
     await waitFor('シェルの終わり', () => exits.has(shell.id));
     expect(shells.info(shell.id)).toBeNull();
     const running = shells.run('session-1', dir, 'sleep 30', 'sleep');
-    const task = opened.at(-1)!.id;
+    const task = shells.list('session-1').at(-1)!.id;
     shells.kill(task);
     // 止めたコマンドは、済んだことにしない（シグナルで終わると node-pty は終了コードを 0 で返すので、シェルと同じく 128 + シグナルの番号）
     expect(await running).toBeGreaterThan(128);
@@ -182,17 +284,19 @@ describe('ShellTerminals', () => {
     const shell = shells.create('session-1', dir, 40, 12);
     await waitForPrompt(shell.id);
     await typeAndWait(shell.id, 'echo before-$((1+1))\r');
+    // 失敗したコマンドはタブに出る
     await shells.run('session-2', dir, 'echo built; exit 3', 'npm install');
     const npm = opened[0].id;
     shells.detach();
     const forwarded = data.get(shell.id);
-    // 読み込み直している間の出力・開いたタブ・終わったタブは、画面に知らせない（控えには書く）
+    // 読み込み直している間の出力・開いたタブ（失敗して出したもの）・終わったタブは、画面に知らせない（控えには書く）。
+    // 通って画面に出していないコマンドは、引き継ぐ画面にも渡さない
     await typeAndWait(shell.id, 'echo during-$((2+1))\r');
-    const yarn = shells.run('session-1', dir, 'echo linked; exit 5', 'yarn');
-    await yarn;
+    await shells.run('session-1', dir, 'echo linked; exit 5', 'yarn');
+    await shells.run('session-1', dir, 'exit 0', 'quiet');
     expect(data.get(shell.id)).toBe(forwarded);
     expect(opened).toHaveLength(1);
-    expect([...exits.keys()]).toEqual([npm]);
+    expect([...exits.keys()]).toEqual([]);
 
     const list = shells.attach();
     const yarnId = list.find((s) => s.name === 'yarn')?.id;

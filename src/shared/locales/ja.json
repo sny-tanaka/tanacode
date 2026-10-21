@@ -157,6 +157,7 @@
       "commandFailedAt": "{command}（{dir}・終了コード {code}）",
       "prepareFailed": "node_modules を用意できませんでした（{error}）",
       "installFailed": "{commands} が失敗しました。ターミナルのタブで確かめてください",
+      "installWaiting": "{command} が入力を待っているようです。ターミナルのタブで答えてください",
       "notRepo": "worktree で始めるには、git のリポジトリのフォルダを選んでください",
       "noCommit": "worktree で始めるには、リポジトリにコミットが 1 つ以上必要です",
       "noName": "worktree の名前を決められませんでした",

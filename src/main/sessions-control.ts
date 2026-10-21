@@ -1409,6 +1409,9 @@ function setupProblemsOf(trouble: WorktreeSetupTrouble | null): { setup_problems
       ...trouble.installsFailed.map((i) => `${i.command} ${at(i.dir)} exited with code ${i.exitCode}, so its dependencies may be missing (its output is in a tab of the Terminal panel)`),
       ...trouble.notCopied.map((dir) => `node_modules ${at(dir)} could not be copied and was not installed`),
       ...(trouble.error ? [`setting up node_modules failed: ${trouble.error}`] : []),
+      ...(trouble.waiting
+        ? [`${trouble.waiting.command} ${at(trouble.waiting.dir)} seems to be waiting for input, so the worktree is not ready yet (ask the user to answer it in its tab in the Terminal panel of that session)`]
+        : []),
     ],
   };
 }

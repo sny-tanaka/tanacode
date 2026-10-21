@@ -447,7 +447,9 @@ describe('部品から画面への知らせ', () => {
   it('セッションのフォルダで、Claude が頼んだコマンドをターミナルで動かす', async () => {
     await boot();
     const run = managerArgs()[managerArg.runShell] as (...args: unknown[]) => unknown;
-    expect(run('s1', '/work', 'npm test', 'テスト')).toEqual({ call: 'shells.run', args: ['s1', '/work', 'npm test', 'テスト'] });
+    // 入力を待っているように見えたときの知らせ（onWaiting）も渡す
+    const onWaiting = () => {};
+    expect(run('s1', '/work', 'npm test', 'テスト', onWaiting)).toEqual({ call: 'shells.run', args: ['s1', '/work', 'npm test', 'テスト', onWaiting] });
   });
 
   it('アーカイブした・一覧から消したセッションの予約とウォークスルーは捨てる。ほかの状態の変化では捨てない', async () => {
