@@ -9,11 +9,19 @@ import { E2EApp } from './app';
 // ふだんのブラウザを開かないよう、main の shell.openExternal を差し替えて、渡された URL を控える。
 // リンクを見つけるのは、マウスを動かしたとき（xterm がそこにリンクがあるかを調べる）なので、乗せてから押す
 
-// パスを題にしたページを返すサーバー
+// パスを題にしたページを返すサーバー。届いたパスはそのまま HTML に書かず、決めたページだけを返す（ほかは 404）
+const PAGES = new Map([
+  ['/plain', 'page/plain'],
+  ['/osc', 'page/osc'],
+]);
 async function serve(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
+    const title = PAGES.get(req.url ?? '');
+    if (!title) {
+      res.writeHead(404).end();
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    const title = `page${req.url ?? ''}`;
     res.end(`<!doctype html><title>${title}</title><h1>${title}</h1>`);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
