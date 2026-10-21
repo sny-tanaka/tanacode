@@ -230,6 +230,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ShellResize, ['sh1', 90, 20], 'ShellTerminals', 'resize', ['sh1', 90, 20]],
     [IpcChannel.ShellKill, ['sh1'], 'ShellTerminals', 'kill', ['sh1']],
     [IpcChannel.BrowserAttach, ['s1', 'tab-1', 42], 'BrowserControl', 'attach', ['s1', 'tab-1', 42]],
+    [IpcChannel.WatchOpenFiles, [{ '/work': ['a.ts', '/outside/memo.md'] }], 'OpenFileWatchers', 'set', [{ '/work': ['a.ts', '/outside/memo.md'] }]],
     [IpcChannel.BrowserActivate, ['s1', null], 'BrowserControl', 'activate', ['s1', null]],
     [IpcChannel.BrowserAnswer, ['s1', 'ask-1', { done: false, reason: 'ログインできない' }], 'BrowserControl', 'answerAsk', ['s1', 'ask-1', { done: false, reason: 'ログインできない' }]],
   ];

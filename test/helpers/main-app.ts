@@ -575,7 +575,8 @@ const modules: Record<string, Record<string, unknown>> = {
       search: echoIn('workspace.search'),
     }),
   },
-  'workspace-watcher': { WorkspaceWatchers: fakeClass('WorkspaceWatchers', { retain: () => undefined, release: () => undefined }) },
+  'workspace-watcher': { WorkspaceWatchers: fakeClass('WorkspaceWatchers', { retain: () => undefined, release: () => undefined, roots: () => [] }) },
+  'open-file-watcher': { OpenFileWatchers: fakeClass('OpenFileWatchers', { set: () => undefined, rootsChanged: () => undefined, closeAll: () => undefined }) },
 };
 
 vi.mock('electron', () => electronModule);
@@ -632,6 +633,7 @@ vi.mock('../../src/main/usage-limit-resume', () => modules['usage-limit-resume']
 vi.mock('../../src/main/usage-monitor', () => modules['usage-monitor']);
 vi.mock('../../src/main/workspace', () => modules.workspace);
 vi.mock('../../src/main/workspace-watcher', () => modules['workspace-watcher']);
+vi.mock('../../src/main/open-file-watcher', () => modules['open-file-watcher']);
 
 // --- 読み込みと起動 ---
 

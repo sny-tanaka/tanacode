@@ -1,13 +1,18 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
 // 作業フォルダのファイルを、エクスプローラー・エディタ・Markdown のプレビュー・⌘P・全文検索で扱う。
-// エディタで書いたものがディスクに保存され、ディスクの変更がエディタに戻るか。日本語の名前のファイルも、⌘P と入力欄の @ の補完で扱えるか
+// エディタで書いたものがディスクに保存され、ディスクの変更がエディタに戻るか（フォルダの監視の外のファイル（監視しない out の中・
+// リンク越し・作業フォルダの外）も、Claude Code の編集も）。日本語の名前のファイルも、⌘P と入力欄の @ の補完で扱えるか
 
 const PROMPT = 'ファイルを見ていてください';
 const MENTION = 'を読んでください';
+const OUTSIDE_READ = '外のメモを読んでください';
+const OUTSIDE_EDIT = '外のメモを直してください';
+// 作業フォルダの外のファイル（作業フォルダの隣）
+const OUTSIDE = (work: string) => join(dirname(work), 'notes', 'memo.txt');
 // 日本語の名前のファイル（一覧を -z なしで読むと、"\347\250\216..." のようにエスケープされて返る）
 const NOTE = '税込みの価格は、1 円未満を切り捨てます。\n';
 // 1×1 の PNG
@@ -43,11 +48,29 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
       trusted: true,
       git: true,
       files: { 'README.md': README, 'src/tax.ts': TAX, 'docs/税の説明.md': NOTE },
-      conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: 'わかりました' }], [{ type: 'text', text: '説明を読みました' }]] }],
+      conversations: (work) => [
+        {
+          match: PROMPT,
+          steps: [
+            [{ type: 'text', text: 'わかりました' }],
+            [{ type: 'tool_use', id: 'toolu_read_outside', name: 'Read', input: { file_path: OUTSIDE(work) } }],
+            [{ type: 'text', text: '外のメモを読みました' }],
+            [{ type: 'tool_use', id: 'toolu_edit_outside', name: 'Edit', input: { file_path: OUTSIDE(work), old_string: 'はじめのメモ', new_string: 'Claude が直したメモ' } }],
+            [{ type: 'text', text: '外のメモを直しました' }],
+            [{ type: 'text', text: '説明を読みました' }],
+          ],
+        },
+      ],
     });
     // 画像はバイナリなので、files とは別に置く
     mkdirSync(join(app.work, 'docs'), { recursive: true });
     writeFileSync(join(app.work, 'docs', 'dot.png'), PNG);
+    // 作業フォルダの外のファイルと、作業フォルダから外のファイルを指すリンク
+    mkdirSync(dirname(OUTSIDE(app.work)), { recursive: true });
+    writeFileSync(OUTSIDE(app.work), 'はじめのメモ\n');
+    mkdirSync(join(app.root, 'shared'));
+    writeFileSync(join(app.root, 'shared', 'note.txt'), '共有のメモ\n');
+    symlinkSync(join(app.root, 'shared', 'note.txt'), join(app.work, 'shared-note.txt'));
   });
 
   afterEach(async ({ task }) => {
@@ -59,7 +82,8 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
   });
 
   it('Markdown を開くと、整形して出る（コードの色付け・mermaid の図・フォルダの中の画像）', async () => {
-    await app.startSession(PROMPT);
+    // 作業フォルダの外のファイルを読む・書くときに、許可の確認を出させる（あとのテスト）
+    await app.startSession(PROMPT, { mode: 'manual' });
     await app.byText('.chat-list', 'わかりました').waitFor();
     await app.page.click('.activity-bar [aria-label^="エクスプローラー"]');
     await app.page.click('.tree-row[title="README.md"]');
@@ -111,7 +135,32 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     await app.byText('.editor-tab.active', 'tax.ts').waitFor();
   });
 
-  // 監視しないフォルダ（out など）のファイルは、ディスクで変わっても知らせが来ない。書く前に main が、読んだときの中身のままかを確かめる
+  it('変更の知らせを取りこぼしても、開いているファイルを開き直すと、ディスクから読み直す', async () => {
+    // 画面へのファイルの変更の知らせ（fs:changed）を、main で止める
+    await app.app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const send = contents.send.bind(contents);
+      (globalThis as { e2eRestoreSend?: () => void }).e2eRestoreSend = () => {
+        contents.send = send;
+      };
+      contents.send = (channel: string, ...args: unknown[]) => {
+        if (channel !== 'fs:changed') send(channel, ...args);
+      };
+    });
+    try {
+      writeFileSync(join(app.work, 'src/tax.ts'), TAX.replace('0.1', '0.05'));
+      await app.page.keyboard.press('ControlOrMeta+P');
+      await app.page.fill('.quick-open input', 'tax');
+      await app.byText('.quick-open-list .quick-open-name', 'tax.ts').waitFor();
+      await app.page.keyboard.press('Enter');
+      await app.page.locator('.quick-open').waitFor({ state: 'detached' });
+      await editorLine('TAX_RATE = 0.05').waitFor();
+    } finally {
+      await app.app.evaluate(() => (globalThis as { e2eRestoreSend?: () => void }).e2eRestoreSend?.());
+    }
+  });
+
+  // 変更の知らせが届く前（知らせをまとめる間）に保存しても、書く前に main が、読んだときの中身のままかを確かめる
   it('保存していない変更があるうちにディスク側でも変わっていたら、⌘S では書かず、衝突の知らせを出す。「このまま保存」を選んだときだけ上書きする', async () => {
     const report = join(app.work, 'out', 'report.txt');
     const dirty = () => app.page.locator('.editor-tab.active .editor-tab-dot.dirty');
@@ -134,6 +183,44 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     await app.page.getByRole('button', { name: 'このまま保存' }).click();
     await dirty().waitFor({ state: 'detached' });
     expect(readFileSync(report, 'utf8')).toBe('はじめの報告 手で直した\n');
+  });
+
+  it('監視しないフォルダ（out など）のファイルも、開いている間は、ディスクで書き換わるとエディタに戻る', async () => {
+    await app.byText('.editor-tab.active', 'report.txt').waitFor();
+    writeFileSync(join(app.work, 'out', 'report.txt'), 'ビルドし直した報告\n');
+    await editorLine('ビルドし直した報告').waitFor();
+  });
+
+  it('リンク越しに開いたファイルも、リンクの先が書き換わるとエディタに戻る', async () => {
+    await app.page.keyboard.press('ControlOrMeta+P');
+    await app.page.fill('.quick-open input', 'shared-note');
+    await app.byText('.quick-open-list .quick-open-name', 'shared-note.txt').waitFor();
+    await app.page.keyboard.press('Enter');
+    await app.page.locator('.quick-open').waitFor({ state: 'detached' });
+    await app.byText('.editor-tab.active', 'shared-note.txt').waitFor();
+    await editorLine('共有のメモ').waitFor();
+    writeFileSync(join(app.root, 'shared', 'note.txt'), '共有のメモを書き換えた\n');
+    await editorLine('共有のメモを書き換えた').waitFor();
+  });
+
+  it('作業フォルダの外のファイルも、チャットのツールから開くと、Claude Code の編集とディスクの変更がエディタに戻る', async () => {
+    await app.send(OUTSIDE_READ);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
+    await app.byText('.chat-list', '外のメモを読みました').waitFor();
+    // ツールの呼び出しは畳まれているので、開いてから、Read のカードでファイルを開く
+    const head = app.page.locator('.chat-list .tool-group-head[aria-expanded="false"]').last();
+    await app.press(head);
+    await app.byText('.chat-list .tool-card', 'memo.txt').click();
+    await app.byText('.editor-tab.active', 'memo.txt').waitFor();
+    await editorLine('はじめのメモ').waitFor();
+    // Claude Code は、一時ファイルに書いてから置き換える
+    await app.send(OUTSIDE_EDIT);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
+    await app.byText('.chat-list', '外のメモを直しました').waitFor();
+    expect(readFileSync(OUTSIDE(app.work), 'utf8')).toBe('Claude が直したメモ\n');
+    await editorLine('Claude が直したメモ').waitFor();
+    writeFileSync(OUTSIDE(app.work), 'ディスクで書き換えたメモ\n');
+    await editorLine('ディスクで書き換えたメモ').waitFor();
   });
 
   // ⌘P の枠を開いたまま落ちると、続くテストの操作が枠に遮られるので、画面を操作するテストの最後に置く

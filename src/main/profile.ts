@@ -35,6 +35,7 @@ import { ShellTerminals } from './shell-terminals';
 import { TurnReports } from './turn-reports';
 import { UsageLimitResume } from './usage-limit-resume';
 import { UsageMonitor } from './usage-monitor';
+import { OpenFileWatchers } from './open-file-watcher';
 import { WorkspaceWatchers } from './workspace-watcher';
 
 export type Send = <C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]) => void;
@@ -80,6 +81,8 @@ export class Profile {
   readonly claudeDir: string | null;
   readonly settings: AppSettings;
   readonly watchers: WorkspaceWatchers;
+  // エディタで開いているタブのうち、フォルダの監視の知らせでは読み直せないもの（フォルダの外など）を、ファイルごとに見張る
+  readonly openFiles: OpenFileWatchers;
   readonly shells: ShellTerminals;
   readonly statusLines: StatusLineWatcher;
   readonly settingsFiles: SettingsFiles;
@@ -126,9 +129,14 @@ export class Profile {
       },
       claudeDir,
     );
-    this.watchers = new WorkspaceWatchers((root, paths) => {
-      send(IpcChannel.FilesChanged, { root, paths });
-    });
+    this.watchers = new WorkspaceWatchers(
+      (root, paths) => send(IpcChannel.FilesChanged, { root, paths }),
+      () => this.openFiles.rootsChanged(),
+    );
+    this.openFiles = new OpenFileWatchers(
+      () => this.watchers.roots(),
+      (root, paths) => send(IpcChannel.FilesChanged, { root, paths }),
+    );
     this.statusLines = new StatusLineWatcher(
       join(dataDir, 'statusline'),
       (id, info) => this.manager.statusLineChanged(id, info),
@@ -514,6 +522,7 @@ export class Profile {
   close(): void {
     this.statusLines.close();
     this.manager?.closeAll(false);
+    this.openFiles.closeAll();
     this.ptyHost?.close();
     this.browserBridge?.close();
     this.sessionsControl?.dispose();
