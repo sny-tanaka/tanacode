@@ -5,6 +5,7 @@ import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
 import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
 import { codeBlock } from '../chat/sanitize';
+import { useOpenInBrowser } from './openInBrowser';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
 
 // Electron の <webview> のうち、ここで使うもの
@@ -51,6 +52,8 @@ type Props = {
   visible: boolean;
   // 今あるセッション（アーカイブしていないもの）。消えたセッションのタブは閉じる
   liveSessionIds: readonly string[];
+  // ブラウザを出す（ターミナルのリンクから開いたとき）
+  onShow: () => void;
   onClose: () => void;
 };
 
@@ -76,7 +79,7 @@ let tabSeq = 0;
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開く（main が知らせてくる）。
 // Claude が操作したセッションの今のタブは、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
 // 透明にして画面の後ろに置き、ブラウザを開いたときと同じ大きさで描かせる
-export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Props) {
+export function PreviewPane({ sessionId, visible, liveSessionIds, onShow, onClose }: Props) {
   const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   // タブの ID → webview
@@ -231,6 +234,19 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
     return () => offs.forEach((off) => off());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ターミナルのリンクを ⌘ クリックした（openInBrowser）。見ているセッションのブラウザの新しいタブで開き、ブラウザを出す。
+  // Claude がそのセッションのブラウザを操作している間は、タブを足すだけで選ばない（Claude の操作は今のタブに対して行うので、
+  // 操作の途中で今のタブが替わると、Claude が人の開いたページを、前のページのつもりで押したり打ったりしてしまう）。
+  // 人が開いたタブも、Claude が読めるのは許す先（localhost など）のページだけ（ほかのページは、Claude が navigate で人に許可を求めてから）
+  useOpenInBrowser((requested, raw) => {
+    const sid = requested ?? sessionId;
+    const next = normalizeUrl(raw);
+    if (!sid || sid !== sessionId || !next) return false;
+    openTab(sid, next, { activate: !claude[sid]?.active });
+    onShow();
+    return true;
+  });
 
   // 消した・アーカイブしたセッションのタブは閉じる
   const liveKey = liveSessionIds.join(',');
