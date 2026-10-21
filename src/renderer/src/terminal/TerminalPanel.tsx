@@ -6,6 +6,7 @@ import { t } from '@shared/i18n';
 import { terminalLabel } from '@shared/terminal-tools';
 import type { ShellSnapshot } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
+import { openInBrowser } from '../preview/openInBrowser';
 import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { Busy } from '../layout/Busy';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
@@ -21,6 +22,14 @@ type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
 const HEIGHT_KEY = 'tanacode.terminalHeight';
 const DEFAULT_HEIGHT = 280;
 const MIN_HEIGHT = 120;
+
+// ターミナルのリンク（出力の URL と、プログラムが付けた OSC 8 のハイパーリンク）を開く。⌘ クリックはアプリ内ブラウザ（見ているセッションの
+// ブラウザの新しいタブ）、⌘⇧ クリックはふだんのブラウザ（決めたこと）。アプリ内ブラウザで開けなければ、ふだんのブラウザで開く
+// （window.open は、main が http(s) だけをふだんのブラウザに渡す）
+function openLink(event: MouseEvent, uri: string, sessionId: string | null): void {
+  if (!event.metaKey) return;
+  if (event.shiftKey || !openInBrowser(sessionId, uri)) window.open(uri);
+}
 
 function loadHeight(): number {
   const saved = Number(readSharedPref(HEIGHT_KEY));
@@ -79,11 +88,20 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
     element.className = 'terminal-instance';
     element.hidden = true;
     hostRef.current!.appendChild(element);
-    const term = new Terminal(xtermOptions());
+    // リンクに乗せている間は、開く先の URL と開き方を出す。OSC 8 のリンクは、見える文字と開く先が違うことがある
+    // （xterm の既定は、開く前に URL を出して確かめる。ここでは確かめずに開くので、代わりに乗せたときに出す）
+    const tip = {
+      hover: (_event: MouseEvent, uri: string) => {
+        element.title = t('terminal.link.tip', { url: uri });
+      },
+      leave: () => element.removeAttribute('title'),
+    };
+    const open = (event: MouseEvent, uri: string) => openLink(event, uri, sessionIdRef.current);
+    // OSC 8 のリンクは linkHandler で開く（無いと、xterm が確かめたあと空のページを開こうとして、何も開かない）。http(s) のものだけが届く
+    const term = new Terminal({ ...xtermOptions(), linkHandler: { activate: open, ...tip } });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    // URL は ⌘ クリックでブラウザで開く
-    term.loadAddon(new WebLinksAddon((event, uri) => event.metaKey && window.open(uri)));
+    term.loadAddon(new WebLinksAddon(open, tip));
     // ⌘K で画面を消す（macOS のターミナルと同じ）
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.metaKey && e.key === 'k') {

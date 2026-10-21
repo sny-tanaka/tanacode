@@ -1636,6 +1636,9 @@
       "stopAndClose": "Stop and close",
       "new": "New terminal"
     },
+    "link": {
+      "tip": "{url}\n⌘-click: open in the in-app browser\n⌘⇧-click: open in your default browser"
+    },
     "task": {
       "running": "{name} (running)",
       "done": "{name} (done)",

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ShellSnapshot } from '@shared/ipc';
 import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
+import { useOpenInBrowser } from '../../src/renderer/src/preview/openInBrowser';
 import { runInTerminal } from '../../src/renderer/src/terminal/runInTerminal';
 import { TerminalPanel } from '../../src/renderer/src/terminal/TerminalPanel';
 import './dom';
@@ -27,10 +28,16 @@ const xterm = vi.hoisted(() => {
     focused = 0;
     private selection = '';
     private selectionListeners: Listener<void>[] = [];
-    constructor() {
+    // 作るときに渡されたもの（OSC 8 のリンクの受け手など）と、足した部品（URL のリンクの部品など）
+    options: Record<string, unknown>;
+    addons: unknown[] = [];
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options;
       FakeTerminal.all.push(this);
     }
-    loadAddon() {}
+    loadAddon(addon: unknown) {
+      this.addons.push(addon);
+    }
     attachCustomKeyEventHandler() {}
     open(element: HTMLElement) {
       this.element = element;
@@ -94,7 +101,13 @@ const xterm = vi.hoisted(() => {
   class FakeFitAddon {
     fit() {}
   }
-  class FakeWebLinksAddon {}
+  // 押したときの受け手と、乗せたとき・離れたときの受け手を持つだけ
+  class FakeWebLinksAddon {
+    constructor(
+      readonly handler?: (event: MouseEvent, uri: string) => void,
+      readonly options: { hover?: (event: MouseEvent, uri: string) => void; leave?: (event: MouseEvent, uri: string) => void } = {},
+    ) {}
+  }
   return { FakeTerminal, FakeFitAddon, FakeWebLinksAddon };
 });
 vi.mock('@xterm/xterm', () => ({ Terminal: xterm.FakeTerminal }));
@@ -255,6 +268,66 @@ describe('TerminalPanel: シェルのタブ', () => {
     act(() => api.emit('shell.onExit', { id: 'shell-9', exitCode: 0 }));
     expect(tabNames()).toEqual(['zsh 1']);
     expect(opened.disposed).toBe(true);
+  });
+});
+
+describe('TerminalPanel: リンク', () => {
+  type LinkHandler = { activate: (event: MouseEvent, uri: string) => void; hover: (event: MouseEvent, uri: string) => void; leave: (event: MouseEvent, uri: string) => void };
+  const press = (metaKey: boolean, shiftKey = false) => ({ metaKey, shiftKey }) as MouseEvent;
+
+  it('URL と OSC 8 のリンクは、⌘ クリックでアプリ内ブラウザ、⌘⇧ クリックでふだんのブラウザで開く。アプリ内ブラウザで開けなければ、ふだんのブラウザで。⌘ が無ければ開かない', async () => {
+    const external: string[] = [];
+    vi.spyOn(window, 'open').mockImplementation((url) => {
+      external.push(String(url));
+      return null;
+    });
+    // アプリ内ブラウザの代わり。localhost だけ開けることにする
+    const inBrowser: [string | null, string][] = [];
+    function Browser() {
+      useOpenInBrowser((sessionId, url) => {
+        inBrowser.push([sessionId, url]);
+        return url.startsWith('http://localhost');
+      });
+      return null;
+    }
+    render(
+      <>
+        <Panel sessionId="s1" />
+        <Browser />
+      </>,
+    );
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    const term = termOf(0);
+    const web = term.addons.find((a) => a instanceof xterm.FakeWebLinksAddon) as InstanceType<typeof xterm.FakeWebLinksAddon>;
+    const osc = term.options.linkHandler as LinkHandler;
+    for (const open of [web.handler!, osc.activate]) {
+      inBrowser.length = 0;
+      external.length = 0;
+      open(press(false), 'http://localhost:3000/');
+      open(press(false, true), 'http://localhost:3000/');
+      expect([inBrowser, external]).toEqual([[], []]);
+      open(press(true), 'http://localhost:3000/');
+      expect([inBrowser, external]).toEqual([[['s1', 'http://localhost:3000/']], []]);
+      open(press(true, true), 'http://localhost:3000/');
+      expect(external).toEqual(['http://localhost:3000/']);
+      expect(inBrowser).toHaveLength(1);
+      open(press(true), 'https://example.test/');
+      expect(external).toEqual(['http://localhost:3000/', 'https://example.test/']);
+    }
+  });
+
+  it('リンクに乗せている間は、開く先の URL と開き方を出す（OSC 8 のリンクは、見える文字と開く先が違うことがある）', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    const term = termOf(0);
+    const web = term.addons.find((a) => a instanceof xterm.FakeWebLinksAddon) as InstanceType<typeof xterm.FakeWebLinksAddon>;
+    const osc = term.options.linkHandler as LinkHandler;
+    for (const { hover, leave } of [web.options as LinkHandler, osc]) {
+      hover(press(false), 'https://example.test/docs');
+      expect(term.element!.title).toBe('https://example.test/docs\n⌘ クリック: アプリ内ブラウザで開く\n⌘⇧ クリック: ふだんのブラウザで開く');
+      leave(press(false), 'https://example.test/docs');
+      expect(term.element!.hasAttribute('title')).toBe(false);
+    }
   });
 });
 
