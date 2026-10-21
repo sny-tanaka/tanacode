@@ -18,6 +18,7 @@
   "test/cli/sessions.test.ts": 59,
   "test/cli/stop.test.ts": 31,
   "test/cli/terminal-mode.test.ts": 2,
+  "test/cli/terminal-turn-end.test.ts": 5,
   "test/cli/terminal.test.ts": 27,
   "test/cli/turn-summary.test.ts": 2,
   "test/cli/unknown-events.test.ts": 1,

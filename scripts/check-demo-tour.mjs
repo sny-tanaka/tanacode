@@ -11,7 +11,7 @@ import { app, BrowserWindow } from 'electron';
 import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
-import { snapshot, within } from './demo-tour-evidence.mjs';
+import { snapshot, TRACE_QUERY, TRACE_SHOWN, traceLog, within } from './demo-tour-evidence.mjs';
 
 // このスクリプトより後ろの引数（electron の実行ファイルのパスなどは除く）
 const args = process.argv.slice(process.argv.findIndex((a) => a.endsWith('check-demo-tour.mjs')) + 1);
@@ -71,12 +71,14 @@ app.whenReady().then(async () => {
     return;
   }
   const server = await serve();
-  const url = `http://127.0.0.1:${server.address().port}/#${chapter}`;
+  // 台本の操作の足あとを出させる（止まったときに、どの操作の途中だったかを残す）
+  const url = `http://127.0.0.1:${server.address().port}/${TRACE_QUERY}#${chapter}`;
   const win = new BrowserWindow({ width: 1920, height: 1080, show: false, webPreferences: { offscreen: true } });
   // iframe の中（アプリの画面）のエラーも拾う
   const errors = [];
+  const trace = traceLog();
   win.webContents.on('console-message', (e) => {
-    if (e.level === 'error') errors.push(e.message);
+    if (!trace.add(e.message) && e.level === 'error') errors.push(e.message);
   });
   await win.loadURL(url);
   console.log(`ツアーを流します: ${url}`);
@@ -107,13 +109,19 @@ app.whenReady().then(async () => {
     }
     if (Date.now() - started > LIMIT_MS) break;
   }
+  trace.freeze();
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  if (evidenceDir && result !== 'done') await saveEvidence(win, { result, seconds: Number(seconds), step, last, errors });
+  if (evidenceDir && result !== 'done') await saveEvidence(win, { result, seconds: Number(seconds), step, last, errors, trace: trace.lines() });
   server.close();
   const ok = result === 'done' && errors.length === 0;
   if (ok) console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
   else if (result === 'done') console.error(`ツアーは最後まで流れましたが、コンソールにエラーが出ました（${errors.length} 件。${seconds} 秒）`);
   else console.error(result === 'failed' ? `ツアーが途中で止まりました（${seconds} 秒）。直前の説明: ${step}` : `ツアーが ${LIMIT_MS / 1000} 秒で終わりませんでした。直前の説明: ${step}`);
   for (const message of errors) console.error(`コンソールのエラー: ${message}`);
+  // 止まったときは、直前の台本の操作の足あとを出す（最後の行が、固まった・止まった操作）
+  if (result !== 'done') {
+    console.error('直前の台本の操作（古い順。足あとが「済み」で終わっていなければ、その操作の途中）:');
+    for (const line of trace.lines().slice(-TRACE_SHOWN)) console.error(`  ${line}`);
+  }
   app.exit(ok ? 0 : 1);
 });

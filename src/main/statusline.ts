@@ -1,4 +1,4 @@
-import { readFileSync, watch, type FSWatcher } from 'node:fs';
+import { readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { gatedBrowserToolIds } from '@shared/browser-tools';
@@ -33,9 +33,11 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // - instructions のとき（アプリが起動するときはいつも）: 会話の始まり・再開・/clear・圧縮のあとに、TANACODE.md を Claude に渡す
 //   （instructions-hook.ts）
 // - 書くだけのフック（何も決めない。いつも足す）: 許可の確認を出す直前（PermissionRequest）のツールの名前と入力、Claude Code の知らせ
-//   （Notification）、ターンの終わり（Stop）を、セッションごとのファイルに書かせる。ターミナルモード（TUI）の間に、確認待ちと、手が空いたことを
-//   知るため（設計書 9 節）。stream-json では使わない（can_use_tool と result で分かる）。答えは {"suppressOutput":true} だけで、許可も断りも
-//   決めないので、can_use_tool と競わない（実測。suppressOutput は、チャットに出す何も出力しなかったフックと見分けるため。hook-output.ts）
+//   （Notification）、ターンの終わりのフック（Stop）を、セッションごとのファイルに書かせる。ターミナルモード（TUI）の間に、確認待ちと、
+//   メニューが閉じたこと・TUI の権限モードを知るため（設計書 9 節）。Stop では、ターンの終わりは決めない（一緒に動くチェックリストの Stop の
+//   フックが、文を渡して続けさせることがある。終わりは会話ログのターンの終わりの行で知る）。stream-json では使わない（can_use_tool と
+//   result で分かる）。答えは {"suppressOutput":true} だけで、許可も断りも決めないので、can_use_tool と競わない（実測。suppressOutput は、
+//   チャットに出す何も出力しなかったフックと見分けるため。hook-output.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // 描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
@@ -190,7 +192,7 @@ export class StatusLineWatcher {
     private readonly onChange: (sessionId: string, info: StatusLineInfo) => void,
     // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
     private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
-    // 書くだけの Stop のフックが書いた（ターミナルモードの TUI のターンが終わった）
+    // 書くだけの Stop のフックが書いた（ターミナルモードの TUI が、ターンを終えようとした。フックが続けさせることもある）
     // input: Stop のフックの入力（permission_mode など）。読めなければ null
     private readonly onIdle: (sessionId: string, input: unknown) => void = () => {},
   ) {}
@@ -246,11 +248,32 @@ export class StatusLineWatcher {
     });
   }
 
-  // 今ファイルにある statusLine を読む（知らせない）。時刻はファイルが書かれた時刻
-  async peek(sessionId: string): Promise<StatusLineInfo | null> {
+  // 今ファイルにある statusLine を読む（知らせない）。時刻はファイルが書かれた時刻。無い・読めなければ null。
+  // アプリを起動し直して TUI を引き継ぐとき、引き継ぐ前の値を、その場で読む
+  peek(sessionId: string): StatusLineInfo | null {
     const file = this.fileFor(sessionId);
-    const [text, written] = await Promise.all([readFile(file, 'utf8').catch(() => null), stat(file).then((s) => s.mtimeMs, () => Date.now())]);
+    const written = mtimeOf(file);
+    if (written === null) return null;
+    const text = readText(file);
     return text ? parseStatusLine(text, written) : null;
+  }
+
+  // 書くだけの PermissionRequest のフックが、最後に書いた入力と、書いた時刻（知らせない）。無い・読めなければ null
+  peekPermission(sessionId: string): { request: unknown; at: number } | null {
+    const file = this.permissionFileFor(sessionId);
+    const at = mtimeOf(file);
+    const text = at === null ? null : readText(file);
+    if (at === null || !text) return null;
+    try {
+      return { request: JSON.parse(text), at };
+    } catch {
+      return null;
+    }
+  }
+
+  // 書くだけの Stop のフックが、最後に書いた時刻。無ければ null
+  stopHookAt(sessionId: string): number | null {
+    return mtimeOf(join(this.dir, `${sessionId}${IDLE_SUFFIX}`));
   }
 
   async read(sessionId: string): Promise<StatusLineInfo | null> {
@@ -285,5 +308,21 @@ export class StatusLineWatcher {
   close(): void {
     this.watcher?.close();
     this.timers.forEach((t) => clearTimeout(t));
+  }
+}
+
+function mtimeOf(file: string): number | null {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function readText(file: string): string | null {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
   }
 }

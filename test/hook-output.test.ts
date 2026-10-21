@@ -83,8 +83,12 @@ describe('シェルで動くアプリのフック', () => {
       [NOTIFICATION_FILE_COMMAND, ''],
       [IDLE_FILE_COMMAND, ''],
     ]) {
+      // timeout: 一度だけ、手元の Mac で重い負荷がかかっていたときに、Node が 1MB の入力を書き終えたのに標準入力を閉じず
+      // （ソケットに残りは無いのに、書く側を持ったまま）、フックの cat が入力の終わりを待ち続けて、テストの流れ全体が 20 分止まった。
+      // 3 回流し直しても再現しなかったので、次に起きたときに、どのコマンドで止まったか（ETIMEDOUT）が分かる失敗にする
       const result = spawnSync('sh', ['-c', command], {
         input,
+        timeout: 10_000,
         encoding: 'utf8',
         env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
       });

@@ -1,5 +1,7 @@
 // デモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
-// 録画は画面の外で描いたコマを撮るので OS のカーソルは映らない。代わりにこのカーソルを映す
+// 録画は画面の外で描いたコマを撮るので OS のカーソルは映らない。代わりにこのカーソルを映す。
+// ツアーの確かめのときは、操作の始まりと終わりを足あととして出す（trace.ts）
+import { describeTarget, trace } from './trace';
 
 // デモのサイトの一時停止。止めている間は、台本の待ち時間を進めない
 let paused = false;
@@ -151,6 +153,7 @@ export class Director {
   // （まだ無い要素は、出てきたところで照らす）。次の操作は、説明を読む間が経つまで待つ。早送りの間は何もしない
   caption(text: string, target: Target | null = null): void {
     if (fast) return;
+    trace(`説明: ${text}`);
     this.captionText = text;
     this.captionTarget = target;
     this.captionBox = null;
@@ -240,6 +243,7 @@ export class Director {
 
   // 要素の上（中心から dx, dy ずらした位置）へ、なめらかに動かす。ホバーの出来事も起こす
   async moveTo(target: Target, { ms = 700, dx = 0, dy = 0 }: { ms?: number; dx?: number; dy?: number } = {}): Promise<Element> {
+    trace(`動かす: ${describeTarget(target)}`);
     await this.waitReading();
     const el = await this.find(target);
     this.leaveSpotlight(el);
@@ -250,7 +254,9 @@ export class Director {
     if (quick()) ms = 0;
     this.place(x, y, ms * WAIT);
     await sleep(ms);
+    trace('動かす: ホバーの出来事');
     this.hover(document.elementFromPoint(x, y) ?? el);
+    trace('動かす: 済み');
     return el;
   }
 
@@ -265,26 +271,33 @@ export class Director {
     }
     await sleep(120);
     const at = document.elementFromPoint(this.x, this.y);
+    trace(`押す: ${describeTarget(target)}`);
     this.pressAt(at && el.contains(at) ? at : el);
+    trace('押す: 済み');
     await sleep(250);
   }
 
   // 画面の座標へ動かす（Monaco の行番号の横など、要素の中心ではないところ）
   async moveToPoint(x: number, y: number, ms = 700): Promise<void> {
+    trace(`動かす: (${Math.round(x)}, ${Math.round(y)})`);
     await this.waitReading();
     this.leaveSpotlight(document.elementFromPoint(x, y));
     if (quick()) ms = 0;
     this.place(x, y, ms * WAIT);
     await sleep(ms);
     const el = document.elementFromPoint(x, y);
+    trace('動かす: ホバーの出来事');
     if (el) this.hover(el);
+    trace('動かす: 済み');
   }
 
   async clickPoint(x: number, y: number, ms = 700): Promise<void> {
     await this.moveToPoint(x, y, ms);
     await sleep(120);
     const el = document.elementFromPoint(x, y);
+    trace(`押す: (${Math.round(x)}, ${Math.round(y)})`);
     if (el) this.pressAt(el);
+    trace('押す: 済み');
     await sleep(250);
   }
 
@@ -302,6 +315,7 @@ export class Director {
 
   // 入力欄に 1 文字ずつ打つ（React の onChange が動くよう、値を差し替えて input の出来事を起こす）
   async type(target: Target, text: string, perChar = 45): Promise<void> {
+    trace(`打つ: ${describeTarget(target)}`);
     await this.waitReading();
     const el = (await this.find(target)) as HTMLTextAreaElement | HTMLInputElement;
     el.focus();
