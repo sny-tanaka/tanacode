@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askQuestionsOf, chatMessage, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
+import { askQuestionsOf, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
 import type { CanUseToolRequest } from '../src/main/stream/protocol';
 
 // Claude Code が答えを待つ要求（can_use_tool）を、カードと親の道具で扱う形にし、答えを Claude Code への返事にする（requests.ts）
@@ -137,20 +137,18 @@ describe('permissionResult', () => {
 });
 
 describe('questionResult', () => {
-  const QUESTIONS = [{ question: 'どちら?', header: '', multiSelect: false, options: [{ label: 'A', description: '' }] }];
+  const QUESTIONS = [{ question: 'どちら?', header: '', multiSelect: false, options: [{ label: 'A', description: '', preview: 'A の図' }] }];
   const input = { questions: QUESTIONS };
 
   it('答えは入力の answers に、添え書きがあれば annotations に入れて許す', () => {
-    expect(questionResult(input, QUESTIONS, { kind: 'answer', answers: { 'どちら?': 'A' } })).toEqual({ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' } } });
-    expect(questionResult(input, QUESTIONS, { kind: 'answer', answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { notes: 'メモ' } } })).toEqual({
+    expect(questionResult(input, { kind: 'answer', answers: { 'どちら?': 'A' } })).toEqual({ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' } } });
+    expect(questionResult(input, { kind: 'answer', answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図' } } })).toEqual({
       behavior: 'allow',
-      updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { notes: 'メモ' } } },
+      updatedInput: { questions: QUESTIONS, answers: { 'どちら?': 'A' }, annotations: { 'どちら?': { preview: 'A の図' } } },
     });
   });
 
-  it('「Chat about this」は質問について話す文で断り（作業は続く）、キャンセルは止める', () => {
-    expect(questionResult(input, QUESTIONS, { kind: 'chat' })).toEqual({ behavior: 'deny', message: chatMessage(['どちら?']) });
-    expect(chatMessage(['どちら?', 'いつ?'])).toContain('- "どちら?"\n  (No answer provided)\n- "いつ?"\n  (No answer provided)');
-    expect(questionResult(input, QUESTIONS, { kind: 'cancel' })).toEqual({ behavior: 'deny', message: REJECTED, interrupt: true });
+  it('キャンセルは断って、作業を止める', () => {
+    expect(questionResult(input, { kind: 'cancel' })).toEqual({ behavior: 'deny', message: REJECTED, interrupt: true });
   });
 });

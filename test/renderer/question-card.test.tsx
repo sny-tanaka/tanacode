@@ -23,6 +23,7 @@ afterEach(cleanup);
 const style: AskQuestion = { question: '書き方は？', header: '書き方', multiSelect: false, options: [{ label: 'です・ます', description: '丁寧' }, { label: 'だ・である', description: '' }] };
 const languages: AskQuestion = { question: '言語は？', header: '言語', multiSelect: true, options: [{ label: 'TypeScript', description: '' }, { label: 'Go', description: '' }] };
 const color: AskQuestion = { question: '色は？', header: '', multiSelect: false, options: [{ label: '明るい', description: '' }, { label: '暗い', description: '' }] };
+const withPreview: AskQuestion = { question: '並べ方は？', header: '並べ方', multiSelect: false, options: [{ label: '縦', description: '', preview: '縦の図' }, { label: '無し', description: '' }] };
 const pending = (...questions: AskQuestion[]): PendingQuestion => ({ id: 'q1', questions, answered: {} });
 const replies = () => api.argsOf('question.reply');
 // 送り終えるのを待つ
@@ -118,10 +119,8 @@ describe('QuestionCard', () => {
     expect(screen.getByText('その他: 常体と敬体を混ぜる').closest('button')!.classList.contains('chosen')).toBe(true);
   });
 
-  it('Chat about this・右上のキャンセル・回答の確認のキャンセルは、それぞれの返事を送る', async () => {
+  it('右上のキャンセル・回答の確認のキャンセルは、キャンセルを送る', async () => {
     render(<QuestionCard sessionId="s1" question={pending(languages)} />);
-    fireEvent.click(screen.getByText('この質問について話す（Chat about this）'));
-    await sent();
     // Esc の受け口は無い（画面全体で Esc を受けると、エディタやダイアログを閉じるつもりの Esc で答えてしまう）ので、ツールチップにも出さない
     expect(screen.getByLabelText('キャンセル').getAttribute('data-tip')).toBe('キャンセル');
     fireEvent.click(screen.getByLabelText('キャンセル'));
@@ -129,7 +128,7 @@ describe('QuestionCard', () => {
     fireEvent.click(screen.getByText('回答の確認へ →'));
     fireEvent.click(screen.getByText('キャンセル', { selector: '.menu-option-label' }));
     await sent();
-    expect(replies().map((args) => args[2])).toEqual([{ kind: 'chat' }, { kind: 'cancel' }, { kind: 'cancel' }]);
+    expect(replies().map((args) => args[2])).toEqual([{ kind: 'cancel' }, { kind: 'cancel' }]);
   });
 
   it('もう答えられない（ほかで答えた・取り下げられた）・送れなかったときは、カードに知らせる', async () => {
@@ -161,10 +160,9 @@ describe('QuestionCard', () => {
     const shown = () => popup()?.querySelector('.menu-preview-body')?.textContent ?? null;
     afterEach(() => vi.useRealTimers());
 
-    it('ホバーした選択肢のプレビューを、カードの外（body）のポップアップに出す。プレビューの無い選択肢では出さない。この形には自由記述が無い', () => {
+    it('ホバーした選択肢のプレビューを、カードの外（body）のポップアップに出す。プレビューの無い選択肢では出さない', () => {
       render(<QuestionCard sessionId="s1" question={pending(layout)} />);
       expect(popup()).toBeNull();
-      expect(screen.queryByText('その他（自由に入力）')).toBeNull();
       fireEvent.mouseEnter(option('縦'));
       expect(shown()).toBe('縦の図');
       expect(popup()!.querySelector('.menu-preview-label')!.textContent).toBe('プレビュー: 縦');
@@ -239,29 +237,36 @@ describe('QuestionCard', () => {
     });
   });
 
-  it('プレビュー付きの質問には、自由記述の代わりにメモ欄を出し、メモと選んだ案のプレビューを添え書き（annotations）で渡す', async () => {
-    const layout: AskQuestion = {
-      question: '並べ方は？',
-      header: '並べ方',
-      multiSelect: false,
-      options: [
-        { label: '縦', description: '', preview: '縦の図' },
-        { label: '無し', description: '' },
-      ],
-    };
-    const { unmount } = render(<QuestionCard sessionId="s1" question={pending(layout)} />);
-    fireEvent.change(screen.getByPlaceholderText('選んだ案について Claude に伝えること'), { target: { value: '  余白を広めに  ' } });
+  // 前は Claude Code の画面に合わせ、プレビュー付きの質問には自由記述を出さず、代わりにメモ欄を出していた。tanacode ではそろえた（決めたこと）
+  it('プレビュー付きの質問も、プレビューの無い質問と同じ形（「その他（自由に入力）」があり、メモ欄・Chat about this は無い）', () => {
+    // 選択肢の下の行（選択肢の名前を除いたもの）
+    const rest = () => [...document.querySelectorAll('.menu-options > *')].slice(withPreview.options.length).map((e) => e.textContent);
+    render(<QuestionCard sessionId="s1" question={pending(style)} />);
+    const plain = rest();
+    cleanup();
+    render(<QuestionCard sessionId="s1" question={pending(withPreview)} />);
+    expect(rest()).toEqual(plain);
+    expect(rest()).toEqual(['その他（自由に入力）']);
+    expect(document.querySelector('.menu-card textarea')).toBeNull();
+    expect(screen.queryByText('この質問について話す（Chat about this）')).toBeNull();
+  });
+
+  it('プレビュー付きの質問: 選んだ案にプレビューがあれば添え書き（annotations）で渡す。プレビューの無い案・自由記述の答えには付けない', async () => {
+    const { unmount } = render(<QuestionCard sessionId="s1" question={pending(withPreview)} />);
     fireEvent.click(screen.getByText('縦'));
     await sent();
-    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '並べ方は？': '縦' }, annotations: { '並べ方は？': { notes: '余白を広めに', preview: '縦の図' } } }]]);
+    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '並べ方は？': '縦' }, annotations: { '並べ方は？': { preview: '縦の図' } } }]]);
     unmount();
-    // メモが無く、選んだ案にプレビューも無ければ、添え書きは付けない。プレビューの無い質問にはメモ欄を出さない
-    render(<QuestionCard sessionId="s1" question={{ ...pending(layout), id: 'q2' }} />);
+    render(<QuestionCard sessionId="s1" question={{ ...pending(withPreview), id: 'q2' }} />);
     fireEvent.click(screen.getByText('無し'));
     await sent();
     expect(replies()[1]).toEqual(['s1', 'q2', { kind: 'answer', answers: { '並べ方は？': '無し' } }]);
     cleanup();
-    render(<QuestionCard sessionId="s1" question={pending(style)} />);
-    expect(screen.queryByPlaceholderText('選んだ案について Claude に伝えること')).toBeNull();
+    render(<QuestionCard sessionId="s1" question={{ ...pending(withPreview), id: 'q3' }} />);
+    fireEvent.click(screen.getByText('その他（自由に入力）'));
+    fireEvent.change(screen.getByPlaceholderText('回答を入力（Enter で改行、⌘+Enter で決定）'), { target: { value: '格子に並べる\n2 列で' } });
+    fireEvent.click(screen.getByText('送信'));
+    await sent();
+    expect(replies()[2]).toEqual(['s1', 'q3', { kind: 'answer', answers: { '並べ方は？': '格子に並べる\n2 列で' } }]);
   });
 });

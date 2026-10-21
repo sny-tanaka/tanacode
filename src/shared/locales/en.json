@@ -2167,14 +2167,11 @@
       "stopEditing": "Stop editing",
       "preview": "Preview: {label}",
       "answerPlaceholderMultiline": "Type your answer (Enter for a new line, ⌘+Enter to confirm)",
-      "chat": "Chat about this",
       "review": "Review your answers",
       "unanswered": "(Not answered)",
       "submitAnswers": "Submit answers",
       "questionTab": "Question {n}",
-      "questionGone": "This question can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
-      "notes": "Notes (optional)",
-      "notesPlaceholder": "Anything to tell Claude about your choice"
+      "questionGone": "This question can no longer be answered (it was answered elsewhere, or Claude Code withdrew it)."
     },
     "permission": {
       "allow": "Allow",

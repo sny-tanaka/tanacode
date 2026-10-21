@@ -2097,14 +2097,11 @@
       "stopEditing": "やめる",
       "preview": "プレビュー: {label}",
       "answerPlaceholderMultiline": "回答を入力（Enter で改行、⌘+Enter で決定）",
-      "chat": "この質問について話す（Chat about this）",
       "review": "回答の確認",
       "unanswered": "（未回答）",
       "submitAnswers": "回答を送る",
       "questionTab": "{n} 問め",
-      "questionGone": "この質問には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
-      "notes": "メモ（任意）",
-      "notesPlaceholder": "選んだ案について Claude に伝えること"
+      "questionGone": "この質問には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）"
     },
     "permission": {
       "allow": "許可する",

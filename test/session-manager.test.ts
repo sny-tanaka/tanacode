@@ -735,7 +735,7 @@ describe('待っている要求の知らせ', () => {
     // 質問は許可の確認ではない
     expect(app.manager.pendingPermission(id)).toBeNull();
     expect(app.manager.replyPermission(id, 'req-q', { kind: 'allow' })).toBe(false);
-    const annotations = { 'どちらの方式?': { notes: '余白を広く', preview: 'B の図' } };
+    const annotations = { 'どちらの方式?': { preview: 'B の図' } };
     expect(app.manager.replyQuestion(id, question.id, { kind: 'answer', answers: { 'どちらの方式?': 'B 案' }, annotations })).toBe(true);
     await app.waitFor('返事', () => answerTo(pipe, 'req-q').length === 1);
     expect(answerTo(pipe, 'req-q')).toEqual([{ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'どちらの方式?': 'B 案' }, annotations } }]);
@@ -743,30 +743,11 @@ describe('待っている要求の知らせ', () => {
     expect(app.manager.stateOf(id)).toBe('working');
   });
 
-  it('質問の「Chat about this」は、答えずに質問について話す文を返す（TUI で選んだときと同じ文）。キャンセルは断って作業を止める', async () => {
+  it('質問のキャンセルは、断って作業を止める', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
-    request(pipe, 'req-chat', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
-    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
-    app.manager.replyQuestion(id, app.manager.pendingQuestion(id)!.id, { kind: 'chat' });
-    await app.waitFor('返事', () => answerTo(pipe, 'req-chat').length === 1);
-    expect(answerTo(pipe, 'req-chat')).toEqual([
-      {
-        behavior: 'deny',
-        message: [
-          "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:",
-          'The user wants to clarify these questions.',
-          '    This means they may have additional information, context or questions for you.',
-          '    Take their response into account and then reformulate the questions if appropriate.',
-          '    Start by asking them what they would like to clarify.',
-          '',
-          '    Questions asked:',
-          '- "どちらの方式?"\n  (No answer provided)',
-        ].join('\n'),
-      },
-    ]);
     request(pipe, 'req-cancel', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
-    await app.waitFor('次の質問', () => app.manager.pendingQuestion(id) !== null);
+    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
     app.manager.replyQuestion(id, app.manager.pendingQuestion(id)!.id, { kind: 'cancel' });
     await app.waitFor('返事', () => answerTo(pipe, 'req-cancel').length === 1);
     expect(answerTo(pipe, 'req-cancel')).toEqual([

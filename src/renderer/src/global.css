@@ -3889,24 +3889,6 @@ details[open] > summary > .disclosure {
   font-size: 12px;
   color: var(--text-secondary);
 }
-/* プレビュー付きの質問のメモ欄 */
-.menu-notes-input {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.menu-notes-input textarea {
-  resize: vertical;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text-primary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
 .menu-title {
   font-weight: 400;
   line-height: 1.6;

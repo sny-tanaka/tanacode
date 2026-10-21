@@ -2,7 +2,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { createPortal } from 'react-dom';
 import { t } from '@shared/i18n';
 import { answerText, type PendingQuestion, type QuestionAnnotations, type QuestionReply } from '@shared/questions';
-import type { AskQuestion } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
 // 1 つの質問の、カードの中での答え（選んだ選択肢と自由記述）
@@ -12,11 +11,6 @@ const EMPTY: Draft = { picked: [], other: '' };
 
 function answered(draft: Draft): boolean {
   return draft.picked.length > 0 || draft.other.trim() !== '';
-}
-
-// 選択肢のどれかにプレビューがある質問。Claude Code と同じく、この形には自由記述が無い
-function hasPreview(question: AskQuestion): boolean {
-  return question.options.some((o) => o.preview);
 }
 
 // プレビューのポップアップの向きへマウスを動かしている間に乗った選択肢は、ここまで止まってから、そのプレビューに切り替える（ms）
@@ -33,15 +27,15 @@ type Props = {
 // ページの送り方は Claude Code の画面と同じ: 質問を 1 問ずつ出し（タブで、答えた質問が分かる）、単一選択は選ぶと次の質問へ、
 // 複数選択はチェックしてから次の質問へ。質問が複数あるときと複数選択のときは、最後に回答の確認を出してから送る。
 // 質問が 1 つで単一選択なら、選んだらすぐ送る。答えは全部そろってから、まとめて返す。
-// プレビュー付きの質問には自由記述が無いので、代わりにメモ欄を出し、選んだ案のプレビューと一緒に添え書き（annotations）で渡す（決めたこと）。
+// カードの形は、プレビューの有無でそろえる（決めたこと）。どの質問にも「その他（自由に入力）」を出し、メモ欄は出さない。
+// Claude Code の画面では、プレビュー付きの質問に自由記述が無く、代わりにメモ欄があるが、tanacode ではそろえた。
+// 「Chat about this」も出さない（その他に書けば、質問について話せる）。選んだ案にプレビューがあれば、添え書き（annotations）で渡す。
 // 選択肢のプレビューは、ホバー（Tab のフォーカスでも）した選択肢のものを、カードの外にポップアップで出す（PreviewPopup）。
 // 前はカードの一番下に出していたので、ホバーでカードの高さが変わり、一覧が最下部を保とうとしてカードが上下に動き、止めたマウスの下に
 // 別の選択肢が来てプレビューが替わり、また動くのを繰り返した
 export function QuestionCard({ sessionId, question }: Props) {
   const { questions } = question;
   const [drafts, setDrafts] = useState<Draft[]>(() => questions.map(() => EMPTY));
-  // プレビュー付きの質問のメモ（質問ごと）
-  const [notes, setNotes] = useState<string[]>(() => questions.map(() => ''));
   // 今のページ（questions.length は回答の確認）
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -85,15 +79,13 @@ export function QuestionCard({ sessionId, question }: Props) {
 
   const answers = (list: Draft[]) => Object.fromEntries(questions.map((q, i) => [q.question, answerText(q, list[i].picked, list[i].other)]));
 
-  // プレビュー付きの質問の添え書き（メモと、選んだ案がひとつならそのプレビュー）。無ければ undefined
+  // 添え書き（選んだ案がひとつで、プレビューがあれば、そのプレビュー）。無ければ undefined
   const annotations = (list: Draft[]): QuestionAnnotations | undefined => {
     const result: QuestionAnnotations = {};
     questions.forEach((q, i) => {
-      if (!hasPreview(q)) return;
-      const note = notes[i].trim();
       const picked = q.options.filter((o) => list[i].picked.includes(o.label));
       const preview = picked.length === 1 ? picked[0].preview : undefined;
-      if (note || preview) result[q.question] = { ...(note ? { notes: note } : {}), ...(preview ? { preview } : {}) };
+      if (preview) result[q.question] = { preview };
     });
     return Object.keys(result).length > 0 ? result : undefined;
   };
@@ -204,18 +196,6 @@ export function QuestionCard({ sessionId, question }: Props) {
       {current ? (
         <>
           <div className="menu-title">{current.question}</div>
-          {hasPreview(current) && (
-            <label className="menu-notes-input">
-              <span>{t('screen.card.notes')}</span>
-              <textarea
-                rows={2}
-                value={notes[page]}
-                placeholder={t('screen.card.notesPlaceholder')}
-                disabled={sending}
-                onChange={(e) => setNotes(notes.map((n, i) => (i === page ? e.target.value : n)))}
-              />
-            </label>
-          )}
           <div className="menu-options">
             {current.options.map((option) => {
               const picked = draft.picked.includes(option.label);
@@ -250,61 +230,55 @@ export function QuestionCard({ sessionId, question }: Props) {
                 </button>
               );
             })}
-            {!hasPreview(current) &&
-              (editing ? (
-                <form
-                  className="menu-text-input multiline"
-                  onSubmit={(e) => {
+            {editing ? (
+              <form
+                className="menu-text-input multiline"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitText();
+                }}
+              >
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={text}
+                  placeholder={t('screen.card.answerPlaceholderMultiline')}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    // チャットの入力欄と同じく、Enter は改行、⌘+Enter で決める。変換確定の Enter では決めない
+                    if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.nativeEvent.isComposing || e.keyCode === 229) return;
                     e.preventDefault();
                     submitText();
                   }}
-                >
-                  <textarea
-                    autoFocus
-                    rows={3}
-                    value={text}
-                    placeholder={t('screen.card.answerPlaceholderMultiline')}
-                    onChange={(e) => setText(e.target.value)}
-                    onKeyDown={(e) => {
-                      // チャットの入力欄と同じく、Enter は改行、⌘+Enter で決める。変換確定の Enter では決めない
-                      if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.nativeEvent.isComposing || e.keyCode === 229) return;
-                      e.preventDefault();
-                      submitText();
-                    }}
-                  />
-                  <div className="menu-text-actions">
-                    <button className="send-button" type="submit" disabled={!text.trim() || sending}>
-                      {direct ? t('screen.card.send') : t('screen.card.confirm')}
-                    </button>
-                    <IconButton icon={CloseIcon} size="md" label={t('screen.card.stopEditing')} onClick={() => setEditing(false)} />
-                  </div>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  className={`menu-option${draft.other.trim() && !current.multiSelect ? ' chosen' : ''}`}
-                  disabled={sending}
-                  onClick={() => {
-                    setText(draft.other);
-                    setEditing(true);
-                  }}
-                >
-                  {current.multiSelect && <span className={`menu-check${draft.other.trim() ? ' on' : ''}`}>{draft.other.trim() && <CheckIcon size={12} />}</span>}
-                  <span className="menu-option-text">
-                    <span className="menu-option-label">{draft.other.trim() ? t('screen.card.otherTyped', { text: draft.other.trim() }) : t('screen.card.other')}</span>
-                  </span>
-                </button>
-              ))}
+                />
+                <div className="menu-text-actions">
+                  <button className="send-button" type="submit" disabled={!text.trim() || sending}>
+                    {direct ? t('screen.card.send') : t('screen.card.confirm')}
+                  </button>
+                  <IconButton icon={CloseIcon} size="md" label={t('screen.card.stopEditing')} onClick={() => setEditing(false)} />
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                className={`menu-option${draft.other.trim() && !current.multiSelect ? ' chosen' : ''}`}
+                disabled={sending}
+                onClick={() => {
+                  setText(draft.other);
+                  setEditing(true);
+                }}
+              >
+                {current.multiSelect && <span className={`menu-check${draft.other.trim() ? ' on' : ''}`}>{draft.other.trim() && <CheckIcon size={12} />}</span>}
+                <span className="menu-option-text">
+                  <span className="menu-option-label">{draft.other.trim() ? t('screen.card.otherTyped', { text: draft.other.trim() }) : t('screen.card.other')}</span>
+                </span>
+              </button>
+            )}
             {current.multiSelect && (
               <button type="button" className="menu-option submit" disabled={sending} onClick={() => go(page + 1)}>
                 {page + 1 < questions.length ? t('screen.card.nextQuestion') : t('screen.card.reviewAnswers')}
               </button>
             )}
-            <button type="button" className="menu-option" disabled={sending} onClick={() => send({ kind: 'chat' })}>
-              <span className="menu-option-text">
-                <span className="menu-option-label">{t('screen.card.chat')}</span>
-              </span>
-            </button>
           </div>
         </>
       ) : (
