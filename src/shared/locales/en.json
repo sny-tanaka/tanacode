@@ -2161,7 +2161,6 @@
       "send": "Send",
       "stopEditing": "Stop editing",
       "preview": "Preview: {label}",
-      "noPreview": "No preview for this option",
       "answerPlaceholderMultiline": "Type your answer (Enter for a new line, ⌘+Enter to confirm)",
       "chat": "Chat about this",
       "review": "Review your answers",

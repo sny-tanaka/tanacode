@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { PartialBlock, UnsentPrompt } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
-import type { PendingPermission } from '@shared/questions';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
@@ -58,7 +58,8 @@ function conversation(count: number): ChatItem[] {
 // comments: コードへのコメント / exited: Claude Code が終了している（exitReason: 終わったわけ）/ running: 作業中 /
 // unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
 // starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション /
-// partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）/ permission: 答えを待っている許可の確認（会話の最後にカードで出る）
+// partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）/ permission: 答えを待っている許可の確認（会話の最後にカードで出る）/
+// question: 答えを待っている質問（会話の最後にカードで出る）
 function Pane({
   items,
   settingsFile = null,
@@ -76,6 +77,7 @@ function Pane({
   child = false,
   partial = [],
   permission = null,
+  question = null,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -93,6 +95,7 @@ function Pane({
   child?: boolean;
   partial?: PartialBlock[];
   permission?: PendingPermission | null;
+  question?: PendingQuestion | null;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -140,6 +143,7 @@ function Pane({
         onTakePending={() => null}
         scheduled={scheduled}
         permission={permission}
+        question={question}
       />
       <TooltipLayer />
     </div>
@@ -258,6 +262,37 @@ export const 許可の確認を待っている長い会話: Story = {
       always: ['Bash(npm test:*)'],
       plan: null,
       agent: null,
+    },
+  },
+};
+
+// 長い会話の最後に、プレビュー付きの質問のカード。プレビューの高さは選択肢ごとに違う。
+// プレビューはホバーした選択肢のものをカードの上にポップアップで出し、カードの高さは変えない。
+// 直す前: プレビューをカードの中に出していたので、ホバーで高さが変わってカードが上下に動き（一覧は最下部を保つ）、止めたマウスの下に
+// 別の選択肢が来てプレビューが替わり、また動くのを繰り返した
+export const プレビュー付きの質問を待っている長い会話: Story = {
+  args: {
+    items: conversation(30),
+    running: true,
+    question: {
+      id: 'q-1',
+      answered: {},
+      questions: [
+        {
+          question: '設定の画面の並べ方はどうしますか？',
+          header: '並べ方',
+          multiSelect: false,
+          options: [
+            {
+              label: '縦に並べる',
+              description: '項目を上から下へ並べる',
+              preview: ['┌────────┐', ...Array.from({ length: 8 }, (_, i) => `│ 項目 ${i + 1} │`), '└────────┘'].join('\n'),
+            },
+            { label: '横に並べる', description: '項目を左から右へ並べる', preview: '┌──────┬──────┐\n│ 項目 │ 項目 │\n└──────┴──────┘' },
+            { label: 'タブで分ける', description: 'プレビューの無い選択肢' },
+          ],
+        },
+      ],
     },
   },
 };

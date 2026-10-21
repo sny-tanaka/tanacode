@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Block } from '../cli/mock-api';
+import { ASK_PREVIEW } from '../scenarios/questions';
 import { E2EApp } from './app';
 
 // チャットの一覧のスクロール。一覧は最下部に張り付いて新しい行を追いかけ、人の操作でない上へのスクロールは最下部へ送り直す（ClaudePane）。
@@ -15,6 +16,10 @@ const CARD_PROMPT = '確かめのコマンドを動かしてください';
 const CARD_DONE = 'コマンドを動かしました';
 // 許可を聞くコマンド（echo だけなら、聞かずに動く）
 const bash: Block[] = [{ type: 'tool_use', id: 'toolu_scroll', name: 'Bash', input: { command: 'mkdir scrolled && echo scrolled-$((40+2))', description: '確かめのコマンド' } }];
+// プレビュー付きの質問（プレビューの高さが選択肢ごとに違う）
+const PREVIEW_PROMPT = '並べ方を聞いてください';
+const PREVIEW_DONE = '並べ方を決めました';
+const askPreview: Block[] = [{ type: 'tool_use', id: 'toolu_preview', name: 'AskUserQuestion', input: { questions: ASK_PREVIEW } }];
 
 describe('チャットの一覧のスクロール', () => {
   let app: E2EApp;
@@ -25,6 +30,7 @@ describe('チャットの一覧のスクロール', () => {
       conversations: () => [
         { match: PROMPT, steps: [[{ type: 'text', text: DONE }]] },
         { match: CARD_PROMPT, steps: [bash, [{ type: 'text', text: CARD_DONE }]] },
+        { match: PREVIEW_PROMPT, steps: [askPreview, [{ type: 'text', text: PREVIEW_DONE }]] },
       ],
     });
   });
@@ -143,6 +149,89 @@ describe('チャットの一覧のスクロール', () => {
     await card.locator('.menu-option', { hasText: /^許可する/ }).first().click();
     await app.byText('.chat-list', CARD_DONE).waitFor();
     expect(app.api.toolResults.some((r) => r.includes('scrolled-42'))).toBe(true);
+  });
+
+  // 直す前: プレビューをカードの一番下に出していたので、選択肢にマウスを乗せるとカードの高さが変わり、一覧が最下部を保とうとしてカードが
+  // 上下に動いた。選択肢の上端近くに止めたマウスの下に別の選択肢が来てプレビューが替わり、また動くのを繰り返した。止めたマウスの下で
+  // 要素が動いたときのホバーの出し直しは、画面の部品のテスト（jsdom）では起きないので、本物の画面で確かめる
+  it('プレビュー付きの質問のカードで、選択肢の上端近くにマウスを止めても、プレビューの対象が替わり続けず、カードの高さが変わらない。プレビューはカードの上のポップアップに出て、マウスを移しても消えない', async () => {
+    await app.startSession(PREVIEW_PROMPT);
+    const card = await app.menuCard('question');
+    // 一覧をスクロールさせる背の高い行を、一覧の頭に置く（一覧が最下部を保つと、カードの高さの変化がカードの位置の変化になる）
+    await app.page.evaluate(() => {
+      const filler = document.createElement('div');
+      filler.style.flex = 'none';
+      filler.style.height = '1500px';
+      document.querySelector('.chat-list')?.prepend(filler);
+    });
+    await nextFrames();
+    // プレビューを出している選択肢と、カードの高さの移り変わりを、変わるたびに記録する（1 回描くごとに替わり続けても取りこぼさない）。
+    // 記録するのは変わったときだけ（ResizeObserver は見張り始めにも知らせる。裏のウインドウでは、それが届くのが遅れることがある）
+    await app.page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>('.chat-list > .menu-card.question')!;
+      const log: string[] = [];
+      const entry = () => `${card.querySelector('.menu-option.previewed .menu-option-label')?.textContent ?? '-'} ${card.offsetHeight}`;
+      let last = entry();
+      const record = () => {
+        const now = entry();
+        if (now === last) return;
+        log.push(now);
+        last = now;
+      };
+      new MutationObserver(record).observe(card, { subtree: true, attributes: true, attributeFilter: ['class'] });
+      new ResizeObserver(record).observe(card);
+      Object.assign(window, { e2ePreviewLog: log });
+    });
+    const height = await card.evaluate((element) => (element as HTMLElement).offsetHeight);
+    // カード・ポップアップの位置と、出しているプレビュー（落ちたときに読めるよう、文字にして添える）
+    const state = () =>
+      app.page.evaluate(() => {
+        const box = document.querySelector('.chat-list > .menu-card.question')!.getBoundingClientRect();
+        const popup = document.querySelector('.menu-preview-popup');
+        const rect = popup?.getBoundingClientRect();
+        const center = rect && document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return {
+          shown: popup?.querySelector('.menu-preview-label')?.textContent ?? null,
+          card: `${Math.round(box.top)}〜${Math.round(box.bottom)}`,
+          popup: rect ? `${Math.round(rect.top)}〜${Math.round(rect.bottom)} (${Math.round(rect.left)}〜${Math.round(rect.right)})` : null,
+          // カードの上にあり、重なっていない（枠に 1px だけ重ねる。位置が端数のときの分を見込む）
+          above: rect ? rect.bottom <= box.top + 2 && rect.top >= 0 : null,
+          // 一覧の枠で切れず、前に出ている
+          front: !!center && !!popup?.contains(center),
+          log: (window as unknown as { e2ePreviewLog: string[] }).e2ePreviewLog.splice(0),
+        };
+      });
+    // 上から順に（ポップアップから離れる向きに）移る。ポップアップの向きへ移ると、止まってから切り替える（QuestionCard の REST_MS）
+    const [first, second, none] = ASK_PREVIEW[0].options;
+    for (const option of [first, second, none]) {
+      const box = (await card.locator('.menu-option', { hasText: option.label }).boundingBox())!;
+      await app.page.mouse.move(box.x + box.width / 2, box.y + 3);
+      // 替わり続けるなら、1 回描くごとに替わる。10 回描く間、見張る
+      for (let i = 0; i < 5; i++) await nextFrames();
+      const now = await state();
+      const message = JSON.stringify({ option: option.label, height, now });
+      expect(now.log.every((entry) => entry.endsWith(` ${height}`)), message).toBe(true);
+      expect(now.log.length, message).toBeLessThanOrEqual(1);
+      if (option.preview) expect(now, message).toMatchObject({ shown: `プレビュー: ${option.label}`, above: true, front: true });
+      else expect(now.shown, message).toBeNull();
+    }
+    // 一番上の選択肢から、まっすぐ上のポップアップへ移っても消えない。カードとポップアップの両方から外れたら消える
+    const box = (await card.locator('.menu-option', { hasText: first.label }).boundingBox())!;
+    const x = box.x + box.width / 2;
+    await app.page.mouse.move(x, box.y + box.height / 2);
+    await nextFrames();
+    const popup = app.page.locator('.menu-preview-popup');
+    const target = (await popup.boundingBox())!;
+    await app.page.mouse.move(x, target.y + target.height / 2, { steps: 10 });
+    await nextFrames();
+    const inside = await state();
+    expect(inside, JSON.stringify(inside)).toMatchObject({ shown: `プレビュー: ${first.label}` });
+    const sidebar = (await app.page.locator('nav.sidebar').boundingBox())!;
+    await app.page.mouse.move(sidebar.x + sidebar.width / 2, sidebar.y + sidebar.height / 2, { steps: 5 });
+    await popup.waitFor({ state: 'detached' });
+    // 選んで答えられる
+    await app.choose(card, none.label);
+    await app.byText('.chat-list', PREVIEW_DONE).waitFor();
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
