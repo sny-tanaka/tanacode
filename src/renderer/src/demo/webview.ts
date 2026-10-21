@@ -84,8 +84,11 @@ class DemoWebview extends HTMLElement {
     return Promise.resolve(win.eval(code.replaceAll('location.href', JSON.stringify(this.url))) as T);
   }
 
-  // ページの一部を画像にする（ページの中身を SVG の foreignObject に写して描く）
+  // ページの一部を画像にする（ページの中身を SVG の foreignObject に写して描く）。
+  // 確かめ（?demo-trace）のときは、段ごとに足あとを出す（CI のスマホのツアーで、ページで最初にこれを動かす「要素を選ぶ」の直後に、
+  // ページの処理が 40 秒応答しないまま落ちたことが 2 回あった。次に止まったときに、どの段で止まったかを見分ける）
   async capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<{ isEmpty(): boolean; toDataURL(): string }> {
+    trace('画像を切り出す: ページを SVG に写す');
     const doc = this.frame.contentDocument!;
     const width = doc.documentElement.clientWidth;
     const height = doc.documentElement.clientHeight;
@@ -95,15 +98,22 @@ class DemoWebview extends HTMLElement {
     const image = new Image();
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     await image.decode();
+    trace('画像を切り出す: SVG を読み込んだ。canvas に描く');
     const r = rect ?? { x: 0, y: 0, width, height };
     const scale = 2;
     const canvas = document.createElement('canvas');
     canvas.width = r.width * scale;
     canvas.height = r.height * scale;
-    const ctx = canvas.getContext('2d')!;
+    // 描いてすぐ読み出す（toDataURL）canvas なので、GPU で描かない canvas にする（willReadFrequently）。Linux の WebKit（スマホのツアー）では、
+    // ふつうの canvas は GPU で描き、ページで最初に読み出すときに、その仕組みの立ち上げで 50〜500ms 止まる（Playwright の WebKit で実測。
+    // willReadFrequently なら 1ms ほど）。CI で落ちたのは、ページで最初に読み出すこの処理の直後なので、立ち上げの途中で固まったと見ている
+    // （確かめきれてはいない。上の足あとで見分ける）
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
     ctx.scale(scale, scale);
     ctx.drawImage(image, -r.x, -r.y, width, height);
+    trace('画像を切り出す: 描いた。PNG にする');
     const url = canvas.toDataURL('image/png');
+    trace('画像を切り出す: 済み');
     return { isEmpty: () => false, toDataURL: () => url };
   }
 

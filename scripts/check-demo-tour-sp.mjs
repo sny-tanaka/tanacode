@@ -104,6 +104,61 @@ function webProcesses() {
   return out;
 }
 
+// /proc の CPU の時間の単位（USER_HZ。Linux ではふつう 100）
+const CLOCK_TICKS = 100;
+const readText = (path) => {
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch {
+    return '';
+  }
+};
+// stat の状態（R: 動いている・S: 待っている・D: 入出力を待っている など）と、CPU を使った時間（秒）
+function cpuStat(path) {
+  const fields = readFileSync(path, 'utf8').split(') ')[1].split(' ');
+  return { state: fields[0], cpu: (Number(fields[11]) + Number(fields[12])) / CLOCK_TICKS };
+}
+// 前に測った CPU の時間（プロセスとスレッドごと）
+let lastCpu = new Map();
+// このスクリプトから起こした WebKit のプロセスの様子（1 つ 1 行）。名前・番号・状態・CPU の時間と前に測ってからの増え、主スレッド
+// （ページの処理なら、JavaScript・レイアウト・描画を動かすところ）が待っている場所（wchan。動いているときは 0）、CPU の増えの多いスレッドの上位 3 つ。
+// ページの処理が応答しないときに、回り続けている（CPU が増え続ける）のか、何かを待って止まっている（増えない）のか、どのスレッドかを見分ける
+// （CI のスマホのツアーで、40 秒応答しないまま落ちたが、メモリは増えておらず、どちらか分からなかった）
+function processReport() {
+  const next = new Map();
+  const lines = [];
+  for (const pid of ownProcesses()) {
+    const name = readText(`/proc/${pid}/comm`);
+    if (!/WPE|WebKit|MiniBrowser/i.test(name)) continue;
+    try {
+      const own = cpuStat(`/proc/${pid}/stat`);
+      next.set(pid, own.cpu);
+      const threads = [];
+      for (const tid of readdirSync(`/proc/${pid}/task`)) {
+        try {
+          const t = cpuStat(`/proc/${pid}/task/${tid}/stat`);
+          const key = `${pid}/${tid}`;
+          next.set(key, t.cpu);
+          threads.push({ name: readText(`/proc/${pid}/task/${tid}/comm`), state: t.state, grew: t.cpu - (lastCpu.get(key) ?? t.cpu) });
+        } catch {
+          // 調べる間に終わったスレッドは飛ばす
+        }
+      }
+      const busy = threads
+        .sort((a, b) => b.grew - a.grew)
+        .slice(0, 3)
+        .map((t) => `${t.name} ${t.state} +${t.grew.toFixed(1)}s`)
+        .join('、');
+      const grew = (own.cpu - (lastCpu.get(pid) ?? own.cpu)).toFixed(1);
+      lines.push(`${name}(${pid}) ${own.state} CPU ${own.cpu.toFixed(1)}s（+${grew}s） 主スレッドの待ち: ${readText(`/proc/${pid}/task/${pid}/wchan`) || '-'} スレッド: ${busy}`);
+    } catch {
+      // 調べる間に終わったプロセスは飛ばす
+    }
+  }
+  lastCpu = next;
+  return lines;
+}
+
 if (process.platform !== 'linux') {
   console.error('メモリを /proc から読むため、Linux でだけ動きます');
   process.exit(1);
@@ -155,11 +210,15 @@ let reading = null;
 let unresponsive = null;
 let responsiveRss = 0;
 let unresponsiveNoted = 0;
+// 応答しない間の WebKit のプロセスの様子（5 秒ごと。新しい 12 回分）と、落ちたときに残っていたプロセスの様子（processReport）
+const hangReports = [];
+let crashReport = [];
 const PENDING = Symbol('pending');
 for (;;) {
   await sleep(250);
   if (crashed) {
     result = 'crashed';
+    crashReport = processReport();
     break;
   }
   reading ??= {
@@ -177,10 +236,18 @@ for (;;) {
     // 応答しない間は、5 秒ごとにメモリを出す（JavaScript が回り続けてメモリを食っていくのが分かる）
     const waited = Date.now() - reading.since;
     if (waited >= UNRESPONSIVE_MS) {
-      unresponsive ??= { since: reading.since, rss: responsiveRss };
+      if (!unresponsive) {
+        unresponsive = { since: reading.since, rss: responsiveRss };
+        // CPU の時間の増えを測る起点（次の知らせから、その間の増えを出す）
+        processReport();
+      }
       if (Date.now() - unresponsiveNoted >= 5000) {
+        const report = unresponsiveNoted >= unresponsive.since ? processReport() : [];
         unresponsiveNoted = Date.now();
         console.log(`${elapsed()}s ${peak}MB（いま ${rss}MB） ページの処理が ${(waited / 1000).toFixed(0)} 秒応答しません。直前の説明: ${step}`);
+        for (const line of report) console.log(`  ${line}`);
+        if (report.length > 0) hangReports.push({ seconds: Number(elapsed()), processes: report });
+        if (hangReports.length > 12) hangReports.shift();
       }
     }
   } else {
@@ -231,7 +298,11 @@ async function saveEvidence() {
     if (html) writeFileSync(join(evidenceDir, 'app.html'), html);
     state = await within(app.evaluate(snapshot).catch((e) => ({ error: String(e) })), { error: '応答しませんでした' });
   }
-  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], trace: trace.lines(), frames: trace.frames(), state }, null, 2));
+  const processes = { hang: hangReports, afterCrash: crashReport };
+  writeFileSync(
+    join(evidenceDir, 'state.json'),
+    JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], trace: trace.lines(), frames: trace.frames(), processes, state }, null, 2),
+  );
   console.log(`止まったときの様子を ${evidenceDir} に書き出しました`);
 }
 
@@ -241,7 +312,12 @@ const hung = unresponsive
   ? `その前の ${hungSeconds} 秒、ページの処理は応答していませんでした（メモリ ${unresponsive.rss}MB → 最大 ${peak}MB）。`
   : '';
 let ok = false;
-if (result === 'crashed') console.error(`ページの処理が落ちました（${seconds} 秒）。iPhone の Safari では、白くなってページが読み込み直されます。${hung}直前の説明: ${step}`);
+if (result === 'crashed') {
+  console.error(`ページの処理が落ちました（${seconds} 秒）。iPhone の Safari では、白くなってページが読み込み直されます。${hung}直前の説明: ${step}`);
+  // 落ちたプロセスは一覧から消えている（残ったものだけ出る）
+  console.error('落ちたときに残っていた WebKit のプロセス:');
+  for (const line of crashReport) console.error(`  ${line}`);
+}
 else if (result === 'failed') console.error(`ツアーが途中で止まりました（${seconds} 秒）。直前の説明: ${step}`);
 else if (result === 'stalled') console.error(`ツアーが ${STALL_MS / 1000} 秒進みません（${seconds} 秒）。${hung}直前の説明: ${step}`);
 else if (result === 'timeout') console.error(`ツアーが ${LIMIT_MS / 1000} 秒で終わりませんでした。${hung}直前の説明: ${step}`);
