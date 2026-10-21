@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { t } from '@shared/i18n';
 import { answerText, type PendingQuestion, type QuestionAnnotations, type QuestionReply } from '@shared/questions';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
+import { placePreview, type Place } from './previewPlace';
 
 // 1 つの質問の、カードの中での答え（選んだ選択肢と自由記述）
 type Draft = { picked: string[]; other: string };
@@ -15,8 +16,6 @@ function answered(draft: Draft): boolean {
 
 // プレビューのポップアップの向きへマウスを動かしている間に乗った選択肢は、ここまで止まってから、そのプレビューに切り替える（ms）
 const REST_MS = 150;
-// ポップアップと画面の端との間
-const POPUP_MARGIN = 8;
 
 type Props = {
   sessionId: string;
@@ -31,6 +30,7 @@ type Props = {
 // Claude Code の画面では、プレビュー付きの質問に自由記述が無く、代わりにメモ欄があるが、tanacode ではそろえた。
 // 「Chat about this」も出さない（その他に書けば、質問について話せる）。選んだ案にプレビューがあれば、添え書き（annotations）で渡す。
 // 選択肢のプレビューは、ホバー（Tab のフォーカスでも）した選択肢のものを、カードの外にポップアップで出す（PreviewPopup）。
+// カードの右（エディタの側）に、選択肢の高さにそろえて出す。右に場所が足りなければ、カードの上（入りきらなければ下）に出す。
 // 前はカードの一番下に出していたので、ホバーでカードの高さが変わり、一覧が最下部を保とうとしてカードが上下に動き、止めたマウスの下に
 // 別の選択肢が来てプレビューが替わり、また動くのを繰り返した
 export function QuestionCard({ sessionId, question }: Props) {
@@ -48,10 +48,12 @@ export function QuestionCard({ sessionId, question }: Props) {
   const card = useRef<HTMLDivElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const popupId = useId();
-  // カード（とポップアップ）の上での、マウスの直前の位置（縦）。ポップアップの向きへ動かしているかを見る
-  const lastY = useRef<number | null>(null);
-  // ポップアップの向きへ動かしている間に乗った選択肢と、止まったら切り替えるタイマー
-  const resting = useRef<{ label: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // カード（とポップアップ）の上での、マウスの直前の位置。ポップアップの向きへ動かしているかを見る
+  const lastPoint = useRef<{ x: number; y: number } | null>(null);
+  // 選択肢のボタン（名前 → 要素）。右に出すポップアップを、プレビューを出す選択肢の高さにそろえる
+  const optionButtons = useRef(new Map<string, HTMLButtonElement>());
+  // ポップアップの向きへ動かしている間に乗った選択肢（null は「その他」）と、止まったら切り替えるタイマー
+  const resting = useRef<{ label: string | null; timer: ReturnType<typeof setTimeout> } | null>(null);
   // マウスがカード（とポップアップ）の上にあるか
   const hovering = useRef(false);
   // キーボード（Tab）でフォーカスした選択肢。マウスがカードから外れたら、そのプレビューに戻す
@@ -100,19 +102,24 @@ export function QuestionCard({ sessionId, question }: Props) {
   };
   useEffect(() => stopResting, []);
 
-  // マウスがポップアップの向き（上に出ていれば上、下に出ていれば下）へ動いているか
-  const towardPopup = (y: number) => {
-    const last = lastY.current;
-    const box = popup.current?.getBoundingClientRect();
-    if (!box || last === null || y === last) return false;
-    return box.bottom <= y ? y < last : box.top >= y ? y > last : false;
+  // マウスがポップアップの向き（右に出ていれば右、上に出ていれば上、下に出ていれば下）へ動いているか
+  const towardPopup = (x: number, y: number) => {
+    const last = lastPoint.current;
+    const element = popup.current;
+    if (!element || !last) return false;
+    if (element.classList.contains('right')) return x > last.x;
+    const box = element.getBoundingClientRect();
+    if (y === last.y) return false;
+    return box.bottom <= y ? y < last.y : box.top >= y ? y > last.y : false;
   };
   // 選択肢にマウスが乗った・乗ったまま動いた。ふつうはすぐそのプレビューに切り替える。ポップアップの向きへ動かしている間は切り替えず、
-  // 止まってから切り替える（下の選択肢からポップアップへ移る途中で、またいだ選択肢のプレビューに替わると、読みたいものに乗れない）
-  const hoverOption = (label: string, y: number) => {
+  // 止まってから切り替える（ポップアップへ移る途中で、またいだ選択肢のプレビューに替わると、読みたいものに乗れない。
+  // 右に出したときも、高いポップアップの下のほうへ斜めに動かすと、下の選択肢をまたぐ）。
+  // label が null なら「その他」。プレビューの無い選択肢と同じく、出ているプレビューを消す
+  const hoverOption = (label: string | null, x: number, y: number) => {
     stopResting();
     if (label === previewed) return;
-    if (!towardPopup(y)) return setPreviewed(label);
+    if (!towardPopup(x, y)) return setPreviewed(label);
     const timer = setTimeout(() => {
       resting.current = null;
       setPreviewed(label);
@@ -161,13 +168,13 @@ export function QuestionCard({ sessionId, question }: Props) {
         hovering.current = true;
       }}
       onMouseMove={(e) => {
-        lastY.current = e.clientY;
+        lastPoint.current = { x: e.clientX, y: e.clientY };
       }}
       // ポップアップは React の木ではカードの中にあるので、マウスをカードからポップアップへ移しても来ない。両方から外れたときに来る。
       // キーボードでフォーカスした選択肢があれば、そのプレビューに戻す
       onMouseLeave={() => {
         hovering.current = false;
-        lastY.current = null;
+        lastPoint.current = null;
         stopResting();
         setPreviewed(focused.current);
       }}
@@ -202,13 +209,20 @@ export function QuestionCard({ sessionId, question }: Props) {
               return (
                 <button
                   key={option.label}
+                  ref={(element) => {
+                    if (!element) return;
+                    optionButtons.current.set(option.label, element);
+                    return () => {
+                      optionButtons.current.delete(option.label);
+                    };
+                  }}
                   type="button"
                   className={`menu-option${picked && !current.multiSelect ? ' chosen' : ''}${shown && option.label === shown.label ? ' previewed' : ''}`}
                   aria-describedby={shown && option.label === shown.label ? popupId : undefined}
                   disabled={sending}
                   onClick={() => (current.multiSelect ? toggle(option.label) : decide({ picked: [option.label], other: '' }))}
-                  onMouseEnter={(e) => hoverOption(option.label, e.clientY)}
-                  onMouseMove={(e) => hoverOption(option.label, e.clientY)}
+                  onMouseEnter={(e) => hoverOption(option.label, e.clientX, e.clientY)}
+                  onMouseMove={(e) => hoverOption(option.label, e.clientX, e.clientY)}
                   onMouseLeave={() => resting.current?.label === option.label && stopResting()}
                   // キーボードで移ったときだけ出す（押して移ったときは、ホバーで出ている。押したあとでカードから外れたら消す）
                   onFocus={(e) => {
@@ -267,6 +281,16 @@ export function QuestionCard({ sessionId, question }: Props) {
                   setText(draft.other);
                   setEditing(true);
                 }}
+                // プレビューの無い選択肢と同じく、マウスを乗せたら（Tab で移ったら）、出ているプレビューを消す
+                onMouseEnter={(e) => hoverOption(null, e.clientX, e.clientY)}
+                onMouseMove={(e) => hoverOption(null, e.clientX, e.clientY)}
+                onMouseLeave={() => resting.current?.label === null && stopResting()}
+                onFocus={(e) => {
+                  if (!e.currentTarget.matches(':focus-visible')) return;
+                  focused.current = null;
+                  stopResting();
+                  setPreviewed(null);
+                }}
               >
                 {current.multiSelect && <span className={`menu-check${draft.other.trim() ? ' on' : ''}`}>{draft.other.trim() && <CheckIcon size={12} />}</span>}
                 <span className="menu-option-text">
@@ -312,44 +336,47 @@ export function QuestionCard({ sessionId, question }: Props) {
         </div>
       )}
       {/* 選択肢のプレビュー（比べるための図や文章）。ホバーした選択肢のものを出す。選択肢ごとに作り直して、大きさを測り直す */}
-      {shown && <PreviewPopup key={shown.label} id={popupId} anchor={card} popup={popup} label={shown.label} preview={shown.preview!} />}
+      {shown && <PreviewPopup key={shown.label} id={popupId} anchor={card} options={optionButtons} popup={popup} label={shown.label} preview={shown.preview!} />}
     </div>
   );
 }
 
-type Place = { side: 'top' | 'bottom'; left: number; edge: number; maxHeight: number; minWidth: number };
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, Math.max(min, max)));
-
 // 選択肢のプレビューのポップアップ。チャットの一覧のスクロールの枠で切れないよう、画面（body）に出す（Tooltip と同じ）。
-// カードの上に出し、上に入りきらず下のほうが広ければ、カードの下に出す。入りきらない分は中でスクロールする。
+// カードの右に、選択肢の高さにそろえて出す。右に場所が足りなければ、カードの上（入りきらず下のほうが広ければ下）に出す（placePreview）。
+// 入りきらない分は中でスクロールする。
 // カードには重ねない（ホバーした選択肢に重なると、マウスがポップアップに乗ったところで選択肢から外れ、ちらつく）。
 // カードの側の透明な余白で、カードとすき間なくつなぐ（マウスをカードからポップアップへ移す間に、両方から外れたことにしない）。
 // 一覧のスクロール・ウインドウやカードの大きさの変化に合わせて置き直す
-function PreviewPopup({ id, anchor, popup, label, preview }: { id: string; anchor: RefObject<HTMLDivElement | null>; popup: RefObject<HTMLDivElement | null>; label: string; preview: string }) {
+function PreviewPopup({
+  id,
+  anchor,
+  options,
+  popup,
+  label,
+  preview,
+}: {
+  id: string;
+  anchor: RefObject<HTMLDivElement | null>;
+  options: RefObject<Map<string, HTMLButtonElement>>;
+  popup: RefObject<HTMLDivElement | null>;
+  label: string;
+  preview: string;
+}) {
   const [place, setPlace] = useState<Place | null>(null);
 
   useLayoutEffect(() => {
     const element = popup.current;
     if (!element) return;
-    // 置く前（高さを限らず、見えない所に出している）の大きさ
-    const natural = { width: element.offsetWidth, height: element.offsetHeight };
+    // 置く前（見えない所に、透明な余白を付けずに出している）の大きさ。本文の高さを限らないときの高さは、本文の隠れている分を足す
+    const body = element.querySelector('.menu-preview-body');
+    const height = element.offsetHeight;
+    const natural = { width: element.offsetWidth, height, fullHeight: height + (body ? body.scrollHeight - body.clientHeight : 0) };
     const update = () => {
       const box = anchor.current?.getBoundingClientRect();
       // カードが隠れた（ターミナルモードにした）間は出さない
       if (!box || (box.width === 0 && box.height === 0)) return setPlace(null);
-      const above = box.top - POPUP_MARGIN;
-      const below = innerHeight - POPUP_MARGIN - box.bottom;
-      const top = natural.height <= above || above >= below;
-      const width = Math.min(Math.max(natural.width, box.width), innerWidth - POPUP_MARGIN * 2);
-      // カードの枠に 1px 重ねる（間に端数のすき間を作らない）
-      setPlace({
-        side: top ? 'top' : 'bottom',
-        left: clamp(box.left, POPUP_MARGIN, innerWidth - POPUP_MARGIN - width),
-        edge: top ? innerHeight - box.top - 1 : box.bottom - 1,
-        maxHeight: Math.max(top ? above : below, 0) + 1,
-        minWidth: box.width,
-      });
+      const option = options.current.get(label)?.getBoundingClientRect() ?? box;
+      setPlace(placePreview(box, option, natural, { width: innerWidth, height: innerHeight }));
     };
     update();
     // ポップアップの中のスクロールでは置き直さない
@@ -365,19 +392,17 @@ function PreviewPopup({ id, anchor, popup, label, preview }: { id: string; ancho
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', scrolled, true);
     };
-  }, [anchor, popup]);
+  }, [anchor, options, popup, label]);
 
+  // side のほかは、そのまま位置と大きさの限りにする
+  const { side, ...box } = place ?? { side: 'measuring' };
   return createPortal(
     <div
       ref={popup}
       id={id}
       role="tooltip"
-      className={`menu-preview-popup ${place?.side ?? 'top'}`}
-      style={
-        place
-          ? { left: place.left, minWidth: place.minWidth, maxHeight: place.maxHeight, ...(place.side === 'top' ? { bottom: place.edge } : { top: place.edge }) }
-          : { left: 0, top: 0, visibility: 'hidden' }
-      }
+      className={`menu-preview-popup ${side}`}
+      style={place ? box : { left: 0, top: 0, visibility: 'hidden' }}
       // React の木ではチャットの一覧の中にあるので、中のホイールを一覧のもの（人が一覧を上へスクロールした）と取り違えさせない
       onWheel={(e) => e.stopPropagation()}
     >
