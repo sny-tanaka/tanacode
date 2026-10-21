@@ -259,6 +259,7 @@
       "noOpenPr": "There's no open PR for branch {branch}. Create a PR first.",
       "badPrUrl": "Couldn't read the PR URL ({url}).",
       "headMismatch": "Your local HEAD ({local}) doesn't match the PR's latest commit ({remote}). Push (or pull) before posting.",
+      "outsideFiles": "Some steps show files outside the session folder: {files}. They aren't in the PR, so this walkthrough can't be posted. To post one, start a walkthrough without those steps.",
       "missingFiles": "Some files aren't in the commit: {files}. Commit and push them before posting.",
       "dirtyFiles": "Some files have uncommitted changes: {files}. Commit and push them before posting.",
       "emptyBody": "The comment body is empty.",

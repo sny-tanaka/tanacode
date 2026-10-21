@@ -361,6 +361,7 @@ PR で、次のものを流します。develop への push では流しません
 | `terminal.test.ts` | 人のターミナルの MCP（`tanacode-terminal`）。人がターミナルパネルの xterm で打ったコマンドの出力を、Claude（台本）が `read_terminal` で確認なしに読めるか。auto のモードでも、`type_in_terminal` の前に許可のカードが出て、tanacode のフックが出させた理由（タブの名前と打つ文字）が出るか。許すと xterm に出るか |
 | `mcp.test.ts` | Claude が MCP でチェックリスト・ウォークスルー・アプリ内ブラウザを操作すると、画面に出るか。許可や「終わった」の操作が、ツールの結果として Claude に戻るか |
 | `walkthrough-post.test.ts` | Claude に頼むと、ウォークスルーを GitHub の PR に載せる（`post_walkthrough`）。載せる前に許可のカードが出て、答えると載せ、コメントの URL が Claude に戻るか。載せた本文が、ボタンで開く下見の本文に一言を添えたものか。下見に、もう載せたことが出るか。GitHub には書かず、PATH の先頭に置いた偽の `gh`（`E2EApp.launch` の `commands`）が受け取る |
+| `walkthrough-outside.test.ts` | ウォークスルーで、セッションのフォルダの外のファイルも示せるか。外のファイルのステップがあっても始まり、そのステップでは外のファイルを（絶対パスのタブで）開いて吹き出しを出すか。開いている外のファイルが書き換わると、吹き出しに「Claude に示し直してもらう」が出るか（フォルダの中のステップも、書き換わったら出るか）。`show_code` で外のファイルを示すと、開いて吹き出しを出し、示したことが Claude に戻るか |
 | `walkthrough-shown.test.ts` | Claude がウォークスルーで示した場所を、画面がどう扱ったかが Claude に戻るか。始めると 1 つ目のステップをエディタに開き、開いたことが戻る。人が自分で別のファイルを開いていれば、`show_code` で示してもエディタは動かさずに帯を出し、動かさなかったことが戻る。`walkthrough_status` も、人が別のファイルを見ていると返す |
 | `browser-shot.test.ts` | Claude がアプリ内ブラウザのスクリーンショット（表示中の範囲・ページ全体・要素）を撮れるか。ブラウザが見えているときと、閉じて見ていないとき（透明にして描かせたままのタブ）の両方 |
 | `browser-popup.test.ts` | アプリ内ブラウザのページが `window.open`（features 付き）で開くポップアップが、アプリ内ブラウザの外の別ウインドウで開き、`window.opener` から `postMessage` が届くか（Claude が押したときと、人が押したときの両方）。別ウインドウに Node も preload（`window.tanacode`）も無く（features で `nodeIntegration=yes` などを渡しても）、features で `closable=no`・`opacity=0`・`alwaysOnTop=yes` などを渡しても、ふつうのウインドウ（閉じられる・不透明・最前面でない など）か。`file:`・`blob:` へ移れず、プレビューのセッションか。ページが画面の外の位置を指定しても、開いている間ずっと tanacode のウインドウがある画面の中にあるか（作った直後は位置が決まっていないので、読み込み終えてから閉じるまで 0.1 秒ごとに見る）。`window.close()` で閉じるか。タブの一覧に出ないか。空のページを開いてから `location` を移すもの（MSAL など）も開けるか。Claude の操作で、許す先の外（`[::1]`）のポップアップを開かないか。ポップアップが開くポップアップも同じ守りで開くか。1 つのタブから続けて 7 つ開いても 5 個までか。タブを閉じると、そのタブから開いたものだけが閉じるか |
@@ -1157,7 +1158,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - エディタのフォルダが変わる操作は、どれも `leaveEditorThen(移った先のフォルダ, 移る処理)` を通します（一覧・チャットの見出し・通知からの選択、新規セッションの画面を開く・フォルダを変える・始めて移る、見ているセッションの一覧からの削除、取り込み、worktree を作れなかったときの戻り）。フォルダが変わり、保存していない変更（`EditorHandle.unsaved`）があれば、`UnsavedDialog` で「保存して移る・保存せずに移る・やめる」を聞きます。移った先のフォルダが分からないとき（worktree で始めたセッションなど）は、変わるものとして扱います。確かめている間に別の移り先を頼まれたら、新しいほうを確かめます。
   - ディスク側でも変わったファイル（衝突中。`EditorHandle.conflicts`）は、ダイアログで分けて示し、「保存して移る」では書きません（あるうちは押せません）。今のタブでなければ衝突の知らせが見えないので、Claude が書き換えた中身を黙って上書きしないためです。「やめる」では、そのファイルをエディタで開き、どちらを残すかを選ばせます。
   - 保存できなかったとき・エディタが閉じていて保存できないとき・保存しようとして衝突が分かり、書かずに残ったファイルがあるとき（`saveForLeaving`）は、理由を出して移りません。「やめる」では、今のエディタに衝突中のファイルを聞き直して開きます（ダイアログを出したあとに分かったものも開けるように）。
-- 読み書きの範囲: エディタの `ReadFile`・`WriteFile`（`Workspace.readFile`・`writeFile`）は、絶対パス（作業フォルダの外のファイル。Claude が送ったものなど）も、作業フォルダの中の、外を指すリンクの先も開きます。どれも、人の操作（エクスプローラー・リンク）か、main がセッションのフォルダの中に限ったウォークスルーの場所（Claude に返るのは行数とエラーだけ）がきっかけで、開けなくすると、pnpm・monorepo のリンクや `.env` へのリンクのファイルを編集できなくなるためです（決めたこと）。画面から渡るパスで読むもののうち、人の操作を経ずに読むもの（Markdown のプレビューの画像。`Workspace.readImage`）だけを、作業フォルダと追加したフォルダの中（リンクを解いた場所で確かめる）に限ります。
+- 読み書きの範囲: エディタの `ReadFile`・`WriteFile`（`Workspace.readFile`・`writeFile`）は、絶対パス（作業フォルダの外のファイル。Claude が送ったものなど）も、作業フォルダの中の、外を指すリンクの先も開きます。どれも、人の操作（エクスプローラー・リンク）か、ウォークスルーの場所（Claude に返るのは行数とエラーだけ）がきっかけで、開けなくすると、pnpm・monorepo のリンクや `.env` へのリンクのファイルを編集できなくなるためです（決めたこと）。ウォークスルーの場所も、セッションのフォルダの外を断りません（下の「ウォークスルー」）。画面から渡るパスで読むもののうち、人の操作を経ずに読むもの（Markdown のプレビューの画像。`Workspace.readImage`）だけを、作業フォルダと追加したフォルダの中（リンクを解いた場所で確かめる）に限ります。
 
 ### ターミナル
 
@@ -1543,7 +1544,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - MCP サーバー（`tanacode-walkthrough`）は、ほかと同じ形の stdio の中継（`src/main/walkthrough-mcp.ts` → `out/main/walkthrough-mcp.js`）。定義は `src/shared/walkthrough-tools.ts` の `WALKTHROUGH_MCP`、起動の材料は `index.ts` の `walkthroughLaunch` と `walkthrough-bridge.ts`（ソケットは userData の `walkthrough.sock`。env は `TANACODE_WALKTHROUGH_SOCKET`・`TANACODE_WALKTHROUGH_SESSION`）。
   - ツールの種類は、示す `start_walkthrough`・`show_code` が `show`、`walkthrough_status` が `read`（`mcp-tools.ts`）。どちらも `--allowedTools` で許可済みにし、`readOnlyHint` も付けます。人のエディタに示すだけで、ファイルは書き換えないためです。
   - PR に載せる `post_walkthrough` は `act` で、許可済みにせず、Claude Code の許可の確認を通します。GitHub に書き込むので、`openWorld`（`tools/list` の `openWorldHint`）も付けます（下の「GitHub の PR に載せる」）。
-  - 確かめること（`readStep`）: パスはセッションのフォルダ（`manager.cwdOf`。エディタが開くのと同じ）の中だけ（フォルダの中の絶対パスは相対パスにする）、文字のファイルで、範囲がファイルの行数の中にあること。直せないステップがあれば、全部の理由をまとめて返し、始めません。手順は 40 ステップ・見出しは 120 文字・説明は 4000 文字まで。
+  - 確かめること（`readStep`）: 文字のファイルで、範囲がファイルの行数の中にあること。直せないステップがあれば、全部の理由をまとめて返し、始めません。手順は 40 ステップ・見出しは 120 文字・説明は 4000 文字まで。
+  - パス（`stepPath`）: セッションのフォルダ（`manager.cwdOf`。エディタが開くのと同じ）の中は、フォルダからの相対パスにします（エクスプローラーから開いたタブと同じになる）。Claude Code が渡すのはリンクを解いたパスなので、フォルダのリンクを解いた場所とも比べます。外は、絶対パスのまま示します（画面のエディタは、外のファイルも絶対パスのタブで開く）。フォルダの外を断らないのは、人と決めたことです（「制限なく開けていいです。元々読もうと思えば Claude はどのファイルも読めます。tanacode だけ制限をかけても意味がないです」）。
   - 説明（`instructions`）で、いくつものファイルにわたる変更や、レビューしてほしい判断を含む変更を終えたら、チャットでまとめるだけでなくウォークスルーを始めてターンを終えること（小さな変更・人が要らないと言ったとき・親セッションからの作業では除く）・コードの仕組みを説明するときや、特定のコードについての質問に答えるときは、チャットにコードを貼らずに `show_code` で示すこと・頼まれたときも使うこと・手順を作って一度に渡すこと・説明はなぜこうしたかを中心にすること・渡したらターンを終えて待つこと・質問の届き方・別の場所は `show_code` で示すこと・直したら示し直すこと・PR に載せるよう頼まれたら `post_walkthrough` で載せ、`gh pr comment` などで自分の文を書かないこと（載せられなくても、理由を伝える）・頼まれなければ載せないことを伝えます。
 - ステップの `view`: `file` はエディタ、`diff` はブランチの変更の差分（`App.tsx` の `DiffView` の `branch`。`DiffPane` の変更後の側）に出します。行番号はどちらも今のファイルのもの。ブランチの変更に無い・消したファイルは、画面がエディタに出します（`inBranchDiff`。main では確かめない）。
 - 状態: `open`（人が見ているか。閉じると吹き出し・帯・「ここを聞く」を出さない。`go` と、Claude が示したとき（`start_walkthrough`・`show_code`）に開く）・`current`（人が見ているステップ）・`aside`（`show_code` の寄り道。人がステップへ移ると消える）・`visited`（見たステップ）・`movedBy` と `seq`（示す場所を最後に変えたのは誰か。変わるたびに増える）。画面からは `walkthrough:go`（「次へ」「戻る」・ソース管理の一覧・寄り道から戻る・閉じたものを開く）と `walkthrough:close`、main からは `walkthrough:changed` で送ります。
@@ -1551,7 +1553,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - ステップの一覧は、ソース管理パネルの「Claude へのコメント」の上（`walkthrough/WalkthroughList.tsx`。`ScmPanel` の `walkthrough`）。閉じたものも出します。吹き出しには一覧を出さず、ソース管理パネルを開くボタンだけを置きます。画面を作り直したときは `walkthrough:get` で読み直します。
 - 画面: `App.tsx` が `useWalkthroughs` で全セッションの分を持ち、選んでいるセッションのものを `EditorPane` に渡します。示している場所のファイルのモデルをエディタに入れ終えたら、`walkthrough/WalkthroughZone.tsx` が範囲に色を付け、範囲の下の view zone に吹き出し（`WalkthroughBox`）を portal で描きます。示す場所が変わるたび（`id` と `seq`）に、範囲の頭を上の方へスクロールします。示す Markdown はソースで開きます。
   - 追従: Claude が場所を変えたとき（`movedBy` が `claude`）、見ているセッションで、始めたとき（`id` が変わった）か、人が前に示した場所を開いていたときだけ、エディタで開きます。人が別のファイル・差分・ブラウザなどを開いていたら動かさず、エディタの場所の上に `WalkthroughBand` を出します。見ていないセッションは、切り替えたときに開きます（アプリ内ブラウザと同じ）。
-  - コードが変わった: 始めてからステップのファイルが変わった（`fs:changed`。始めて 3 秒のうちは、始める前の書き込みとみなす）ら、吹き出しに「Claude に示し直してもらう」を出し、押すと `restartRequestText` を送ります。
+  - コードが変わった: 始めてからステップのファイルが変わった（`fs:changed`。始めて 3 秒のうちは、始める前の書き込みとみなす。セッションのフォルダの外のファイルは、エディタで開いている間だけ知らせが届く（エディタの「ファイルごとの見張り」））ら、吹き出しに「Claude に示し直してもらう」を出し、押すと `restartRequestText` を送ります。
   - ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」のボタン（`WalkthroughIcon`）は、決まった頼み方の文（`App.tsx` の `WALKTHROUGH_REQUEST`）を送るだけ。
   - 「ここを聞く」: ウォークスルーの間だけ、`review/LineComments.tsx` に `onAsk` を渡します（エディタと差分の画面）。選択の下の content widget と右クリックのメニューから、行コメントと同じ下書きの欄（`ask`）を開き、送るとすぐ発言にします。
   - チャットのツールの行: 名前は「ウォークスルー · 始める」など（`src/shared/tool-label.ts`）、対象は `walkthroughTarget`（「税率の変更 · 7 ステップ」「src/tax.ts:12-20」）。押したときは `walkthrough/openWalkthrough.ts` で `App` に渡し、`start_walkthrough` は今の場所、`show_code` はその場所を開きます（`walkthroughOfTool`）。
@@ -1564,6 +1566,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - インラインのレビューコメントにはしません。差分の行にしか付けられず、「Files changed」のファイル順に並び替わるので、ウォークスルーの良さ（説明の順番・差分の外のコード）が消えるためです。
   - 本文: ステップの順に、見出し・パーマリンク（`<リポジトリ>/blob/<SHA>/<パス>#L1-L3`。前後を空行にして 1 行だけで置くと、GitHub がコードを埋め込む）・説明。リポジトリの URL は PR の URL から取ります。パスは、リポジトリのルートからセッションのフォルダまで（`repoPrefix`）を足したもの。質問と答え・寄り道は載せません。
   - 確かめること（下見と、投稿の直前の 2 回）: ブランチの開いている PR（`gh pr list`。`pullRequestsOf`）があること・手元の HEAD が PR の `headRefOid` と同じこと・ステップのファイルが HEAD のコミットにあり、変更が無いこと。パーマリンクが手元の HEAD を指すためです。アプリが代わりにプッシュや PR の作成はしません。
+    - セッションのフォルダの外のファイル（絶対パスのステップ）があれば、先にそれを理由にします（`outsideFiles`）。PR に無いファイルなので、「コミットに入っていない（コミットしてプッシュして）」と返すと、Claude や人が直しようのないことを頼まれるためです。
   - 投稿は `gh pr comment <番号> --body-file -`（本文は標準入力。`commentOnPullRequest`）。「Claude が書いた説明」の一言は既定で添えます（`finalCommentBody`）。GitHub のコメントの上限（65536 文字）を超える本文は断ります。
   - 載せたウォークスルーは `WalkthroughControl` が覚え（メモリの上だけ。ボタンと Claude のどちらで載せても同じ記録）、もう一度載せようとすると、下見で前のコメントを知らせます。Claude からは、断ってコメントの URL を返し、`repost: true` のときだけ載せ直します（人に頼まれたときだけ渡すよう、ツールの説明に書く）。
 - オン・オフ: メニューの「tanacode → Claude にウォークスルーさせる」（`settings.json` の `walkthroughControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。
@@ -1773,7 +1776,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `project-instructions.test.ts` / `instructions-hook-entry.test.ts` / `session-manager-parent-role.test.ts`: TANACODE.md と「親にする」（渡す文と囲み・探すフォルダ・会話ログに最後に渡したもの・フックの答え・入口・`SessionManager` の送り方）
   - `checklist-reminder.test.ts` / `checklist-hook.test.ts` / `checklist-mcp-entry.test.ts`: チェックリストを使い続けさせる hooks（どの時点で何を渡すか・ターンの終わりを止める条件・会話ログからのツールの数え方・アプリへの聞き方と Claude Code への返し方・中継の入り口）
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
-  - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所・PR への投稿と載せ直し・載せられない理由）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
+  - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外も示す・リンクを解いたパスを相対パスにする・寄り道・今の場所・PR への投稿と載せ直し・載せられない理由）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `stream-client.test.ts` / `stream-state.test.ts`: stream-json のやりとり（行の読み分け・知らない種類と形の違う行（未知のイベントとして知らせるものと、知らせないもの）・制御の要求と返事・時間切れ・答えを待つ要求と取り下げ・使わない要求への error・引き継ぎ・内部の要求）と、行から作る値（権限モードの名前・表記・進み具合・利用枠）
   - `chat-notices.test.ts` / `fixtures/claude-code-events/<バージョン>/`: チャットのお知らせ（Claude Code の警告と出さない `key`・モデルの切り替え・断られた応答の取り直しと取り消し・メモリ）。切り替えと取り直しの行は、本物の Claude Code をモックの API につないで録った控え（場面ごとのフォルダに、stream-json の行と、アプリが読まない大きな行を除いた会話ログ）
   - `pipe-backlog.test.ts`: パイプの claude の出力の行の控え（通し番号と送り直し・上限・種類ごとの最新・答えを待つ要求）
