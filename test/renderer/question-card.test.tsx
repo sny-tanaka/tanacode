@@ -240,6 +240,21 @@ describe('QuestionCard', () => {
       expect(shown()).toBe('横の図');
     });
 
+    it('「その他（自由に入力）」にマウスを乗せる・Tab で移ると、出ているプレビューを消す（プレビューの無い選択肢と同じ）', () => {
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      const other = screen.getByText('その他（自由に入力）').closest('button')!;
+      fireEvent.mouseEnter(option('横'));
+      expect(shown()).toBe('横の図');
+      fireEvent.mouseEnter(other);
+      expect(popup()).toBeNull();
+      // マウスはカードの上（「縦」）のまま、Tab で「その他」へ移る
+      fireEvent.mouseEnter(option('縦'));
+      expect(shown()).toBe('縦の図');
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      act(() => other.focus());
+      expect(popup()).toBeNull();
+    });
+
     // jsdom には大きさが無いので、カード（幅 400）と選択肢の枠を決める。ウインドウは 1024×768 なので、カードの右に場所がある
     const sized = () => {
       const tops: Record<string, number> = { 縦: 150, 横: 210, 無し: 270 };

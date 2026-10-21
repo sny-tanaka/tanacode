@@ -52,8 +52,8 @@ export function QuestionCard({ sessionId, question }: Props) {
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   // 選択肢のボタン（名前 → 要素）。右に出すポップアップを、プレビューを出す選択肢の高さにそろえる
   const optionButtons = useRef(new Map<string, HTMLButtonElement>());
-  // ポップアップの向きへ動かしている間に乗った選択肢と、止まったら切り替えるタイマー
-  const resting = useRef<{ label: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // ポップアップの向きへ動かしている間に乗った選択肢（null は「その他」）と、止まったら切り替えるタイマー
+  const resting = useRef<{ label: string | null; timer: ReturnType<typeof setTimeout> } | null>(null);
   // マウスがカード（とポップアップ）の上にあるか
   const hovering = useRef(false);
   // キーボード（Tab）でフォーカスした選択肢。マウスがカードから外れたら、そのプレビューに戻す
@@ -114,8 +114,9 @@ export function QuestionCard({ sessionId, question }: Props) {
   };
   // 選択肢にマウスが乗った・乗ったまま動いた。ふつうはすぐそのプレビューに切り替える。ポップアップの向きへ動かしている間は切り替えず、
   // 止まってから切り替える（ポップアップへ移る途中で、またいだ選択肢のプレビューに替わると、読みたいものに乗れない。
-  // 右に出したときも、高いポップアップの下のほうへ斜めに動かすと、下の選択肢をまたぐ）
-  const hoverOption = (label: string, x: number, y: number) => {
+  // 右に出したときも、高いポップアップの下のほうへ斜めに動かすと、下の選択肢をまたぐ）。
+  // label が null なら「その他」。プレビューの無い選択肢と同じく、出ているプレビューを消す
+  const hoverOption = (label: string | null, x: number, y: number) => {
     stopResting();
     if (label === previewed) return;
     if (!towardPopup(x, y)) return setPreviewed(label);
@@ -279,6 +280,16 @@ export function QuestionCard({ sessionId, question }: Props) {
                 onClick={() => {
                   setText(draft.other);
                   setEditing(true);
+                }}
+                // プレビューの無い選択肢と同じく、マウスを乗せたら（Tab で移ったら）、出ているプレビューを消す
+                onMouseEnter={(e) => hoverOption(null, e.clientX, e.clientY)}
+                onMouseMove={(e) => hoverOption(null, e.clientX, e.clientY)}
+                onMouseLeave={() => resting.current?.label === null && stopResting()}
+                onFocus={(e) => {
+                  if (!e.currentTarget.matches(':focus-visible')) return;
+                  focused.current = null;
+                  stopResting();
+                  setPreviewed(null);
                 }}
               >
                 {current.multiSelect && <span className={`menu-check${draft.other.trim() ? ' on' : ''}`}>{draft.other.trim() && <CheckIcon size={12} />}</span>}
