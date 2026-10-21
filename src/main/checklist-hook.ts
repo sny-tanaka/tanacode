@@ -21,7 +21,9 @@ import { callBridge } from './mcp-bridge';
 // チェックリストを直した直後でも「触れていない」と止めたり、ツールを使ったターンを止め損なったりする。そこで、
 // - 行の順番ではなく、親（parentUuid）をたどって数える（turnActivity）。最後の応答から、ターンのはじまりまで
 // - フックの入力の last_assistant_message（最後の応答の文）と同じ応答が書かれ、そこからターンのはじまりまで親がつながるのを待ってから数える（settledScan）
-// - 待ってもそろわなかったときは、そろわなかったことをアプリに伝え、アプリが自分の受けた呼び出しでも確かめる（ChecklistControl の reminder）
+// - 前のターンの最後の応答と同じ文でも、そのあとにターンが始まっていれば、そろったとしない（このターンの応答がまだ書かれていない）
+// - 待ってもそろわなかったときは、そろわなかったことをアプリに伝え、アプリが自分の受けたもの（チャットの stream-json の応答・
+//   チェックリストのツールの呼び出し）で確かめる（ChecklistControl の reminder）
 
 // 入口に付けると、中継（MCP サーバー）ではなくフックとして動く
 export const CHECKLIST_HOOK_ARG = '--hook';
@@ -151,7 +153,10 @@ export function turnActivity(transcript: string, last?: string, earlier: (uuid: 
     if (startsTurn(line)) break;
   }
   scan.since = (first?.timestamp && Date.parse(first.timestamp)) || null;
-  scan.settled = newest !== undefined && first !== undefined && (startsTurn(first) || (!!first.parentUuid && earlier(first.parentUuid)));
+  // たどったつながりの外に、それよりあとに始まったターンがあれば、たどったのは前のターンの同じ文の応答（このターンの応答がまだ書かれていない）
+  const after = first?.timestamp ?? '';
+  const later = !!after && lines.some((line) => !seen.has(line) && (line.timestamp ?? '') > after && startsTurn(line));
+  scan.settled = newest !== undefined && first !== undefined && !later && (startsTurn(first) || (!!first.parentUuid && earlier(first.parentUuid)));
   return scan;
 }
 
@@ -239,9 +244,10 @@ export async function runHook(stdin: string, socketPath: string, session: string
     if (input.stop_hook_active || !input.transcript_path) return '';
     const last = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim() ? input.last_assistant_message : undefined;
     const { turn, checklist, since, settled } = await settledScan(input.transcript_path, last, settleMs);
-    // 止めないと分かっているターンは、アプリに聞かない。そろわなかったときにツールが 1 つも見えないのは、まだ書かれていないだけかもしれないが、
-    // 使ったと言い切れないので止めない
-    if (checklist > 0 || turn === 0) return '';
+    // 止めないと分かっているターン（そろった会話ログで、チェックリストに触れた・ツールを使っていない）は、アプリに聞かない。
+    // そろわなかったときは、見えているのが前のターンのものかもしれないので、数えたものによらずアプリに聞く
+    // （アプリは、チャットなら stream-json で受けた応答から、このターンのツールを数えている。ChecklistControl の reminder）
+    if (settled && (checklist > 0 || turn === 0)) return '';
     args = { turn, checklist, since, settled };
   }
   const result = await callBridge(socketPath, { session, tool: checklistHookRequest(event), args }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);

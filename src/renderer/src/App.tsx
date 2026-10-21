@@ -407,9 +407,11 @@ export function App() {
   const walkthroughs = useWalkthroughs((sessionId: string, walk: Walkthrough, prev: Walkthrough | null) => {
     if (sessionId !== selectedIdRef.current) {
       walkedUnseen.current.add(sessionId);
-      return;
+      return 'unseen';
     }
-    if (!prev || prev.id !== walk.id || viewingWalkRef.current) showStepRef.current(shownStep(walk));
+    if (prev && prev.id === walk.id && !viewingWalkRef.current) return 'band';
+    showStepRef.current(shownStep(walk));
+    return 'moved';
   });
   const walksRef = useRef(walkthroughs);
   walksRef.current = walkthroughs;
@@ -864,6 +866,8 @@ export function App() {
     !!walkShown &&
     (walkInDiff ? diffView?.source === 'branch' && diffView.path === walkShown.path : !diffView && editor.activePath === walkShown.path);
   viewingWalkRef.current = viewingWalk;
+  // walkthrough_status で、人が別のセッション・別のファイルを見ていることを Claude に返せるよう、main に知らせる
+  useEffect(() => window.tanacode.walkthrough.viewing(selectedId, viewingWalk), [selectedId, viewingWalk]);
   const walkStale = !!walk && !walk.aside && staleWalkFiles.has(`${walk.id}:${walkShown!.path}`);
   // ステップへ移る（閉じていれば開く）。先にエディタで開き、main に知らせる（範囲までのスクロールは、main から届いた変更で吹き出しが行う）
   const goWalk = useCallback(

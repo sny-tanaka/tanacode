@@ -30,6 +30,11 @@ export type Walkthrough = {
 // main → 画面。walkthrough が null なら無くなった（セッションをアーカイブ・一覧から削除した など）
 export type SessionWalkthrough = { sessionId: string; walkthrough: Walkthrough | null };
 
+// Claude が示した場所（start_walkthrough・show_code）を、画面がどう扱ったか（画面 → main。Claude に返す結果に使う）。
+// moved: エディタをその場所へ動かした / band: 人が自分で別のファイルや画面を開いていたので動かさず、エディタの上の帯で知らせた /
+// unseen: 人が別のセッションを見ていたので動かさなかった（そのセッションに戻ったときに開く）
+export type WalkthroughShown = 'moved' | 'band' | 'unseen';
+
 // 上限（Claude が大きすぎる手順を渡さないように）
 export const MAX_STEPS = 40;
 export const MAX_TITLE_CHARS = 120;

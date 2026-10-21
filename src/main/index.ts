@@ -702,6 +702,8 @@ function registerIpc(): void {
   handle(IpcChannel.WalkthroughGet, (e) => P(e).walkthroughControl?.list() ?? []);
   handle(IpcChannel.WalkthroughGo, (e, id: string, index: unknown) => P(e).walkthroughControl?.go(String(id), Number(index)));
   handle(IpcChannel.WalkthroughClose, (e, id: string) => P(e).walkthroughControl?.close(String(id)));
+  listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) => P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown));
+  listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) => P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true));
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
   handle(IpcChannel.WalkthroughDraftComment, async (e, id: string) => {

@@ -627,6 +627,8 @@ export class DemoBackend {
         go: async () => {},
         close: async () => {},
         onChanged: () => () => {},
+        shown: () => {},
+        viewing: () => {},
         draftComment: () => ok({ ok: false as const, reason: 'デモでは GitHub に載せられません。' }),
         postComment: () => Promise.reject(new Error('デモでは GitHub に載せられません。')),
       },

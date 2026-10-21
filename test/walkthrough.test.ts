@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setLanguage } from '../src/shared/i18n';
 import { allowedToolIds } from '../src/shared/mcp-tools';
-import { rangeQuestionText, restartRequestText, stepQuestionText, type Walkthrough } from '../src/shared/walkthrough';
+import { rangeQuestionText, restartRequestText, stepQuestionText, type Walkthrough, type WalkthroughShown } from '../src/shared/walkthrough';
 import { finalCommentBody } from '../src/shared/walkthrough-comment';
 import { WALKTHROUGH_MCP, walkthroughOfTool, walkthroughTarget, walkthroughToolId } from '../src/shared/walkthrough-tools';
 import { AppSettings } from '../src/main/app-settings';
@@ -36,14 +36,20 @@ const ME = '11111111-0000-4000-8000-000000000001';
 // PR を探す・コメントを書く代わり（PR は無い）
 const noPullRequests: CommentDeps = { pullRequests: async () => [], comment: async () => '' };
 
-function setup(enabled = true, comment = noPullRequests) {
+// answer: Claude が示した場所を画面がどう扱ったか（画面からの返事）。null なら返事をしない（画面を作り直している間など）
+function setup(enabled = true, comment = noPullRequests, answer: () => WalkthroughShown | null = () => 'moved') {
   const changes: { sessionId: string; walkthrough: Walkthrough | null }[] = [];
-  const control = new WalkthroughControl({
+  const control: WalkthroughControl = new WalkthroughControl({
     cwdOf: (id) => (id === ME ? cwd : null),
     enabled: () => enabled,
-    onChange: (sessionId, walkthrough) => changes.push({ sessionId, walkthrough }),
+    onChange: (sessionId, walkthrough) => {
+      changes.push({ sessionId, walkthrough });
+      const shown = walkthrough?.movedBy === 'claude' ? answer() : null;
+      if (walkthrough && shown) control.shown(sessionId, walkthrough.id, walkthrough.seq, shown);
+    },
     comment,
     clock: () => 1000,
+    shownTimeoutMs: 20,
   });
   return { control, changes };
 }
@@ -144,6 +150,73 @@ describe('MCP のツール', () => {
     expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user has closed the walkthrough (last viewed 2/3; it can be reopened from the list in "ソース管理").');
     control.discard(ME);
     expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('There is no walkthrough');
+  });
+
+  it('show_code: 画面が動かさなかったときは、動かしたとは返さない（帯だけ・別のセッション・返事が無い）', async () => {
+    const band = await setup(true, noPullRequests, () => 'band').control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    expect(text(band)).toBe(
+      'Did not move the user\'s editor to src/tax.ts:7: the user has opened another file or view in this session. A band above the editor tells them that you are showing src/tax.ts:7, with "Claude が示している場所へ戻る" to open it. Mention the location in your reply so that the user can find it.',
+    );
+    const unseen = await setup(true, noPullRequests, () => 'unseen').control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    expect(text(unseen)).toBe(
+      "Did not move the user's editor: the user is viewing another session in tanacode. src/tax.ts:7 opens when the user comes back to this session. Mention the location in your reply so that the user can find it.",
+    );
+    const silent = await setup(true, noPullRequests, () => null).control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    expect(text(silent)).toBe(
+      "Sent src/tax.ts:7 to the user's editor as an aside, but the tanacode window did not confirm that it showed it. Mention the location in your reply so that the user can find it.",
+    );
+    // 画面が返事をしなくても、示した場所は残す（あとで帯や一覧から開ける）
+    expect(silent.isError).toBeUndefined();
+  });
+
+  it('show_code: 遅れて届いた前の返事・別のウォークスルーへの返事は使わない', async () => {
+    let control!: WalkthroughControl;
+    let last: Walkthrough | null = null;
+    control = new WalkthroughControl({
+      cwdOf: () => cwd,
+      enabled: () => true,
+      onChange: (_id, w) => {
+        last = w;
+      },
+      comment: noPullRequests,
+      shownTimeoutMs: 20,
+    });
+    const pending = control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    await new Promise((r) => setTimeout(r, 5));
+    const w = last as unknown as Walkthrough;
+    control.shown(ME, 'another-walkthrough', w.seq, 'moved');
+    control.shown(ME, w.id, w.seq - 1, 'moved');
+    control.shown(ME, w.id, w.seq, 'nonsense' as WalkthroughShown);
+    expect(text(await pending)).toContain('did not confirm');
+  });
+
+  it('start_walkthrough: 人が別のセッションを見ているときは、開いたとは返さない', async () => {
+    const r = await setup(true, noPullRequests, () => 'unseen').control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step()] });
+    expect(text(r)).toContain('Prepared 1/2 "税率を読む" (src/tax.ts:3-5). The user is viewing another session in tanacode, so it opens when the user comes back to this session.');
+    expect(text(r)).not.toContain('Opened');
+    const silent = await setup(true, noPullRequests, () => null).control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step()] });
+    expect(text(silent)).toContain('Sent 1/1 "税率を読む" (src/tax.ts:3-5) to the user\'s tanacode editor, but the tanacode window did not confirm that it opened it.');
+  });
+
+  it('walkthrough_status: 人が別のセッション・別のファイルを見ていれば、そう返す', async () => {
+    const { control } = setup();
+    await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' })] });
+    control.go(ME, 1);
+    control.viewing('another-session', false);
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing another session in tanacode now. The walkthrough is at 2/2 "切り捨て".');
+    control.viewing(ME, false);
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain(
+      'The user has opened another file or view in the editor instead (a band above the editor offers to go back). The walkthrough is at 2/2 "切り捨て".',
+    );
+    control.viewing(ME, true);
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing 2/2 "切り捨て".');
+    // 寄り道だけのときも
+    const alone = setup().control;
+    await alone.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    alone.viewing(null, false);
+    expect(text(await alone.handle(ME, 'walkthrough_status', {}))).toBe(
+      'No walkthrough has been started. Showing src/tax.ts:7 as an aside. The user is viewing another session in tanacode now.',
+    );
   });
 
   it('メニューでオフ・知らないセッション・知らないツールは断る', async () => {

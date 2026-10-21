@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Walkthrough } from '@shared/walkthrough';
+import type { Walkthrough, WalkthroughShown } from '@shared/walkthrough';
 
 // セッションごとの今のウォークスルー（main がメモリに持つ。画面を作り直したときは読み直す）。
-// onClaudeMove: Claude が示す場所を変えた（start_walkthrough・show_code）。prev: 変わる前のもの（追従するかを決めるのに使う）
-export function useWalkthroughs(onClaudeMove: (sessionId: string, walkthrough: Walkthrough, prev: Walkthrough | null) => void): Record<string, Walkthrough> {
+// onClaudeMove: Claude が示す場所を変えた（start_walkthrough・show_code）。prev: 変わる前のもの（追従するかを決めるのに使う）。
+// どう扱ったか（動かした・帯だけ・別のセッションを見ている）を返す。main に返し、Claude に返す結果に使う
+export function useWalkthroughs(onClaudeMove: (sessionId: string, walkthrough: Walkthrough, prev: Walkthrough | null) => WalkthroughShown): Record<string, Walkthrough> {
   const [walks, setWalks] = useState<Record<string, Walkthrough>>({});
   const walksRef = useRef(walks);
   walksRef.current = walks;
@@ -29,7 +30,9 @@ export function useWalkthroughs(onClaudeMove: (sessionId: string, walkthrough: W
       else delete next[sessionId];
       walksRef.current = next;
       setWalks(next);
-      if (walkthrough?.movedBy === 'claude' && walkthrough.seq !== prev?.seq) onMoveRef.current(sessionId, walkthrough, prev);
+      if (walkthrough?.movedBy === 'claude' && walkthrough.seq !== prev?.seq) {
+        window.tanacode.walkthrough.shown(sessionId, walkthrough.id, walkthrough.seq, onMoveRef.current(sessionId, walkthrough, prev));
+      }
     });
     return () => {
       alive = false;

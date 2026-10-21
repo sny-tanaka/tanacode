@@ -65,6 +65,8 @@ export type SessionsHost = {
   // 親セッションの ID（無ければ null）。状態の変化のたびに呼ぶので、一覧を作らずに引く
   parentOf(id: string): string | null;
   stateOf(id: string): SessionState | null;
+  // 引き継いだ claude の、前のアプリが（動かしたまま）終えたときの状態。一度だけ返す（無ければ null）
+  takeDetachedState?(id: string): SessionState | null;
   modeOf(id: string): PermissionMode | null;
   // 今のモデル（--model に渡せる値）とエフォート。分からなければ null
   currentModel(id: string): string | null;
@@ -987,7 +989,11 @@ export class SessionsControl {
   // 親が子に出した指示の作業だけ（人が子に直接出した指示の作業では、親を起こさない）。親の手が空いたら送るのは SessionNotices
   private stateChanged(id: string): void {
     const state = this.deps.host.stateOf(id);
-    const before = this.lastState.get(id);
+    // 引き継いだ子は、止まっている → 起動中 → 待機と変わるので、作業中から手が空いたように見えない。起動し終えたら、前のアプリが
+    // 終えたときに見ていた状態と比べる（作業中の子を残してアプリを終え、閉じている間に子が作業を終えていたら知らせる）。
+    // 引き継ぎの途中（claude をつなぐ前の「止まっている」・起動中）では使わない
+    const detached = state && state !== 'starting' && state !== 'exited' ? (this.deps.host.takeDetachedState?.(id) ?? null) : null;
+    const before = detached ?? this.lastState.get(id);
     this.lastState.set(id, state);
     const parentId = this.deps.host.parentOf(id);
     // 子がまた動き出したら、まだ送っていない知らせは取り下げる。最適化圧縮の流れ（仕上げ・再開のターン）で作業中に見えているだけなら、

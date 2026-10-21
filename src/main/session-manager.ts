@@ -23,6 +23,8 @@ import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
+import type { TurnActivity } from '@shared/checklist-reminder';
+import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
 import { modeWithin, parentMessageText, type SessionState } from '@shared/session-tools';
 import { INSTRUCTIONS_FILE, PARENT_INSTRUCTIONS_FILE, parentRoleText, parseParentRole } from '@shared/project-instructions';
 import type {
@@ -213,6 +215,9 @@ type Runtime = {
   // 圧縮の失敗の知らせ（ツールの呼び出しの ID・送った発言の uuid → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
+  // stream で受けた本体の応答の、今か直前のターンのツールの数（turn: ほかのツール / checklist: チェックリストのツール）。
+  // チェックリストのフックが、会話ログがそろわないときに使う（ChecklistControl の reminder）。このプロセスでまだターンを受けていなければ null
+  turnTools: TurnActivity | null;
   shownTools: Set<string>;
   // stream で見た本体の応答の行の uuid → 応答の ID（message.id。新しい MAX_STREAM_MESSAGES 個まで）。モデルが断って取り消された応答
   // （system/model_refusal_fallback の retracted_message_uuids）を、書いている途中の文から外すのに使う
@@ -293,6 +298,8 @@ type Runtime = {
   // 会話ログを読み終えたら使って捨てる（historySettled）
   detachedAt: number | null;
   outsideLimit: UsageLimitStop | null;
+  // 引き継いだ claude の、前のアプリが終えたときの状態（記録の detachedState）。SessionsControl が一度だけ受け取る（takeDetachedState）
+  detachedState: SessionState | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -2074,8 +2081,9 @@ export class SessionManager {
         const unsent = rt.process
           ? [...rt.unsent.values()].filter((prompt) => !prompt.carried).map((prompt) => ({ ...unsentPrompt(prompt), shown: prompt.shown }))
           : [];
-        // 動いている claude を残して終える時刻（次のアプリが、閉じている間に利用枠で止まったターンを見つけるため）
-        this.store.update(id, { unsent: unsent.length > 0 ? unsent : null, ...(rt.process ? { detachedAt: Date.now() } : {}) });
+        // 動いている claude を残して終える時刻（次のアプリが、閉じている間に利用枠で止まったターンを見つけるため）と、そのときの状態
+        // （次のアプリが、閉じている間に作業を終えた子を親に知らせるため）
+        this.store.update(id, { unsent: unsent.length > 0 ? unsent : null, ...(rt.process ? { detachedAt: Date.now(), detachedState: this.stateOf(id) } : {}) });
         rt.process?.detach();
       }
       rt.workflows.dispose();
@@ -2091,6 +2099,20 @@ export class SessionManager {
 
   isFocused(id: string): boolean {
     return this.focusedId === id;
+  }
+
+  // 引き継いだ claude の、前のアプリが終えたときの状態。一度だけ返す（引き継いでいない・もう返したなら null）
+  takeDetachedState(id: string): SessionState | null {
+    const rt = this.runtimes.get(id);
+    const state = rt?.detachedState ?? null;
+    if (rt) rt.detachedState = null;
+    return state;
+  }
+
+  // stream で受けた、今か直前のターンに本体が使ったツールの数（知らないセッション・ターンを受けていなければ null）
+  turnTools(id: string): TurnActivity | null {
+    const tools = this.runtimes.get(id)?.turnTools;
+    return tools ? { ...tools } : null;
   }
 
   // stream-json の送受信の控えのファイル（userData/stream-logs/<セッション ID>.log）
@@ -2178,6 +2200,7 @@ export class SessionManager {
         permissionAt: null,
         hookStarts: new Map(),
         streamTools: [],
+        turnTools: null,
         shownTools: new Set(),
         streamMessages: new Map(),
         heldHooks: new Map(),
@@ -2220,6 +2243,7 @@ export class SessionManager {
         lateTurnEnd: null,
         endedTurnLine: null,
         detachedAt: null,
+        detachedState: null,
         outsideLimit: null,
         turnStarter: 'other',
         starterSeen: false,
@@ -2311,6 +2335,8 @@ export class SessionManager {
     runtime.detachedAt = adopted && !tui ? (record.detachedAt ?? null) : null;
     runtime.outsideLimit = null;
     if (record.detachedAt) this.store.update(id, { detachedAt: null });
+    runtime.detachedState = adopted ? (record.detachedState ?? null) : null;
+    if (record.detachedState) this.store.update(id, { detachedState: null });
     runtime.turnOpen = false;
     runtime.lastTurnLine = null;
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
@@ -2320,6 +2346,7 @@ export class SessionManager {
     // 前の claude のツールの呼び出し・待たせていたフック・発言の鍵は持ち越さない（結果が来ないまま止まった呼び出しが、次の同じ名前の
     // 呼び出しのフックを決められなくし、待たせたフックが、関係のない発言のあとに出るため）
     runtime.streamTools = [];
+    runtime.turnTools = null;
     runtime.streamMessages.clear();
     runtime.heldHooks.clear();
     runtime.hookStarts.clear();
@@ -2980,6 +3007,14 @@ export class SessionManager {
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
     rt.lastTurnLine = message.uuid;
+    // このターンのツールを数える（ターンを開いてから。開く前に数えると、最初の応答のツールが前のターンに入る）
+    if (!past && rt.turnTools) {
+      for (const block of message.message.content ?? []) {
+        if (block.type !== 'tool_use' || typeof block.name !== 'string') continue;
+        if (block.name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`)) rt.turnTools.checklist++;
+        else rt.turnTools.turn++;
+      }
+    }
     // 合成の応答（利用枠で止まった・API エラーなど）は、モデルの応答に数えない
     if (!past && message.message.model !== '<synthetic>') rt.turnAnswered = true;
     if (!past && message.message.id) {
@@ -3047,6 +3082,7 @@ export class SessionManager {
     rt.limitResult = false;
     rt.rejectedLimit = null;
     rt.turnAnswered = false;
+    if (!past) rt.turnTools = { turn: 0, checklist: 0 };
     if (!past) this.startProgress(id, rt);
     this.emitSessions();
     this.changed(id);

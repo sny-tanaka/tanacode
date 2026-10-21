@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from
 import { dirname } from 'node:path';
 import type { UnsentPrompt } from '@shared/chat';
 import type { PermissionMode } from '@shared/screen';
+import type { SessionState } from '@shared/session-tools';
 import type { ClaudeProcess } from './leftover-claude';
 import type { SavedInit } from './stream/protocol';
 
@@ -72,6 +73,10 @@ export type SessionRecord = {
   // 最後のターンが利用枠で止まって終わったかを見て、再開の予約を入れる（前のアプリの頃の行なので、ターンの終わりでは知らせない）。
   // 引き継いだら消す（アプリが落ちて、終えた時刻を書けなかったときは、前に終えた時刻を使い回さない）
   detachedAt?: number | null;
+  // claude を動かしたままアプリを終えたときの、このセッションの状態（作業中・待機 など）。次のアプリが引き継いだら、閉じている間に
+  // 作業を終えた子を親に知らせるのに使う（引き継いだあとの状態は、止まっている → 起動中 → 待機と変わり、作業中から手が空いたように見えないため。
+  // SessionsControl の stateChanged）。引き継いだら消す
+  detachedState?: SessionState | null;
   createdAt: number;
   updatedAt: number;
 };
