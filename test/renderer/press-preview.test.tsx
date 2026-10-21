@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserAskChange } from '@shared/ipc';
 import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
+import { openInBrowser } from '../../src/renderer/src/preview/openInBrowser';
 import { BrowserHostsDialog } from '../../src/renderer/src/preview/BrowserHostsDialog';
 import { PreviewPane } from '../../src/renderer/src/preview/PreviewPane';
 import { CANCEL_PICKER_SCRIPT, describePicked, type PickedElement } from '../../src/renderer/src/preview/picker';
@@ -87,10 +88,22 @@ function Inbox({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-function Pane({ sessionId, visible = true, live = ['s1', 's2'], onClose = () => {} }: { sessionId: string | null; visible?: boolean; live?: string[]; onClose?: () => void }) {
+function Pane({
+  sessionId,
+  visible = true,
+  live = ['s1', 's2'],
+  onShow = () => {},
+  onClose = () => {},
+}: {
+  sessionId: string | null;
+  visible?: boolean;
+  live?: string[];
+  onShow?: () => void;
+  onClose?: () => void;
+}) {
   return (
     <>
-      <PreviewPane sessionId={sessionId} visible={visible} liveSessionIds={live} onClose={onClose} />
+      <PreviewPane sessionId={sessionId} visible={visible} liveSessionIds={live} onShow={onShow} onClose={onClose} />
       <Inbox sessionId="s1" />
       <Inbox sessionId="s2" />
     </>
@@ -365,6 +378,49 @@ describe('PreviewPane: タブ', () => {
     expect(activated().at(-1)).toEqual(['s1', null]);
     expect(tabs()).toEqual([]);
     expect(screen.getByText('上のアドレス欄に URL を入れて Enter で開きます')).toBeTruthy();
+  });
+});
+
+describe('PreviewPane: ターミナルのリンクから開く（openInBrowser）', () => {
+  it('見ているセッションのブラウザの新しいタブで開いて選び、ブラウザを出させる。ほかのセッション・http(s) でないものは開かない（呼び出し側がふだんのブラウザで開く）', async () => {
+    const shown: string[] = [];
+    render(<Pane sessionId="s1" onShow={() => shown.push('s1')} />);
+    await act(async () => {});
+    go('localhost:3000');
+    let handled = false;
+    act(() => {
+      handled = openInBrowser(null, 'http://127.0.0.1:5173/docs');
+    });
+    expect(handled).toBe(true);
+    expect(webviews.map((w) => w.src)).toEqual(['http://localhost:3000/', 'http://127.0.0.1:5173/docs']);
+    expect(tabs().map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+    expect(activated().at(-1)).toEqual(['s1', expect.stringMatching(/^tab-/)]);
+    expect(shown).toEqual(['s1']);
+    // 見ていないセッションのもの・開けない URL は開かない
+    expect(openInBrowser('s2', 'http://localhost:3000/')).toBe(false);
+    expect(openInBrowser('s1', 'ftp://example.test/')).toBe(false);
+    expect(webviews).toHaveLength(2);
+    expect(shown).toEqual(['s1']);
+  });
+
+  it('Claude がそのセッションのブラウザを操作している間は、タブを足すだけで選ばない（Claude の今のタブを替えない）', async () => {
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('localhost:3000');
+    act(() => api.emit('browser.onActivity', { sessionId: 's1', active: true, label: 'クリック', box: null }));
+    const before = activated().length;
+    act(() => void openInBrowser('s1', 'http://localhost:4000/'));
+    expect(webviews).toHaveLength(2);
+    expect(tabs().map((t) => t.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+    expect(activated()).toHaveLength(before);
+    // 終わったあとは、また選ぶ
+    act(() => api.emit('browser.onActivity', { sessionId: 's1', active: false, label: null, box: null }));
+    act(() => void openInBrowser('s1', 'http://localhost:5000/'));
+    expect(tabs().map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true']);
+  });
+
+  it('ブラウザが無い（受け手がいない）ときは false を返す', () => {
+    expect(openInBrowser(null, 'http://localhost:3000/')).toBe(false);
   });
 });
 

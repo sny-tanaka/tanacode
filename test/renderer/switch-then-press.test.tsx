@@ -361,14 +361,14 @@ describe('PreviewPane（セッションを切り替えた直後の「要素を�
     const picks = fakeWebviews();
     const api = mockApi({ 'browser.asks': () => Promise.resolve([]) });
     api.install();
-    const view = render(<PreviewPane sessionId="A" visible liveSessionIds={['A', 'B']} onClose={noop} />);
+    const view = render(<PreviewPane sessionId="A" visible liveSessionIds={['A', 'B']} onShow={noop} onClose={noop} />);
     act(() => {
       api.emit('browser.onOpen', { sessionId: 'A', url: 'http://localhost:3000/a' });
       api.emit('browser.onOpen', { sessionId: 'B', url: 'http://localhost:3000/b' });
     });
     fireEvent.click(button('要素を選ぶ'));
     expect(button('選ぶのをやめる').getAttribute('aria-pressed')).toBe('true');
-    view.rerender(<PreviewPane sessionId="B" visible liveSessionIds={['A', 'B']} onClose={noop} />);
+    view.rerender(<PreviewPane sessionId="B" visible liveSessionIds={['A', 'B']} onShow={noop} onClose={noop} />);
     expect(button('要素を選ぶ').disabled).toBe(false);
     fireEvent.click(button('要素を選ぶ'));
     expect(button('選ぶのをやめる').getAttribute('aria-pressed')).toBe('true');

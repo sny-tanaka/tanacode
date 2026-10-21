@@ -766,6 +766,8 @@ export function App() {
   const statusOf = useCallback((id: string) => statuses.get(id) ?? 'not-started', [statuses]);
   const openImport = useCallback(() => setImporting(true), []);
   const closeCenter = useCallback(() => setDiffView(null), []);
+  // 中央にアプリ内ブラウザを出す（ターミナルのリンクを ⌘ クリックしたとき）
+  const showPreview = useCallback(() => setDiffView({ source: 'preview' }), []);
   // 一覧から消したセッションを見ていたら、ほかのセッションに移る
   const nextAfterRemoval = (id: string) => sessionsRef.current?.find((s) => s.id !== id && !s.archived)?.id ?? null;
   const forgetSession = useCallback(
@@ -1269,6 +1271,7 @@ export function App() {
             sessionId={toolId}
             visible={diffView?.source === 'preview' && !!toolId}
             liveSessionIds={liveSessionIds}
+            onShow={showPreview}
             onClose={closeCenter}
           />
           <TerminalPanel
