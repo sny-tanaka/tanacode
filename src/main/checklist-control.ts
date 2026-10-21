@@ -20,7 +20,7 @@ import {
   type ChecklistOp,
   type ListKind,
 } from '@shared/checklist';
-import { checklistReminder, type ReminderEvent } from '@shared/checklist-reminder';
+import { checklistReminder, type ReminderEvent, type TurnActivity } from '@shared/checklist-reminder';
 import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
@@ -45,6 +45,8 @@ type Deps = {
   enabled: () => boolean;
   // 知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;
+  // チャット（stream-json）で受けた本体の応答から数えた、今か直前のターンのツール（ターミナルモード・まだ受けていなければ null）
+  turnTools?: (sessionId: string) => TurnActivity | null;
 };
 
 // 知らせの中身。ref: 開くカード
@@ -175,7 +177,14 @@ export class ChecklistControl {
     // 会話ログは遅れて書かれるので、フックが待っても、最後の応答までそろわないことがある（checklist-hook.ts の冒頭）。
     // そのときフックが数えたのは、読めた分だけ。アプリが自分で受けたもので補う（会話ログがそろったときは、会話ログだけで決める。
     // アプリは、本体の呼び出しとサブエージェントの呼び出しを見分けられないため）
-    if (event === 'stop' && counts.settled !== true && typeof counts.since === 'number') {
+    let turn = count(counts.turn);
+    // チャット（stream-json）なら、アプリは本体の応答を会話ログより先に受けていて、このターンのツールを数えてある（SessionManager の turnTools）。
+    // 会話ログがそろわなかったときは、それで決める（フックが見たものは、前のターンのものかもしれない）
+    const streamed = event === 'stop' && counts.settled !== true ? (this.deps.turnTools?.(caller.id) ?? null) : null;
+    if (streamed) {
+      turn = streamed.turn;
+      checklist = streamed.checklist;
+    } else if (event === 'stop' && counts.settled !== true && typeof counts.since === 'number') {
       // このターンの行がまだ 1 つも書かれていなければ、数えたのは前のターン。人の発言のフックを受けた時刻より、
       // はじまりがずっと前なら、止めない（発言の行の時刻と、フックがアプリに届く時刻は、少しずれる）
       const prompted = this.promptedAt.get(caller.id);
@@ -184,7 +193,7 @@ export class ChecklistControl {
       const used = this.usedAt.get(caller.id);
       if (used !== undefined && used >= counts.since) checklist++;
     }
-    const activity = { turn: count(counts.turn), checklist };
+    const activity = { turn, checklist };
     return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
   }
 

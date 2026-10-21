@@ -546,6 +546,60 @@ describe('アプリを閉じている間に利用枠で止まったターン', (
   });
 });
 
+describe('閉じる前に見ていた状態', () => {
+  it('claude を動かしたままアプリを終えるときは、そのときの状態を記録に残す（止めて終えるときは残さない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 作業中（ターンが開いている）
+    pipe.emit(stream.assistant(line.text('作業しています')));
+    expect(app.manager.stateOf(id)).toBe('working');
+    app.manager.closeAll(false);
+    expect(new SessionStore(join(app.userData, 'sessions.json')).get(id)?.detachedState).toBe('working');
+    const other = new ScriptedApp();
+    const stopped = other.create();
+    await other.ready(stopped.id);
+    other.pipe(stopped.id).emit(stream.assistant(line.text('作業しています')));
+    other.manager.closeAll(true);
+    expect(new SessionStore(join(other.userData, 'sessions.json')).get(stopped.id)?.detachedState ?? null).toBeNull();
+    other.dispose();
+  });
+
+  it('引き継いだら、前のアプリが見ていた状態を一度だけ返し、記録から消す。引き継いでいないセッションは null', async () => {
+    const id = await previous(line.user('はじめ'), line.text('はい'));
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    store.update(id, { detachedState: 'working' });
+    // 引き継ぐ前（止まっている間）は返さない
+    expect(app.manager.takeDetachedState(id)).toBeNull();
+    app.host.hosted = [hosted(id)];
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
+    expect(app.manager.takeDetachedState(id)).toBe('working');
+    expect(app.manager.takeDetachedState(id)).toBeNull();
+    expect(new SessionStore(join(app.userData, 'sessions.json')).get(id)?.detachedState ?? null).toBeNull();
+    expect(app.manager.takeDetachedState('いないセッション')).toBeNull();
+  });
+
+  it('引き継いだ claude がまだ作業中なら、起動中から待機を挟まずに作業中になる（閉じる前の状態と比べて、作業を終えたと取り違えない）', async () => {
+    const id = await previous(line.user('はじめ'));
+    const states: (string | null)[] = [];
+    const off = app.manager.watchState((changed) => {
+      if (changed === id && states.at(-1) !== app.manager.stateOf(id)) states.push(app.manager.stateOf(id));
+    });
+    app.host.hosted = [hosted(id, { lastSeq: 2, firstSeq: 1 })];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.emit(stream.lifecycle('u1', 'started'), 1);
+    pipe.emit(stream.blockStart('thinking'), 2);
+    pipe.replayed();
+    await app.waitFor('起動済み', () => app.manager.snapshot(id).events.some((e) => e.type === 'ready'));
+    await sleep(200);
+    off();
+    expect(app.manager.stateOf(id)).toBe('working');
+    expect(states).not.toContain('idle');
+  });
+});
+
 describe('closeAll', () => {
   it('アプリの終了では claude を止めずに見るのをやめる（次のアプリが引き継ぐ）。2 回目は何もしない', async () => {
     const { id, pipe } = app.create();

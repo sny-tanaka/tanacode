@@ -100,6 +100,25 @@ describe('会話ログからツールを数える', () => {
     expect(turnActivity(text(long.slice(3)), '終わりました', () => false)).toMatchObject({ turn: 1, since: null, settled: false });
     expect(turnActivity(text(long.slice(3)), '終わりました')).toMatchObject({ turn: 1, since: null, settled: false });
   });
+
+  it('前のターンの最後の応答と同じ文でも、そのあとにターンが始まっていれば、そろっていない（このターンの応答がまだ書かれていない）', () => {
+    // 前のターンはチェックリストに触れて「はい」で終えた。このターンの発言は書かれたが、そのあとのツールと「はい」はまだ書かれていない
+    const lines = link(
+      prompt('前の依頼', { timestamp: '2026-10-12T01:00:00.000Z' }),
+      use('Edit', CARD_CHECK),
+      result(),
+      say('はい', { timestamp: '2026-10-12T01:01:00.000Z' }),
+      prompt('次の依頼', { timestamp: '2026-10-12T01:05:00.000Z' }),
+      use('Read'),
+      result(),
+      say('はい', { timestamp: '2026-10-12T01:06:00.000Z' }),
+    );
+    expect(turnActivity(text(lines.slice(0, 5)), 'はい')).toMatchObject({ settled: false });
+    expect(turnActivity(text(lines), 'はい')).toMatchObject({ turn: 1, checklist: 0, settled: true });
+    // 書き直した（巻き戻した）枝の古い発言は、あとから始まったターンではない
+    const rewound = [...lines.slice(0, 4), { ...lines[4], parentUuid: 'u1' }];
+    expect(turnActivity(text([...rewound, { ...lines[5], parentUuid: 'u5' }, lines[6], lines[7]]), 'はい')).toMatchObject({ turn: 1, settled: true });
+  });
 });
 
 describe('会話ログが最後の応答まで書かれるのを待つ', () => {
@@ -269,13 +288,26 @@ describe('フックの本体', () => {
     ]);
   });
 
-  it('止めたあとの続き・チェックリストに触れたターン・ツールを使っていないターンは、アプリに聞かずに通す', async () => {
+  it('止めたあとの続き・チェックリストに触れたターン・ツールを使っていないターンは、会話ログがそろっていれば、アプリに聞かずに通す', async () => {
     const worked = transcript(prompt('依頼'), use('Edit'));
     expect(await run({ hook_event_name: 'Stop', transcript_path: worked, stop_hook_active: true })).toBe('');
-    expect(await run({ hook_event_name: 'Stop', transcript_path: transcript(prompt('依頼'), use('Edit', CARD_CHECK)) })).toBe('');
-    expect(await run({ hook_event_name: 'Stop', transcript_path: transcript(prompt('質問')) })).toBe('');
+    const touched = transcript(prompt('依頼'), use('Edit', CARD_CHECK), result(), say('直しました'));
+    expect(await run({ hook_event_name: 'Stop', transcript_path: touched, last_assistant_message: '直しました' })).toBe('');
+    expect(await run({ hook_event_name: 'Stop', transcript_path: transcript(prompt('質問'), say('答えです')), last_assistant_message: '答えです' })).toBe('');
     expect(await run({ hook_event_name: 'Stop' })).toBe('');
     expect(calls).toEqual([]);
+  });
+
+  it('会話ログがそろわなければ、ツールが見えなくても・チェックリストに触れたように見えても、アプリに聞く（アプリが、自分が受けた応答で確かめる）', async () => {
+    // このターンの行がまだ 1 つも書かれていない。見えているのは前のターン（質問に答えただけ・チェックリストに触れた）
+    const quiet = transcript(prompt('質問'), say('答えです'));
+    await runHook(JSON.stringify({ hook_event_name: 'Stop', transcript_path: quiet, last_assistant_message: '終わりました' }), socket, 'S1', 2000, 50);
+    const touched = transcript(prompt('依頼'), use('Edit', CARD_CHECK), result(), say('直しました'));
+    await runHook(JSON.stringify({ hook_event_name: 'Stop', transcript_path: touched, last_assistant_message: '終わりました' }), socket, 'S1', 2000, 50);
+    expect(calls.map((c) => c.args)).toEqual([
+      { turn: 0, checklist: 0, since: null, settled: false },
+      { turn: 1, checklist: 1, since: null, settled: false },
+    ]);
   });
 
   it('アプリが何も返さない・エラーを返す・文でないものを返す・つながらないときは、何も出さない', async () => {

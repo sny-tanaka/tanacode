@@ -46,6 +46,24 @@ describe('二重にしない', () => {
   });
 });
 
+describe('ターンに使ったツール（チェックリストのフックが、会話ログがそろわないときに使う）', () => {
+  it('stream-json で受けた本体の応答から、このターンのツールと、そのうちチェックリストのツールを数える。サブエージェントの中のものと前のターンは数えない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // まだターンを受けていない
+    expect(app.manager.turnTools(id)).toBeNull();
+    app.say(id, line.user('前の依頼'), line.toolUse('toolu_1', 'Edit', {}), line.toolResult('toolu_1', 'ok'), line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(app.manager.turnTools(id)).toEqual({ turn: 1, checklist: 0 });
+    pipe.emit(stream.assistant(line.toolUse('toolu_2', 'Read', {})));
+    pipe.emit({ ...stream.assistant(line.toolUse('toolu_3', 'Grep', {})), parent_tool_use_id: 'toolu_2' });
+    pipe.emit(stream.assistant(line.toolUse('toolu_4', 'mcp__tanacode-checklist__card_check', {})));
+    expect(app.manager.turnTools(id)).toEqual({ turn: 1, checklist: 1 });
+    expect(app.manager.turnTools('いないセッション')).toBeNull();
+  });
+});
+
 describe('ターンの終わりの順番', () => {
   it('result は会話ログより先に届く。チャットのターンの終わりは、最後の応答が会話ログに出てから出す（実行中のツールを、いったんエラーにしない）', async () => {
     // 会話ログを読むのが遅くても、時間切れのターンの終わりが先に出ないよう、待つ時間を長くする
