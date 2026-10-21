@@ -14,13 +14,46 @@ export class GitError extends Error {}
 // 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardOf）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
 // プル・ブランチの切り替えなど）と、worktree の作り直し・消す前の控えの書き込みは userGit で、ターミナルで git を打ったときと同じに動かす
 // （フック・資格情報・フィルターを使う）
+// 読むだけの git の status は、インデックスを書き直さない（GIT_OPTIONAL_LOCKS=0）。書き直すときは index.lock を取るので、同じときに
+// ターミナルや Claude が動かした git（add・commit など）が「index.lock': File exists」で失敗する
 export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
-  return guardOf(cwd).then((guard) => runGit(cwd, [...guard.args, ...args], input, { ...env, ...guard.env }));
+  return inLane(cwd, false, () =>
+    guardOf(cwd).then((guard) => runGit(cwd, [...guard.args, ...args], input, { GIT_OPTIONAL_LOCKS: '0', ...env, ...guard.env })),
+  );
 }
 
 // 人が頼んだ操作。設定はそのまま使う
 export function userGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
-  return runGit(cwd, args, input, env);
+  return inLane(cwd, true, () => runGit(cwd, args, input, env));
+}
+
+// 同じフォルダの、tanacode が自分で動かす git と人の操作を重ねない。作業ツリーと比べる diff は GIT_OPTIONAL_LOCKS=0 でもインデックスを
+// 書き直す（index.lock を取る。git 2.39 で確かめた）ので、パネルが状態を読み直している間に人がステージ・コミットを押すと失敗していた。
+// 読む git どうしは並べて動かし、人の操作は、それより前に頼まれた git が終わってから動かす（あとから頼まれた読む git は、その操作が
+// 終わるまで待つ）
+// reads: 終わっていない読む git（待っているものも）。op: いちばんあとに頼まれた人の操作。left: 終わっていないものの数
+type Lane = { reads: Set<Promise<void>>; op: Promise<void>; left: number };
+const lanes = new Map<string, Lane>();
+
+function inLane<T>(cwd: string, exclusive: boolean, run: () => Promise<T>): Promise<T> {
+  let lane = lanes.get(cwd);
+  if (!lane) lanes.set(cwd, (lane = { reads: new Set(), op: Promise.resolve(), left: 0 }));
+  const task = (exclusive ? Promise.all([lane.op, ...lane.reads]) : lane.op).then(run);
+  // 待つ側には、失敗も「終わった」として渡す
+  const done = task.then(
+    () => {},
+    () => {},
+  );
+  lane.left++;
+  if (exclusive) lane.op = done;
+  else lane.reads.add(done);
+  const own = lane;
+  void done.then(() => {
+    own.reads.delete(done);
+    // 何も残っていなければ、フォルダの控えを片付ける
+    if (--own.left === 0 && lanes.get(cwd) === own) lanes.delete(cwd);
+  });
+  return task;
 }
 
 // cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）

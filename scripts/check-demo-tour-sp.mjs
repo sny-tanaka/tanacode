@@ -9,13 +9,13 @@
 //
 // 例: VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build && npm run demo:check:sp
 //     npm run demo:check:sp -- --dir demo-check --chapter review --max-memory 1500
-//     npm run demo:check:sp -- --evidence tour-evidence/sp（止まったら、そのときの画面の様子を書き出す。demo-tour-evidence.mjs）
+//     npm run demo:check:sp -- --evidence tour-evidence/sp（止まったら、そのときの画面の様子と WebKit の出力を書き出す。demo-tour-evidence.mjs）
 // WebKit が入っていなければ、先に npx playwright install --with-deps webkit で入れる（Linux だけで動く。メモリを /proc から読むため）
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import { extname, join, normalize, resolve } from 'node:path';
-import { devices, webkit } from 'playwright';
-import { EVIDENCE_TIMEOUT_MS, snapshot, TRACE_QUERY, TRACE_SHOWN, traceLog, within } from './demo-tour-evidence.mjs';
+import { browserLogTail, EVIDENCE_TIMEOUT_MS, keepBrowserLog, snapshot, TRACE_QUERY, TRACE_SHOWN, traceLog, within } from './demo-tour-evidence.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -34,6 +34,13 @@ const UNRESPONSIVE_MS = 3000;
 const MAX_MEMORY_MB = Number(option('max-memory', 2048));
 // 止まったときの証拠を書き出すフォルダ（無ければ書き出さない）
 const evidenceDir = option('evidence', '');
+// WebKit の出力を書かせるファイル。止まったときだけ、証拠のフォルダに写して、最後の行を出す
+const browserLog = join(tmpdir(), `tanacode-demo-webkit-${process.pid}.log`);
+// 止まったときに出す WebKit の出力の行の数
+const BROWSER_LOG_SHOWN = 20;
+if (evidenceDir) keepBrowserLog(browserLog);
+// WebKit の出力を書かせる設定は、playwright を読み込む前に済ませる
+const { devices, webkit } = await import('playwright');
 // 見立てる端末。iPhone 13（390×664・倍率 3）
 const DEVICE = 'iPhone 13';
 
@@ -207,6 +214,10 @@ const hungSeconds = unresponsive ? ((Date.now() - unresponsive.since) / 1000).to
 if (evidenceDir && result !== 'done') await saveEvidence();
 await Promise.race([browser.close().catch(() => {}), sleep(15_000)]);
 server.close();
+// WebKit の出力は、閉じたあとに読む（落ちたときの最後の行まで書き終えている）
+const browserTail = evidenceDir && result !== 'done' ? browserLogTail(browserLog, BROWSER_LOG_SHOWN) : [];
+if (browserTail.length > 0) copyFileSync(browserLog, join(evidenceDir, 'webkit.log'));
+rmSync(browserLog, { force: true });
 
 // 止まったときの画面の写し（ページ全体と、差分の画面）・アプリの画面の HTML・画面の様子。ページの処理が落ちたときは、止まり方とエラーだけ
 async function saveEvidence() {
@@ -220,7 +231,7 @@ async function saveEvidence() {
     if (html) writeFileSync(join(evidenceDir, 'app.html'), html);
     state = await within(app.evaluate(snapshot).catch((e) => ({ error: String(e) })), { error: '応答しませんでした' });
   }
-  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], trace: trace.lines(), state }, null, 2));
+  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], trace: trace.lines(), frames: trace.frames(), state }, null, 2));
   console.log(`止まったときの様子を ${evidenceDir} に書き出しました`);
 }
 
@@ -244,6 +255,12 @@ else {
 if (result !== 'done') {
   console.error('直前の台本の操作（古い順。足あとが「済み」で終わっていなければ、その操作の途中）:');
   for (const line of trace.lines().slice(-TRACE_SHOWN)) console.error(`  ${line}`);
+  console.error('直前の描き直し（古い順。最後が「前」なら描き直しの途中、「後」なら描き直しの間のタスクで固まった）:');
+  for (const line of trace.frames()) console.error(`  ${line}`);
+  if (browserTail.length > 0) {
+    console.error(`WebKit の出力の最後の ${browserTail.length} 行（全部は証拠のフォルダの webkit.log）:`);
+    for (const line of browserTail) console.error(`  ${line}`);
+  }
 }
 // 同じエラーは、まとめて 1 行にする（WebKit では、作り物の環境で許されない操作のエラーが何十回も出るため）
 const counts = new Map();

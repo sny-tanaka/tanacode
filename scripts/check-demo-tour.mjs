@@ -111,7 +111,7 @@ app.whenReady().then(async () => {
   }
   trace.freeze();
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  if (evidenceDir && result !== 'done') await saveEvidence(win, { result, seconds: Number(seconds), step, last, errors, trace: trace.lines() });
+  if (evidenceDir && result !== 'done') await saveEvidence(win, { result, seconds: Number(seconds), step, last, errors, trace: trace.lines(), frames: trace.frames() });
   server.close();
   const ok = result === 'done' && errors.length === 0;
   if (ok) console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
@@ -122,6 +122,8 @@ app.whenReady().then(async () => {
   if (result !== 'done') {
     console.error('直前の台本の操作（古い順。足あとが「済み」で終わっていなければ、その操作の途中）:');
     for (const line of trace.lines().slice(-TRACE_SHOWN)) console.error(`  ${line}`);
+    console.error('直前の描き直し（古い順。最後が「前」なら描き直しの途中、「後」なら描き直しの間のタスクで固まった）:');
+    for (const line of trace.frames()) console.error(`  ${line}`);
   }
   app.exit(ok ? 0 : 1);
 });
