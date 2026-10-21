@@ -109,6 +109,13 @@ jobs:
           echo "::group::スマホのツアー"; cat "$RUNNER_TEMP/tour-sp.log"; echo "::endgroup::"
           [ "$sp_status" -eq 0 ] || echo "::error::スマホのツアーが最後まで流れませんでした（メモリの上限を超えたときも）"
           [ "$status" -eq 0 ] && [ "$sp_status" -eq 0 ]
+      # ページの処理のプロセスが落ちたときに、OS が落とした理由（メモリが足りずに落とした・不正な番地や命令で落ちた など）を残す。
+      # WebKit の出力（webkit.log）には、落ちた理由が出ないことがあるため
+      - name: OS の記録を残す
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/tour-evidence"
+          sudo dmesg -T 2>/dev/null | tail -n 200 > "$RUNNER_TEMP/tour-evidence/dmesg.txt" || true
       # ツアーがときどき止まるときは、手元で再現しにくい。止まったときの画面の写し・アプリの画面の HTML・画面の様子を残して、原因を見分けられるようにする
       - name: ツアーが止まったときの様子を残す
         if: failure()
