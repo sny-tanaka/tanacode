@@ -47,7 +47,7 @@ describe('QuestionCard', () => {
   it('入力欄に書いてから選択肢を押すと、選択肢と、書いた文を補足（annotations の notes）として一緒に送る', async () => {
     render(<QuestionCard sessionId="s1" question={pending(style)} />);
     expect(screen.getByLabelText('補足（選択肢を押すと一緒に送ります）')).toBe(field());
-    expect(field().placeholder).toBe('選択肢に無い答えは、書いて『入力だけで答える』');
+    expect(field().placeholder).toBe('選択肢に無い答えは、書いて「入力だけで答える」');
     write('  語尾は\nやわらかく  ');
     fireEvent.click(screen.getByText('だ・である'));
     await sent();

@@ -2093,7 +2093,7 @@
       "reviewAnswers": "回答の確認へ →",
       "notesLabel": "補足（選択肢を押すと一緒に送ります）",
       "notesLabelMulti": "補足（チェックと一緒に送ります）",
-      "textPlaceholder": "選択肢に無い答えは、書いて『入力だけで答える』",
+      "textPlaceholder": "選択肢に無い答えは、書いて「入力だけで答える」",
       "answerWithText": "入力だけで答える",
       "reviewNotes": "補足: {text}",
       "send": "送信",

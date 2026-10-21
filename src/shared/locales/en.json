@@ -2163,7 +2163,7 @@
       "reviewAnswers": "Review Answers →",
       "notesLabel": "Note (sent with the option you click)",
       "notesLabelMulti": "Note (sent with the options you check)",
-      "textPlaceholder": "For an answer not in the options, write it and click “Answer with Text Only”",
+      "textPlaceholder": "For an answer that isn't listed, write it and click “Answer with Text Only”",
       "answerWithText": "Answer with Text Only",
       "reviewNotes": "Note: {text}",
       "send": "Send",
