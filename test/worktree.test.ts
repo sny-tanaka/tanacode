@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { availableParallelism, loadavg, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeArgs } from '../src/main/claude-session';
 import { type PullRequest, pullRequestsOf } from '../src/main/github';
 import {
@@ -17,6 +17,7 @@ import {
   worktreeLeftovers,
   type WorktreePlan,
 } from '../src/main/worktree';
+import { stages } from './helpers/stages';
 
 // worktree のセッション（claude --worktree）の、アプリが受け持つところ。本物の git で確かめる。
 // Claude Code が worktree を作るところは、Claude Code と同じ形（.claude/worktrees/<名前>・ブランチ worktree-<名前>・
@@ -444,19 +445,6 @@ const withOrigin = () => {
   git(join(root, 'origin.git'), 'config', 'gc.auto', '0');
   git(repo, 'remote', 'add', 'origin', join(root, 'origin.git'));
   git(repo, 'fetch', '-q', 'origin');
-};
-
-// テストの段ごとの経過時間を覚え、落ちたとき（時間切れも）に、段ごとの経過と、そのときの Mac（CI の台）の負荷を出す。
-// git を 70 回ほど動かすテストが、単体テストの全体を並べて流したときに 5 秒の時間切れで落ちたことがあり（手元では再現しなかった）、
-// どの段で遅れたか（1 つの段だけか、どの段も遅いか）と、CPU の取り合いがあったかを、次に落ちたときに読めるようにする
-const stages = (): ((name: string) => void) => {
-  const start = performance.now();
-  const marks: string[] = [];
-  onTestFailed(() => {
-    const load = loadavg().map((n) => n.toFixed(1)).join(' / ');
-    console.log(`段ごとの経過: ${marks.join(' → ') || '（最初の段の途中）'}。負荷（1・5・15 分の平均）: ${load}。CPU: ${availableParallelism()} 個`);
-  });
-  return (name) => marks.push(`${name} ${Math.round(performance.now() - start)}ms`);
 };
 
 // gh pr list の 1 件
