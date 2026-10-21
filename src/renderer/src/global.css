@@ -3965,19 +3965,39 @@ details[open] > summary > .disclosure {
 .menu-option.previewed {
   border-color: var(--border-focus);
 }
-/* 選択肢のプレビュー（Claude が比べるために付けた図や文章）。等幅で、空白や改行をそのまま出す */
+/* 選択肢のプレビューのポップアップ（QuestionCard の PreviewPopup）。カードの上（入りきらなければ下）に、画面に重ねて出す。
+   位置・最小の幅（カードの幅）・高さの上限は、画面の部品が決める。カードの側の透明な余白で、カードとすき間なくつなぐ
+   （マウスをカードからポップアップへ移す間に、両方から外れたことにしない） */
+.menu-preview-popup {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+}
+.menu-preview-popup.top {
+  padding-bottom: 6px;
+}
+.menu-preview-popup.bottom {
+  padding-top: 6px;
+}
+/* 選択肢のプレビュー（Claude が比べるために付けた図や文章）。等幅で、空白や改行をそのまま出す。入りきらない分は中でスクロールする */
 .menu-preview {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 .menu-preview-label {
   font-size: 11px;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 .menu-preview-body {
   margin: 0;
@@ -3988,10 +4008,6 @@ details[open] > summary > .disclosure {
   line-height: 1.5;
   color: var(--text-primary);
   white-space: pre;
-}
-.menu-preview-none {
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 .menu-option.submit {
   justify-content: center;
