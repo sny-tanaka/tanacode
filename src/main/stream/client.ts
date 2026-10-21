@@ -144,6 +144,11 @@ export class StreamClient {
     this.log?.close();
   }
 
+  // 控えに覚え書きを書く（送受信の行ではない。あとで不具合を調べるときの手がかり）
+  note(text: string): void {
+    this.log?.write('!', text);
+  }
+
   private write(line: string): void {
     this.log?.write('>', line);
     this.pipe.send(line);

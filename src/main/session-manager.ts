@@ -2609,6 +2609,14 @@ export class SessionManager {
     }
     if (rt.process !== process) return;
     rt.init = init;
+    // 起動に時間がかかったときは、かかった時間と標準エラーの末尾を控えに残す（画面の知らせは、起動を終えると消える。
+    // 会話ログを書かないまま 45 秒ほど止まった起動の原因が、TUI のころに分からなかったため）
+    const watch = rt.startWatch;
+    if (watch && Date.now() - watch.since >= watch.after) {
+      // 控えは 1 行ずつなので、標準エラーの改行は JSON の文字列にして書く
+      const stderr = watch.stderr.trim().split('\n').slice(-8).join('\n');
+      client.note(`initialize の返事まで ${Math.round((Date.now() - watch.since) / 1000)} 秒かかりました。標準エラーの末尾: ${JSON.stringify(stderr)}`);
+    }
     this.stopStartWatch(id, rt);
     if (typeof init.pid === 'number') this.store.update(id, { claudeProcess: { pid: init.pid, conversation } });
     this.store.update(id, { claudeInit: { commands: init.commands, models: init.models, remote_control_available: init.remote_control_available } });

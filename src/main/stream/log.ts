@@ -18,8 +18,8 @@ export class LineLog {
     private readonly maxBytes = 4 * 1024 * 1024,
   ) {}
 
-  // dir: '<' は Claude Code から、'>' はアプリから
-  write(dir: '<' | '>', line: string): void {
+  // dir: '<' は Claude Code から、'>' はアプリから、'!' はアプリの覚え書き（起動に時間がかかったことなど。行ではない）
+  write(dir: '<' | '>' | '!', line: string): void {
     if (this.closed) return;
     try {
       this.open();
