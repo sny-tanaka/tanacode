@@ -577,6 +577,30 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: false }, PEER))).toContain('checklists not touched');
   });
 
+  it('会話ログがそろわなかったとき、チャット（stream-json）で受けた応答から数えたものがあれば、それで決める', async () => {
+    let streamed: { turn: number; checklist: number } | null = { turn: 3, checklist: 0 };
+    const c = new ChecklistControl({ store, host, enabled: () => true, notifyDelayMs: 10, turnTools: (id) => (id === ME ? streamed : null) });
+    const stop = async (args: Record<string, unknown>) => first(await c.handle(ME, 'hook:stop', args));
+    try {
+      await c.handle(ME, 'hook:prompt', {});
+      // 会話ログには、このターンのツールがまだ 1 つも見えない（フックは 0 と数えた）。前のターンのものしか見えない
+      expect(await stop({ turn: 0, checklist: 0, since: null, settled: false })).toContain('Before you end this turn (3 tool calls, checklists not touched');
+      expect(await stop({ turn: 2, checklist: 1, since: Date.now() - 60_000, settled: false })).toContain('Before you end this turn (3 tool calls,');
+      // チャットで受けた応答では、チェックリストに触れた・ツールを使っていない
+      streamed = { turn: 3, checklist: 1 };
+      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBe('');
+      streamed = { turn: 0, checklist: 0 };
+      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBe('');
+      // 会話ログがそろったときは、会話ログで決める
+      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: true })).toContain('Before you end this turn (4 tool calls,');
+      // チャットで受けていない（ターミナルモード）なら、これまでどおり。ツールが見えなければ止めない
+      streamed = null;
+      expect(await stop({ turn: 0, checklist: 0, since: null, settled: false })).toBe('');
+    } finally {
+      c.dispose();
+    }
+  });
+
   it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
     host.add(CHILD, { parentId: ME });
     expect(first(await call('hook:stop', { turn: 9, checklist: 0 }, CHILD))).toBe('');

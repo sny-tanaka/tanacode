@@ -222,9 +222,11 @@ export class E2EApp {
     }, this.work);
   }
 
-  // アプリを終えて、起動し直す。終了の確認では「動かしたまま終了」を選ぶので、Claude Code は動き続け、次のアプリが引き継ぐ
-  async restart(): Promise<void> {
+  // アプリを終えて、起動し直す。終了の確認では「動かしたまま終了」を選ぶので、Claude Code は動き続け、次のアプリが引き継ぐ。
+  // whileClosed: アプリを閉じている間に待つこと（閉じている間に Claude Code が作業を終えるのを待つなど）
+  async restart(whileClosed?: () => Promise<void>): Promise<void> {
     await this.quit(0);
+    await whileClosed?.();
     await this.start();
   }
 

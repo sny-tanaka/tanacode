@@ -444,6 +444,13 @@ class FakeHost implements SessionsHost {
   // 今のターンを始めた、まだ会話に入っていない送った発言の送り主
   unseenPrompts = new Map<string, { parent: string | null }>();
   unseenTurnPrompt = (id: string) => this.unseenPrompts.get(id) ?? null;
+  // 前のアプリが、claude を動かしたまま終えたときに見ていた状態（引き継いだら一度だけ返す）
+  detached = new Map<string, SessionState>();
+  takeDetachedState = (id: string) => {
+    const state = this.detached.get(id) ?? null;
+    this.detached.delete(id);
+    return state;
+  };
   // 答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
   questions = new PendingQuestions((id) => this.listeners.forEach((l) => l(id)));
   pendingQuestion = (id: string) => this.questions.first(id);
@@ -2083,6 +2090,53 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: [CHILD] });
       // 送ったら、記録からも外す
       expect(host.savedNotices('sessions')).toEqual([]);
+    });
+
+    it('作業中の子を残してアプリを終え、閉じている間に子が作業を終えたら、次のアプリが引き継いだときに親に知らせる', async () => {
+      host.set(PARENT, 'idle');
+      control.dispose();
+      // 次のアプリが起動した（引き継ぐ前は止まっている）。前のアプリが最後に見た子の状態は「作業中」
+      host.set(CHILD, 'exited');
+      control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
+      host.detached.set(CHILD, 'working');
+      // 引き継ぎの途中（claude をつなぐ前の止まっている間・起動中）では使わない
+      host.set(CHILD, 'exited');
+      host.set(CHILD, 'starting');
+      expect(host.detached.get(CHILD)).toBe('working');
+      // 引き継いで、起動中から手が空いた（閉じている間に作業を終えていた）
+      host.set(CHILD, 'starting');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+      expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: [CHILD] });
+      expect(host.submitted[0].text).toContain('作業が終わりました');
+      // 一度だけ使う（次に起動し直して手が空いても、知らせ直さない）
+      host.submitted = [];
+      host.set(CHILD, 'starting');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted).toEqual([]);
+    });
+
+    it('閉じる前から手が空いていた子・引き継いだあとも作業を続けている子は、引き継いだときには知らせない', async () => {
+      host.set(PARENT, 'idle');
+      control.dispose();
+      host.set(CHILD, 'exited');
+      control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
+      host.detached.set(CHILD, 'idle');
+      host.set(CHILD, 'starting');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted).toEqual([]);
+      // 引き継いだら、まだ作業中だった。作業を終えたときに知らせる（1 回だけ）
+      host.detached.set(CHILD, 'working');
+      host.set(CHILD, 'starting');
+      host.set(CHILD, 'working');
+      await settle();
+      expect(host.submitted).toEqual([]);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
     });
 
     it('人が子に直接出した指示の作業では、親を起こさない。親がもう読んだ出来事も知らせない', async () => {

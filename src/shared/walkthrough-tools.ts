@@ -63,7 +63,7 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
     name: 'show_code',
     kind: 'show',
     description:
-      "Show a place outside the steps in the user's editor while answering a question (an aside). When the user goes back to the walkthrough, the editor returns to the step they were on. Works even when no walkthrough has been started",
+      "Show a place outside the steps in the user's editor while answering a question (an aside). When the user goes back to the walkthrough, the editor returns to the step they were on. Works even when no walkthrough has been started. The result says whether the editor actually moved (it does not when the user is viewing another session or has opened another file)",
     inputSchema: {
       type: 'object',
       properties: { path, start_line: startLine, end_line: endLine, body, view },
@@ -74,7 +74,7 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
   {
     name: 'walkthrough_status',
     kind: 'read',
-    description: 'Return the steps of the current walkthrough and which step the user is viewing now (the steps already viewed, any aside). If the user has finished it, it says so',
+    description: 'Return the steps of the current walkthrough and which step the user is viewing now (the steps already viewed, any aside), or that the user is viewing another session or file. If the user has finished it, it says so',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   // GitHub に書き込むので、許可済みにせず、Claude Code の許可の確認を通す

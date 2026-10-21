@@ -321,7 +321,12 @@ export class Profile {
       },
       enabled: () => this.settings.terminalControlEnabled(),
     });
-    const checklistControl = new ChecklistControl({ store: this.checklists, host: outward, enabled: () => this.settings.checklistControlEnabled() });
+    const checklistControl = new ChecklistControl({
+      store: this.checklists,
+      host: outward,
+      enabled: () => this.settings.checklistControlEnabled(),
+      turnTools: (id) => manager.turnTools(id),
+    });
     this.checklistControl = checklistControl;
     const compact = new OptimizedCompact({
       host: manager,

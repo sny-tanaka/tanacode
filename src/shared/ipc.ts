@@ -20,7 +20,7 @@ import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 import type { CompactStatus } from './optimized-compact';
-import type { SessionWalkthrough } from './walkthrough';
+import type { SessionWalkthrough, WalkthroughShown } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
@@ -214,6 +214,8 @@ export const IpcChannel = {
   WalkthroughGet: 'walkthrough:get',
   WalkthroughGo: 'walkthrough:go',
   WalkthroughClose: 'walkthrough:close',
+  WalkthroughShown: 'walkthrough:shown',
+  WalkthroughViewing: 'walkthrough:viewing',
   WalkthroughChanged: 'walkthrough:changed',
   // ウォークスルーを GitHub の PR にコメントとして載せる。下見（本文と投稿先。載せられなければ理由）・投稿
   WalkthroughDraftComment: 'walkthrough:draft-comment',
@@ -795,6 +797,10 @@ export type TanacodeApi = {
     // 閉じる（手順は残し、Claude が作り直すまで go でもう一度開ける）
     close(sessionId: string): Promise<void>;
     onChanged(listener: (payload: SessionWalkthrough) => void): () => void;
+    // Claude が示した場所（onChanged で届いた、movedBy が claude の変更）を、画面がどう扱ったか。id・seq はその変更のもの
+    shown(sessionId: string, id: string, seq: number, shown: WalkthroughShown): void;
+    // 人が見ているセッション（無ければ null）と、そのセッションで Claude の示している場所を見ているか（walkthrough_status に使う）
+    viewing(sessionId: string | null, onWalkthrough: boolean): void;
     // GitHub の PR にコメントとして載せる。draftComment: 下見 / postComment: 投稿して、コメントの URL を返す（載せられなければ理由を添えて失敗する）。
     // attribution: 「Claude が書いた説明」の一言を添える
     draftComment(sessionId: string): Promise<WalkthroughCommentDraft>;
@@ -976,6 +982,8 @@ export type IpcSend = {
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
+  [IpcChannel.WalkthroughShown]: Api['walkthrough']['shown'];
+  [IpcChannel.WalkthroughViewing]: Api['walkthrough']['viewing'];
 };
 
 // main → 画面の知らせ（webContents.send ↔ ipcRenderer.on）。中身の型は、それを受ける API のメソッドの listener の引数と同じ

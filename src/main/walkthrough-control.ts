@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
-import { MAX_BODY_CHARS, MAX_STEPS, MAX_TITLE_CHARS, shownStep, stepLocation, type SessionWalkthrough, type Walkthrough, type WalkthroughStep } from '@shared/walkthrough';
+import {
+  MAX_BODY_CHARS,
+  MAX_STEPS,
+  MAX_TITLE_CHARS,
+  shownStep,
+  stepLocation,
+  type SessionWalkthrough,
+  type Walkthrough,
+  type WalkthroughShown,
+  type WalkthroughStep,
+} from '@shared/walkthrough';
 import { walkthroughTool } from '@shared/walkthrough-tools';
 import { textResult, type ToolResult } from './mcp-bridge';
 import { postWalkthroughAsDrafted, type CommentDeps } from './walkthrough-github';
@@ -11,6 +21,8 @@ import { Workspace } from './workspace';
 // 呼び出し元のセッションは中継の env で渡ってくる。保存はせず、セッションごとに今の 1 つだけをメモリに持つ。
 // 人が閉じても捨てず、Claude が作り直すまで、もう一度開ける（go）。
 // ツールは人の操作を待たずにすぐ返す（Claude Code は、120 秒たっても終わらない MCP のツールをバックグラウンドに移すため）。
+// ただし示した場所を画面がどう扱ったか（動かした・帯だけ・別のセッションを見ていた）は、画面の返事を少しだけ待って、結果に書く。
+// 人が別のファイルやセッションを見ていると画面は動かないので、「示した」とだけ返すと Claude が見せたつもりになるため
 // Claude に返す結果とエラーは英語（画面の項目の名前だけ、画面の言語で入れる）
 
 type Deps = {
@@ -23,7 +35,12 @@ type Deps = {
   // PR を探す・コメントを書く（post_walkthrough）
   comment: CommentDeps;
   clock?: () => number;
+  // 画面の返事（shown）を待つ長さ。画面はすぐ返すので、これを過ぎたら画面がいない（作り直している間など）とみる
+  shownTimeoutMs?: number;
 };
+
+const SHOWN_TIMEOUT_MS = 2000;
+const SHOWN = new Set<string>(['moved', 'band', 'unseen'] satisfies WalkthroughShown[]);
 
 class WalkthroughError extends Error {}
 
@@ -31,6 +48,10 @@ export class WalkthroughControl {
   private readonly walks = new Map<string, Walkthrough>();
   // PR に載せたウォークスルー（id → コメントの URL）。二重に載せる前に知らせる
   private readonly posted = new Map<string, string>();
+  // 画面の返事を待っているもの（セッション・ウォークスルー・seq → 受け取る関数）
+  private readonly waiting = new Map<string, (shown: WalkthroughShown | null) => void>();
+  // 人が見ているセッションと、そこで Claude の示している場所を見ているか（画面から。まだ届いていなければ null）
+  private view: { sessionId: string | null; onWalkthrough: boolean } | null = null;
 
   constructor(private readonly deps: Deps) {}
 
@@ -65,6 +86,16 @@ export class WalkthroughControl {
   discard(sessionId: string): void {
     if (!this.walks.delete(sessionId)) return;
     this.deps.onChange(sessionId, null);
+  }
+
+  // Claude が示した場所を、画面がどう扱ったか。待っているもの（同じウォークスルーの同じ seq）にだけ渡す
+  shown(sessionId: string, walkthroughId: string, seq: number, shown: unknown): void {
+    if (typeof shown !== 'string' || !SHOWN.has(shown)) return;
+    this.waiting.get(waitKey(sessionId, walkthroughId, seq))?.(shown as WalkthroughShown);
+  }
+
+  viewing(sessionId: string | null, onWalkthrough: boolean): void {
+    this.view = { sessionId, onWalkthrough };
   }
 
   postedUrl(walkthroughId: string): string | null {
@@ -123,12 +154,19 @@ export class WalkthroughControl {
           seq: (prev?.seq ?? 0) + 1,
           startedAt: now,
         };
-        this.set(sessionId, walkthrough);
+        const shown = await this.show(sessionId, walkthrough);
         const replaced = prev && prev.steps.length > 0 ? `It replaced the previous walkthrough "${prev.title}".` : '';
+        const first = `1/${steps.length} "${steps[0].title}" (${stepLocation(steps[0])})`;
         return [
           `Started the walkthrough "${title}" (${stepCount(steps.length)}).`,
           replaced,
-          `Opened 1/${steps.length} "${steps[0].title}" (${stepLocation(steps[0])}) in the user's tanacode editor.`,
+          shown === 'moved'
+            ? `Opened ${first} in the user's tanacode editor.`
+            : shown === 'unseen'
+            ? `Prepared ${first}. The user is viewing another session in tanacode, so it opens when the user comes back to this session.`
+            : shown === 'band'
+            ? `Did not move the user's editor to ${first}: the user has opened another file or view in this session. A band above the editor lets them open it.`
+            : `Sent ${first} to the user's tanacode editor, but the tanacode window did not confirm that it opened it.`,
           `The user moves through the steps with "${t('walkthrough.box.next')}" and "${t('walkthrough.box.previous')}" at their own pace. Write only a short line in the chat, end your turn and wait for questions.`,
         ]
           .filter(Boolean)
@@ -140,14 +178,21 @@ export class WalkthroughControl {
         });
         const base: Walkthrough = prev ?? { id: randomUUID(), title: '', steps: [], open: true, current: 0, aside: null, visited: [], movedBy: 'claude', seq: 0, startedAt: now };
         // 人が閉じていても、質問に答えて示すときは開く
-        this.set(sessionId, { ...base, open: true, aside, movedBy: 'claude', seq: base.seq + 1 });
+        const shown = await this.show(sessionId, { ...base, open: true, aside, movedBy: 'claude', seq: base.seq + 1 });
         const step = base.current + 1;
         const total = base.steps.length;
         const back = total > 0 ? ` When the user clicks "${t('walkthrough.box.backToWalkthrough', { step, total })}", the editor returns to ${step}/${total}.` : '';
-        return `Showed ${stepLocation(aside)} in the user's editor (an aside).${back}`;
+        const where = stepLocation(aside);
+        const mention = ' Mention the location in your reply so that the user can find it.';
+        if (shown === 'moved') return `Showed ${where} in the user's editor (an aside).${back}`;
+        if (shown === 'band') {
+          return `Did not move the user's editor to ${where}: the user has opened another file or view in this session. A band above the editor tells them that you are showing ${where}, with "${t('walkthrough.band.backToClaude')}" to open it.${mention}${back}`;
+        }
+        if (shown === 'unseen') return `Did not move the user's editor: the user is viewing another session in tanacode. ${where} opens when the user comes back to this session.${mention}${back}`;
+        return `Sent ${where} to the user's editor as an aside, but the tanacode window did not confirm that it showed it.${mention}${back}`;
       }
       case 'walkthrough_status':
-        return prev ? statusText(prev) : 'There is no walkthrough (the user has finished it, or none has been started).';
+        return prev ? statusText(prev, this.elsewhere(sessionId)) : 'There is no walkthrough (the user has finished it, or none has been started).';
       case 'post_walkthrough': {
         if (!prev || prev.steps.length === 0) throw new WalkthroughError('There is no walkthrough to post. Start one with start_walkthrough first.');
         // 同じものを何度も載せないよう、載せたものは、人に頼まれたときだけ載せ直す
@@ -171,6 +216,34 @@ export class WalkthroughControl {
     this.walks.set(sessionId, walkthrough);
     this.deps.onChange(sessionId, walkthrough);
   }
+
+  // Claude が示す場所を変えて、画面の返事を待つ（返事が無ければ null）。画面がすぐ返しても受け取れるよう、知らせる前に待ち始める
+  private show(sessionId: string, walkthrough: Walkthrough): Promise<WalkthroughShown | null> {
+    const key = waitKey(sessionId, walkthrough.id, walkthrough.seq);
+    const answer = new Promise<WalkthroughShown | null>((resolve) => {
+      const timer = setTimeout(() => done(null), this.deps.shownTimeoutMs ?? SHOWN_TIMEOUT_MS);
+      const done = (shown: WalkthroughShown | null) => {
+        clearTimeout(timer);
+        if (this.waiting.get(key) === done) this.waiting.delete(key);
+        resolve(shown);
+      };
+      this.waiting.set(key, done);
+    });
+    this.set(sessionId, walkthrough);
+    return answer;
+  }
+
+  // 人がこのセッションの示している場所を見ていなければ、その一文（画面から届いていなければ null）
+  private elsewhere(sessionId: string): string | null {
+    if (!this.view) return null;
+    if (this.view.sessionId !== sessionId) return 'The user is viewing another session in tanacode now.';
+    if (!this.view.onWalkthrough) return 'The user has opened another file or view in the editor instead (a band above the editor offers to go back).';
+    return null;
+  }
+}
+
+function waitKey(sessionId: string, walkthroughId: string, seq: number): string {
+  return `${sessionId}\n${walkthroughId}\n${seq}`;
 }
 
 function errorOf(error: unknown, prefix: string): string {
@@ -220,13 +293,17 @@ function stepCount(count: number): string {
   return `${count} ${count === 1 ? 'step' : 'steps'}`;
 }
 
-function statusText(w: Walkthrough): string {
-  if (w.steps.length === 0) return `No walkthrough has been started. Showing ${stepLocation(shownStep(w))} as an aside.`;
+// elsewhere: 人が示している場所を見ていない（別のセッション・別のファイル）ときの一文
+function statusText(w: Walkthrough, elsewhere: string | null): string {
+  if (w.steps.length === 0) return [`No walkthrough has been started. Showing ${stepLocation(shownStep(w))} as an aside.`, elsewhere].filter(Boolean).join(' ');
+  const at = w.aside
+    ? `${stepLocation(w.aside)}, which you showed as an aside (going back returns to ${w.current + 1}/${w.steps.length})`
+    : `${w.current + 1}/${w.steps.length} "${w.steps[w.current].title}"`;
   const now = !w.open
     ? `The user has closed the walkthrough (last viewed ${w.current + 1}/${w.steps.length}; it can be reopened from the list in "${t('app.sidePanel.scmLabel')}").`
-    : w.aside
-    ? `The user is viewing ${stepLocation(w.aside)}, which you showed as an aside (going back returns to ${w.current + 1}/${w.steps.length}).`
-    : `The user is viewing ${w.current + 1}/${w.steps.length} "${w.steps[w.current].title}".`;
+    : elsewhere
+    ? `${elsewhere} The walkthrough is at ${at}.`
+    : `The user is viewing ${at}.`;
   const lines = w.steps.map((s, i) => {
     const mark = i === w.current ? ' (current)' : w.visited.includes(i) ? ' (viewed)' : '';
     return `${i + 1}. ${s.title} — ${stepLocation(s)}${mark}`;
