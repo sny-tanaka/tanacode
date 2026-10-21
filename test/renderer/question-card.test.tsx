@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingQuestion } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import { QuestionCard } from '../../src/renderer/src/screen/QuestionCard';
+import './dom';
 import { mockApi } from './mock-api';
 
 // フックが答えを待っている AskUserQuestion の質問のカード（ターミナルの画面を読まずに描く）。
@@ -143,7 +144,7 @@ describe('QuestionCard', () => {
     expect(screen.getByRole('alert').textContent).toBe('送れませんでした。もう一度押してください');
   });
 
-  it('プレビュー付きの選択肢は、ホバー・フォーカスしたもののプレビューを出す。この形には自由記述が無い', () => {
+  describe('プレビューのポップアップ', () => {
     const layout: AskQuestion = {
       question: '並べ方は？',
       header: '並べ方',
@@ -154,13 +155,88 @@ describe('QuestionCard', () => {
         { label: '無し', description: '' },
       ],
     };
-    render(<QuestionCard sessionId="s1" question={pending(layout)} />);
-    expect(screen.getByText('縦の図')).toBeTruthy();
-    expect(screen.queryByText('その他（自由に入力）')).toBeNull();
-    fireEvent.mouseEnter(screen.getByText('横'));
-    expect(screen.getByText('横の図')).toBeTruthy();
-    fireEvent.focus(screen.getByText('無し').closest('button')!);
-    expect(screen.getByText('この選択肢にはプレビューがありません')).toBeTruthy();
+    const option = (label: string) => screen.getByText(label).closest('button')!;
+    const card = () => document.querySelector('.menu-card')!;
+    const popup = () => document.querySelector<HTMLElement>('.menu-preview-popup');
+    const shown = () => popup()?.querySelector('.menu-preview-body')?.textContent ?? null;
+    afterEach(() => vi.useRealTimers());
+
+    it('ホバーした選択肢のプレビューを、カードの外（body）のポップアップに出す。プレビューの無い選択肢では出さない。この形には自由記述が無い', () => {
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      expect(popup()).toBeNull();
+      expect(screen.queryByText('その他（自由に入力）')).toBeNull();
+      fireEvent.mouseEnter(option('縦'));
+      expect(shown()).toBe('縦の図');
+      expect(popup()!.querySelector('.menu-preview-label')!.textContent).toBe('プレビュー: 縦');
+      // チャットの一覧のスクロールの枠で切れないよう body に出す（カードの中には出さないので、カードの高さが変わらない）
+      expect(popup()!.parentElement).toBe(document.body);
+      expect(card().contains(popup())).toBe(false);
+      expect(option('縦').classList.contains('previewed')).toBe(true);
+      expect(option('縦').getAttribute('aria-describedby')).toBe(popup()!.id);
+      fireEvent.mouseEnter(option('横'));
+      expect(shown()).toBe('横の図');
+      expect(option('縦').classList.contains('previewed')).toBe(false);
+      fireEvent.mouseEnter(option('無し'));
+      expect(popup()).toBeNull();
+    });
+
+    it('マウスをカードからポップアップへ移しても消さず、両方から外れたら消す', () => {
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      fireEvent.mouseEnter(option('横'));
+      const element = popup()!;
+      fireEvent.mouseOut(option('横'), { relatedTarget: element });
+      expect(shown()).toBe('横の図');
+      // ポップアップの中を動かしても替わらない
+      fireEvent.mouseMove(element, { clientY: 5 });
+      expect(shown()).toBe('横の図');
+      fireEvent.mouseOut(element, { relatedTarget: document.body });
+      expect(popup()).toBeNull();
+      // カードから直接外れても消す
+      fireEvent.mouseEnter(option('縦'));
+      fireEvent.mouseLeave(card());
+      expect(popup()).toBeNull();
+    });
+
+    it('Tab で選択肢に移ったときにも出す。カードからマウスが外れたら、フォーカスした選択肢のものに戻し、フォーカスが外れたら消す', () => {
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      // キーボードで移ったフォーカス（:focus-visible）。jsdom も、直前がマウスの操作なら、そう見なさない
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      act(() => option('横').focus());
+      expect(shown()).toBe('横の図');
+      fireEvent.mouseEnter(option('縦'));
+      expect(shown()).toBe('縦の図');
+      fireEvent.mouseLeave(card());
+      expect(shown()).toBe('横の図');
+      act(() => option('横').blur());
+      expect(popup()).toBeNull();
+    });
+
+    // 直す前（カードの上に出すだけ）: 下の選択肢からポップアップへマウスを動かす途中で、またいだ選択肢のプレビューに替わり、
+    // 読みたいプレビューに乗れなかった。jsdom では大きさが 0 なので、ポップアップは画面の一番上（y=0）にあることになる
+    it('ポップアップの向きへマウスを動かしている間は、乗った選択肢のプレビューに切り替えず、止まってから切り替える。逆の向きでは、すぐ切り替える', () => {
+      vi.useFakeTimers();
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      fireEvent.mouseMove(option('横'), { clientY: 100 });
+      expect(shown()).toBe('横の図');
+      // 上へ動かして「縦」に乗る。動かし続けている間は替えない
+      fireEvent.mouseOver(option('縦'), { relatedTarget: option('横'), clientY: 60 });
+      fireEvent.mouseMove(option('縦'), { clientY: 60 });
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.mouseMove(option('縦'), { clientY: 50 });
+      act(() => vi.advanceTimersByTime(100));
+      expect(shown()).toBe('横の図');
+      // 止まったら替える
+      act(() => vi.advanceTimersByTime(50));
+      expect(shown()).toBe('縦の図');
+      // 下へ動かすと、すぐ替える
+      fireEvent.mouseMove(option('横'), { clientY: 120 });
+      expect(shown()).toBe('横の図');
+      // 上へ動かして「縦」をまたぎ、止まる前に抜けたら替えない
+      fireEvent.mouseMove(option('縦'), { clientY: 40 });
+      fireEvent.mouseOut(option('縦'), { relatedTarget: popup() });
+      act(() => vi.advanceTimersByTime(500));
+      expect(shown()).toBe('横の図');
+    });
   });
 
   it('プレビュー付きの質問には、自由記述の代わりにメモ欄を出し、メモと選んだ案のプレビューを添え書き（annotations）で渡す', async () => {

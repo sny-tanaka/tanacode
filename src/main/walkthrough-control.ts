@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
 import {
@@ -258,12 +259,19 @@ function text(value: unknown, key: string, max: number): string {
   return s;
 }
 
-// フォルダからの相対パスにする。フォルダの外は断る（tanacode のエディタはセッションのフォルダの中だけを開く）
-export function relativePath(cwd: string, raw: string): string {
+// ステップのパス。セッションのフォルダの中は、フォルダからの相対パスにする（エクスプローラーから開いたタブと同じになる）。
+// Claude Code が渡すのはリンクを解いたパスなので、フォルダのリンクを解いた場所とも比べる。
+// フォルダの外は、絶対パスのまま示す（断らない。Claude はもともと、どのファイルも読めるので、tanacode だけで制限しても意味がない）
+async function stepPath(cwd: string, raw: string): Promise<string> {
   const abs = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
-  const rel = relative(cwd, abs);
+  return inside(cwd, abs) ?? inside(await realpath(cwd).catch(() => cwd), abs) ?? abs;
+}
+
+// root の中なら、root からの相対パス
+function inside(root: string, abs: string): string | null {
+  const rel = relative(root, abs);
   // .. そのものか ../ で始まるものが外（..notes.md のような名前のファイルは中）
-  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new WalkthroughError(`${raw} is not a file in the folder of this session (${cwd}).`);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
   return rel.split(sep).join('/');
 }
 
@@ -271,7 +279,7 @@ export function relativePath(cwd: string, raw: string): string {
 async function readStep(workspace: Workspace, raw: unknown, titled: boolean): Promise<WalkthroughStep> {
   const s = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   if (typeof s.path !== 'string' || !s.path.trim()) throw new WalkthroughError('Pass path.');
-  const path = relativePath(workspace.root, s.path.trim());
+  const path = await stepPath(workspace.root, s.path.trim());
   const startLine = Number(s.start_line);
   const endLine = s.end_line === undefined ? startLine : Number(s.end_line);
   if (!Number.isInteger(startLine) || startLine < 1) throw new WalkthroughError(`${path}: start_line must be an integer of 1 or more.`);

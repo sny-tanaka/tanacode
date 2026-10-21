@@ -10,7 +10,7 @@ export const WALKTHROUGH_MCP_SERVER = 'tanacode-walkthrough';
 
 type Schema = Record<string, unknown>;
 
-const path: Schema = { type: 'string', description: 'File path (relative to the session folder, or an absolute path inside it)' };
+const path: Schema = { type: 'string', description: 'File path (relative to the session folder, or absolute). Files outside the session folder can be shown too' };
 const startLine: Schema = { type: 'integer', minimum: 1, description: 'First line of the range to show (1-based)' };
 const endLine: Schema = { type: 'integer', minimum: 1, description: 'Last line of the range to show (inclusive). Omit it to show only start_line' };
 const view: Schema = {
