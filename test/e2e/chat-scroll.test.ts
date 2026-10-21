@@ -154,8 +154,9 @@ describe('チャットの一覧のスクロール', () => {
   // 直す前: プレビューをカードの一番下に出していたので、選択肢にマウスを乗せるとカードの高さが変わり、一覧が最下部を保とうとしてカードが
   // 上下に動いた。選択肢の上端近くに止めたマウスの下に別の選択肢が来てプレビューが替わり、また動くのを繰り返した。止めたマウスの下で
   // 要素が動いたときのホバーの出し直しは、画面の部品のテスト（jsdom）では起きないので、本物の画面で確かめる。
-  // ポップアップはカードの上に出し、上に入りきらなければ下に出す。どちらに出るかはウインドウの大きさしだい（手元の Mac は 1600×960 で上、
-  // CI は 1180×674 で、カードが一覧より高く下）なので、どちらの側でも確かめる。
+  // ポップアップはカードの右（エディタの側）に、選択肢の高さにそろえて出す。右に場所が足りなければ、カードの上に出し、上に入りきらなければ
+  // 下に出す。どこに出るかはウインドウとチャット欄の大きさしだいなので、どの側でも確かめる（手元の Mac の 1600×960 と CI の 1180×674 では、
+  // チャット欄の幅が既定のままなら右。右に出せないときは、手元では上、CI ではカードが一覧より高く下）。
   // CI で一度落ちた: 上に出ることを前提に確かめていた（テストの誤り）
   it('プレビュー付きの質問のカードで、選択肢の上端近くにマウスを止めても、プレビューの対象が替わり続けず、カードの高さが変わらない。プレビューはカードに重ならないポップアップに出て、マウスを移しても消えない', async () => {
     await app.startSession(PREVIEW_PROMPT);
@@ -192,16 +193,21 @@ describe('チャットの一覧のスクロール', () => {
         const box = document.querySelector('.chat-list > .menu-card.question')!.getBoundingClientRect();
         const popup = document.querySelector('.menu-preview-popup');
         const rect = popup?.getBoundingClientRect();
+        const option = document.querySelector('.chat-list > .menu-card.question .menu-option.previewed')?.getBoundingClientRect();
         const center = rect && document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         return {
           shown: popup?.querySelector('.menu-preview-label')?.textContent ?? null,
           window: `${innerWidth}×${innerHeight}`,
-          card: `${Math.round(box.top)}〜${Math.round(box.bottom)}`,
+          card: `${Math.round(box.top)}〜${Math.round(box.bottom)} (${Math.round(box.left)}〜${Math.round(box.right)})`,
           popup: rect ? `${Math.round(rect.top)}〜${Math.round(rect.bottom)} (${Math.round(rect.left)}〜${Math.round(rect.right)})` : null,
           // カードのどちら側にあるか（枠に 1px だけ重ねる。位置が端数のときの分を見込む）。overlap: カードに重なっている
-          side: rect ? (rect.bottom <= box.top + 2 ? 'top' : rect.top >= box.bottom - 2 ? 'bottom' : 'overlap') : null,
-          // カードの上に、ポップアップが入りきる場所がある（あれば上に出す）
+          side: rect ? (rect.left >= box.right - 2 ? 'right' : rect.bottom <= box.top + 2 ? 'top' : rect.top >= box.bottom - 2 ? 'bottom' : 'overlap') : null,
+          // カードの右に、カードの幅以上の場所がある（あれば右に出す。8: ウインドウの端との間、6: カードとの間の透明な余白）
+          roomRight: innerWidth - 8 - box.right - 6 >= box.width,
+          // カードの上に、ポップアップが入りきる場所がある（右に出せず、ここに場所があれば上に出す）
           roomAbove: !!rect && box.top - 8 >= rect.height + 1,
+          // 右に出したとき、プレビューを出している選択肢の右を、まるごと覆っている（真横に動かしてポップアップへ移れる）
+          besideOption: !!rect && !!option && rect.top <= option.top + 1 && rect.bottom >= option.bottom - 1,
           // ウインドウの中にあり、一覧の枠で切れず、前に出ている
           inWindow: !!rect && rect.top >= 0 && rect.bottom <= innerHeight,
           front: !!center && !!popup?.contains(center),
@@ -228,24 +234,28 @@ describe('チャットの一覧のスクロール', () => {
       expect(now.log.length, message).toBeLessThanOrEqual(1);
       if (!option.preview) continue;
       expect(now, message).toMatchObject({ shown: `プレビュー: ${option.label}`, inWindow: true, front: true });
-      expect(['top', 'bottom'], message).toContain(now.side);
-      if (now.roomAbove) expect(now.side, message).toBe('top');
+      expect(['right', 'top', 'bottom'], message).toContain(now.side);
+      if (now.roomRight) expect(now, message).toMatchObject({ side: 'right', besideOption: true });
+      else if (now.roomAbove) expect(now.side, message).toBe('top');
     }
     // 選択肢から、ポップアップの側のカードの端（カードの余白。ほかの選択肢はまたがない）へ移り、そこからポップアップへ少しずつ移っても
-    // 消えない（カードとポップアップの間に、外れる所が無い）。カードとポップアップの両方から外れたら消える
+    // 消えない（カードとポップアップの間に、外れる所が無い）。右に出したときは真横へ、上・下に出したときは真上・真下へ動かす。
+    // カードとポップアップの両方から外れたら消える
     const box = (await card.locator('.menu-option', { hasText: first.label }).boundingBox())!;
     const x = box.x + box.width / 2;
-    await app.page.mouse.move(x, box.y + box.height / 2);
+    const y = box.y + box.height / 2;
+    await app.page.mouse.move(x, y);
     await waitShown(`プレビュー: ${first.label}`);
     const { side } = await state();
     const edges = (await card.boundingBox())!;
-    const edge = side === 'top' ? edges.y + 4 : edges.y + edges.height - 4;
-    const onCard = await card.evaluate((element, [px, py]) => document.elementFromPoint(px, py) === element, [x, edge]);
-    expect(onCard, JSON.stringify({ side, edge, card: edges })).toBe(true);
-    await app.page.mouse.move(x, edge);
+    const [edgeX, edgeY] = side === 'right' ? [edges.x + edges.width - 4, y] : [x, side === 'top' ? edges.y + 4 : edges.y + edges.height - 4];
+    const onCard = await card.evaluate((element, [px, py]) => document.elementFromPoint(px, py) === element, [edgeX, edgeY]);
+    expect(onCard, JSON.stringify({ side, edgeX, edgeY, card: edges })).toBe(true);
+    await app.page.mouse.move(edgeX, edgeY);
     const popup = app.page.locator('.menu-preview-popup');
     const target = (await popup.boundingBox())!;
-    await app.page.mouse.move(x, target.y + target.height / 2, { steps: 10 });
+    if (side === 'right') await app.page.mouse.move(target.x + target.width / 2, y, { steps: 10 });
+    else await app.page.mouse.move(x, target.y + target.height / 2, { steps: 10 });
     await nextFrames();
     const inside = await state();
     expect(inside, JSON.stringify(inside)).toMatchObject({ shown: `プレビュー: ${first.label}` });

@@ -61,6 +61,23 @@ const layout: AskQuestion = {
   ],
 };
 
+// 横に長い表と、縦に長い一覧のプレビュー
+const table = [
+  '| 画面       | 一覧の並べ方         | 1 行の高さ | 1 画面の件数 | 並べ替え           | 絞り込み             |',
+  '|------------|----------------------|------------|--------------|--------------------|----------------------|',
+  ...Array.from({ length: 12 }, (_, i) => `| 画面 ${String(i + 1).padStart(2, '0')}    | 表（列を固定）       | 32px       | ${String(20 + i).padEnd(12)} | 列の見出しを押す   | 上の検索欄           |`),
+].join('\n');
+const big: AskQuestion = {
+  question: '一覧の画面の作りはどれにしますか？',
+  header: '一覧',
+  multiSelect: false,
+  options: [
+    { label: '表にする', description: '列を並べる', preview: table },
+    { label: 'カードを並べる', description: '1 件を 1 枚のカードに', preview: Array.from({ length: 60 }, (_, i) => `┌──────────┐\n│ カード ${String(i + 1).padStart(2)} │\n└──────────┘`).join('\n') },
+    { label: 'プレビュー無し', description: 'プレビューの無い選択肢' },
+  ],
+};
+
 const meta = {
   title: 'チャット/質問のカード',
   component: QuestionCard,
@@ -81,9 +98,15 @@ export const 複数の質問: Story = { args: { question: pending(style, languag
 // 複数選択だけの質問。チェックしてから、回答の確認へ
 export const 複数選択: Story = { args: { question: pending(languages) } };
 
-// 選択肢にマウスを乗せる（Tab で移る）と、比べるためのプレビューをカードの外にポップアップで出す（上に入りきらなければ下）。
+// 選択肢にマウスを乗せる（Tab で移る）と、比べるためのプレビューを、カードの右に選択肢の高さにそろえてポップアップで出す。
 // ほかは、プレビューの無い質問と同じ（「その他（自由に入力）」がある）
 export const プレビュー付き: Story = { args: { question: pending(layout) } };
+
+// 大きなプレビュー。右に出すときは、右の幅とウインドウの高さまで使い、入りきらない分は中でスクロールする
+export const 大きなプレビュー: Story = { args: { question: pending(big) } };
+
+// カードの右に場所が無いとき（カードが画面の幅いっぱい）は、前と同じく、カードの上（入りきらなければ下）に出す
+export const 右に場所が無いとき: Story = { args: { question: pending(big) }, parameters: { width: 'none' } };
 
 // 送ろうとしたときに、もう答えられなかった（人がターミナルで答えた・Claude Code が先へ進んだ）
 export const 答えられなかったとき: Story = {

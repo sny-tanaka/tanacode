@@ -158,7 +158,10 @@ describe('QuestionCard', () => {
     const card = () => document.querySelector('.menu-card')!;
     const popup = () => document.querySelector<HTMLElement>('.menu-preview-popup');
     const shown = () => popup()?.querySelector('.menu-preview-body')?.textContent ?? null;
-    afterEach(() => vi.useRealTimers());
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
 
     it('ホバーした選択肢のプレビューを、カードの外（body）のポップアップに出す。プレビューの無い選択肢では出さない', () => {
       render(<QuestionCard sessionId="s1" question={pending(layout)} />);
@@ -210,7 +213,8 @@ describe('QuestionCard', () => {
     });
 
     // 直す前（カードの上に出すだけ）: 下の選択肢からポップアップへマウスを動かす途中で、またいだ選択肢のプレビューに替わり、
-    // 読みたいプレビューに乗れなかった。jsdom では大きさが 0 なので、ポップアップは画面の一番上（y=0）にあることになる
+    // 読みたいプレビューに乗れなかった。jsdom では大きさが 0 なので置く場所が決まらず、ポップアップは画面の一番上（y=0）にあることになる
+    // （カードの右に場所が足りず、上に出したとき）
     it('ポップアップの向きへマウスを動かしている間は、乗った選択肢のプレビューに切り替えず、止まってから切り替える。逆の向きでは、すぐ切り替える', () => {
       vi.useFakeTimers();
       render(<QuestionCard sessionId="s1" question={pending(layout)} />);
@@ -234,6 +238,51 @@ describe('QuestionCard', () => {
       fireEvent.mouseOut(option('縦'), { relatedTarget: popup() });
       act(() => vi.advanceTimersByTime(500));
       expect(shown()).toBe('横の図');
+    });
+
+    // jsdom には大きさが無いので、カード（幅 400）と選択肢の枠を決める。ウインドウは 1024×768 なので、カードの右に場所がある
+    const sized = () => {
+      const tops: Record<string, number> = { 縦: 150, 横: 210, 無し: 270 };
+      const rect = (left: number, top: number, width: number, height: number) =>
+        ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        const top = this.classList.contains('menu-option') ? tops[this.querySelector('.menu-option-label')?.textContent ?? ''] : undefined;
+        if (top !== undefined) return rect(10, top, 380, 50);
+        return this.classList.contains('menu-card') ? rect(0, 100, 400, 300) : rect(0, 0, 0, 0);
+      });
+    };
+
+    it('カードの右に場所があれば、カードの右（枠に 1px 重ねる）に、ホバー・フォーカスした選択肢の高さにそろえて出す', () => {
+      sized();
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      fireEvent.mouseEnter(option('横'));
+      expect(popup()!.classList.contains('right')).toBe(true);
+      expect(popup()!.style).toMatchObject({ left: '399px', top: '210px', minHeight: '50px' });
+      fireEvent.mouseLeave(card());
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      act(() => option('縦').focus());
+      expect(shown()).toBe('縦の図');
+      expect(popup()!.style.top).toBe('150px');
+    });
+
+    // 右に出したときは、右へ動かすのがポップアップの向き。真横に動かせばほかの選択肢をまたがないが、高いポップアップの下のほうへ
+    // 斜めに動かすと、下の選択肢をまたぐ
+    it('右に出したときは、右へ動かしている間は、乗った選択肢のプレビューに切り替えず、止まってから切り替える。右へ動かしていなければ、すぐ切り替える', () => {
+      vi.useFakeTimers();
+      sized();
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      fireEvent.mouseMove(option('縦'), { clientX: 100, clientY: 170 });
+      expect(shown()).toBe('縦の図');
+      // 右下へ動かして「横」に乗る。止まるまでは替えない
+      fireEvent.mouseMove(option('横'), { clientX: 140, clientY: 220 });
+      act(() => vi.advanceTimersByTime(100));
+      expect(shown()).toBe('縦の図');
+      act(() => vi.advanceTimersByTime(50));
+      expect(shown()).toBe('横の図');
+      expect(popup()!.style.top).toBe('210px');
+      // 真上へ動かすと、すぐ替える
+      fireEvent.mouseMove(option('縦'), { clientX: 140, clientY: 170 });
+      expect(shown()).toBe('縦の図');
     });
   });
 

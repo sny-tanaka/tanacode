@@ -3964,6 +3964,10 @@ details[open] > summary > .disclosure {
 .menu-preview-popup.bottom {
   padding-top: 6px;
 }
+/* カードの右（エディタの側）に出すとき。カードとの間の透明な余白は左 */
+.menu-preview-popup.right {
+  padding-left: 6px;
+}
 /* 選択肢のプレビュー（Claude が比べるために付けた図や文章）。等幅で、空白や改行をそのまま出す。入りきらない分は中でスクロールする */
 .menu-preview {
   display: flex;
@@ -3983,13 +3987,16 @@ details[open] > summary > .disclosure {
 }
 .menu-preview-body {
   margin: 0;
-  max-height: 320px;
   overflow: auto;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-primary);
   white-space: pre;
+}
+/* カードの上・下に出すとき（右に場所が足りないとき）は、本文の高さを限る。右に出すときは、ウインドウの高さまで使う */
+.menu-preview-popup:not(.right) .menu-preview-body {
+  max-height: 320px;
 }
 .menu-option.submit {
   justify-content: center;
