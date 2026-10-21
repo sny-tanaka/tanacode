@@ -2093,7 +2093,6 @@
       "send": "送信",
       "stopEditing": "やめる",
       "preview": "プレビュー: {label}",
-      "noPreview": "この選択肢にはプレビューがありません",
       "answerPlaceholderMultiline": "回答を入力（Enter で改行、⌘+Enter で決定）",
       "chat": "この質問について話す（Chat about this）",
       "review": "回答の確認",

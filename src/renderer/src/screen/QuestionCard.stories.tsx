@@ -81,7 +81,8 @@ export const 複数の質問: Story = { args: { question: pending(style, languag
 // 複数選択だけの質問。チェックしてから、回答の確認へ
 export const 複数選択: Story = { args: { question: pending(languages) } };
 
-// 選択肢の右に、比べるためのプレビューを出す（この形には自由記述が無い）
+// 選択肢にマウスを乗せる（Tab で移る）と、比べるためのプレビューをカードの外にポップアップで出す（上に入りきらなければ下）。
+// この形には自由記述が無く、代わりにメモ欄が付く
 export const プレビュー付き: Story = { args: { question: pending(layout) } };
 
 // 送ろうとしたときに、もう答えられなかった（人がターミナルで答えた・Claude Code が先へ進んだ）

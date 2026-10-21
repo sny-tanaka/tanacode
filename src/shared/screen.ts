@@ -33,9 +33,6 @@ export type Menu = {
   options: MenuOption[];
   multiSelect: boolean;
   hint: string;
-  // 選択肢の右にプレビューの枠が並ぶ形（選択肢のどれかにプレビューがある AskUserQuestion）。
-  // この形には自由記述（Type something）が無く、「Chat about this」は選択肢にならない
-  previewLayout?: boolean;
 };
 
 // 権限モード（Shift+Tab で manual → acceptEdits → plan → auto の順に切り替わる）
