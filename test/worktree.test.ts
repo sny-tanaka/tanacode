@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, loadavg, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { claudeArgs } from '../src/main/claude-session';
 import { type PullRequest, pullRequestsOf } from '../src/main/github';
 import {
@@ -253,6 +253,7 @@ describe('残っているもの', () => {
 
   describe('PR', () => {
     it('PR をスカッシュマージして、リモートのブランチを消していても、PR に入っているコミットはプッシュしていないと数えない', async () => {
+      const done = stages();
       withOrigin();
       const plan = await create();
       commitIn(plan.path, 'b.txt');
@@ -261,8 +262,10 @@ describe('残っているもの', () => {
       // GitHub がマージのあとにブランチを消し、手元でも prune した（上流が無くなった）
       git(repo, 'push', '-q', 'origin', '--delete', plan.branch);
       git(repo, 'fetch', '-q', '--prune');
+      done('準備（origin・worktree・コミット・プッシュ・ブランチを消す）');
       // gh で調べられなければ、どのリモートにも無いコミットとして数える
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 2, pr: { state: 'unknown' } });
+      done('数える 1（PR を調べられない）');
       const head = git(repo, 'rev-parse', plan.branch);
       prs.mockResolvedValue([pull({ number: 7, state: 'MERGED', headRefOid: head })]);
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({
@@ -271,9 +274,11 @@ describe('残っているもの', () => {
         pr: { state: 'merged', number: 7, base: 'main', url: 'https://github.com/me/repo/pull/7', after: 0 },
       });
       expect(prs).toHaveBeenLastCalledWith(repo, plan.branch);
+      done('数える 2（マージ済みの PR）');
       // マージのあとに足したコミットは、プッシュしていないコミットとして数える
       commitIn(plan.path, 'd.txt');
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, pr: { state: 'merged', after: 1 } });
+      done('数える 3（マージのあとのコミット）');
     });
 
     it('上流の名前が違えば、その名前で PR を探す', async () => {
@@ -441,8 +446,21 @@ const withOrigin = () => {
   git(repo, 'fetch', '-q', 'origin');
 };
 
+// テストの段ごとの経過時間を覚え、落ちたとき（時間切れも）に、段ごとの経過と、そのときの Mac（CI の台）の負荷を出す。
+// git を 70 回ほど動かすテストが、単体テストの全体を並べて流したときに 5 秒の時間切れで落ちたことがあり（手元では再現しなかった）、
+// どの段で遅れたか（1 つの段だけか、どの段も遅いか）と、CPU の取り合いがあったかを、次に落ちたときに読めるようにする
+const stages = (): ((name: string) => void) => {
+  const start = performance.now();
+  const marks: string[] = [];
+  onTestFailed(() => {
+    const load = loadavg().map((n) => n.toFixed(1)).join(' / ');
+    console.log(`段ごとの経過: ${marks.join(' → ') || '（最初の段の途中）'}。負荷（1・5・15 分の平均）: ${load}。CPU: ${availableParallelism()} 個`);
+  });
+  return (name) => marks.push(`${name} ${Math.round(performance.now() - start)}ms`);
+};
+
 // gh pr list の 1 件
-const pull = (pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
+const pull =(pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
   baseRefName: 'main',
   url: `https://github.com/me/repo/pull/${pr.number}`,
   ...pr,
