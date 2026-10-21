@@ -1012,6 +1012,26 @@ describe('ヘッダー', () => {
       }
     });
 
+    // 直す前: ウインドウから離れたかを、capture で付けた blur で見ていたので、ほかの要素の blur でもやめていた。押した要素へフォーカスが
+    // 移ると、入力欄などから外れた blur が押してから離すまでの間に届き、その場で最下部へ送っていた（CI の chat の E2E で、Playwright が
+    // 見出しを見せようと一覧を上へ送った直後に押すと、送った知らせが届く前に最下部へ戻り、離した所が見出しから外れて開かなかった）
+    it('押した要素へフォーカスが移って、ほかの要素（入力欄）からフォーカスが外れても、位置を保つ', () => {
+      const { list, option, top } = pressScene({ content: 1000, view: 200, offset: 950 });
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      // 最下部を追いかけている一覧が上へ送られ、その知らせが届く前に押す
+      list.scrollTop = 750;
+      expect(top()).toBe(200);
+      fireEvent.pointerDown(option);
+      fireEvent.blur(box());
+      expect(list.scrollTop).toBe(750);
+      fireEvent.scroll(list);
+      expect(top()).toBe(200);
+      fireEvent.pointerUp(option);
+      vi.runOnlyPendingTimers();
+      expect(list.scrollTop).toBe(800);
+    });
+
     it('押したのが一覧そのもの（スクロールバー）なら、何もしない（今までどおり、人のスクロールとして扱う）', () => {
       const { list, scene, resized } = pressScene({ content: 1000, view: 200, offset: 950 });
       list.scrollTop = 800;
