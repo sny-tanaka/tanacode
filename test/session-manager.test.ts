@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
@@ -49,6 +49,11 @@ describe('起動と送信', () => {
     await app.ready(id);
     expect(app.progress.get(id)).toBeNull();
     expect(app.manager.progress(id)).toBeNull();
+    // 画面の知らせは消えるので、かかった時間と標準エラーの末尾を、stream-json の控えに覚え書き（!）で残す
+    const notes = readFileSync(join(app.userData, 'stream-logs', `${id}.log`), 'utf8')
+      .split('\n')
+      .filter((l) => / ! /.test(l));
+    expect(notes).toEqual([expect.stringMatching(/ ! initialize の返事まで \d+ 秒かかりました。標準エラーの末尾: "MCP server \\"slow\\": connecting"$/)]);
     // 答えずに終わったら、知らせを消して終了を出す
     const other = app.create();
     await app.waitFor('起動が遅い', () => app.progress.get(other.id)?.phase === 'starting');
