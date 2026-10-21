@@ -184,7 +184,36 @@ describe('チャットの一覧のスクロール', () => {
       };
       new MutationObserver(record).observe(card, { subtree: true, attributes: true, attributeFilter: ['class'] });
       new ResizeObserver(record).observe(card);
-      Object.assign(window, { e2ePreviewLog: log });
+      // ポップアップを置いた（置き直した）ときの、ポップアップ・選択肢・カードの縦の位置と、一覧のスクロールの位置
+      // （CI で一度、右に出したポップアップが選択肢の横からずれて落ちた。置いたあとに選択肢が動いたのかを読めるようにする）
+      const placed: string[] = [];
+      const list = document.querySelector('.chat-list')!;
+      const place = () => {
+        const popup = document.querySelector<HTMLElement>('.menu-preview-popup');
+        if (!popup || popup.style.visibility === 'hidden') return;
+        const option = card.querySelector('.menu-option.previewed')?.getBoundingClientRect();
+        const where = `${popup.className} ${popup.style.top || '-'}/${popup.style.bottom || '-'}`;
+        placed.push(`${where} 選択肢 ${option ? `${option.top}〜${option.bottom}` : '-'} カード ${card.getBoundingClientRect().top} 一覧 ${list.scrollTop}`);
+      };
+      new MutationObserver(place).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+      // 描くごとの、選択肢・ポップアップ・カード・一覧の縦の位置（変わったときだけ）と、一覧のスクロール・ウインドウの大きさの知らせ。
+      // ポップアップを置き直す知らせ（スクロール・大きさの変化）が無いまま、選択肢が動いたかを読めるようにする
+      const frames: string[] = [];
+      let lastFrame = '';
+      const at = () => `${Math.round(performance.now())}ms`;
+      const watch = () => {
+        const option = card.querySelector('.menu-option.previewed')?.getBoundingClientRect();
+        const box = list.getBoundingClientRect();
+        const popup = document.querySelector<HTMLElement>('.menu-preview-popup');
+        const now = `選択肢 ${option?.top ?? '-'} ポップアップ ${popup?.style.top || '-'} カード ${card.getBoundingClientRect().top} 一覧 ${box.top}+${box.height} ${list.scrollTop}`;
+        if (now !== lastFrame) frames.push(`${at()} ${now}`);
+        lastFrame = now;
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+      addEventListener('scroll', (e) => frames.push(`${at()} scroll ${e.target === list ? '一覧' : e.target instanceof Element ? e.target.className : 'document'}`), true);
+      addEventListener('resize', () => frames.push(`${at()} resize ${innerWidth}×${innerHeight}`));
+      Object.assign(window, { e2ePreviewLog: log, e2ePlaced: placed, e2eFrames: frames });
     });
     const height = await card.evaluate((element) => (element as HTMLElement).offsetHeight);
     // カード・ポップアップの位置と、出しているプレビュー（落ちたときに読めるよう、文字にして添える）
@@ -194,12 +223,19 @@ describe('チャットの一覧のスクロール', () => {
         const popup = document.querySelector('.menu-preview-popup');
         const rect = popup?.getBoundingClientRect();
         const option = document.querySelector('.chat-list > .menu-card.question .menu-option.previewed')?.getBoundingClientRect();
+        const list = document.querySelector('.chat-list')!;
         const center = rect && document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         return {
           shown: popup?.querySelector('.menu-preview-label')?.textContent ?? null,
           window: `${innerWidth}×${innerHeight}`,
           card: `${Math.round(box.top)}〜${Math.round(box.bottom)} (${Math.round(box.left)}〜${Math.round(box.right)})`,
           popup: rect ? `${Math.round(rect.top)}〜${Math.round(rect.bottom)} (${Math.round(rect.left)}〜${Math.round(rect.right)})` : null,
+          // プレビューを出している選択肢の縦の位置と、一覧のスクロールの位置（scrollTop/scrollHeight/clientHeight）
+          option: option ? `${option.top}〜${option.bottom}` : null,
+          list: `${list.scrollTop}/${list.scrollHeight}/${list.clientHeight}`,
+          // ポップアップを置いた（置き直した）ときの位置と、描くごとの位置の移り変わり。直近のもの
+          placed: (window as unknown as { e2ePlaced: string[] }).e2ePlaced.slice(-4),
+          frames: (window as unknown as { e2eFrames: string[] }).e2eFrames.slice(-12),
           // カードのどちら側にあるか（枠に 1px だけ重ねる。位置が端数のときの分を見込む）。overlap: カードに重なっている
           side: rect ? (rect.left >= box.right - 2 ? 'right' : rect.bottom <= box.top + 2 ? 'top' : rect.top >= box.bottom - 2 ? 'bottom' : 'overlap') : null,
           // カードの右に、カードの幅以上の場所がある（あれば右に出す。8: ウインドウの端との間、6: カードとの間の透明な余白）
