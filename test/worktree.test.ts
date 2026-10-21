@@ -460,7 +460,7 @@ const stages = (): ((name: string) => void) => {
 };
 
 // gh pr list の 1 件
-const pull =(pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
+const pull = (pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
   baseRefName: 'main',
   url: `https://github.com/me/repo/pull/${pr.number}`,
   ...pr,
