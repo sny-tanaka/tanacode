@@ -604,16 +604,18 @@ export function App() {
   const openTabs = useMemo(() => Object.fromEntries(Object.entries(editors).map(([dir, s]) => [dir, s.files.map((f) => f.path)])), [openTabsKey]);
   useEffect(() => window.tanacode.workspace.watchOpenFiles(openTabs), [openTabs]);
 
-  // ウォークスルーを始めたあとで、ステップのファイルがディスク側で変わった（ウォークスルーの id:パス）。示している位置がずれているかもしれない
+  // ウォークスルーを始めたあとで、ステップのファイルがディスク側で変わった（ウォークスルーの id:パス）。示している位置がずれているかもしれない。
+  // ステップのパスは、セッションのフォルダからの相対パスか、フォルダの外のファイルの絶対パス（外のファイルの知らせは、エディタで開いている間だけ届く）
   const [staleWalkFiles, setStaleWalkFiles] = useState<ReadonlySet<string>>(new Set());
   useEffect(
     () =>
       window.tanacode.workspace.onFilesChanged(({ root, paths }) => {
-        const changed = new Set(paths);
+        const changed = new Set(paths.map((p) => `${root}/${p}`));
         const keys: string[] = [];
         for (const [sessionId, walk] of Object.entries(walksRef.current)) {
-          if (sessionsRef.current?.find((s) => s.id === sessionId)?.cwd !== root || Date.now() - walk.startedAt < WALK_STALE_GRACE_MS) continue;
-          for (const step of walk.steps) if (changed.has(step.path)) keys.push(`${walk.id}:${step.path}`);
+          const cwd = sessionsRef.current?.find((s) => s.id === sessionId)?.cwd;
+          if (!cwd || Date.now() - walk.startedAt < WALK_STALE_GRACE_MS) continue;
+          for (const step of walk.steps) if (changed.has(step.path.startsWith('/') ? step.path : `${cwd}/${step.path}`)) keys.push(`${walk.id}:${step.path}`);
         }
         if (keys.length > 0) setStaleWalkFiles((prev) => new Set([...prev, ...keys]));
       }),
