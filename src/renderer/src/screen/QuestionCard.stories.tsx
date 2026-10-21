@@ -4,7 +4,7 @@ import type { AskQuestion } from '@shared/screen';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { QuestionCard } from './QuestionCard';
 
-// Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。プレビュー付きの質問には、メモ欄が付く
+// Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。カードの形は、プレビューの有無で変わらない
 const pending = (...questions: AskQuestion[]): PendingQuestion => ({ id: '1', questions, answered: {} });
 
 const handling: AskQuestion = {
@@ -82,7 +82,7 @@ export const 複数の質問: Story = { args: { question: pending(style, languag
 export const 複数選択: Story = { args: { question: pending(languages) } };
 
 // 選択肢にマウスを乗せる（Tab で移る）と、比べるためのプレビューをカードの外にポップアップで出す（上に入りきらなければ下）。
-// この形には自由記述が無く、代わりにメモ欄が付く
+// ほかは、プレビューの無い質問と同じ（「その他（自由に入力）」がある）
 export const プレビュー付き: Story = { args: { question: pending(layout) } };
 
 // 送ろうとしたときに、もう答えられなかった（人がターミナルで答えた・Claude Code が先へ進んだ）

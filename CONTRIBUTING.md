@@ -426,7 +426,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `progress.test.ts` | 作業中の進み具合のうち、Claude Code の知らせから作る段階。auto モードの判定を 5 秒待たせる（モデルを呼ばない判定の呼び出しを、モックの API が遅らせる）と判定待ちになり、済むとツールの実行に戻る → コンテキストを埋めて、自動の圧縮をアプリの圧縮の前のフック（チェックリストの hooks と同じ入口を、ビルドして動かす）に止めさせると、圧縮中にならず、失敗も出ない → 止めないと、圧縮中になり、区切りが出る |
     | `permission-mode.test.ts` | 子の権限モードの上限にする親のモード（`SessionManager.modeOf`）。止まっていたセッションを開き直すと、権限モードは新しいセッションと同じ決まり（設定の `defaultMode`、無ければ auto、使えなければ default）で決め（前回のモードは引き継がない）、上限は Claude Code の今のモードになるか |
     | `elicitation.test.ts` | 使う人が足した MCP サーバー（テスト用の `elicit-mcp-server.mjs`。プロジェクトの `.mcp.json`）の人への質問（`control_request` の `elicitation`）に、カードと同じ答え方（`SessionManager.replyElicitation`）で答える。Claude Code がフォームと URL の形に答えられると MCP サーバーに伝える → フォームの項目（MCP サーバーが書いた順）がカードに出て、送った中身（action と content）が MCP サーバーに届く → 断ると decline が届く → URL の形は、開くとページを開いて accept が届き、完了を待つカードになり、MCP サーバーの完了の知らせ（`system/elicitation_complete`）で閉じる → 答える前に作業を止めると `control_cancel_request` で取り下げられる |
-| `cards.test.ts` | Claude Code が答えを待つ要求（stream-json の `can_use_tool`）に、カードと同じ答え方（`SessionManager.replyQuestion`・`replyPermission`）で答える。質問（複数の質問・複数選択・自由記述）の答えが会話ログと Claude に届く → プレビュー付きの質問のメモ（`annotations`）も届く → Chat about this・キャンセル → Bash の許可（許す・理由を添えて断ると作業が続く・× で止める・今後は聞かないと次から聞かない）→ プランモードでプランのファイルに書いてからのプランの承認（本文はプランのファイルから。承認して編集を自動で進めると acceptEdits） |
+| `cards.test.ts` | Claude Code が答えを待つ要求（stream-json の `can_use_tool`）に、カードと同じ答え方（`SessionManager.replyQuestion`・`replyPermission`）で答える。質問（複数の質問・複数選択・自由記述）の答えが会話ログと Claude に届く → プレビュー付きの質問で選んだ案のプレビュー（`annotations`）も届く → プレビュー付きの質問に自由記述で答えても届く → キャンセル → Bash の許可（許す・理由を添えて断ると作業が続く・× で止める・今後は聞かないと次から聞かない）→ プランモードでプランのファイルに書いてからのプランの承認（本文はプランのファイルから。承認して編集を自動で進めると acceptEdits） |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の中断（stream-json の `interrupt`。応答の前に中断しても、発言は会話に残る）→ 中断した会話の `--resume`（作業中にならず、`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 取り消された応答の取り直し（書いている途中で接続が切れる・ツールの呼び出しの形が壊れる。書いている途中の文が、取り直した返事より先に外れる。形が壊れた応答は、会話ログにいったん書かれてから消される。チャットにも、会話ログから作り直したチャットにも残らず、会話ログに残った行は読み落とさない）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
     | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`McpBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は localhost のページなら確認なし、それ以外のページなら「次から聞かない」を選んでも次も確認、アプリに聞けない間も確認・許す先の外を開くときは `bypassPermissions` でも「次から聞かない」のあとでも毎回確認、許す先は今までどおり・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える・`ask_user_to_act` は許可の確認なしに届き、人が返事をするまで返らない（チャットでは、Claude Code が呼び出しをバックグラウンドに移さず、ターンの中で待つ）・待っている間に中断（`interrupt`）すると、取り消し（`notifications/cancelled`）が届く |
     | `sessions.test.ts` | ほかのセッションを扱う MCP。アプリと同じ起動の引数（`--mcp-config` の `timeout` も・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`src/main/sessions-mcp.ts`）がアプリの代わりのソケットまで呼び出しを運ぶか。読むだけのツールと子への指示・質問への回答・許可の確認への回答・子の片付け・自分への予約・人への報告は確認なし・子の中断と起動は確認あり。bypassPermissions でも、子の起動だけはフックで確認が出て、確認に「利用枠」が出る。親からの指示（囲みと、複数行の本文。40 行の長いものも）は会話ログから親の ID と本文の発言として読め、順番待ちにも本文だけが出る。子の知らせと予約の知らせ（`<tanacode-wakeup>`）は「Claude への知らせ」として読め、Claude が続きを始める。作業中に頼んだ親の指示は、ターンが終わってから送る。子が出した AskUserQuestion に、親（`SessionsControl` の `answer_question`。本物の `SessionManager` で）が答えると、子が続きを始める（1 問ずつ続けて出す質問では、1 問めに答えた結果に 2 問めが入って返る。番号付きの項目が続く複数行の自由記述も、そのまま届く）。子が出した許可の確認に、親（`answer_permission`）が答える（`can_use_tool` のツールの入力の全文を読める。許すと動き、許可は覚えないので次の確認が出る。断ると動かず、理由が確認への答えとして届いて、子が続きを始める。歯止めの確認にも答えられる。親が読んだあとで人が答えて別の確認に変わっていたら、答えない）。worktree の子で裏の Bash を動かし、親が `end_session` で終える（作業中は断る。裏のタスクの完了待ちなら、裏の Bash も止まり、アーカイブして worktree とブランチを消し、未追跡のファイルは控えに残る。もう一度呼ぶと、片付いていることを返す）。自分への予約を重ねようとすると（本物の `SessionsControl` と `ScheduledMessages` で）、入らずに前の予約が結果としてモックの API まで届き、Claude（モック）がそれを読んで取り消し、入れ直せる。`even_if_scheduled: true` は中継を通って届き、重ねて入る |
@@ -805,12 +805,11 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - AskUserQuestion は、Claude Code が答えを待つ要求（`can_use_tool`。`requires_user_interaction: true`）として届きます。画面は読まず、キーも打ちません。
   - 入力（`input.questions`）から質問を取り出し（`requests.ts` の `askQuestionsOf`）、`SessionManager` が持つ `PendingQuestions`（`pending-questions.ts`）で返事を待って、Claude Code に返します（`questionResult`）。質問文・選択肢・説明・プレビューは、どれも入力のものを使います。
   - 形が違って読めない質問は、カードにも親にも出せないので、断って Claude に知らせます（許可の確認としては出さない）。
-- 返事（`@shared/questions` の `QuestionReply`）は 3 つ。
+- 返事（`@shared/questions` の `QuestionReply`）は 2 つ。
   - 答え: `behavior: 'allow'` と、入力に `answers`（質問文 → 答え）を足した `updatedInput`。会話ログには、TUI で答えたときと同じ結果が書かれます（「The user answered: …」・`toolUseResult` の `questions` と `answers`）。
     - 答えの文も、TUI で答えたときと同じ形です（`answerText`）。複数選択は、選んだ選択肢を選択肢の順に「, 」でつなぎ、自由記述は最後に足します。
     - 改行も、そのまま渡せます。
-    - プレビュー付きの質問には自由記述が無いので、代わりにメモ欄を出し、メモと、選んだ案のプレビューを `annotations`（質問文 → `{ notes, preview }`）で渡します（決めたこと。メモは TUI にしか無く、Remote Control にも無い）。
-  - Chat about this: `deny` と、TUI で選んだときに Claude Code が Claude に返す文（`chatMessage`。2.1.296 の会話ログの tool_result と同じ）。
+    - 選んだ案にプレビューがあれば、そのプレビューを `annotations`（質問文 → `{ preview }`）で添えます。Claude には、答えのあとに「selected preview: …」として届きます（2.1.305 で実測）。
   - キャンセル: `deny` と `interrupt: true`。TUI の Esc と同じく、作業を止めます。
   - どれも、本物の Claude Code が受け付けて Claude まで届くかを、`test/cli/cards.test.ts` が確かめます。
 - 待っている間は質問中です（`stateOf` は `question`。一覧の操作待ちも質問）。来たら、通知を 1 回出します（本文は質問文）。アプリを起動し直して、出し直した要求では、もう一度は出しません。
@@ -818,7 +817,10 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 画面への渡し方
   - `question:changed`（`question.onChanged`）で、セッションのいちばん前の待っている質問を送ります。画面は `useSessionQuestions` で受け、`ClaudePane` が `QuestionCard` で出します。
   - カードは、質問の入力だけで描きます。ページの送り方は TUI と同じです（1 問ずつ・タブ・単一選択は選ぶと次へ・複数選択はチェックしてから次へ・最後に回答の確認）。質問が 1 つで単一選択なら、選んだらすぐ送ります。
-  - 選んだもの・チェック・自由記述・メモは、カードが持ちます。自由記述とメモは複数行で、チャットの入力欄と同じく Enter で改行、⌘+Enter で決定します。
+  - カードの形は、プレビューの有無でそろえます（決めたこと）。どの質問にも「その他（自由に入力）」を出し、メモ欄と「Chat about this」は出しません。
+    - TUI では、プレビュー付きの質問に自由記述が無く、代わりにメモ欄があります。tanacode では、プレビューはホバーで出すだけにして、ほかはプレビューの無い質問と同じにしました。
+    - 「Chat about this」は、その他に書けば質問について話せるので出しません（前は、TUI で選んだときと同じ文で断っていた）。
+  - 選んだもの・チェック・自由記述は、カードが持ちます。自由記述は複数行で、チャットの入力欄と同じく Enter で改行、⌘+Enter で決定します。
   - 選択肢のプレビューは、ホバー（Tab のフォーカスでも）した選択肢のものを、カードの外にポップアップで出します（`PreviewPopup`）。チャットの一覧のスクロールの枠で切れないよう、`Tooltip` と同じく body に出し（`createPortal`・`position: fixed`）、カードの上（入りきらず、下のほうが広ければ下）に置きます。
     - カードの中に出すと、ホバーでカードの高さが変わり、一覧が最下部を保とうとしてカードが上下に動きます。止めたマウスの下に別の選択肢が来てプレビューが替わり、また動くのを繰り返しました。
     - カードには重ねません（ホバーした選択肢に重なると、マウスがポップアップに乗ったところで選択肢から外れ、ちらつく）。カードの側の透明な余白で、カードとすき間なくつなぎます。React の木ではカードの中に置くので、マウスをカードからポップアップへ移しても、カードの `onMouseLeave` は来ません。両方から外れたら消します。

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { git, status, userGit } from '../src/main/git';
 import { SourceControl } from '../src/main/source-control';
+import { stages } from './helpers/stages';
 
 // ソース管理パネルの操作（ステージ・取り消し・変更を捨てる・コミット・プッシュ・ブランチの切り替え・差分の左右）。
 // 使い捨てのリポジトリに、本物の git で行う
@@ -136,21 +137,28 @@ describe('SourceControl', () => {
     expect((await run(remote, ['rev-parse', 'feature'])).trim()).toBe((await run(repo, ['rev-parse', 'HEAD'])).trim());
   });
 
+  // 単体テストの全体を並べて流したときに、5 秒の時間切れで落ちたことがある（手元で 2 回流しても再現しなかった）。落ちたら段ごとの経過を出す
   it('checkout: 新しいブランチ・手元のブランチ・リモートのブランチ（同じ名前で作って追跡）へ切り替える', async () => {
+    const done = stages();
     await run(root, ['init', '-q', '--bare', '-b', 'main', remote]);
     await run(repo, ['remote', 'add', 'origin', remote]);
     await run(repo, ['push', '-q', 'origin', 'main', 'main:shared']);
     await run(repo, ['fetch', '-q', 'origin']);
+    done('準備（origin・プッシュ・fetch）');
     await scm.checkout('topic', 'create');
     expect((await scm.state()).isRepo && (await scm.state())).toMatchObject({ branch: 'topic' });
+    done('新しいブランチ');
     await scm.checkout('main', 'local');
     expect(await scm.state()).toMatchObject({ branch: 'main' });
+    done('手元のブランチ');
     await scm.checkout('origin/shared', 'remote');
     expect(await scm.state()).toMatchObject({ branch: 'shared' });
     expect((await run(repo, ['rev-parse', '--abbrev-ref', 'shared@{upstream}'])).trim()).toBe('origin/shared');
+    done('リモートのブランチ');
     // 画面から来たブランチの名前が - で始まっていたら、git のオプションとして読ませずに断る（ブランチから外れない）
     for (const mode of ['local', 'remote', 'create'] as const) await expect(scm.checkout('--detach', mode)).rejects.toThrow();
     expect(await scm.state()).toMatchObject({ branch: 'shared' });
+    done('- で始まる名前を断る');
   });
 
   it('diffSides: ステージ済みは HEAD とステージ、そうでなければステージ（無ければ HEAD）と作業ツリー', async () => {

@@ -134,7 +134,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.RemoteControlAvailable, [], call('manager.remoteAvailable')],
     [IpcChannel.SessionsProgressGet, ['s1'], call('manager.progress', 's1')],
     [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],
-    [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'chat' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'chat' })],
+    [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'cancel' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'cancel' })],
     [IpcChannel.PermissionGet, ['s1'], call('manager.pendingPermission', 's1')],
     [IpcChannel.PermissionReply, ['s1', 'r1', { kind: 'allow', always: true }], call('manager.replyPermission', 's1', 'r1', { kind: 'allow', always: true })],
     [IpcChannel.WorkflowsGet, ['s1'], call('manager.workflows', 's1')],
@@ -203,10 +203,12 @@ describe('そのまま渡す受け口', () => {
       call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' } }),
     );
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'press-enter' })).resolves.toBe(false);
-    // プレビュー付きの質問のメモ（annotations）は、文字の値だけを渡す
+    // 「Chat about this」はカードから消したので、渡さない
+    await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'chat' })).resolves.toBe(false);
+    // 添え書き（annotations）は、文字のプレビューだけを渡す
     await expect(
-      invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く', preview: 1 }, 空: { notes: ' ' } } }),
-    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く' } } }));
+      invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く', preview: 'A の図' }, 数: { preview: 1 } } }),
+    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { preview: 'A の図' } } }));
   });
 
   it('許可の確認のカードの返事も、形を確かめてから渡す（形の違う返事・理由の無い断りは渡さずに false）', async () => {

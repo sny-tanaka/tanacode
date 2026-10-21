@@ -14,8 +14,8 @@ describe('待っている質問（PendingQuestions）', () => {
     const second = pending.wait('s', ASK_TABS, new AbortController().signal);
     const firstId = pending.first('s')!.id;
     expect(pending.first('s')?.questions).toEqual([QUESTION]);
-    expect(pending.reply('s', firstId, { kind: 'chat' })).toBe(true);
-    expect(await first).toEqual({ kind: 'chat' });
+    expect(pending.reply('s', firstId, { kind: 'cancel' })).toBe(true);
+    expect(await first).toEqual({ kind: 'cancel' });
     expect(pending.first('s')?.questions).toEqual(ASK_TABS);
     pending.releaseAll('s');
     expect(await second).toBeNull();
@@ -25,7 +25,7 @@ describe('待っている質問（PendingQuestions）', () => {
     aborted.abort();
     expect(await pending.wait('s', [QUESTION], aborted.signal)).toBeNull();
     expect(pending.first('s')).toBeNull();
-    expect(pending.reply('s', 'nope', { kind: 'chat' })).toBe(false);
+    expect(pending.reply('s', 'nope', { kind: 'cancel' })).toBe(false);
     expect(pending.answerOne('s', 'nope', QUESTION.question, 'x')).toBeNull();
   });
 });
@@ -43,7 +43,15 @@ describe('答えの文（answerText）', () => {
 describe('返事の読み方（questionReplyOf）', () => {
   it('画面から届いた返事を読む。形の違うものは null', () => {
     expect(questionReplyOf({ kind: 'answer', answers: { a: 'b' } })).toEqual({ kind: 'answer', answers: { a: 'b' } });
-    expect(questionReplyOf({ kind: 'chat' })).toEqual({ kind: 'chat' });
+    expect(questionReplyOf({ kind: 'cancel' })).toEqual({ kind: 'cancel' });
+    // 添え書きは、プレビューだけを読む
+    expect(questionReplyOf({ kind: 'answer', answers: { a: 'b' }, annotations: { a: { preview: '図', notes: 'メモ' }, c: { notes: 'メモ' }, d: 'x' } })).toEqual({
+      kind: 'answer',
+      answers: { a: 'b' },
+      annotations: { a: { preview: '図' } },
+    });
+    // 「Chat about this」はカードから消したので、受け取らない
+    expect(questionReplyOf({ kind: 'chat' })).toBeNull();
     expect(questionReplyOf({ kind: 'answer', answers: ['x'] })).toBeNull();
     expect(questionReplyOf(null)).toBeNull();
   });

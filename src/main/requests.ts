@@ -18,30 +18,13 @@ export function rejectedWith(message: string): string {
   return `${REJECTED} To tell you how to proceed, the user said:\n${message}`;
 }
 
-// 質問で「Chat about this」を選んだときの文（2.1.296 の会話ログの tool_result と同じ）
-export function chatMessage(questions: string[]): string {
-  return [
-    `${REJECTED} To tell you how to proceed, the user said:`,
-    'The user wants to clarify these questions.',
-    '    This means they may have additional information, context or questions for you.',
-    '    Take their response into account and then reformulate the questions if appropriate.',
-    '    Start by asking them what they would like to clarify.',
-    '',
-    '    Questions asked:',
-    ...questions.map((q) => `- "${q}"\n  (No answer provided)`),
-  ].join('\n');
-}
-
 // プランの承認のツール
 export const PLAN_TOOL = 'ExitPlanMode';
 
 // 質問への返事を、Claude Code への返事にする（答えは入力の answers・annotations に入れて許す。実測）
-export function questionResult(input: Record<string, unknown>, questions: AskQuestion[], reply: QuestionReply): PermissionResult {
-  if (reply.kind === 'answer') {
-    return { behavior: 'allow', updatedInput: { ...input, answers: reply.answers, ...(reply.annotations ? { annotations: reply.annotations } : {}) } };
-  }
+export function questionResult(input: Record<string, unknown>, reply: QuestionReply): PermissionResult {
   if (reply.kind === 'cancel') return { behavior: 'deny', message: REJECTED, interrupt: true };
-  return { behavior: 'deny', message: chatMessage(questions.map((q) => q.question)) };
+  return { behavior: 'allow', updatedInput: { ...input, answers: reply.answers, ...(reply.annotations ? { annotations: reply.annotations } : {}) } };
 }
 
 // 質問でない要求を、カードと親の道具で扱う形にする。plan: プランの承認なら、プランの本文（Claude Code は要求の入力に本文を入れず、

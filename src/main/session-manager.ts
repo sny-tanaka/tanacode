@@ -3429,7 +3429,7 @@ export class SessionManager {
         rt.questionWaits.delete(requestId);
         // 待つのをやめた（取り下げられた・終わった・人がほかで答えた）ときは、何も返さない
         if (!reply || rt.process !== process) return;
-        if (process?.client?.respond(requestId, questionResult(request.input, questions, reply))) this.requestRemoved(id, rt, requestId);
+        if (process?.client?.respond(requestId, questionResult(request.input, reply))) this.requestRemoved(id, rt, requestId);
       });
     }
     this.updateAttention(id, rt, replayed);

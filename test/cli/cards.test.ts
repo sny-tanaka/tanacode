@@ -25,7 +25,8 @@ const SIMPLE: AskQuestion[] = [
     ],
   },
 ];
-const NOTE = 'NOTE-余白を広めにしてください';
+// プレビュー付きの質問に、選択肢に無い答えを書く
+const TYPED_LAYOUT = 'TYPED-格子に並べる\n2 列で';
 const DENIED = 'DENY-代わりに echo で確かめてください';
 const PLAN = '# 計画\n\n1. 価格の表記を直す\n2. テストを足す';
 
@@ -34,8 +35,8 @@ const ask = (id: string, questions: AskQuestion[]): Block[] => [{ type: 'tool_us
 const bash = (id: string, command: string): Block[] => [{ type: 'tool_use', id, name: 'Bash', input: { command, description: command } }];
 const SCRIPT: Record<string, Block[]> = {
   'CARD-TABS': ask('toolu_tabs', ASK_TABS),
+  'CARD-PREVIEW-TYPED': ask('toolu_preview_typed', ASK_PREVIEW),
   'CARD-PREVIEW': ask('toolu_preview', ASK_PREVIEW),
-  'CARD-CHAT': ask('toolu_chat', SIMPLE),
   'CARD-CANCEL': ask('toolu_cancel', SIMPLE),
   'CARD-ALLOW': bash('toolu_allow', 'touch allowed.txt'),
   'CARD-DENY': bash('toolu_deny', 'touch denied.txt'),
@@ -96,26 +97,27 @@ describe(`Claude Code ${version} の、答えを待つ要求とカード`, () =>
     expect(run.manager.pendingQuestion(run.sessionId!)).toBeNull();
   });
 
-  it('プレビュー付きの質問のメモ（annotations）も、答えと一緒に Claude に届く', async () => {
+  it('プレビュー付きの質問で選んだ案のプレビュー（annotations）も、答えと一緒に Claude に届く', async () => {
     const before = turnEnds().length;
     await run.send('CARD-PREVIEW');
     const question = await run.question('プレビュー付きの質問');
     const [asked] = ASK_PREVIEW;
     const picked = asked.options[1];
-    run.replyQuestion(question, { kind: 'answer', answers: { [asked.question]: picked.label }, annotations: { [asked.question]: { notes: NOTE, preview: picked.preview } } });
+    run.replyQuestion(question, { kind: 'answer', answers: { [asked.question]: picked.label }, annotations: { [asked.question]: { preview: picked.preview! } } });
     await finished(before);
     const result = api.toolResults.find((r) => r.includes(picked.label));
-    expect(result).toContain(NOTE);
+    expect(result).toContain(`selected preview:\n${picked.preview}`);
   });
 
-  it('「Chat about this」は、答えずに質問について話す文を Claude に返す（TUI で選んだときと同じ）', async () => {
+  it('プレビュー付きの質問に自由記述で答えても、答えが会話ログに残り、Claude に届く', async () => {
     const before = turnEnds().length;
-    await run.send('CARD-CHAT');
-    const question = await run.question('質問');
-    run.replyQuestion(question, { kind: 'chat' });
-    const end = await finished(before);
-    expect(end).not.toHaveProperty('interrupted');
-    expect(api.toolResults.some((r) => r.includes('The user wants to clarify these questions') && r.includes(SIMPLE[0].question))).toBe(true);
+    await run.send('CARD-PREVIEW-TYPED');
+    const question = await run.question('プレビュー付きの質問');
+    const [asked] = ASK_PREVIEW;
+    run.replyQuestion(question, { kind: 'answer', answers: { [asked.question]: TYPED_LAYOUT } });
+    await finished(before);
+    expect(resultOf('toolu_preview_typed')?.answers).toEqual([{ header: asked.header, question: asked.question, answer: TYPED_LAYOUT }]);
+    expect(api.toolResults.some((r) => r.includes(TYPED_LAYOUT))).toBe(true);
   });
 
   it('質問のキャンセル（×）は、作業を止める（中断で終わる）', async () => {
