@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -77,8 +77,7 @@ describe('MCP のツール', () => {
       title: '税率の変更',
       steps: [
         step(),
-        step({ path: '../outside.ts' }),
-        step({ path: join(dir, 'outside.ts') }),
+        step({ path: join(dir, 'none.ts') }),
         step({ start_line: 18, end_line: 25 }),
         step({ start_line: 5, end_line: 3 }),
         step({ path: 'src/none.ts' }),
@@ -88,13 +87,12 @@ describe('MCP のツール', () => {
     });
     expect(r.isError).toBe(true);
     const message = text(r);
-    expect(message).toContain('Step 2: ../outside.ts is not a file in the folder of this session');
-    expect(message).toContain('Step 3:');
-    expect(message).toContain('Step 4: src/tax.ts has 20 lines (there is no line 25).');
-    expect(message).toContain('Step 5: src/tax.ts: end_line must be an integer of start_line or more');
-    expect(message).toContain('Step 6: src/none.ts was not found');
-    expect(message).toContain('Step 7: src/logo.png is not a text file');
-    expect(message).toContain('Step 8: Pass body.');
+    expect(message).toContain(`Step 2: ${join(dir, 'none.ts')} was not found`);
+    expect(message).toContain('Step 3: src/tax.ts has 20 lines (there is no line 25).');
+    expect(message).toContain('Step 4: src/tax.ts: end_line must be an integer of start_line or more');
+    expect(message).toContain('Step 5: src/none.ts was not found');
+    expect(message).toContain('Step 6: src/logo.png is not a text file');
+    expect(message).toContain('Step 7: Pass body.');
     expect(message).not.toContain('Step 1:');
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
@@ -294,6 +292,12 @@ describe('PR への投稿（post_walkthrough）', () => {
     const dirty = await started(github([pr()]));
     writeFileSync(join(cwd, 'src', 'tax.ts'), 'changed\n'.repeat(20));
     expect(text(await dirty.handle(ME, 'post_walkthrough', {}))).toContain('Some files have uncommitted changes: src/tax.ts.');
+    // セッションのフォルダの外のファイルのステップは、PR に無い（コミットするようには言わない）
+    const { control: outside } = setup(true, github([pr()]));
+    await outside.handle(ME, 'start_walkthrough', { title: '外も見る', steps: [step({ path: join(dir, 'outside.ts'), start_line: 1, end_line: 1 })] });
+    expect(text(await outside.handle(ME, 'post_walkthrough', {}))).toBe(
+      `Could not post the walkthrough "外も見る". Some steps show files outside the session folder: ${join(dir, 'outside.ts')}. They aren't in the PR, so this walkthrough can't be posted. To post one, start a walkthrough without those steps. Tell the user the reason instead of posting a comment of your own.`,
+    );
     expect(posted).toEqual([]);
     expect(control.postedUrl(control.get(ME)!.id)).toBeNull();
   });
@@ -402,15 +406,36 @@ describe('引数と状態の細かいところ', () => {
     expect(text(await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 4, body: 'x' }))).toBe('src/short.ts has 3 lines (there is no line 4).');
   });
 
-  it('show_code: 示せないものは理由を返し、今の表示を変えない', async () => {
+  it('show_code: 示せないもの（無いファイル・フォルダ）は理由を返し、今の表示を変えない', async () => {
     const { control, changes } = setup();
-    expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('is not a file in the folder of this session');
-    // .. そのもの、名前が .. で始まるフォルダを通って外に出るもの、.. を含む絶対パスも断る
-    for (const path of ['..', '..notes/../../outside.ts', `${cwd}/../outside.ts`]) {
-      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: 'x' }))).toBe(`${path} is not a file in the folder of this session (${cwd}).`);
-    }
+    expect(text(await control.handle(ME, 'show_code', { path: join(dir, 'none.ts'), start_line: 1, body: 'x' }))).toBe(`${join(dir, 'none.ts')} was not found.`);
+    expect(text(await control.handle(ME, 'show_code', { path: '..', start_line: 1, body: 'x' }))).toBe(`${dir} was not found.`);
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
+  });
+
+  // 人と決めたこと: 制限しない。Claude はもともと、どのファイルも読めるので、tanacode だけで制限しても意味がない
+  it('セッションのフォルダの外のファイルも示せる（show_code・start_walkthrough のステップ）。外は絶対パスのまま、画面がエディタで開く', async () => {
+    const outside = join(dir, 'outside.ts');
+    const { control } = setup();
+    // 絶対パス、.. で外に出る相対パス（名前が .. で始まるフォルダを通るもの）、.. を含む絶対パス
+    for (const path of [outside, '../outside.ts', '..notes/../../outside.ts', `${cwd}/../outside.ts`]) {
+      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: '外のファイル' }))).toBe(`Showed ${outside}:1 in the user's editor (an aside).`);
+      expect(control.get(ME)!.aside).toEqual({ path: outside, startLine: 1, endLine: 1, title: '', body: '外のファイル', view: 'file' });
+    }
+    const r = await control.handle(ME, 'start_walkthrough', { title: '外も見る', steps: [step(), step({ path: outside, start_line: 1, end_line: 1, title: '外' })] });
+    expect(r.isError).toBeUndefined();
+    expect(control.get(ME)!.steps[1]).toMatchObject({ path: outside, startLine: 1, endLine: 1 });
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain(`2. 外 — ${outside}:1`);
+  });
+
+  it('セッションのフォルダがリンク越しのパスでも、Claude Code が渡すリンクを解いたパスのフォルダの中のファイルは、相対パスにする', async () => {
+    const real = realpathSync(cwd);
+    cwd = join(dir, 'linked');
+    symlinkSync(real, cwd);
+    const { control } = setup();
+    expect(text(await control.handle(ME, 'show_code', { path: join(real, 'src', 'tax.ts'), start_line: 2, body: 'x' }))).toBe("Showed src/tax.ts:2 in the user's editor (an aside).");
+    expect(control.get(ME)!.aside?.path).toBe('src/tax.ts');
   });
 
   it('思いがけない失敗（ツールの理由にできないもの）は、結果にせずに投げる', async () => {

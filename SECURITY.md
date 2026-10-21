@@ -33,6 +33,7 @@ tanacode が信頼できない中身を扱う箇所。
 - Claude Code そのものの脆弱性。報告先は Anthropic の窓口（[Responsible Disclosure Policy](https://www.anthropic.com/responsible-disclosure-policy)）
 - ユーザー自身が明示的に実行したコマンドの結果
 - 同じユーザーの権限で動くプロセスが、アプリのソケット（自分だけが読み書きできる）につないで、セッションを名乗ること。Bash を実行できる Claude を含め、そのプロセスはもともと同じ権限で何でもできるため、新しくできることは増えません
+- Claude がウォークスルー（`show_code`・`start_walkthrough`）で、セッションのフォルダの外のファイルをエディタに出すこと。Claude はもともと、どのファイルも読めるため、tanacode だけで制限しても意味がありません（制限しないと決めています）
 - Apple の署名・公証が無いことそのもの（[README](README.md#インストール) に記載）
 - 信頼していないフォルダで始めたセッションで、そのフォルダの hooks・MCP サーバー・許可のルールが確認なしに動くこと。人がフォルダを選んでセッションを始めたことを、同意とみなす作りです（下の「フォルダの信頼」）
 

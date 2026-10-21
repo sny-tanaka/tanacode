@@ -128,6 +128,13 @@ describe('載せられるかの確かめと投稿', () => {
     expect(d.ok ? 'ok' : d.reason).toContain('コミットに入っていないファイルがあります: src/new.ts');
   });
 
+  it('セッションのフォルダの外のファイル（絶対パスのステップ）があれば、コミットするよう言わずに、PR に無いので載せられないと返す', async () => {
+    const memo = join(dir, 'notes', 'memo.md');
+    const extra = { ...WALK, steps: [...WALK.steps, step(memo, 1, 1, '外のメモ', '…')] };
+    const d = await draftWalkthroughComment(app, extra, null, deps([pr()]));
+    expect(d.ok ? 'ok' : d.reason).toBe(`セッションのフォルダの外のファイルを示すステップがあります: ${memo}。PR に入っていないので、このウォークスルーは載せられません。載せるときは、そのステップを除いたウォークスルーを作ってください。`);
+  });
+
   it('投稿: 確かめ直してから、一言を添えて載せ、コメントの URL を返す。長すぎる本文は断る', async () => {
     const posted: string[] = [];
     const url = await postWalkthroughComment(app, WALK, '直した本文', true, deps([pr()], posted));

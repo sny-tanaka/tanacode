@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { finalCommentBody, MAX_COMMENT_CHARS, repoUrlOfPullRequest, stepFiles, walkthroughCommentBody, type WalkthroughCommentDraft } from '@shared/walkthrough-comment';
 import type { Walkthrough } from '@shared/walkthrough';
 import { t, tFor, type MessageKey, type Params } from '@shared/i18n';
@@ -25,6 +26,9 @@ const english: Say = (key, params) => tFor('en', key, params);
 // 載せられるか確かめる。だめなら理由
 async function target(cwd: string, w: Walkthrough, deps: CommentDeps, say: Say): Promise<Target | string> {
   if (w.steps.length === 0) return say('main.walkthrough.noSteps');
+  // セッションのフォルダの外のファイル（絶対パスのステップ）は、PR に無いので、リンクを作れない
+  const outside = stepFiles(w).filter((file) => isAbsolute(file));
+  if (outside.length > 0) return say('main.walkthrough.outsideFiles', { files: outside.join(say('main.format.listSeparator')) });
   const prefix = await repoPrefix(cwd);
   if (prefix === null) return say('main.walkthrough.notRepo');
   const { branch } = await repoInfo(cwd);
