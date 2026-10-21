@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -17,9 +17,18 @@ export function claudeJsonPath(dir: string | null = null): string {
   return join(dir ?? (process.env.CLAUDE_CONFIG_DIR || homedir()), '.claude.json');
 }
 
-// フォルダ cwd の会話ログを置くフォルダ。Claude Code は cwd の英数字以外を '-' に置き換えた名前にする
+// フォルダ cwd の会話ログを置くフォルダ。Claude Code は cwd の英数字以外を '-' に置き換えた名前にする。
+// Claude Code の cwd はリンクを解いた実体のパス（/tmp で始めると /private/tmp）なので、こちらも解いてから名前にする。無いフォルダはそのまま
 export function projectLogDir(cwd: string, dir: string | null = null): string {
-  return join(claudeConfigDir(dir), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  return join(claudeConfigDir(dir), 'projects', realCwd(cwd).replace(/[^a-zA-Z0-9]/g, '-'));
+}
+
+function realCwd(cwd: string): string {
+  try {
+    return realpathSync(cwd);
+  } catch {
+    return cwd;
+  }
 }
 
 // ~/.claude 以外を設定のフォルダにする Claude Code に、読ませない指示ファイル（設定の claudeMdExcludes。絶対パスの glob）。

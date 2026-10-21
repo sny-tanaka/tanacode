@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -415,6 +415,17 @@ describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
     expect(config.claudeConfigDir()).toBe(join(home, '.claude'));
     expect(config.claudeJsonPath()).toBe(join(home, '.claude.json'));
     expect(session.transcriptPath('/Users/me/my app', 'abc')).toBe(join(home, '.claude', 'projects', '-Users-me-my-app', 'abc.jsonl'));
+  });
+
+  it('会話ログの場所は、リンクを解いたフォルダで決める（Claude Code は実体のパスで置く。/tmp は /private/tmp）', () => {
+    const real = join(home, 'real-work');
+    mkdirSync(real, { recursive: true });
+    const link = join(home, 'link-work');
+    symlinkSync(real, link);
+    const named = (path: string) => realpathSync(path).replace(/[^a-zA-Z0-9]/g, '-');
+    expect(session.transcriptPath(link, 'abc')).toBe(join(home, '.claude', 'projects', named(real), 'abc.jsonl'));
+    // 無いフォルダは、そのままの名前
+    expect(session.transcriptPath('/no/such/dir', 'abc')).toBe(join(home, '.claude', 'projects', '-no-such-dir', 'abc.jsonl'));
   });
 
   it('あれば、設定・会話ログ・.claude.json をすべてその中から読む（Claude Code と同じ）', async () => {

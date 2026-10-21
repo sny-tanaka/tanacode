@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ChatEvent } from '@shared/chat';
 import { line, ScriptedApp, type ScriptedOptions } from './helpers/scripted-claude';
 
 // Remote Control（スマホから続ける）の指定と、会話ログのつながりの行（SessionManager）。
@@ -59,6 +60,27 @@ describe('会話ログのつながりの行', () => {
     await app.waitFor('つながり', () => remoteEvents(id).length > 0);
     expect(remoteEvents(id)).toEqual([{ type: 'remote-control', url: 'https://claude.ai/code/session_abc' }]);
     expect(app.manager.remoteConnectedOf(id)).toBe(true);
+  });
+
+  it('同じつながり・同じ PR の行が書き直されても、変わったときだけチャットに積む（Claude Code は 1 本の会話ログに数百回書く）', async () => {
+    start();
+    const { id } = app.create({ remoteControl: true });
+    await app.ready(id);
+    const bridge = (bridgeSessionId: string, lastSequenceNum: number) => ({ type: 'bridge-session', bridgeSessionId, lastSequenceNum });
+    const pr = (prNumber: number) => ({ type: 'pr-link', prNumber, prUrl: `https://github.com/o/r/pull/${prNumber}`, prRepository: 'o/r' });
+    app.append(id, bridge('cse_abc', 1), pr(1), bridge('cse_abc', 2), pr(1));
+    app.append(id, bridge('cse_abc', 3), pr(1));
+    app.append(id, bridge('cse_def', 4), pr(2), bridge('cse_def', 5), line.user('おわり'));
+    await app.waitFor('最後の行', () => app.events(id).some((e) => e.type === 'user'));
+    const states = (events: ChatEvent[]) => events.filter((e) => e.type === 'remote-control' || e.type === 'pr-link');
+    const expected = [
+      { type: 'remote-control', url: 'https://claude.ai/code/session_abc' },
+      { type: 'pr-link', pr: { number: 1, url: 'https://github.com/o/r/pull/1', repository: 'o/r' } },
+      { type: 'remote-control', url: 'https://claude.ai/code/session_def' },
+      { type: 'pr-link', pr: { number: 2, url: 'https://github.com/o/r/pull/2', repository: 'o/r' } },
+    ];
+    expect(states(app.events(id))).toEqual(expected);
+    expect(states(app.manager.snapshot(id).events)).toEqual(expected);
   });
 
   it('再開したときは、前に起動した claude のつながり（読み直した過去の行）を出さない', async () => {

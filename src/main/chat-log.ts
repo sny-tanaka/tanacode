@@ -92,6 +92,28 @@ export function withoutForkContext(entries: TranscriptEntry[], toolUseId: string
   });
 }
 
+// 会話ログの行から作った今の状態のイベント（Remote Control のつながり・PR へのリンク）のうち、前の同じ種類のもの（before と、
+// events のその前）と同じもの。Claude Code はこれらの行を 1 本の会話ログに数百回書き足す（bridge-session は lastSequenceNum だけ
+// 違う）ので、同じものは積まない（画面は最後のものを使う。同じものを当て直しても変わらない）
+const LOGGED_STATES = new Set<ChatEvent['type']>(['remote-control', 'pr-link']);
+export function withoutRepeatedState(before: ChatEvent[], events: ChatEvent[]): ChatEvent[] {
+  if (!events.some((e) => LOGGED_STATES.has(e.type))) return events;
+  const kept: ChatEvent[] = [];
+  for (const event of events) {
+    if (LOGGED_STATES.has(event.type)) {
+      const last = lastOfType(kept, event.type) ?? lastOfType(before, event.type);
+      if (last && JSON.stringify(last) === JSON.stringify(event)) continue;
+    }
+    kept.push(event);
+  }
+  return kept;
+}
+
+function lastOfType(events: ChatEvent[], type: ChatEvent['type']): ChatEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].type === type) return events[i];
+  return undefined;
+}
+
 // 会話ログ全体をチャットのイベントにする（アーカイブ済みセッションを再開せずに見るため）
 export async function readChatLog(file: string, cwd: string): Promise<ChatEvent[]> {
   return chatEventsOf(await readEntries(file), cwd);
@@ -122,7 +144,7 @@ function chatEventsOf(entries: TranscriptEntry[], cwd: string, endTurn = true): 
     }
     const retracted = conversation && retract(chain, events, retractedUuidsOf(conversation));
     if (retracted) ({ chain, events } = retracted);
-    events.push(...lineChatEvents(line, cwd, false, rememberImage));
+    events.push(...withoutRepeatedState(events, lineChatEvents(line, cwd, false, rememberImage)));
   }
   // 応答のないまま終わったターンを作業中として扱わない
   return endTurn ? [...events, { type: 'turn-end' }] : events;

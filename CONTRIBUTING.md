@@ -533,7 +533,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `--model` は設定ファイルの `model` を上書きするので（実測）、モデルを選んでいないときは登録した設定の `model` を `--model` に渡します。設定ファイルを変えたら、モデルとエフォートは `null` に戻します（設定によって使えるモデルが違うため）。
   - 登録が外れている・ファイルが無い・読めないときは、記録を作る前・起動し直す前・動いている Claude Code を止める前に断ります。標準の設定に黙って切り替えると、意図しない契約で動いてしまうためです。登録を外すのは、使っているセッションがあっても止めません（次に起動するときに断られる）。
   - `-p` は、形の違う設定ファイル（壊れた JSON・型の違う値・形の不正な hooks）を、ファイルごと黙って無視します（標準出力にも標準エラーにも何も出ない。実測）。同じ理由で黙って切り替えないよう、起動の直後に `get_settings` を送り、`errors` があれば、理由をチャットに出して Claude Code を止めます。
-- チャットは、stream-json の応答の行ではなく、会話ログから組み立てます（同じものを 2 つの道から取らない）。会話ログは `~/.claude/projects/<フォルダ>/<id>.jsonl`。`/clear` で会話が切り替わっても追いかけます。
+- チャットは、stream-json の応答の行ではなく、会話ログから組み立てます（同じものを 2 つの道から取らない）。会話ログは `~/.claude/projects/<フォルダ>/<id>.jsonl`（`<フォルダ>` は、作業フォルダのリンクを解いた実体のパスの英数字以外を `-` にしたもの。Claude Code と同じく、`/tmp` で始めたセッションは `/private/tmp` の名前）。`/clear` で会話が切り替わっても追いかけます。
   - 書いている途中の応答（`stream_event`）だけは、会話ログに書かれる前に、チャットの最後（作業中の表示の上）に出します（`stream/partial.ts` の `PartialText`）。会話ログに残らない、画面だけの表示です。
     - main が、応答（`message_start` の `message.id`）とブロック（`index`）ごとに文と思考をため、0.05 秒に 1 回までまとめて、チャットの配信に載せます（`ChatBatch` の `partial`。そのときの全部）。通し番号には数えず、`rt.events` にも入れません。スナップショットにも入れるので、画面を読み込み直しても続きから出ます。
     - そのブロックが会話ログに出たら（同じ `message.id` と `apiBlockIndex` の応答の行。会話ログは 1 ブロックを 1 行に書く。`apiBlockIndex` が無ければ、同じ応答の行の数で決める）外し、その行のイベントと同じ配信で送ります。画面では、同じ場所のまま書き終わった本文に入れ替わります（決めたこと）。中断しても、書いたところまでが会話ログに残るので、同じく入れ替わります（2.1.302 で実測）。
@@ -550,7 +550,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - それでも会話ログに出ないまま残ったものは、ターンの終わり・claude の終了・`/clear` で捨てます。
     - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts`（モックの API は、途中の文が配信されるまで文を書き終えない。`holdText`）、取り消された書きかけが取り直した返事より先に外れることは `test/cli/errors.test.ts` で確かめます。
   - `/clear` のあとの会話は、チャットでは `conversation_reset` のあとの `system/init` の `session_id` で分かります（`new_conversation_id` とは別の値。実測）。ターミナルモードでは、statusLine の `transcript_path` で分かります。Remote Control を使っていれば、新しい会話ログにも同じ `bridge-session` の ID が書かれるので、それでも追います。ただし、一度離れた会話ログへは、この ID では乗り換え直しません（`/clear` のときに Claude Code が前の会話ログにも行を書き足し、その頭にも同じ ID があるため。乗り換え直すと、チャットに前の会話が戻る。実測）。
-  - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行と、チャットでは `system/bridge_state` で分かります。
+  - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行と、チャットでは `system/bridge_state` で分かります。Claude Code は `bridge-session` と `pr-link` の行を、1 本の会話ログに何百回も書き足します（`bridge-session` は `lastSequenceNum` だけが違う）。チャットのイベントにするのは、前の同じ種類のものから変わったときだけです（`withoutRepeatedState`。画面は最後のものを使うので、同じものを積んでも変わらず、メモリと配信だけが増える）。
   - 会話ログは、変更の通知（`fs.watch`）ですぐ読みます。取りこぼしに備えて、0.15 秒ごとにも確かめます。
   - 送った発言が会話に出たかは、発言の行の `uuid`（作業中に送ったものは、`queued_command` の attachment の `source_uuid`）が、アプリが付けた `uuid` と同じかで見ます。
   - `-p` の会話ログは、TUI と違って `turn_duration` を書かず、`permission-mode` の行も書きません（今のモードは、発言の行の `permissionMode` に入る）。`entrypoint` は `sdk-cli`（2.1.301 で実測）。
