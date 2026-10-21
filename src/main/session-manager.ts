@@ -386,8 +386,9 @@ type Runtime = {
   stderr: string;
 };
 
-// アプリが開くコマンドのターミナル（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id
-export type RunTask = (owner: string, cwd: string, command: string, name: string) => Promise<number>;
+// アプリが動かすコマンド（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id /
+// onWaiting: 入力を待っているように見えた（アプリは、そのときタブに出す）
+export type RunTask = (owner: string, cwd: string, command: string, name: string, onWaiting?: () => void) => Promise<number>;
 
 type Listeners = {
   onSessionsChanged: (sessions: SessionSummary[]) => void;
@@ -435,7 +436,7 @@ export class SessionManager {
     private readonly remoteControlAvailable = true,
     // 登録した設定ファイルを、起動する Claude Code に重ねる。無ければ設定ファイルは使えない
     private readonly settingsFiles: SettingsFiles | null = null,
-    // worktree の npm install などを実行する（アプリはターミナルのタブに出す）。無ければ、画面に出さずに実行する
+    // worktree の npm install などを実行する（アプリは画面に出さずに動かし、失敗・入力待ちのときだけターミナルのタブに出す）。無ければ、画面に出さずに実行する
     private readonly runTask: RunTask = runQuietly,
     // 起動する Claude Code に、アプリ内ブラウザの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly browser: () => BrowserMcpLaunch | null = () => null,
@@ -2749,7 +2750,7 @@ export class SessionManager {
     let failure: string | null = null;
     const result = await prepareNodeModules(root, record.cwd, {
       onStep: step,
-      install: (cwd, dir, command) => this.runTask(id, cwd, command, dir ? t('main.worktree.commandAt', { command, dir }) : command),
+      install: (cwd, dir, command) => this.runInstall(id, rt, cwd, dir, command),
     }).catch((error: unknown): NodeModulesResult => {
       console.error('node_modules を用意できませんでした', error);
       failure = error instanceof Error ? error.message : String(error);
@@ -2779,6 +2780,23 @@ export class SessionManager {
     // 準備の間に再起動して、止めた claude が捨てた発言があれば、受け付けられるようになったここで送り直す
     this.resendCarried(id, rt);
     this.emitSessions();
+  }
+
+  // worktree の準備の install を動かす。入力を待っているように見えたら（アプリはタブに出す）、チャットの注意の行と、親が読む準備の問題
+  // （get_session の setup_problems）で知らせる。誰にも見えないまま止まると、子は最初の指示を受け取れずに待ち続けるため。終わったら問題から外す
+  private async runInstall(id: string, rt: Runtime, cwd: string, dir: string, command: string): Promise<number> {
+    const waiting = { dir, command };
+    const onWaiting = () => {
+      if (this.runtimes.get(id) !== rt) return;
+      this.setupTrouble.set(id, { installsFailed: [], notCopied: [], error: null, waiting });
+      const at = t('main.worktree.commandAt', { command, dir: dir || t('main.worktree.topDir') });
+      this.pushEvents(id, [{ type: 'info', id: `worktree-waiting:${Date.now()}`, text: t('main.worktree.installWaiting', { command: at }), warning: true }]);
+    };
+    try {
+      return await this.runTask(id, cwd, command, dir ? t('main.worktree.commandAt', { command, dir }) : command, onWaiting);
+    } finally {
+      if (this.setupTrouble.get(id)?.waiting === waiting) this.setupTrouble.delete(id);
+    }
   }
 
   // 会話ログを読み終え、引き継いだ claude なら前のアプリの頃の行も読み終えたら、過去の会話の終わりを決める

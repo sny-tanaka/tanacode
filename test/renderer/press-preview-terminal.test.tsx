@@ -215,6 +215,30 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect(task.element!.isConnected).toBe(false);
   });
 
+  it('画面に出さずに動かしていたコマンドを出したとき: それまでの画面を、前と同じ大きさの xterm に書いてから、このあとの出力をつなぐ。終わっていれば、終了コードも出す', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    // 入力を待っているように見えて出した（まだ動いている）
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'pnpm install', task: true, replay: { exitCode: null, cols: 100, rows: 24, screen: 'Proceed? (Y/n) ' } }));
+    expect(tabNames()).toEqual(['zsh 1', 'pnpm install（実行中）']);
+    expect(selectedTab()).toBe(1);
+    const waiting = termOf(1);
+    expect([waiting.cols, waiting.rows]).toEqual([100, 24]);
+    act(() => api.emit('shell.onData', { id: 'task1', data: 'y\r\n' }));
+    expect(waiting.written).toEqual(['Proceed? (Y/n) ', 'y\r\n']);
+    // 人がタブで答えると、main に届く
+    act(() => waiting.input('y'));
+    expect(api.argsOf('shell.write')).toEqual([['task1', 'y']]);
+    // 失敗して出した（もう終わっている）
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task2', name: 'npm install', task: true, replay: { exitCode: 1, cols: 100, rows: 24, screen: 'npm error' } }));
+    expect(tabNames()).toEqual(['zsh 1', 'pnpm install（実行中）', 'npm install（失敗 1）']);
+    expect(termOf(2).written).toEqual(['npm error']);
+    // 終わったあとの × は、タブを片付ける
+    fireEvent.click(closeOf(2));
+    expect(api.argsOf('shell.kill')).toEqual([['task2']]);
+    expect(tabNames()).toEqual(['zsh 1', 'pnpm install（実行中）']);
+  });
+
   it('Claude が打つために開いたシェル: 人が開いたシェルと同じタブとして出し、選ぶ。タイトルを追い、終わったらタブを閉じる', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));

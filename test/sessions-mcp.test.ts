@@ -646,6 +646,11 @@ describe('ツールの実行（SessionsControl）', () => {
       'yarn install in pkg exited with code 1, so its dependencies may be missing (its output is in a tab of the Terminal panel)',
       'node_modules in the top folder could not be copied and was not installed',
     ]);
+    // 準備の途中で install が入力を待っているように見えるときも出す（子は、答えるまで最初の指示を受け取れない）
+    host.setupTrouble.set(started.session_id, { installsFailed: [], notCopied: [], error: null, waiting: { dir: '', command: 'pnpm install' } });
+    expect(jsonOf<{ worktree: { setup_problems: string[] } }>(await control.handle(PARENT, 'get_session', { session_id: started.session_id })).worktree.setup_problems).toEqual([
+      'pnpm install in the top folder seems to be waiting for input, so the worktree is not ready yet (ask the user to answer it in its tab in the Terminal panel of that session)',
+    ]);
     // うまくいったとき（準備し直して直ったときも）は、何も出さない
     host.setupTrouble.clear();
     expect(jsonOf<{ worktree: Record<string, unknown> }>(await control.handle(PARENT, 'get_session', { session_id: started.session_id })).worktree).not.toHaveProperty('setup_problems');

@@ -149,11 +149,13 @@ export type NodeModulesResult = {
 };
 
 // worktree の準備（node_modules）でうまくいかなかったこと。installsFailed: 失敗した install（終了コードが 0 でない。止めたものも）/
-// notCopied: 複製できず、install もしなかった node_modules の場所（worktree からの相対。'' はいちばん上）/ error: 準備そのものが失敗した理由
+// notCopied: 複製できず、install もしなかった node_modules の場所（worktree からの相対。'' はいちばん上）/ error: 準備そのものが失敗した理由 /
+// waiting: 準備の途中で、入力を待っているように見える install（終わったら外す）
 export type WorktreeSetupTrouble = {
   installsFailed: NodeModulesResult['installs'];
   notCopied: string[];
   error: string | null;
+  waiting?: { dir: string; command: string };
 };
 
 // 準備の結果から、うまくいかなかったことを取り出す。無ければ null
@@ -179,7 +181,7 @@ export function withSetupNote(prompt: string, trouble: WorktreeSetupTrouble | nu
 
 type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
-  // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
+  // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリは画面に出さずに動かし、失敗・入力待ちのときだけタブに出す）。dir: worktree からの相対
   install: (cwd: string, dir: string, command: string) => Promise<number>;
   // node_modules を複製する。既定は APFS のクローン（clonefile。書き換えるまでディスクは増えない）
   clone?: (from: string, to: string) => Promise<void>;

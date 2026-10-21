@@ -854,6 +854,7 @@ function registerIpc(): void {
   listen(IpcChannel.ShellWrite, (e, id: string, data: string) => P(e).shells.write(id, data));
   listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
   listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));
+  listen(IpcChannel.ShellReveal, (e, sessionId: string) => P(e).shells.revealOwner(sessionId));
   handle(IpcChannel.WorkspaceInfo, (e, id: string) => new Workspace(P(e).cwdOf(id)).info());
   // 追加するフォルダは、人がダイアログで選んだものだけ（画面から好きなパスを渡させない）
   handle(IpcChannel.WorkspaceAddFolder, async (e, id: string) => {

@@ -381,6 +381,7 @@ PR で、次のものを流します。develop への push では流しません
 | `project-instructions.test.ts` | 作業フォルダに TANACODE.md と TANACODE_PARENT.md を置き、新規セッションの画面の「親として始める」で始めると、最初の指示と一緒に TANACODE_PARENT.md が、会話の始まりに TANACODE.md が（`.app` の Helper が動かす `instructions-hook.js` で）Claude に渡るか。チャットには知らせと最初の指示が出て、フックの行は出ないか。ヘッダーの「親にする」で、もう一度渡るか。`/clear` のあとは TANACODE.md だけが渡るか |
 | `rewind.test.ts` | 発言の横の「ここまで戻す」で会話を戻すと、その発言が入力欄に戻り、チャットにも順番待ちにも残らない（画面を読み直しても同じ）。戻したあとの発言から会話が続く |
 | `start-then-switch.test.ts` | 新規セッションの画面で、セッションを始めている途中（worktree で始める前の git の確かめの間）にフォルダを変えると、変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から移らないか。変えた先で送ると、そのフォルダでセッションが始まるか |
+| `worktree-install.test.ts` | worktree の準備の install（偽の `npm`。lock が元のフォルダと違うので install する）を、ターミナルパネルに出さずに裏で流すか。通ったら子のターミナルに install のタブが残らず（開くと、ふつうのシェルだけ）、失敗したら出力ごとタブに出てチャットに注意の行が出るか。問いを出して止まったら（入力を待っているように見えたら）タブに出てチャットに注意の行が出て、タブで答えると準備が終わって指示が届くか。準備中の「ターミナルで見る」を押すと、動いている install がそれまでの出力ごとタブに出るか |
 | `worktree-start.test.ts` | worktree で始めると、Claude Code が worktree を作っている間（合図があるまで `git worktree add` を待たせる）でも、送ってすぐセッションの画面に移るか。できるまで、チャット・エクスプローラー・ソース管理・ターミナルが準備の段階を出して待ち（ターミナルはシェルを開かない）、できたら預かっていた指示を送って worktree を開くか。作れなかったときは、新規セッションの画面に戻って、指示が入力欄に戻り、理由が出るか。worktree なしで送り直せるか |
 | `first-prompt-order.test.ts` | 親の Claude が子を始めた直後（子の Claude Code が起動を終える前）に `send_message` で指示を送っても、子には `start_session` の最初の指示が先に届き、続きの指示はそのあとに届く（起動を待つ送信は、待ち始めた順に送る） |
 | `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
@@ -681,7 +682,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - install する場所: lock があり、元のフォルダでも依存を入れている（`node_modules` か `.pnp.cjs` がある）場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
     - yarn の Plug'n'Play: `.pnp.cjs` はふつう gitignore されていて worktree に無く、`yarn install` するまで依存を読めません。元のフォルダにあって worktree に無ければ、lock が同じでも `yarn install` します。
     - うまくいかなかったこと（失敗した install・複製できず install もしなかった場所・準備そのものの失敗。`setupTroubleOf`）は、チャットの注意の行（`warning`）にし、`SessionManager.worktreeSetup` に残します（準備のたびに置き換える）。子セッションなら、親の `get_session` の `worktree.setup_problems`（英語）と、子への最初の指示の本文（親の指示の囲みの中に、画面の言語の注記。`withSetupNote`。`submitWhenReady` に文を作る関数を渡し、準備が終わって送るときに作る）に載せます。囲みの外に足すと、親からの指示と読めなくなり、親への知らせも届かなくなるためです。最初の指示を送れなかったとき（準備が 30 分を超えた・止まったなど）は、親に知らせます（`childFirstPromptFailed`）。
-    - install は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
+    - install は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、ターミナルパネルには出しません。人と一緒に見る必要があるときだけタブに出します（失敗した・入力を待っているように見える・人が準備中の「ターミナルで見る」を押した。下の「ターミナル」）。前はいつもタブに出していて、終わったタブが子のターミナルにたまっていました。
+    - 入力を待っているように見えたら（`onWaiting`）、チャットの注意の行（`main.worktree.installWaiting`）にし、`worktreeSetup` の `waiting` に載せます（親の `get_session` の `setup_problems` に出る）。誰にも見えないまま止まると、子は最初の指示を受け取れずに待ち続けるためです。install が終わったら外します。`CI=1` を付けて問いを避けることはしません（lock を書き換えないモードになるため）。
   - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
   - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。
   - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（上流か、元のフォルダの今のブランチにマージ済みのときだけ消える）。消えなくても、手元にしか無いコミットが無ければ（`localOnlyCommits` が 0）、`git branch -D` で消します。数えられなかったときは消しません。
@@ -1163,8 +1165,11 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 ### ターミナル
 
 - シェルは、セッションのフォルダでログインシェル（`$SHELL -l`）を開きます。
-- アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened`（`task: true`）でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブを片付けて、main に出力の控えを捨てさせます（`shell:kill`）。
-- タブの名前（「zsh 1」「npm install（完了）」）は、画面と、Claude に返す一覧の両方で `terminalLabel`（`src/shared/terminal-tools.ts`）から作ります。番号はパネルの並び（main では開いた順）。
+- アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、画面には出しません（`hidden`。出力・終わりを画面に知らせず、⌘R の引き継ぎにも渡さない）。人と共同で見る必要があるものだけをタブに出すためです（人の頼み）。出力の控えは残すので、Claude は `list_terminals`・`read_terminal` で読めます。
+  - タブに出すのは、失敗したとき（終了コードが 0 でない。人が止めたもの・持ち主ごと止めたものは除く）・入力を待っているように見えるとき・人が準備中の「ターミナルで見る」を押したとき（`shell:reveal` → `revealOwner`。動いているものだけ）。出すときは `shell:opened`（`task: true`）に、それまでの画面（`replay`。⌘R の引き継ぎと同じ、控えの画面を描き直す文字列・大きさ・終了コード）を添えます。パネルは、それを同じ大きさの xterm に書いてから、このあとの出力をつなぎます。
+  - 入力を待っているように見える: 出力が 5 秒止まり（`WAIT_QUIET_MS`。1 秒ごとに見る）、カーソルが行の途中にあるとき（`cursorX > 0` で、その行に文字がある）。問い（pnpm の modules の作り直しの確認・corepack のダウンロードの確認・認証・ssh のホスト鍵の確認など）は、問いを出して改行せずに答えを待ちます。進み具合を出すもの（スピナー・進捗の行）は止まらずに書き直し続け、仕事の出力はふつう行の終わりで改行するので、どちらにも当たりません。間違えて出しても、動いているタブが見えるだけです。
+  - 出したタブは、終わっても残し（`ShellTab.task`）、閉じるボタンは画面のタブを片付けて、main に出力の控えを捨てさせます（`shell:kill`）。画面に出していないものは、持ち主を止めるまで控えを残します（下の「出力の控え」の上限まで）。
+- タブの名前（「zsh 1」「npm install（完了）」）は、画面と、Claude に返す一覧の両方で `terminalLabel`（`src/shared/terminal-tools.ts`）から作ります。番号はパネルの並び（main では開いた順。画面に出していないコマンドは数えず、一覧では `tab: null`）。
 - 画面を読み込み直したとき（⌘R）: シェルは止めずに、新しい画面が引き継ぎます（Claude Code のセッションと同じく、画面を読み込み直しても動き続けるもの。開発サーバーを止めないため）。
   - アプリの画面のメインフレームが移り始めたら（`did-start-navigation`。同じ文書の中の移動と、URL の違う移動は除く）、main は、そのプロファイルの新規セッションの画面のフォルダを閉じます（見張り・そこで開いたシェルとブラウザ。新しい画面からは ID が分からず、使えないため）。シェルは `ShellTerminals.detach` で、出力・終わり・開いたタブを画面に知らせるのをやめます（控えには書き続ける）。
   - 新しい画面のターミナルパネルは、はじめに `shell:attach` を呼びます。main は、今のターミナルを開いた順に、画面を描き直す文字列（`@xterm/addon-serialize` の控えの画面と、まだ読み解き終えていない出力をつないだもの）・大きさ・タイトル・終了コードと一緒に返し、そのあとは、また知らせます。
@@ -1184,9 +1189,9 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - MCP サーバー（`tanacode-terminal`）は、ほかと同じ形の stdio の中継（`src/main/terminal-mcp.ts` → `out/main/terminal-mcp.js`）。定義は `src/shared/terminal-tools.ts` の `TERMINAL_MCP`、起動の材料は `profile.ts` の `terminalLaunch` と `terminal-bridge.ts`（ソケットは userData の `terminal.sock`。env は `TANACODE_TERMINAL_SOCKET`・`TANACODE_TERMINAL_SESSION`）。実行は `terminal-control.ts` の `TerminalControl`。
   - `list_terminals`・`read_terminal` は `read`（`--allowedTools` で許可済み）。`type_in_terminal` は `act` で、下の確認を通します。
   - 子セッション（`parentId` のあるもの）には、読むツールだけの定義（`TERMINAL_MCP_FOR_CHILD`。env の `TANACODE_TERMINAL_CHILD`）を渡し、確認のフックも足しません。人のシェルに打てるのは、人が見ている親だけにします。アプリの側でも、子からの打つ呼び出しは断ります。
-  - 読めるのは、自分のセッションのパネルのターミナルと、自分の子のもの（`session_id`。ID のはじめの 8 文字以上）。
+  - 読めるのは、自分のセッションのパネルのターミナルと、自分の子のもの（`session_id`。ID のはじめの 8 文字以上）。画面に出していないコマンドも読めます（打てない。人に見えないため）。
 - 出力の控え: `ShellTerminals` が、シェルごとに `@xterm/headless` の `Terminal`（さかのぼり 3000 行。pty ホストと同じ使い方）に出力を書き込み、色やカーソルの移動を解いた地の文で読めるようにします。大きさの変更も渡します。タイトル（`onTitleChange`）・種類・名前・コマンド・フォルダ・開いた時刻・最後の出力の時刻・終了コードも持ちます。
-  - シェルが終わったら控えを捨てます（画面もタブを閉じる）。終わったコマンドのタブは、画面がタブを閉じる（`kill`）まで残し、持ち主ごとに 20 個まで（古いものから捨てる）。人が動いている間に止めたものは、終わったら捨てます。
+  - シェルが終わったら控えを捨てます（画面もタブを閉じる）。終わったコマンドは、画面がタブを閉じる（`kill`）まで残し（画面に出していないものは、持ち主を止めるまで）、持ち主ごとに 20 個まで（古いものから捨てる）。人が動いている間に止めたものは、終わったら捨てます。
   - 読むときは、書き込みを読み解き終えるのを待ってから（`flush`）、折り返した行をつないで、後ろの空行を除きます。`read_terminal` は最後の 1〜2000 行（既定 100）を、3 万文字で切って（後ろを残す）返します。
 - 打つ前の確認は、アプリ内ブラウザの JavaScript の実行の確認と同じ形です。権限モードの許可の確認は、auto・bypassPermissions や「次から聞かない」で出なくなるので、フックで毎回 `ask` を返させます。
   1. `--settings` の `PreToolUse`（`type_in_terminal` だけ）が、中継の入口を `--gate` 付きで動かします（`TERMINAL_GATE_COMMAND`。中継に使う環境変数は `terminalGateEnv` で、起動する Claude Code の環境に足す）。
@@ -1712,7 +1717,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `added-folders.ts`: ワークスペースに追加するフォルダの確かめ（リンクを解く・セッションのフォルダの中とディスクのいちばん上を断る）
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）。git の標準入力は、渡すものが無ければすぐ閉じます（入力を待つコマンドが、待ち続けずに失敗するように）。tanacode が自分で動かす git（`git`。状態・差分・ブランチを読む・worktree の片付けなど）は、開いたフォルダの設定でコマンドを動かさないよう、`guardOf` の打ち消しを付けて動かします（`core.fsmonitor`・フック・`log.showSignature` はいつも止め、サブモジュールの差分はいつも短い形（`diff.submodule=short`）に。リポジトリの設定で決めたフィルター・merge のドライバーは空にする（取り出してあるサブモジュールの設定のものも）。空にしたフィルターは `required` も `false` に。ユーザー自身の設定と git-lfs の決まった形は残す（リポジトリの設定に git-lfs の拡張（`lfs.extension`）があるときは、それらも空に）。diff には `--no-ext-diff`・`--no-textconv`、パッチを出す diff には `--submodule=short` も）。設定の一覧は、全部をバイトのまま読んで、空にするものをこちらで選びます。打ち消しは `-c` と `GIT_CONFIG_COUNT`・`GIT_CONFIG_KEY_<n>`・`GIT_CONFIG_VALUE_<n>` の両方で渡します（名前に `=` を含むものは環境変数だけ。それを読まない 2.31 より前の git では、git を動かさない）。打ち消しを渡せない名前（UTF-8 として読めないもの）や、設定を読めないサブモジュール（場所が UTF-8 として読めないもの・数や深さの上限を超えるもの）があるときも、git を動かしません。人がソース管理パネルで押した操作（ステージ・コミット・プッシュ・プル・ブランチの切り替えなど）と、worktree の作り直し（`worktree add`）・消す前の控え（`add -A`）は `userGit` で、ターミナルで打ったときと同じに動かします。Claude が始めたもの（親の `end_session` の控え、`send_message` で止まった子を開くときの worktree の作り直し）も同じです（フィルターを通さずに控えを作ると、git-crypt などで守っている中身が、そのまま控えに入るため）。画面から来た基点は `HEAD` か 16 進のコミットの ID だけ、ブランチの名前は `-` で始まるものを断ります（git のオプションとして読まれないように）。同じフォルダの中では、tanacode が自分で動かす git と人の操作を重ねません（読む git どうしは並べて動かし、人の操作は、それより前に頼まれた git が終わってから動かす。あとから頼まれた読む git は、その操作が終わるまで待つ）。作業ツリーと比べる status・diff は、ファイルの時刻が変わっているとインデックスを書き直そうとして `index.lock` を取るので、パネルが状態を読み直している間にステージ・コミットを押すと失敗していたためです。読む git には `GIT_OPTIONAL_LOCKS=0` も付け、status ではインデックスを書き直させません（ターミナルや Claude の git とぶつからないように。diff は、これを付けても書き直します）。時間のかかる操作（フェッチ・プルなど）は、時間では止めません
   - `system-monitor.ts`: CPU・メモリの使用量
-  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）。Claude が読めるよう、出力を `@xterm/headless` に控える。シグナルで終わったコマンド（タブを閉じて止めた）は、node-pty が終了コードを 0 で返すので、シェルと同じく 128 + シグナルの番号を返します（止めた install を、済んだことにしない）
+  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンド（worktree の `npm install`・`yarn install` など。画面に出さずに動かし、失敗・入力待ち・人が見たいときだけタブに出す）。Claude が読めるよう、出力を `@xterm/headless` に控える。シグナルで終わったコマンド（タブを閉じて止めた）は、node-pty が終了コードを 0 で返すので、シェルと同じく 128 + シグナルの番号にします（止めた install を、済んだことにしない）
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、終了するときに新しいバージョンを入れるか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか、Claude にターミナルを使わせるか、Claude に送る文のうち利用者が変えたもの、画面の言語）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと・タイトルバーのチェックを押したとき）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）

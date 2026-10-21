@@ -127,6 +127,7 @@ export const IpcChannel = {
   ShellData: 'shell:data',
   ShellExit: 'shell:exit',
   ShellOpened: 'shell:opened',
+  ShellReveal: 'shell:reveal',
   WorkspaceInfo: 'workspace:info',
   WorkspaceAddFolder: 'workspace:add-folder',
   WorkspaceRemoveFolder: 'workspace:remove-folder',
@@ -420,8 +421,11 @@ export type PtyData = { sessionId: string; data: string };
 export type ShellData = { id: string; data: string };
 export type ShellExit = { id: string; exitCode: number };
 // アプリが開いたターミナル。owner: セッションの id / task: コマンドのタブ（worktree の npm install など。終わってもタブを残す）。
-// false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）
-export type ShellOpened = { owner: string; id: string; name: string; task: boolean };
+// false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）。
+// replay: 画面に出さずに動かしていたコマンドを、あとからタブに出したとき（失敗した・入力を待っているように見える・人が「ターミナルで見る」を
+// 押した）の、それまでの画面（ShellSnapshot と同じ形。exitCode: 動いている間は null）
+export type ShellOpened = { owner: string; id: string; name: string; task: boolean; replay?: ShellReplay };
+export type ShellReplay = { exitCode: number | null; cols: number; rows: number; screen: string };
 // 画面を読み込み直したとき（⌘R）に引き継ぐ、main が持っているターミナル（パネルのタブ）。task: コマンドのタブ / exitCode: 動いている間は null /
 // screen: 今の画面を描き直すための文字列（さかのぼって読める行も含む）。cols・rows の大きさの xterm に書く
 export type ShellSnapshot = {
@@ -715,6 +719,8 @@ export type TanacodeApi = {
     onExit(listener: (payload: ShellExit) => void): () => void;
     // アプリがターミナルを開いた（コマンドのタブは、終わってもタブを残す。task でないものは、Claude が打つために開いたシェル）
     onOpened(listener: (payload: ShellOpened) => void): () => void;
+    // セッションの worktree の準備で、画面に出さずに動かしている install を、タブに出す（準備中の「ターミナルで見る」）
+    reveal(sessionId: string): void;
   };
   // まだセッションが無いフォルダ（新規セッションの画面で選んだもの）
   folders: {
@@ -982,6 +988,7 @@ export type IpcSend = {
   [IpcChannel.ShellWrite]: Api['shell']['write'];
   [IpcChannel.ShellResize]: Api['shell']['resize'];
   [IpcChannel.ShellKill]: Api['shell']['kill'];
+  [IpcChannel.ShellReveal]: Api['shell']['reveal'];
   [IpcChannel.FolderClose]: Api['folders']['close'];
   [IpcChannel.WatchOpenFiles]: Api['workspace']['watchOpenFiles'];
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];

@@ -188,6 +188,7 @@ const api: TanacodeApi = {
     onData: (listener) => subscribe(IpcChannel.ShellData, listener),
     onExit: (listener) => subscribe(IpcChannel.ShellExit, listener),
     onOpened: (listener) => subscribe(IpcChannel.ShellOpened, listener),
+    reveal: (sessionId) => send(IpcChannel.ShellReveal, sessionId),
   },
   folders: {
     pick: () => invoke(IpcChannel.FolderPick),

@@ -553,6 +553,8 @@ export class DemoBackend {
         onData: (l) => this.ch.shellData.on(l),
         onExit: (l) => this.ch.shellExit.on(l),
         onOpened: (l) => this.ch.shellOpened.on(l),
+        // デモの worktree は install しない
+        reveal: () => {},
       },
       folders: {
         pick: () => ok(null),

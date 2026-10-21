@@ -76,17 +76,23 @@ const gate = (input: Record<string, unknown>, caller = ME) => control.handle(cal
 const type = (input: Record<string, unknown>, caller = ME) => control.handle(caller, 'type_in_terminal', input);
 
 describe('読む', () => {
-  it('list_terminals: このセッションのパネルのターミナルを、タブの並びと画面の名前で返す', async () => {
+  it('list_terminals: このセッションのパネルのターミナルを、タブの並びと画面の名前で返す。画面に出していないコマンドも、番号なしで返し、出力を読める', async () => {
     const shell = await openShell();
+    // 通った install は画面に出さない。失敗したものはタブに出る
     await shells.run(ME, dir, 'echo done', 'npm install');
+    await shells.run(ME, dir, 'echo broken; exit 2', 'yarn install');
     await openShell(OTHER);
     const result = JSON.parse(textOf(await control.handle(ME, 'list_terminals', {}))) as { session_id: string; terminals: Record<string, unknown>[] };
     expect(result.session_id).toBe(ME);
     expect(result.terminals.map((t) => [t.id, t.tab, t.kind, t.label, t.running, t.exit_code])).toEqual([
       [shell, 1, 'shell', 'sh 1', true, null],
-      [expect.stringMatching(/^task-/), 2, 'command', 'npm install（完了）', false, 0],
+      [expect.stringMatching(/^task-/), null, 'command', 'npm install（完了）', false, 0],
+      [expect.stringMatching(/^task-/), 2, 'command', 'yarn install（失敗 2）', false, 2],
     ]);
     expect(result.terminals[0]).toMatchObject({ cwd: dir, command: null, foreground: expect.any(String), last_output_at: expect.any(String) });
+    const read = textOf(await control.handle(ME, 'read_terminal', { id: result.terminals[1].id }));
+    expect(read).toContain('(not shown in the terminal panel, "npm install（完了）"): exited with code 0.');
+    expect(read).toContain('done');
   });
 
   it('自分の子のターミナルは session_id で読める。子でないセッションのものは読めない', async () => {
@@ -234,10 +240,14 @@ describe('打つ', () => {
     expect(shells.list(ME).map((t) => t.id)).toEqual([opened[0].id]);
   });
 
-  it('終わったコマンドのタブには打てない', async () => {
+  it('終わったコマンドのタブには打てない。画面に出していないコマンドにも打てない（人に見えない）', async () => {
     await shells.run(ME, dir, 'exit 2', 'npm install');
     const [task] = shells.list(ME);
     expect(textOf(await gate({ id: task.id, text: 'ls' }))).toContain('has exited with code 2');
+    void shells.run(ME, dir, 'sleep 30', 'pnpm install');
+    const quiet = shells.list(ME).find((t) => t.name === 'pnpm install')!;
+    expect(quiet).toMatchObject({ tab: null, running: true });
+    expect(textOf(await gate({ id: quiet.id, text: 'y' }))).toContain('runs without showing it in the terminal panel; it cannot take input.');
   });
 
   it('メニューでオフにしていると、確認の問い合わせも断る（フックは確認を出させる）', async () => {

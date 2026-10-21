@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import * as pty from 'node-pty';
 import { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import type { ShellSnapshot } from '@shared/ipc';
+import type { ShellReplay, ShellSnapshot } from '@shared/ipc';
 import { childEnv } from './claude-session';
 
 // 控える行数（Claude が read_terminal で読める範囲）。出力は、pty-host.ts と同じく @xterm/headless の画面に書き込んで控える
@@ -15,8 +15,12 @@ const KILL_GRACE_MS = 3000;
 // Claude が打つために開くシェルの大きさ（画面のタブが大きさを合わせるまで）
 const OPEN_COLS = 100;
 const OPEN_ROWS = 30;
+// 画面に出さずに動かしているコマンドの出力が、この時間止まっていて、カーソルが行の途中にあれば（問いを出し、改行せずに答えを待っている形）、
+// 入力を待っているとみなしてタブに出す。見張るのは、この間ごと
+const WAIT_QUIET_MS = 5000;
+const WAIT_CHECK_MS = 1000;
 
-// shell: 人が開いたシェル（と、Claude が打つために開いたシェル）/ command: アプリがコマンドを動かしたタブ（worktree の npm install など）
+// shell: 人が開いたシェル（と、Claude が打つために開いたシェル）/ command: アプリが動かしたコマンド（worktree の npm install など。画面に出すまではタブが無い）
 export type TerminalKind = 'shell' | 'command';
 
 type Shell = {
@@ -41,13 +45,18 @@ type Shell = {
   killed: boolean;
   // 止めたあと、終わらなければ強く止める待ちを片付ける（終わったら呼ぶ）
   cancelForceKill: (() => void) | null;
+  // 画面に出さずに動かしているコマンド（run）。出すまで、出力・終わりを画面に知らせず、引き継ぐ画面にも渡さない
+  hidden: boolean;
+  // 入力を待っているかの見張りを片付ける（出したら・終わったら呼ぶ）
+  cancelWatch: (() => void) | null;
 };
 
-// 一覧に返す 1 つのターミナル。tab: 持ち主のパネルの並びの何番目か（1 から）/ foreground: 前面で動いているプログラム（node-pty の pty.process）
+// 一覧に返す 1 つのターミナル。tab: 持ち主のパネルの並びの何番目か（1 から。画面に出していないコマンドは null）/
+// foreground: 前面で動いているプログラム（node-pty の pty.process）
 export type TerminalInfo = {
   id: string;
   owner: string;
-  tab: number;
+  tab: number | null;
   kind: TerminalKind;
   name: string;
   title: string | null;
@@ -63,12 +72,14 @@ export type TerminalInfo = {
 type Listeners = {
   onData: (id: string, data: string) => void;
   onExit: (id: string, exitCode: number) => void;
-  // アプリがターミナルを開いた。task: コマンドのタブ（run）/ false: Claude が打つために開いたシェル（openShell）
-  onOpened?: (owner: string, id: string, name: string, task: boolean) => void;
+  // アプリがターミナルを開いた。task: コマンドのタブ（run）/ false: Claude が打つために開いたシェル（openShell）。
+  // replay: 画面に出さずに動かしていたコマンドを出したときの、それまでの画面（reveal）
+  onOpened?: (owner: string, id: string, name: string, task: boolean, replay?: ShellReplay) => void;
 };
 
 // ユーザーが自分で使うターミナル。セッション（owner）ごとに、そのフォルダでログインシェルを開く。
-// 出力は画面に送るほか、Claude が読めるよう（terminal-control.ts）、シェルごとの画面（@xterm/headless）に控える
+// 出力は画面に送るほか、Claude が読めるよう（terminal-control.ts）、シェルごとの画面（@xterm/headless）に控える。
+// アプリが実行するコマンド（run）は、画面に出さずに動かし、人と一緒に見る必要があるときだけタブに出す
 export class ShellTerminals {
   private shells = new Map<string, Shell>();
   private seq = 0;
@@ -102,15 +113,40 @@ export class ShellTerminals {
     return opened;
   }
 
-  // アプリが実行するコマンド（worktree の npm install・yarn install など）を、セッションのターミナルのタブに出しながら実行する。終了コードを返す。
+  // アプリが実行するコマンド（worktree の npm install・yarn install など）を、画面に出さずに実行する。終了コードを返す。
+  // 人と一緒に見る必要があるときだけ、それまでの出力ごとセッションのターミナルのタブに出す（reveal）: 失敗した・出力が止まって入力を待っているように
+  // 見える（onWaiting で知らせる）・人が「ターミナルで見る」を押した（revealOwner）。出していない間も出力は控え、Claude は読める（list・tail）。
   // ログインシェルで実行する（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）
-  run(owner: string, cwd: string, command: string, name: string): Promise<number> {
+  run(owner: string, cwd: string, command: string, name: string, onWaiting?: () => void): Promise<number> {
     const id = `task-${++this.seq}`;
-    const shell = this.spawn(id, owner, cwd, 'command', name, command, ['-l', '-c', command], 100, 24);
-    if (!this.detached) this.listeners.onOpened?.(owner, id, name, true);
+    const shell = this.spawn(id, owner, cwd, 'command', name, command, ['-l', '-c', command], 100, 24, true);
+    this.watchInput(id, shell, onWaiting);
     // シグナルで終わったもの（タブを閉じて止めた・強く止めた）は、node-pty が終了コードを 0 のまま返すので、シェルと同じく 128 + シグナルの番号にする
     // （0 のままだと、止めた install が済んだことになる）
     return new Promise((resolve) => shell.proc.onExit(({ exitCode, signal }) => resolve(signal ? 128 + signal : exitCode)));
+  }
+
+  // 画面に出していないコマンドを、それまでの出力ごとタブに出す。このあとは、出力・終わりを画面に知らせる。
+  // 画面を読み込み直している間は、引き継ぐ画面に渡す（attach）
+  reveal(id: string): void {
+    const shell = this.shells.get(id);
+    if (!shell?.hidden || shell.killed) return;
+    shell.hidden = false;
+    shell.cancelWatch?.();
+    shell.cancelWatch = null;
+    if (this.detached) return;
+    let screen = '';
+    try {
+      screen = screenOf(shell);
+    } catch {
+      // 描き直す文字列を作れなければ、このあとの出力だけを出す
+    }
+    this.listeners.onOpened?.(shell.owner, id, shell.name, true, { exitCode: shell.exitCode, cols: shell.term.cols, rows: shell.term.rows, screen });
+  }
+
+  // 持ち主の、画面に出さずに動かしているコマンドを、タブに出す（人が準備中の「ターミナルで見る」を押した）
+  revealOwner(owner: string): void {
+    for (const [id, s] of [...this.shells]) if (s.owner === owner && s.hidden && s.exitCode === null) this.reveal(id);
   }
 
   // 止めたもの（kill したが、まだ終わっていない）には打たない
@@ -171,11 +207,12 @@ export class ShellTerminals {
     this.detached = false;
     const snapshots: ShellSnapshot[] = [];
     for (const [id, s] of [...this.shells]) {
-      // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）
-      if (s.killed) continue;
+      // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）。
+      // 画面に出していないコマンドも渡さない
+      if (s.killed || s.hidden) continue;
       let screen: string;
       try {
-        screen = s.serializer.serialize() + s.unparsed.join('');
+        screen = screenOf(s);
       } catch {
         // 描き直す文字列を作れなかったものは、画面に出せないので、見えないまま動かし続けないよう止める（画面の側で書き直せなかったときと同じ）
         this.kill(id);
@@ -187,13 +224,17 @@ export class ShellTerminals {
   }
 
   // 持ち主のターミナル（パネルのタブの並び。開いた順）。止めたもの（kill したが、まだ終わっていない）は出さない（Claude から読ませず、打たせない）。
-  // 番号は、止めたものも数えて振る（パネルは、終わるまで止めたもののタブも残すので、その並びと合わせる）
+  // 番号は、止めたものも数えて振る（パネルは、終わるまで止めたもののタブも残すので、その並びと合わせる）。画面に出していないコマンドも
+  // 一覧には入れる（Claude が出力を読める）が、パネルの並びには無いので、番号を振らない
   list(owner: string): TerminalInfo[] {
-    return [...this.shells]
-      .filter(([, s]) => s.owner === owner)
-      .map(([id, s], i) => ({ s, info: this.infoOf(id, s, i + 1) }))
-      .filter(({ s }) => !s.killed)
-      .map(({ info }) => info);
+    const list: TerminalInfo[] = [];
+    let tab = 0;
+    for (const [id, s] of this.shells) {
+      if (s.owner !== owner) continue;
+      const position = s.hidden ? null : ++tab;
+      if (!s.killed) list.push(this.infoOf(id, s, position));
+    }
+    return list;
   }
 
   info(id: string): TerminalInfo | null {
@@ -242,7 +283,7 @@ export class ShellTerminals {
     return this.shells.get(id)?.term.modes.applicationCursorKeysMode ?? false;
   }
 
-  private spawn(id: string, owner: string, cwd: string, kind: TerminalKind, name: string, command: string | null, args: string[], cols: number, rows: number): Shell {
+  private spawn(id: string, owner: string, cwd: string, kind: TerminalKind, name: string, command: string | null, args: string[], cols: number, rows: number, hidden = false): Shell {
     const env = childEnv(this.claudeDir);
     env.TERM_PROGRAM = 'tanacode';
     const proc = pty.spawn(process.env.SHELL || '/bin/zsh', args, { name: 'xterm-256color', cols, rows, cwd, env });
@@ -265,6 +306,8 @@ export class ShellTerminals {
       unparsed: [],
       killed: false,
       cancelForceKill: null,
+      hidden,
+      cancelWatch: null,
     };
     this.shells.set(id, shell);
     term.onTitleChange((title) => (shell.title = title || null));
@@ -273,18 +316,44 @@ export class ShellTerminals {
       // 書き終えたものから順に外す（@xterm/headless は、届いた順に読み解き、終わったら順に呼ぶ）
       shell.unparsed.push(data);
       term.write(data, () => shell.unparsed.shift());
-      if (!this.detached) this.listeners.onData(id, data);
+      if (!this.detached && !shell.hidden) this.listeners.onData(id, data);
     });
-    proc.onExit(({ exitCode }) => {
-      shell.exitCode = exitCode;
+    proc.onExit(({ exitCode, signal }) => {
+      // シグナルで終わったものは、run と同じく 128 + シグナルの番号にする（node-pty は 0 のまま返す。止められたコマンドを「完了」と出さない）
+      const code = signal ? 128 + signal : exitCode;
+      shell.exitCode = code;
       shell.cancelForceKill?.();
       shell.cancelForceKill = null;
-      if (!this.detached) this.listeners.onExit(id, exitCode);
-      // 画面はシェルのタブを閉じる。コマンドのタブは、出力を見られるよう残す（人が止めたものは閉じる）
+      shell.cancelWatch?.();
+      shell.cancelWatch = null;
+      // 画面に出さずに動かしていたコマンドが失敗したら、出力ごとタブに出す（人が止めたもの・持ち主ごと止めたものは出さない）
+      if (shell.hidden) {
+        if (code !== 0 && !shell.killed) this.reveal(id);
+      } else if (!this.detached) this.listeners.onExit(id, code);
+      // 画面はシェルのタブを閉じる。コマンドは、出力を見られる（Claude が読める）よう残す（人が止めたものは閉じる）
       if (kind === 'shell' || shell.killed) this.drop(id);
       else this.pruneExited(owner);
     });
     return shell;
+  }
+
+  // 画面に出していないコマンドが、入力を待っているように見えたらタブに出し、onWaiting で知らせる。
+  // 出力が WAIT_QUIET_MS 止まり、カーソルが行の途中にある（「Proceed? (Y/n) 」のような問いを出し、改行せずに答えを待っている）とき。
+  // 進み具合を出すもの（スピナー・進捗の行）は止まらずに書き直し続け、仕事の出力はふつう行の終わりで改行するので、どちらにも当たらない
+  private watchInput(id: string, shell: Shell, onWaiting?: () => void): void {
+    shell.cancelWatch = this.later(() => {
+      shell.cancelWatch = null;
+      if (!shell.hidden || shell.exitCode !== null || shell.killed) return;
+      if (!this.waitingForInput(shell)) return this.watchInput(id, shell, onWaiting);
+      this.reveal(id);
+      onWaiting?.();
+    }, WAIT_CHECK_MS);
+  }
+
+  private waitingForInput(shell: Shell): boolean {
+    if (this.clock() - (shell.lastOutputAt ?? shell.openedAt) < WAIT_QUIET_MS || shell.unparsed.length > 0) return false;
+    const buffer = shell.term.buffer.active;
+    return buffer.cursorX > 0 && !!buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true).trim();
   }
 
   private drop(id: string): void {
@@ -300,7 +369,7 @@ export class ShellTerminals {
     for (const [id] of exited.slice(0, Math.max(0, exited.length - MAX_EXITED))) this.drop(id);
   }
 
-  private infoOf(id: string, s: Shell, tab: number): TerminalInfo {
+  private infoOf(id: string, s: Shell, tab: number | null): TerminalInfo {
     const running = s.exitCode === null;
     return {
       id,
@@ -318,6 +387,11 @@ export class ShellTerminals {
       lastOutputAt: s.lastOutputAt,
     };
   }
+}
+
+// 控えの画面を描き直すための文字列（控えの画面と、まだ書き終えていない出力をつないだもの）。作れなければ投げる
+function screenOf(s: Shell): string {
+  return s.serializer.serialize() + s.unparsed.join('');
 }
 
 function foregroundOf(proc: pty.IPty): string | null {

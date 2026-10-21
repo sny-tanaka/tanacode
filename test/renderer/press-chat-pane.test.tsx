@@ -1077,6 +1077,21 @@ describe('ヘッダー', () => {
   });
 });
 
+describe('worktree の準備中', () => {
+  it('install の間の「ターミナルで見る」は、画面に出さずに動かしている install をタブに出させてから（人が見たい）、ターミナルパネルを開く', () => {
+    const shown: string[] = [];
+    const session = summary('s1', { worktree: { name: 'w', branch: 'worktree-w', root: '/Users/me/work/app', preparing: 'installing' } });
+    const view = render(<ClaudePane {...props({ session, sessions: [session], onShowShell: () => shown.push('panel') })} />);
+    fireEvent.click(screen.getByLabelText('ターミナルで見る'));
+    expect(api.argsOf('shell.reveal')).toEqual([['s1']]);
+    expect(shown).toEqual(['panel']);
+    // install の前（複製している間）は出さない
+    const copying = { ...session, worktree: { ...session.worktree!, preparing: 'copying' as const } };
+    view.rerender(<ClaudePane {...props({ session: copying, sessions: [copying] })} />);
+    expect(screen.queryByLabelText('ターミナルで見る')).toBeNull();
+  });
+});
+
 describe('入力欄の下の選択欄', () => {
   it('設定ファイルを変えると、会話があれば確かめてから、開いているセッションの設定を変える（モデルとエフォートは今の値を添える）。やめたら変えない', async () => {
     const view = render(<ClaudePane {...props()} />);

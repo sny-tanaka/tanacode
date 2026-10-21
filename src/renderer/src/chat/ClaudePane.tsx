@@ -683,7 +683,17 @@ export const ClaudePane = memo(function ClaudePane({
   const preparingNote = preparing && (
     <div className="chat-note worktree-preparing">
       <Busy>{preparingLabel(preparing)}…</Busy>
-      {preparing === 'installing' && <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />}
+      {/* install は画面に出さずに動かしているので、押したら（人が見たい）タブに出してからパネルを開く */}
+      {preparing === 'installing' && (
+        <IconButton
+          icon={MonitorIcon}
+          label={t('chat.pane.showInTerminal')}
+          onClick={() => {
+            window.tanacode.shell.reveal(session.id);
+            onShowShell();
+          }}
+        />
+      )}
     </div>
   );
   // 起動し直したときの知らせ（下げた権限モード・チャットに戻せなかったわけ）。ターミナルモードではチャットが隠れるので、画面の下にも出す。
