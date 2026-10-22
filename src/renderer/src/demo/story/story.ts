@@ -1,5 +1,6 @@
 import { REPO_URL } from '@shared/app-update';
 import type { ChatEvent } from '@shared/chat';
+import type { PermissionReply, QuestionReply } from '@shared/questions';
 import { DemoBackend } from '../backend';
 import { cafeProject, DEMO_ACCOUNT, DEMO_CATALOG, demoUsage, ROOT } from '../data';
 import { type Director, sleep } from '../director';
@@ -21,7 +22,7 @@ export const MAIN_CWD = `${ROOT}/.claude/worktrees/${WORKTREE.name}`;
 const README_SESSION = 'demo-readme';
 const IMAGES_SESSION = 'demo-images';
 
-export type Sent = { sessionId: string; text: string; images: string[] };
+export type Sent = { sessionId: string; text: string; images: string[]; pastes: string[] };
 
 export class Story {
   d!: Director;
@@ -44,12 +45,12 @@ export class Story {
     return c;
   }
 
-  // 次に送られる発言を待つ。届いた発言は、そのセッションの会話に足す
+  // 次に送られる発言を待つ。届いた発言は、そのセッションの会話に足す（札があれば、本物と同じく本文とは別に添える）
   nextSend(): Promise<Sent> {
     return new Promise((resolve) => {
-      this.backend.onUserMessage = (sessionId, text, images) => {
-        this.backend.push(sessionId, { type: 'user', id: this.claude(sessionId).next('u'), text, images } satisfies ChatEvent);
-        resolve({ sessionId, text, images });
+      this.backend.onUserMessage = (sessionId, text, images, pastes) => {
+        this.backend.push(sessionId, { type: 'user', id: this.claude(sessionId).next('u'), text, images, ...(pastes.length > 0 ? { pastes } : {}) } satisfies ChatEvent);
+        resolve({ sessionId, text, images, pastes });
       };
     });
   }
@@ -64,10 +65,10 @@ export class Story {
     return sent;
   }
 
-  // 次の答え（質問・許可の確認のカードで選んだもの）を待つ
-  nextChoice(): Promise<void> {
+  // 次の答え（質問・許可の確認のカードで選んだもの）を待つ。選んだ選択肢と、一緒に送った補足は、返す答えにある
+  nextChoice(): Promise<QuestionReply | PermissionReply> {
     return new Promise((resolve) => {
-      this.backend.onAnswer = () => resolve();
+      this.backend.onAnswer = (_sessionId, reply) => resolve(reply);
     });
   }
 

@@ -7,11 +7,13 @@ import { addCards, checkCards, DONE_LIST, replyCard, showPanel } from '../checkl
 import { MAIN, type Story } from '../story';
 
 // 章 2「指示して任せる」: 章 1 で送った指示（税込価格を出す）を、Claude が進める。
-// ツールは「N件の操作」に畳まれる → 要件をチェックリストの「完了前チェック」に積む → 質問にボタンで答える（答えもカードになる）→
+// ツールは「N件の操作」に畳まれる → 要件をチェックリストの「完了前チェック」に積む → 質問にボタンで答える（補足を書いてから選ぶ。答えもカードになる）→
 // ファイルが書き換わる → サブエージェントがトレイに並ぶ → エディタで変わった行を見る → 終わる前に完了前チェックを確かめる
 
 const QUESTION = '税込価格の見せ方はどうしますか？';
 const ANSWER = '税込を大きく、税抜を小さく添える';
+// 選択肢を押す前に書いておく補足（選択肢と一緒に送られる）
+const NOTES = '税率の 10% は店内の場合です。テイクアウトはあとで別に頼みます';
 
 const PRICE_QUESTION: PendingQuestion = {
   id: 'price-question',
@@ -57,21 +59,30 @@ export async function runDelegate(story: Story): Promise<void> {
   claude.say('価格は `formatPrice` でまとめて整形しています。要件を「完了前チェック」に積みました。税込の見せ方だけ確認させてください。');
   await sleep(900);
 
-  // 3. 質問にボタンで答える（選択肢にマウスを乗せると、プレビューが切り替わる）
-  d.caption('Claude からの質問には、ボタンで答えられます。選択肢にマウスを乗せると、プレビューが切り替わります', '.menu-card');
+  // 3. 質問にボタンで答える。選択肢にマウスを乗せると、プレビューがカードの右（エディタの側）に出る。
+  // 書いてから選択肢を押すと、書いた文が補足として一緒に送られる
+  d.caption('Claude からの質問は、カードに出ます。選択肢はボタンで、押すとその答えが Claude に届きます', '.menu-card');
   claude.stopWorking();
   const answered = story.nextChoice();
   backend.ask(id, PRICE_QUESTION);
-  await sleep(1200);
+  await sleep(2800);
+  // プレビューのポップアップは、カードの外（画面の body）の、選択肢の高さに出る。カードを照らしたままだと、ポップアップが幕で暗くなり、
+  // ポップアップを照らすと、選択肢を替えるたびに吹き出しがポップアップに重なる。そのため、場所を渡さずに、画面の下の方に出す
+  d.caption('選択肢にマウスを乗せると、プレビューが、カードの右（エディタの側）に、選択肢の高さにそろえて出ます');
   await d.moveTo(d.byText('.menu-option', '税込だけ'), { ms: 800 });
-  await sleep(1300);
+  await sleep(1800);
   await d.moveTo(d.byText('.menu-option', '切り替える'), { ms: 500 });
   await sleep(1300);
+  d.caption('選択肢に無いことは、欄に書いてから選択肢を押すと、補足として一緒に送られます。書くだけで答えるときは「入力だけで答える」', '.menu-free');
+  await d.click('.menu-free textarea', { ms: 700 });
+  await d.type('.menu-free textarea', NOTES);
+  await sleep(500);
   await d.click(d.byText('.menu-option', ANSWER), { ms: 600 });
-  await answered;
+  const reply = await answered;
+  const notes = reply.kind === 'answer' ? reply.annotations?.[QUESTION]?.notes : undefined;
   const ask = claude.next('ask');
   backend.push(id, { type: 'tool-use', id: ask, name: 'AskUserQuestion', target: QUESTION, input: QUESTION, at: Date.now() });
-  backend.push(id, { type: 'tool-result', id: ask, isError: false, answers: [{ header: '見せ方', question: QUESTION, answer: ANSWER }], at: Date.now() });
+  backend.push(id, { type: 'tool-result', id: ask, isError: false, answers: [{ header: '見せ方', question: QUESTION, answer: ANSWER, ...(notes ? { notes } : {}) }], at: Date.now() });
   claude.startWorking();
 
   // 4. 答えた見せ方も、完了前チェックのカードにする。エクスプローラーに戻る

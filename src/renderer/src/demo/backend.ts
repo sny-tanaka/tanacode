@@ -26,7 +26,7 @@ import type {
 } from '@shared/ipc';
 import type { FileKnowledge } from '@shared/knowledge';
 import type { ModelCatalog } from '@shared/models';
-import type { PendingPermission, PendingQuestion } from '@shared/questions';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import type { Activity } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
@@ -89,9 +89,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class DemoBackend {
   readonly sessions = new Map<string, DemoSession>();
   // 台本が待つ、アプリからの入力（送った発言・質問や許可の確認への答え）
-  // images: 添付した画像の鍵（sessions.image で読める）
-  onUserMessage: (sessionId: string, text: string, images: string[]) => void = () => {};
-  onAnswer: (sessionId: string) => void = () => {};
+  // images: 添付した画像の鍵（sessions.image で読める）/ pastes: 入力欄の札（貼り付けた長い文）の中身
+  onUserMessage: (sessionId: string, text: string, images: string[], pastes: string[]) => void = () => {};
+  // 質問・許可の確認への答え（選んだ選択肢と補足などは reply にある）
+  onAnswer: (sessionId: string, reply: QuestionReply | PermissionReply) => void = () => {};
   // アプリ内ブラウザの「あなたの番です」への返事・タスクの「止める」・ターミナルへの入力・作業の書き出し
   onBrowserAnswer: (sessionId: string, askId: string, answer: BrowserAnswer) => void = () => {};
   onStopTask: (sessionId: string, ref: TaskRef) => void = () => {};
@@ -380,10 +381,11 @@ export class DemoBackend {
         },
         snapshot: (id) => ok({ sessionId: id, fromSeq: 0, events: [...s(id).events] }),
         // 本物と同じく、発言は送った後で（別の順番で）会話に届く。同じ順番で届くと、アプリが「送信中」の仮の発言を消せない。
-        // 画像は、本物（stream-json の image のブロック）と同じく、本文には印を足さずに添える
-        submit: (id, text, attachments) => {
+        // 画像は、本物（stream-json の image のブロック）と同じく、本文には印を足さずに添える。
+        // 札（入力欄に貼り付けた長い文）も、本文には入れず、別に添える（会話では、発言の下に札として出る）
+        submit: (id, text, attachments, pastes = []) => {
           const message = text.trim();
-          if (message || attachments.length > 0) setTimeout(() => this.onUserMessage(id, message, attachments), 0);
+          if (message || attachments.length > 0 || pastes.length > 0) setTimeout(() => this.onUserMessage(id, message, attachments, pastes), 0);
           return ok(undefined);
         },
         interrupt: () => {},
@@ -395,8 +397,11 @@ export class DemoBackend {
         becomeParent: () => ok(undefined),
         setRemoteControl: () => ok(null),
         setTerminalMode: () => ok(undefined),
-        // デモでは、自動の最適化圧縮は起きない（台本が進める）
-        setAutoCompact: () => ok(undefined),
+        // デモでは、自動の最適化圧縮は起きない（台本が進める）。スイッチだけは、本物と同じく一覧の印に残して、押した状態が動くようにする
+        setAutoCompact: (id, on) => {
+          this.update(id, { autoCompact: on });
+          return ok(undefined);
+        },
         remoteControlAvailable: () => ok(true),
         rename: () => ok(undefined),
         remove: () => ok(null),
@@ -430,22 +435,22 @@ export class DemoBackend {
       // 答えたら、カードを消してから台本に知らせる（本物は、Claude Code に返した要求が無くなってカードが消える）
       question: {
         get: (id) => ok(this.sessions.get(id)?.question ?? null),
-        reply: async (id, questionId) => {
+        reply: async (id, questionId, reply) => {
           if (this.sessions.get(id)?.question?.id !== questionId) return false;
           await sleep(250);
           this.ask(id, null);
-          this.onAnswer(id);
+          this.onAnswer(id, reply);
           return true;
         },
         onChanged: (l) => this.ch.question.on(l),
       },
       permission: {
         get: (id) => ok(this.sessions.get(id)?.permission ?? null),
-        reply: async (id, requestId) => {
+        reply: async (id, requestId, reply) => {
           if (this.sessions.get(id)?.permission?.id !== requestId) return false;
           await sleep(250);
           this.askPermission(id, null);
-          this.onAnswer(id);
+          this.onAnswer(id, reply);
           return true;
         },
         onChanged: (l) => this.ch.permission.on(l),

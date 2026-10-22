@@ -7,7 +7,7 @@ import { ADMIN_URL, DEV_URL, setLoggedIn } from '../page';
 import { checkCards, DONE_LIST } from '../checklist';
 import { MAIN, type Story } from '../story';
 
-// 章 4「ブラウザで確かめる」: 開発中のページをアプリ内ブラウザで開き、スマホの幅で崩れている要素を指さして直してもらう。
+// 章 4「ブラウザで確かめる」: 開発中のページをアプリ内ブラウザで開き、スマホの幅で崩れている要素を指さして直してもらう（選んだ要素の情報は、札になって入力欄に添えられる）。
 // 直したあとは Claude 自身がブラウザでページを確かめる（「Claude が操作中」の帯・押す要素の枠・スクリーンショット）。
 // ログインは Claude にさせず、作業の途中で「あなたの番です」と頼まれる。最後に、章 2 で残った「完了前チェック」#3（スマホの幅）にチェックを付ける
 
@@ -73,8 +73,8 @@ export async function runBrowser(story: Story): Promise<void> {
   await moveInPage(d, '.menu-card:nth-child(2) .price', 500);
   await sleep(900);
 
-  // 3. 「要素を選ぶ」で価格を選ぶ（入力欄にセレクタ・HTML と、切り出した画像が入る）
-  d.caption('「要素を選ぶ」で崩れた要素をクリック。セレクタ・HTML・切り出した画像が、入力欄に入ります', '.preview-pane [aria-label="要素を選ぶ"]');
+  // 3. 「要素を選ぶ」で価格を選ぶ（セレクタ・HTML は長いので札になり、切り出した画像と一緒に入力欄に添えられる）
+  d.caption('「要素を選ぶ」で崩れた要素をクリック。セレクタと HTML は、長い文なので札になり、切り出した画像と一緒に入力欄に添えられます', '.preview-pane [aria-label="要素を選ぶ"]');
   await d.click('.preview-pane [aria-label="要素を選ぶ"]', { ms: 800 });
   await sleep(500);
   await moveInPage(d, '.menu-card:nth-child(2) .note', 600);
@@ -85,8 +85,8 @@ export async function runBrowser(story: Story): Promise<void> {
   demoWebview()!.dispatchMouse('click', price.x, price.y);
   await sleep(1400);
 
-  // 4. 書き足して送る
-  d.caption('直してほしいことを書き足して送ります', '.chat-input');
+  // 4. 書き足して送る（札は、押すと中身を読める。送った発言にも付く）
+  d.caption('入力欄に札と画像が添えられました。札は押すと中身を読めます。直してほしいことを書き足して送ります', '.chat-input');
   await story.send(PROMPT);
   claude.startWorking();
 

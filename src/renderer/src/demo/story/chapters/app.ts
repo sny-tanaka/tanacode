@@ -17,12 +17,19 @@ export const DISCOVERED: DiscoveredSession[] = [
   { claudeSessionId: '3a9f1e62-8c4b-4d07-b5e3-71c2a9d4f018', cwd: '/Users/demo/work/cafe-blog', title: 'ブログの記事一覧にページ送りを付ける', updatedAt: Date.now() - 30 * HOUR },
 ];
 
-// 動作確認済のバージョンより 1 つ新しい Claude Code（ステータスバーの印が ↑ に変わる）
-function newerClaudeCode(): string {
-  const parts = VERIFIED_CLAUDE_CODE_VERSION.split('.').map(Number);
+// 末尾の番号を 1 つ上げたバージョン（1.2.3 → 1.2.4）
+function nextPatch(version: string): string {
+  const parts = version.split('.').map(Number);
   parts[parts.length - 1] += 1;
   return parts.join('.');
 }
+
+// 動作確認済のバージョンより 1 つ新しい Claude Code（ステータスバーの印が ↑ に変わる）
+const newerClaudeCode = () => nextPatch(VERIFIED_CLAUDE_CODE_VERSION);
+
+// 今のアプリより 1 つ新しい tanacode。タイトルバーは本物の今のバージョン（__APP_VERSION__）を出すので、
+// 決まった番号にすると、古い番号が「新しいバージョン」として出る
+const newerApp = () => nextPatch(__APP_VERSION__);
 
 export async function runApp(story: Story): Promise<void> {
   const { backend, d } = story;
@@ -54,7 +61,7 @@ export async function runApp(story: Story): Promise<void> {
 
   // 2. tanacode の新しいバージョン
   d.caption('tanacode の新しいバージョンが出ると、タイトルバーのバージョンの右に青い印が出ます', '.app-update');
-  backend.setAppUpdate({ latest: '0.3.0', available: true, url: `${REPO_URL}/releases/latest` });
+  backend.setAppUpdate({ latest: newerApp(), available: true, url: `${REPO_URL}/releases/latest` });
   await sleep(1800);
   d.caption('印にマウスを乗せると、更新の手順が読めます。押すと、GitHub の Releases のページを開きます', '.app-update.available');
   await d.moveTo('.app-update.available', { ms: 900 });
