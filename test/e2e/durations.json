@@ -15,6 +15,7 @@
   "test/e2e/compact-interrupt.test.ts": 34,
   "test/e2e/compact.test.ts": 21,
   "test/e2e/default-branch.test.ts": 16,
+  "test/e2e/editor-pdf.test.ts": 8,
   "test/e2e/elicitation.test.ts": 8,
   "test/e2e/first-prompt-order.test.ts": 12,
   "test/e2e/mcp.test.ts": 13,

@@ -165,6 +165,7 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 - 画面から渡るパスで、人の操作を経ずに main が読むもの（今は Markdown のプレビューの画像。`ReadImage` → `Workspace.readImage`）は、作業フォルダと追加したフォルダの中に限っているか。確かめるのは、リンクを解いた場所（`resolveInside` の `realpath`）か。
 - チャットの本文のパスの実在の確かめ（`ResolveFiles` → `Workspace.resolveFiles`）は、人の操作を経ずに画面から渡るパスを見るが、決めたこととして、フォルダの外（絶対パス・`~/`）も見る（Claude が書いたパスは外のことが多い）。返すのは、実在する普通のファイルの絶対パスか null だけで、中身・サイズ・種類（フォルダか）を返さず、一度に `RESOLVE_FILES_MAX` 件までか。これに、中身を読む・返す処理を足していないか（読んで開くのは、人がリンクを押したときの `ReadFile`）。リンクは `href` の無い `<a class="file-link">` で、外のページとして開かれないか。
+- エディタの `RevealFile`（`Workspace.absolutePath` → `shell.showItemInFolder`）は、人がボタンを押したときだけ、Finder にファイルを見せる（中身は読まない）。画面から渡るパスを `shell.openPath` や `shell.openExternal` に渡す処理（ファイルを開く・実行する）に変えていないか。外を指す相対パス（`..`）は断っているか。
 - エディタの `ReadFile`・`WriteFile` が、外のファイル（絶対パス）や外向きのリンクの先も開くのは決めたこと（開くきっかけは、人の操作か、main がセッションのフォルダの中に限ったウォークスルーの場所）。この受け口を、人の操作を経ずに読む用途に使い回していないか。読む受け口を足すときは、`readImage` と同じ形で限ります。
 
 **制御文字**（`src/shared/paste.ts` の `stripControlChars`。画面側は `src/renderer/src/chat/sanitize.ts` の再エクスポートか、`@shared/paste` から読み込む）
@@ -208,7 +209,8 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 **CSP**（`src/renderer/index.html`）
 
-- `img-src 'self' data: blob:`（外部の画像を読まない）、`frame-src 'none'`、`script-src 'self'`。ゆるめる変更が無いか。
+- `img-src 'self' data: blob:`（外部の画像を読まない）、`frame-src blob:`、`script-src 'self'`。ゆるめる変更が無いか。
+  - `frame-src` が `blob:` だけなのは、エディタの PDF（`editor/PdfView.tsx`。Electron 組み込みのビューアを、blob: の iframe で出す）のため（決めたこと。以前は `'none'`）。`https:`・`data:`・`file:` や、`*` を足していないか。`<iframe>`・`<embed>`・`<object>` を、消毒（DOMPurify の許可リスト）やアプリの外から来る HTML に通していないか（`PdfView` が作る iframe の src は、画面が作った blob: だけ）。
 
 **設定ファイル**（`src/main/statusline.ts`・`settings-files.ts`・`claude-config.ts`）
 

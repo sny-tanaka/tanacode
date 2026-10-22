@@ -135,6 +135,7 @@ export const IpcChannel = {
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
   ResolveFiles: 'fs:resolve-files',
+  RevealFile: 'fs:reveal-file',
   FilesChanged: 'fs:changed',
   WatchOpenFiles: 'fs:watch-open-files',
   TasksBash: 'tasks:bash',
@@ -448,6 +449,8 @@ export type FileContent =
   | { kind: 'binary' }
   // 画像（PNG・JPEG など。SVG は文字なので text）。url は data URL（レンダラーはファイルを直接読めない）
   | { kind: 'image'; url: string }
+  // PDF。data はファイルの中身（レンダラーが Blob にして、組み込みの PDF ビューアに渡す。data URL は CSP が通さない）
+  | { kind: 'pdf'; data: Uint8Array<ArrayBuffer> }
   | { kind: 'too-large'; size: number };
 // エディタの保存の結果。ok: false は、読んだあとにディスク側（Claude Code など）でも変わっていたので書かなかったもの。disk は今のディスクの内容
 export type WriteResult = { ok: true } | { ok: false; disk: FileContent };
@@ -752,6 +755,8 @@ export type TanacodeApi = {
     // チャットの本文に出たパスの候補（絶対パス・~/・作業フォルダからの相対パス）のうち、実在するファイルの絶対パス（無い・ファイルでないものは null。
     // 返すのは候補と同じ順）。中身は読まず、あるかどうかだけを見る。一度に確かめるのは RESOLVE_FILES_MAX 件まで
     resolveFiles(sessionId: string, paths: string[]): Promise<(string | null)[]>;
+    // エディタで開いているファイルを、Finder で表示する（選んだ状態で、入っているフォルダを開く）。relPath は作業フォルダからの相対パスか絶対パス
+    revealFile(sessionId: string, relPath: string): Promise<void>;
     // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身で、今のディスクがそれと同じときだけ書く。
     // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
     writeFile(sessionId: string, relPath: string, text: string, expected: string | null): Promise<WriteResult>;
@@ -957,6 +962,7 @@ export type IpcInvoke = {
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];
   [IpcChannel.ResolveFiles]: Api['workspace']['resolveFiles'];
+  [IpcChannel.RevealFile]: Api['workspace']['revealFile'];
   [IpcChannel.WriteFile]: Api['workspace']['writeFile'];
   [IpcChannel.ListFiles]: Api['workspace']['listFiles'];
   [IpcChannel.Search]: Api['workspace']['search'];

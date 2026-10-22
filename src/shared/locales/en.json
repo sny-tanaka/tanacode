@@ -1530,6 +1530,9 @@
       "source": "Source",
       "label": "Markdown view"
     },
+    "crumb": {
+      "revealInFinder": "Reveal in Finder"
+    },
     "tabs": {
       "closeConfirm": "Close “{name}” without saving your changes?",
       "unsaved": "Unsaved changes (⌘S to save)",

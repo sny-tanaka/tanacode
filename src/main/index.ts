@@ -872,6 +872,10 @@ function registerIpc(): void {
   handle(IpcChannel.ResolveFiles, (e, id: string, paths: string[]) =>
     new Workspace(P(e).cwdOf(id)).resolveFiles(Array.isArray(paths) ? paths : [], P(e).addedFoldersOf(id)).catch(() => []),
   );
+  // エディタのファイルを Finder で表示する（人がボタンを押したときだけ）。見せるだけで、中身は読まない
+  handle(IpcChannel.RevealFile, (e, id: string, relPath: string) => {
+    if (typeof relPath === 'string' && relPath) shell.showItemInFolder(new Workspace(P(e).cwdOf(id)).absolutePath(relPath));
+  });
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
