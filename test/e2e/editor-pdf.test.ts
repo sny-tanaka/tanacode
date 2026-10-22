@@ -3,10 +3,13 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
-// エディタで PDF を開く（Electron 組み込みの PDF ビューアを、blob: の iframe で出す）と、エディタのファイルを Finder で表示するボタン。
+// エディタで PDF を開く（Electron 組み込みの PDF ビューアを、blob: の iframe で出す）と、SVG を画像（プレビュー）でも見られること、
+// エディタのファイルを Finder で開くボタン。
 // 組み込みのビューアは、画面の CSP（frame-src）や、main が見張る画面の移動に止められうるので、本物のアプリで確かめる
 
 const PROMPT = 'PDF を見ていてください';
+// 透過の背景に、円だけを描いた SVG（画像で出ると、円の分の大きさになる）
+const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><circle cx="100" cy="50" r="40" fill="#d97757"/></svg>\n';
 
 // 1 ページだけの、文字入りの PDF（xref の位置まで正しいもの）
 function miniPdf(): Buffer {
@@ -30,14 +33,14 @@ function miniPdf(): Buffer {
   return Buffer.from(out, 'latin1');
 }
 
-describe('エディタで PDF を開く・Finder で表示する', () => {
+describe('エディタで PDF・SVG を開く・Finder で開く', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
     app = await E2EApp.launch({
       trusted: true,
       git: true,
-      files: { 'note.txt': 'メモ\n' },
+      files: { 'note.txt': 'メモ\n', 'logo.svg': SVG },
       conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: 'わかりました' }]] }],
     });
     // PDF はバイナリなので、files とは別に置く
@@ -69,7 +72,23 @@ describe('エディタで PDF を開く・Finder で表示する', () => {
       .toBe(true);
   });
 
-  it('Finder で表示のボタンは、開いているファイルを Finder に渡す（絶対パスで）', async () => {
+  it('SVG を開くと、はじめは画像（プレビュー）で出る。ソースに切り替えると、文字のエディタに戻る', async () => {
+    await app.page.click('.tree-row[title="logo.svg"]');
+    await app.byText('.editor-tab.active', 'logo.svg').waitFor();
+    const image = app.page.locator('.svg-preview img');
+    await image.waitFor();
+    // 画像として読み込めている（CSP が data: を通す）。SVG の width・height の大きさで出る
+    await app.page.waitForFunction(() => {
+      const img = document.querySelector<HTMLImageElement>('.svg-preview img');
+      return !!img && img.complete && img.naturalWidth === 200 && img.naturalHeight === 100;
+    });
+    expect(await image.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
+    await app.page.getByRole('tab', { name: 'ソース' }).click();
+    await image.waitFor({ state: 'detached' });
+    await app.page.locator('.editor .editor-monaco .view-line', { hasText: '<circle' }).first().waitFor();
+  });
+
+  it('Finder で開くボタンは、開いているファイルを Finder に渡す（絶対パスで）', async () => {
     // 本物の Finder は開かず、main で渡されたパスを控える
     await app.app.evaluate(({ shell }) => {
       (shell as { showItemInFolder: (path: string) => void }).showItemInFolder = (path) => {
@@ -77,12 +96,15 @@ describe('エディタで PDF を開く・Finder で表示する', () => {
       };
     });
     const revealed = () => app.app.evaluate(() => (globalThis as { e2eRevealed?: string[] }).e2eRevealed ?? []);
-    await app.page.getByRole('button', { name: 'Finder で表示' }).click();
-    await expect.poll(revealed).toEqual([join(app.work, 'spec.pdf')]);
-    // 文字のファイルでも出る
-    await app.page.click('.tree-row[title="note.txt"]');
-    await app.byText('.editor-tab.active', 'note.txt').waitFor();
-    await app.page.getByRole('button', { name: 'Finder で表示' }).click();
-    await expect.poll(revealed).toEqual([join(app.work, 'spec.pdf'), join(app.work, 'note.txt')]);
+    // 前のテストで開いた SVG が、開いているファイル
+    await app.page.getByRole('button', { name: 'Finder で開く' }).click();
+    await expect.poll(revealed).toEqual([join(app.work, 'logo.svg')]);
+    // PDF・文字のファイルでも出る
+    for (const name of ['spec.pdf', 'note.txt']) {
+      await app.page.click(`.tree-row[title="${name}"]`);
+      await app.byText('.editor-tab.active', name).waitFor();
+      await app.page.getByRole('button', { name: 'Finder で開く' }).click();
+    }
+    await expect.poll(revealed).toEqual([join(app.work, 'logo.svg'), join(app.work, 'spec.pdf'), join(app.work, 'note.txt')]);
   });
 });

@@ -1173,6 +1173,12 @@ body.resizing * {
   background: var(--bg-panel);
   color: var(--text-tertiary);
 }
+/* 開けないファイルの案内（文と、Finder で開くボタン）を、縦に並べて真ん中に置く */
+.editor-placeholder.unopenable {
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+}
 /* 画像。ペインより大きいときは縮めて全体を見せ、小さいときは原寸のまま真ん中に置く */
 .editor-image {
   position: absolute;
@@ -1196,7 +1202,8 @@ body.resizing * {
   height: 100%;
   border: none;
 }
-.editor-image img {
+.editor-image img,
+.svg-preview img {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
@@ -5700,15 +5707,29 @@ button.menu-tab:disabled {
 .editor-body.md-split .editor-monaco {
   right: 50%;
 }
-.markdown-preview {
+.markdown-preview,
+.svg-preview {
   position: absolute;
   inset: 0;
   overflow: auto;
   background: var(--bg-panel);
 }
-.editor-body.md-split .markdown-preview {
+.editor-body.md-split .markdown-preview,
+.editor-body.md-split .svg-preview {
   left: 50%;
   border-left: 1px solid var(--border-subtle);
+}
+/* SVG の画像。画像のタブ（.editor-image）と同じく、ペインより大きければ縮めて全体を見せ、真ん中に置く */
+.svg-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.svg-preview-invalid {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 .markdown-doc {
   max-width: 820px;

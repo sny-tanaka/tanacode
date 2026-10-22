@@ -159,6 +159,7 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 - DOMPurify は明示の許可リスト（`SANITIZE` の `ALLOWED_TAGS`・`ALLOWED_ATTR`、`ALLOW_DATA_ATTR: false`・`ALLOW_ARIA_ATTR: false`）。GitHub が描くもの（中央寄せ・折りたたみ・キーなど）のためにチャットより少し広いが、見た目を偽るもの（`style`）・フォーム・ボタン・埋め込み・外を読みにいくもの（`video`・`audio`・`source`・`picture`・`srcset`）を足していないか。消毒のあとの `keepPreviewParts` で、`class` はコードの言語の印（`language-*`）だけ、`input` はタスクリストのチェックボックス（`disabled`）だけを残しているか。
 - 文書の中の `id`・`name` は、前置き（`user-content-`。`SANITIZE_NAMED_PROPS: true`）を付けたまま残すか。見出しの `id`（`addHeadingIds`）にも同じ前置きを付けるか。前置きの無い `id` を許すと、アプリの画面の要素や mermaid が描くときの id（`mermaid-N` など）とぶつかります。`#目印` のリンクで探すのは、プレビューの中（`ref.current`）だけか。
+- SVG の画像（`editor/SvgPreview.tsx`）は、`<img>` の data URL だけで出すか。`innerHTML`・インラインの `<svg>`・`<object>`・`<iframe>`・`<embed>` に入れていないか（`<img>` なら、SVG の中のスクリプトは動かず、外のファイル・URL も読みません）。
 - 外部の画像は、チャットと同じく `replaceExternalImages` でリンクに。相対パスの画像は `src` を外し、main の `ReadImage` で data URL にして読みます（読める範囲は次の「画面から渡るパスのファイル」）。
 
 **画面から渡るパスのファイル**（`src/main/workspace.ts`・`src/main/index.ts`）

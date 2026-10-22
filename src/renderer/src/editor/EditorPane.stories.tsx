@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { EditorPane, type OpenFile } from './EditorPane';
+import logoSvg from './sample-logo.svg?raw';
 
 // エディタ。画像（PNG など）は絵として出す。ペインより大きければ縮めて全体を見せ、小さければ原寸で真ん中に置く。
-// 透過の部分は市松模様で見える。PDF は組み込みのビューアで出す（ページ送り・拡大・検索・印刷）。
-// バイナリと大きすぎるファイルは、表示できない旨を出す。どのファイルでも、パンくずの右端に「Finder で表示」のボタンが出る
+// 透過の部分は市松模様で見える。SVG は、文字（ソース）としても画像としても見られる（Markdown と同じ、プレビュー・並べる・ソースの切り替え）。PDF は組み込みのビューアで出す（ページ送り・拡大・検索・印刷）。
+// 対応していない形式（バイナリ）と大きすぎるファイルは、その旨と「Finder で開く」のボタンを出す。どのファイルでも、パンくずの右端にも「Finder で開く」のボタンが出る
 
 // 透過の背景に、円と四角を描いた PNG（実物と同じ data URL）
 function png(width: number, height: number): string {
@@ -87,6 +88,10 @@ export const 小さい画像: Story = {
 };
 export const 大きい画像: Story = {
   render: () => <Pane files={[{ path: 'design/retina.png', content: { kind: 'image', url: png(2880, 1800) } }]} />,
+};
+// 透過の背景に、円と四角を描いた SVG（見本は sample-logo.svg を、文字列のまま読む。.tsx に svg の開きタグを書くと、アイコンの置き場の決まり（test/icons.test.ts）に当たる）
+export const SVG: Story = {
+  render: () => <Pane files={[{ path: 'design/logo.svg', content: { kind: 'text', text: logoSvg } }]} />,
 };
 export const PDF: Story = {
   render: () => <Pane files={[{ path: 'docs/spec.pdf', content: { kind: 'pdf', data: pdf('Hello PDF in tanacode') } }]} />,

@@ -1524,15 +1524,17 @@
     }
   },
   "editor": {
-    "markdownMode": {
+    "previewMode": {
       "preview": "Preview",
       "split": "Side by side",
       "source": "Source",
-      "label": "Markdown view"
+      "markdown": "Markdown view",
+      "svg": "SVG view"
     },
-    "crumb": {
-      "revealInFinder": "Reveal in Finder"
+    "svgPreview": {
+      "invalid": "Can't load this as an SVG (it may be unfinished)"
     },
+    "openInFinder": "Open in Finder",
     "tabs": {
       "closeConfirm": "Close “{name}” without saving your changes?",
       "unsaved": "Unsaved changes (⌘S to save)",
@@ -1550,7 +1552,7 @@
     },
     "placeholder": {
       "noFile": "Open a file from the Explorer",
-      "binary": "Binary files can't be displayed",
+      "unsupported": "This file format isn't supported",
       "tooLarge": "This file is too large to display ({size} MB)"
     },
     "markdownPreview": {

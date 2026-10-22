@@ -1476,15 +1476,17 @@
     }
   },
   "editor": {
-    "markdownMode": {
+    "previewMode": {
       "preview": "プレビュー",
       "split": "並べる",
       "source": "ソース",
-      "label": "Markdown の表示"
+      "markdown": "Markdown の表示",
+      "svg": "SVG の表示"
     },
-    "crumb": {
-      "revealInFinder": "Finder で表示"
+    "svgPreview": {
+      "invalid": "SVG として読み込めません（書きかけの可能性があります）"
     },
+    "openInFinder": "Finder で開く",
     "tabs": {
       "closeConfirm": "{name} の変更を保存せずに閉じますか？",
       "unsaved": "未保存の変更があります（⌘S で保存）",
@@ -1502,7 +1504,7 @@
     },
     "placeholder": {
       "noFile": "エクスプローラーからファイルを開いてください",
-      "binary": "バイナリファイルは表示できません",
+      "unsupported": "対応していないファイル形式です",
       "tooLarge": "ファイルが大きすぎるため表示できません（{size}MB）"
     },
     "markdownPreview": {
