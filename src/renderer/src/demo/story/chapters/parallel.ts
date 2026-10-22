@@ -1,5 +1,8 @@
+import { t } from '@shared/i18n';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
+import { sessionToolId } from '@shared/session-tools';
 import type { BashTask } from '@shared/task';
+import { tanacodeToolLabel } from '@shared/tool-label';
 import { ROOT } from '../../data';
 import { sleep } from '../../director';
 import { statusLine } from '../../scenarios/claude';
@@ -7,7 +10,7 @@ import { readerLog, WORKFLOW_TOOL, WorkflowPlayer } from '../../scenarios/workfl
 import { MAIN, type Story } from '../story';
 
 // 章 6「並行して進める」: 残りの作業を、親（このセッション）の Claude が子セッションに分けて任せる。
-// 子の起動の許可 → 子が親の下に並ぶ → 一覧の印で状態を追う → 回答待ちの子に答える（子のチャットには「親セッションからの指示」）→
+// 子の起動の許可（既定では確認が出る） → 子が親の下に並ぶ → 一覧の印で状態を追う → 回答待ちの子に答える（子のチャットには「親セッションからの指示」）→
 // 別の子のワークフローのフロー図を見る → 親の開発サーバー（バックグラウンドの Bash）を止める → 子が終わると親に知らせが届く
 
 const PROMPT = '残りの作業を子セッションに分けて、並行で進めて。README に価格の表記のルールを書くのと、メニューのページのアクセシビリティの点検';
@@ -24,17 +27,25 @@ const CHILDREN: Record<string, { name: string; prompt: string }> = {
 const QUESTION = '価格の表記のルールは、README のどこに書きますか？';
 const ANSWER = '「表示のルール」の節を新しく作る';
 
+// 子を始めるときの許可の確認。本物と同じく、見出しは tanacode のツールの名前（Claude Code が付ける英語の見出しではなく）で、
+// 確認する理由には、確認のフック（main.hooks.sessionsGate）が書いた文が入る。ツールの説明（description）は付かない。
+// フックが確認させるので、「今後は聞かない」の候補は出ない
+const START_TOOL = sessionToolId('start_session');
 const START_PERMISSION = (child: string, name: string, prompt: string): PendingPermission => ({
   id: `start-${child}`,
-  tool: 'mcp__tanacode-sessions__start_session',
-  title: 'tanacode-sessions - start_session (MCP)',
-  description: '子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います',
+  tool: START_TOOL,
+  title: tanacodeToolLabel(START_TOOL),
+  description: null,
   input: { prompt, worktree: true, name },
-  reason: null,
+  reason: t('main.hooks.sessionsGate'),
   always: null,
   plan: null,
   agent: null,
 });
+
+// start_session の結果の note（Claude に返す英語の文。子セッションを worktree で始めたとき。main の SessionsControl.startSession）
+const START_NOTE =
+  'The first instruction will be sent as soon as the child has started. The worktree is set up before the first instruction is sent (the state is starting until then), so the child needs no setup for the worktree itself. If installing its dependencies fails, the first instruction says so and get_session shows it in worktree.setup_problems. Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (schedule a wake-up with schedule_wakeup and end your turn, so that the user can talk to you).';
 
 const README_QUESTION: PendingQuestion = {
   id: 'readme-question',
@@ -83,10 +94,10 @@ export async function runParallel(story: Story): Promise<void> {
   await sleep(600);
   parent.say('2 つの作業を、それぞれ子セッションに任せます。');
 
-  // 2. 子を始めるたびに、許可の確認が出る
+  // 2. 子を始めるたびに（既定では）、許可の確認が出る
   const startChild = async (child: string, first: boolean) => {
     const { name, prompt } = CHILDREN[child];
-    const tool = parent.use('mcp__tanacode-sessions__start_session', prompt, {
+    const tool = parent.use(START_TOOL, prompt, {
       input: JSON.stringify({ prompt, worktree: true, name }, null, 2),
     });
     parent.stopWorking();
@@ -104,12 +115,28 @@ export async function runParallel(story: Story): Promise<void> {
     );
     backend.setStatusLine(child, statusLine(5, 10_000));
     parent.result(tool, {
-      output: JSON.stringify({ session_id: child, name, folder: `${ROOT}/.claude/worktrees/${worktree}`, worktree: { name: worktree, branch: `worktree-${worktree}` }, permission_mode: 'acceptEdits', state: 'starting' }, null, 2),
+      output: JSON.stringify(
+        {
+          session_id: child,
+          name,
+          folder: `${ROOT}/.claude/worktrees/${worktree}`,
+          worktree: { name: worktree, branch: `worktree-${worktree}` },
+          independent: false,
+          model: 'claude-opus-5-5',
+          effort: null,
+          permission_mode: 'acceptEdits',
+          remote_control: false,
+          state: 'starting',
+          note: START_NOTE,
+        },
+        null,
+        2,
+      ),
     });
     story.claude(child).startWorking();
     await sleep(500);
   };
-  d.caption('子セッションを始めるたびに、許可の確認が出ます。子も Claude の利用枠を使うためです', '.menu-card');
+  d.caption('子セッションを始めるたびに、既定では許可の確認が出ます。子も Claude の利用枠を使うためです（メニューで、求めないようにもできます）', '.menu-card');
   await startChild(README_CHILD, true);
   await startChild(A11Y_CHILD, false);
   parent.stopWorking();

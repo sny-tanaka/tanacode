@@ -1,12 +1,13 @@
 import { monaco } from '../../../editor/monaco';
 import { type Director, sleep } from '../../director';
 import { MENU_CARD_WITH_TAKEOUT, PRICE_TEST_WITH_TAKEOUT, PRICE_WITH_TAKEOUT } from '../files';
-import { ASK_LIST, ASK_TITLE, checkCards, readCard, showPanel } from '../checklist';
+import { ASK_LIST, ASK_TITLE, readCard, replyCard, showPanel } from '../checklist';
 import { MAIN, type Story } from '../story';
 
 // 章 5「レビューして直す」: レビューの前に、章 3 で Claude が残した「確認事項」にカードのスレッドで答える（「Claude に通知する」で Claude に届く）。
+// Claude の返事を読んで、人が判断を承認（チェック）すると、カードが「決定事項」のリストに移る（確認事項は種類 review）。
 // ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
-// 直したあと、回答のコマンドを ▶ でターミナルで流し、落ちたテストの出力を選んで「Claude へ送る」
+// 直したあと、回答のコマンドを ▶ でターミナルで流し、落ちたテストの出力を選んで「Claude へ送る」（長い出力は札になって、入力欄に添えられる）
 
 const COMMENT_CARD = 'テイクアウトの税込価格も、ここに並べて出してください';
 const COMMENT_PRICE = 'テイクアウトは軽減税率の 8% です。税率を引数で渡せるようにしてください';
@@ -126,7 +127,7 @@ export async function runReview(story: Story): Promise<void> {
   await showPanel(d, 'チェックリスト');
   await sleep(600);
   await d.click(d.byText('.checklist-card', ASK_TITLE), { ms: 900 });
-  await sleep(2000);
+  await sleep(1200);
 
   // 2. スレッドに返信する。「Claude に通知する」にチェックがあると、手の空いた Claude に知らせが届く
   d.caption('スレッドに返信します。「Claude に通知する」にチェックがあれば、手の空いた Claude に返信の知らせが届きます', '.card-composer');
@@ -140,25 +141,35 @@ export async function runReview(story: Story): Promise<void> {
   await d.type('.card-composer textarea', ANSWER);
   await sleep(500);
   await d.moveTo('.card-composer .checklist-notify', { ms: 600 });
-  await sleep(1200);
+  await sleep(800);
   await d.click('.card-composer-foot [aria-label="返信する"]', { ms: 600 });
   await notified;
   claude.startWorking();
   await sleep(600);
 
-  // 3. Claude が知らせを受けてカードを読み、チェックを付けてスレッドで答える
+  // 3. Claude が知らせを受けてカードを読み、スレッドで答える（チェックは付けない。承認するのは人）
   d.caption('返信の知らせはチャットにも出て、「カードを開く」でカードに移れます。Claude はカードを読んで、スレッドで答えます', () => [...document.querySelectorAll('.claude .chat-notice')].at(-1));
   story.toBottom();
   await readCard(story, ASK_LIST, 1, `## ${ASK_LIST} #1「${ASK_TITLE}」\n\n人の返信（未読）: ${ANSWER}`);
   await sleep(300);
-  await checkCards(story, ASK_LIST, [1], '了解しました。8 品目のままにします。');
+  await replyCard(story, ASK_LIST, 1, '了解しました。8 品目のままにします。よければ、このカードを承認（チェック）してください。');
   await sleep(300);
   claude.stopWorking();
-  claude.say('「確認事項」#1 は、8 品目のままにしてチェックを付けました。');
+  claude.say('「確認事項」#1 は、8 品目のままにします。スレッドに返事を書いたので、よければ承認してください。');
   backend.push(id, { type: 'turn-end' });
   story.toBottom();
-  d.caption('チェックとスレッドには、人と Claude のどちらが付けたかが残ります', '.card-thread');
-  await sleep(2800);
+  d.caption('Claude の返事はスレッドに残り、返信やチェックを人と Claude のどちらがしたかも分かります', '.card-thread');
+  await sleep(1800);
+
+  // 3b. 人が判断を承認（チェック）すると、カードが決定事項のリストに移る
+  d.caption('判断でよければ、人がチェック（承認）します。確認事項のリストでは、承認したカードは「決定事項」に移ります', '.card-pane .diff-pane-head .card-check');
+  await d.click('.card-pane .diff-pane-head .card-check', { ms: 800 });
+  await sleep(700);
+  d.caption(
+    '決定事項にはチェック欄がなく、有効なカードは、人が発言するたびに全部 Claude に渡されます（画面には出ません）',
+    () => document.querySelector('.checklist-list.kind-decisions'),
+  );
+  await sleep(3400);
 
   // 4. ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開く
   d.caption('ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開きます。分岐したところからの変更が、PR のように並びます', '.status-button[data-tip$="ソース管理を開く"]');
@@ -247,14 +258,15 @@ export async function runReview(story: Story): Promise<void> {
   await d.find(() => terminalRow('expected 561'));
   await sleep(1500);
 
-  // 11. 落ちたテストの出力を選んで「Claude へ送る」
-  d.caption('落ちたテストの出力を選んで「Claude へ送る」と、入力欄にそのまま貼られます', '.terminal-panel');
+  // 11. 落ちたテストの出力を選んで「Claude へ送る」。4 行以上の長い出力は、文字にせず札になって入力欄に添えられる
+  d.caption('落ちたテストの出力を選んで「Claude へ送る」と、長い出力は札になって、入力欄に添えられます（押すと中身を読めます）', '.terminal-panel');
   await selectTerminal(d, 'src/lib/price.test.ts', 'expected 561');
   await sleep(500);
   await d.click('.terminal-panel [aria-label="Claude へ送る"]', { ms: 700 });
   await sleep(900);
-  // 貼った出力の下の行に書き足す
-  await story.send('\nこのテストが落ちています。直して');
+  // 札はそのままに、一言を書き足して送る（発言には、札が付いて出る）
+  d.caption('札に一言だけ書き足して送ります。送った発言にも、札が付いて残ります', '.chat-input');
+  await story.send('このテストが落ちています。直して');
   claude.startWorking();
   await sleep(1200);
   claude.say('期待値が間違っていました（520 × 1.08 = 561.6 を切り捨てて 561）。テストを直します。');
@@ -269,5 +281,5 @@ export async function runReview(story: Story): Promise<void> {
   await d.click('.terminal-panel [aria-label="パネルを閉じる"]', { ms: 700 });
   await sleep(500);
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]', { ms: 800 });
-  await sleep(2500);
+  await sleep(1500);
 }
