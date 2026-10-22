@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { EditorPane, type OpenFile } from './EditorPane';
+import logoSvg from './sample-logo.svg?raw';
 
 // エディタ。画像（PNG など）は絵として出す。ペインより大きければ縮めて全体を見せ、小さければ原寸で真ん中に置く。
 // 透過の部分は市松模様で見える。SVG は、文字（ソース）としても画像としても見られる（Markdown と同じ、プレビュー・並べる・ソースの切り替え）。PDF は組み込みのビューアで出す（ページ送り・拡大・検索・印刷）。
@@ -88,20 +89,9 @@ export const 小さい画像: Story = {
 export const 大きい画像: Story = {
   render: () => <Pane files={[{ path: 'design/retina.png', content: { kind: 'image', url: png(2880, 1800) } }]} />,
 };
-// 透過の背景に、円と四角を描いた SVG
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300" viewBox="0 0 480 300">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#d97757" />
-      <stop offset="1" stop-color="#6a9bcc" />
-    </linearGradient>
-  </defs>
-  <circle cx="168" cy="150" r="105" fill="url(#g)" />
-  <rect x="264" y="90" width="168" height="120" fill="#788c5d" />
-</svg>
-`;
+// 透過の背景に、円と四角を描いた SVG（見本は sample-logo.svg を、文字列のまま読む。.tsx に svg の開きタグを書くと、アイコンの置き場の決まり（test/icons.test.ts）に当たる）
 export const SVG: Story = {
-  render: () => <Pane files={[{ path: 'design/logo.svg', content: { kind: 'text', text: svg } }]} />,
+  render: () => <Pane files={[{ path: 'design/logo.svg', content: { kind: 'text', text: logoSvg } }]} />,
 };
 export const PDF: Story = {
   render: () => <Pane files={[{ path: 'docs/spec.pdf', content: { kind: 'pdf', data: pdf('Hello PDF in tanacode') } }]} />,
