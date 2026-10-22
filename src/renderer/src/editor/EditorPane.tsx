@@ -8,19 +8,23 @@ import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, ExternalLinkIcon, EyeIcon, 
 import { DiffDecorations } from './diffDecorations';
 import { MarkdownPreview } from './MarkdownPreview';
 import { PdfView } from './PdfView';
+import { SvgPreview } from './SvgPreview';
 import { editorTheme, languageFor, monaco } from './monaco';
 
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
 export type RevealRequest = { path: string; line: number; seq: number };
-// Markdown ファイルの表示のしかた。タブは絵だけなので、名前（editor.markdownMode.*）は aria-label とツールチップに付ける
-type MarkdownMode = 'preview' | 'split' | 'source';
-const MARKDOWN_MODES: { mode: MarkdownMode; icon: IconComponent }[] = [
+// 文字のまま編集もできて、見た目（プレビュー）もあるファイル（Markdown と SVG）の表示のしかた。
+// タブは絵だけなので、名前（editor.previewMode.*）は aria-label とツールチップに付ける
+type PreviewMode = 'preview' | 'split' | 'source';
+const PREVIEW_MODES: { mode: PreviewMode; icon: IconComponent }[] = [
   { mode: 'preview', icon: EyeIcon },
   { mode: 'split', icon: ColumnsIcon },
   { mode: 'source', icon: CodeIcon },
 ];
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
+const isSvg = (path: string) => /\.svg$/i.test(path);
+const hasPreview = (path: string) => isMarkdown(path) || isSvg(path);
 
 // App から使う操作。別のフォルダへ移る（App がエディタを作り直し、保存していない変更が消える）前に、確かめて保存するため
 export type EditorHandle = {
@@ -109,10 +113,10 @@ export const EditorPane = memo(function EditorPane({
   const [baseline, setBaseline] = useState<{ path: string; value: FileBaseline } | null>(null);
   // 表示中のモデル（Markdown プレビューが内容を読む）。モデルは描画のあとで作るので state で持つ
   const [activeModel, setActiveModel] = useState<monaco.editor.ITextModel | null>(null);
-  // 開いた Markdown は読むことが多いので、はじめはプレビューにする
-  const [markdownModes, setMarkdownModes] = useState<ReadonlyMap<string, MarkdownMode>>(new Map());
-  const setMarkdownMode = (path: string, mode: MarkdownMode) =>
-    setMarkdownModes((prev) => new Map(prev).set(path, mode));
+  // 開いた Markdown・SVG は読む（見る）ことが多いので、はじめはプレビューにする
+  const [previewModes, setPreviewModes] = useState<ReadonlyMap<string, PreviewMode>>(new Map());
+  const setPreviewMode = (path: string, mode: PreviewMode) =>
+    setPreviewModes((prev) => new Map(prev).set(path, mode));
 
   useEffect(() => {
     const editor = monaco.editor.create(containerRef.current!, {
@@ -146,7 +150,7 @@ export const EditorPane = memo(function EditorPane({
 
   const active = files.find((f) => f.path === activePath);
   const activeText = active?.content.kind === 'text' ? active.content.text : null;
-  const markdownMode = activePath && activeText !== null && isMarkdown(activePath) ? (markdownModes.get(activePath) ?? 'preview') : null;
+  const previewMode = activePath && activeText !== null && hasPreview(activePath) ? (previewModes.get(activePath) ?? 'preview') : null;
   const change = activePath ? changes[activePath] : undefined;
 
   useEffect(() => {
@@ -282,18 +286,18 @@ export const EditorPane = memo(function EditorPane({
     if (!reveal || reveal.seq === revealedSeq.current || reveal.path !== activePath || !model) return;
     revealedSeq.current = reveal.seq;
     // 行を指して開いたときは、その行が見えるようにソースを出す
-    if (isMarkdown(reveal.path) && (markdownModes.get(reveal.path) ?? 'preview') === 'preview') setMarkdownMode(reveal.path, 'source');
+    if (hasPreview(reveal.path) && (previewModes.get(reveal.path) ?? 'preview') === 'preview') setPreviewMode(reveal.path, 'source');
     const line = Math.min(reveal.line, model.getLineCount());
     editor.setPosition({ lineNumber: line, column: 1 });
     editor.revealLineInCenterIfOutsideViewport(line, monaco.editor.ScrollType.Smooth);
   }, [reveal, activePath, activeText]);
 
-  // ウォークスルーで示す Markdown は、プレビューではなくソースで出す（範囲と吹き出しはエディタに出すため）
+  // ウォークスルーで示す Markdown・SVG は、プレビューではなくソースで出す（範囲と吹き出しはエディタに出すため）
   const walkStep = walkthrough ? shownStep(walkthrough.walkthrough) : null;
   const walkSeq = walkthrough ? `${walkthrough.walkthrough.id}:${walkthrough.walkthrough.seq}` : null;
   useEffect(() => {
-    if (!walkStep || walkStep.path !== activePath || !isMarkdown(walkStep.path)) return;
-    if ((markdownModes.get(walkStep.path) ?? 'preview') === 'preview') setMarkdownMode(walkStep.path, 'source');
+    if (!walkStep || walkStep.path !== activePath || !hasPreview(walkStep.path)) return;
+    if ((previewModes.get(walkStep.path) ?? 'preview') === 'preview') setPreviewMode(walkStep.path, 'source');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walkSeq, activePath]);
   // 吹き出しは、示している場所のファイルのモデルをエディタに入れ終えてから出す（入れ替えの途中に、前のファイルに出さない）
@@ -354,17 +358,17 @@ export const EditorPane = memo(function EditorPane({
       </div>
       <div className="editor-crumb">
         <span className="editor-crumb-path">{active ? active.path.split('/').join('  ›  ') : ''}</span>
-        {markdownMode && activePath && (
-          <div className="segmented" role="tablist" aria-label={t('editor.markdownMode.label')}>
-            {MARKDOWN_MODES.map(({ mode, icon: Icon }) => (
+        {previewMode && activePath && (
+          <div className="segmented" role="tablist" aria-label={t(isSvg(activePath) ? 'editor.previewMode.svg' : 'editor.previewMode.markdown')}>
+            {PREVIEW_MODES.map(({ mode, icon: Icon }) => (
               <button
                 key={mode}
                 role="tab"
-                aria-selected={markdownMode === mode}
-                aria-label={t(`editor.markdownMode.${mode}`)}
-                data-tip={t(`editor.markdownMode.${mode}`)}
-                className={markdownMode === mode ? 'active' : ''}
-                onClick={() => setMarkdownMode(activePath, mode)}
+                aria-selected={previewMode === mode}
+                aria-label={t(`editor.previewMode.${mode}`)}
+                data-tip={t(`editor.previewMode.${mode}`)}
+                className={previewMode === mode ? 'active' : ''}
+                onClick={() => setPreviewMode(activePath, mode)}
               >
                 <Icon size={14} />
               </button>
@@ -402,11 +406,14 @@ export const EditorPane = memo(function EditorPane({
           <IconButton icon={DiffIcon} label={t('editor.change.showDiff')} onClick={() => onShowDiff(activePath)} />
         </div>
       )}
-      <div className={`editor-body${markdownMode ? ` md-${markdownMode}` : ''}`}>
+      {/* md-preview・md-split・md-source は、Markdown と SVG で共有する（global.css の .editor-body.md-*） */}
+      <div className={`editor-body${previewMode ? ` md-${previewMode}` : ''}`}>
         <div className="editor-monaco" ref={containerRef} />
-        {markdownMode && markdownMode !== 'source' && activePath && activeModel && (
+        {previewMode && previewMode !== 'source' && activePath && activeModel && (isSvg(activePath) ? (
+          <SvgPreview path={activePath} model={activeModel} />
+        ) : (
           <MarkdownPreview sessionId={sessionId} path={activePath} model={activeModel} onOpenFile={onOpenFile} />
-        )}
+        ))}
         {editorInstance && activePath && activeText !== null && (
           <LineComments
             editor={editorInstance}

@@ -1183,6 +1183,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面（`editor/PdfView.tsx`）は、バイト列を `Blob` にして `URL.createObjectURL` で作った blob: の URL を、`<iframe>` で開きます（中身が替わったら URL を作り直して開き直し、閉じたら `revokeObjectURL`）。ビューアは、Chromium の拡張機能のフレームで動きます。
   - CSP（`index.html`）の `frame-src` は `blob:` だけを通します（以前は `'none'`）。`<embed>`・`<object>`・`file://`・`data:` の iframe は、`frame-src 'none'` のままだと出ず、`frame-src blob:` なら、blob: の iframe だけが出ました（アプリとは別の小さな Electron のスクリプトで確かめた）。ゆるめる範囲は、ここまでです。
   - 手元のアプリで確かめる E2E は `test/e2e/editor-pdf.test.ts`（ビューアのフレームが `chrome-extension://` になること。止められると `chrome-error://` になる）。Storybook はアプリ内ブラウザ（`<webview>`）で見ると、ビューアの枠だけ出て、ページは描かれません（本物のウインドウでは描かれる）。
+- SVG は、文字のまま Monaco で開き（`Workspace.readFile` は text で返す）、Markdown と同じ「プレビュー・並べる・ソース」の切り替え（`EditorPane` の `PREVIEW_MODES`・`hasPreview`。レイアウトの CSS `.editor-body.md-*` も共有）で、画像（`editor/SvgPreview.tsx`）を出せます。はじめはプレビュー、行を指して開いたときとウォークスルーで示すときはソース（Markdown と同じ）。
+  - 画像は、編集中（未保存）の内容を `<img src="data:image/svg+xml;charset=utf-8,…">` に入れます（150ms 待ってまとめて描く）。`<img>` に入れた SVG は、中のスクリプトが動かず、外のファイル・URL も読みません。`innerHTML`・`<object>`・`<iframe>`・インラインの `<svg>` には入れません（スクリプトと外への通信が動くため）。CSP の `img-src` は `data:` を通します。読み込みに失敗したとき（書きかけなど）は、画像の代わりに案内を出します。
 - エディタのファイルを Finder で表示するボタン（`EditorPane` のパンくずの右端。`ExternalLinkIcon`）は、`RevealFile`（`Workspace.absolutePath` で絶対パスにして、`shell.showItemInFolder`）を頼みます。人がボタンを押したときだけで、見せるだけです（中身は読まない）。作業フォルダの外を指す相対パス（`..`）は断ります。
 - 読み書きの範囲: エディタの `ReadFile`・`WriteFile`（`Workspace.readFile`・`writeFile`）は、絶対パス（作業フォルダの外のファイル。Claude が送ったものなど）も、作業フォルダの中の、外を指すリンクの先も開きます。どれも、人の操作（エクスプローラー・リンク）か、ウォークスルーの場所（Claude に返るのは行数とエラーだけ）がきっかけで、開けなくすると、pnpm・monorepo のリンクや `.env` へのリンクのファイルを編集できなくなるためです（決めたこと）。ウォークスルーの場所も、セッションのフォルダの外を断りません（下の「ウォークスルー」）。画面から渡るパスで読むもののうち、人の操作を経ずに読むもの（Markdown のプレビューの画像。`Workspace.readImage`）だけを、作業フォルダと追加したフォルダの中（リンクを解いた場所で確かめる）に限ります。チャットの本文のパスの実在の確かめ（`ResolveFiles` → `Workspace.resolveFiles`）は、人の操作を経ずに、画面から渡るパスを main が見ますが、フォルダの外の絶対パスや `~/` も見ます（Claude が書いたパスは、作業フォルダの外のことが多いため。決めたこと）。返すのは、実在する普通のファイルの絶対パスか null だけで、中身は読まず、サイズも返しません（読んで開くのは、人がリンクを押したときの `ReadFile`）。
 
@@ -1767,7 +1769,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
-  - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・PDF の表示（`PdfView.tsx`）・ファイルツリー・検索
+  - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・SVG の画像（`SvgPreview.tsx`）・PDF の表示（`PdfView.tsx`）・ファイルツリー・検索
     - Markdown プレビュー（`MarkdownPreview.tsx`）の消毒は、チャット（`chat/Markdown.tsx` の `SANITIZE`）と同じく明示の許可リスト。リポジトリの文書に混ざる HTML のうち、GitHub が描くもの（中央寄せ・折りたたみ・キー・上付きなど）は残し、`class` はコードの言語の印（`language-*`。色付けと mermaid に使う）だけ、入力欄はタスクリストのチェックボックスだけを残します。`id`・`name` は、GitHub と同じく前置き（`user-content-`。DOMPurify の `SANITIZE_NAMED_PROPS`）を付けて残します。見出しに付ける id（`addHeadingIds`）にも同じ前置きを付けます。アプリの画面の id や、mermaid が図を描くときの id（`mermaid-1` など。mermaid は、同じ id の要素を消してから描く）とぶつけないためです。`#目印` のリンクは、前置きを付けた id・name を探します（URL として読めないもの（`#100%` など）は、書いたままの名前で。前置きまで書いたもの（`#user-content-install`）は、書いたままの名前でも）。画像は main の `Workspace.readImage` が、作業フォルダと追加したフォルダの中（リンクを解いた場所で確かめる）のものだけを読みます
   - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル）と、ターミナルモードの Claude Code の生の画面（`ClaudeScreen`）と切り替え（`terminalMode.ts`）

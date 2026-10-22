@@ -1524,11 +1524,15 @@
     }
   },
   "editor": {
-    "markdownMode": {
+    "previewMode": {
       "preview": "Preview",
       "split": "Side by side",
       "source": "Source",
-      "label": "Markdown view"
+      "markdown": "Markdown view",
+      "svg": "SVG view"
+    },
+    "svgPreview": {
+      "invalid": "Can't load this as an SVG (it may be unfinished)"
     },
     "crumb": {
       "revealInFinder": "Reveal in Finder"

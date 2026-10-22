@@ -371,6 +371,85 @@ describe('EditorPane（エディタ）', () => {
     expect(body().className).toContain('md-preview');
   });
 
+  describe('SVG', () => {
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>\n';
+    const SVG_NEXT = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="20" height="20"/></svg>\n';
+    const dataUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const image = () => document.querySelector<HTMLImageElement>('.svg-preview img');
+    const mode = (label: string) => screen.getByRole<HTMLButtonElement>('tab', { name: label });
+    const files = [text('design/logo.svg', SVG), text('src/app.ts', APP)];
+
+    it('はじめは画像（プレビュー）で出し、ボタンでソース・並べる・プレビューを切り替える。Markdown とは別の名前の切り替えで、ほかのファイルでは出さない', async () => {
+      mockApi().install();
+      const p = props({ files, activePath: 'design/logo.svg' });
+      const view = render(<EditorPane {...p} />);
+      await settle();
+      expect(screen.queryByRole('tablist', { name: 'SVG の表示' })).not.toBeNull();
+      expect(screen.queryByRole('tablist', { name: 'Markdown の表示' })).toBeNull();
+      expect(mode('プレビュー').getAttribute('aria-selected')).toBe('true');
+      expect(body().className).toContain('md-preview');
+      expect(image()?.getAttribute('src')).toBe(dataUrl(SVG));
+      expect(image()?.alt).toBe('design/logo.svg');
+      expect(document.querySelector('.markdown-preview')).toBeNull();
+      fireEvent.click(mode('ソース'));
+      expect(body().className).toContain('md-source');
+      expect(image()).toBeNull();
+      fireEvent.click(mode('並べる'));
+      expect(body().className).toContain('md-split');
+      expect(image()).not.toBeNull();
+      // ほかのファイルでは出さず、戻ると選んだ見せ方のまま
+      view.rerender(<EditorPane {...p} activePath="src/app.ts" />);
+      expect(screen.queryByRole('tablist')).toBeNull();
+      expect(image()).toBeNull();
+      view.rerender(<EditorPane {...p} activePath="design/logo.svg" />);
+      expect(mode('並べる').getAttribute('aria-selected')).toBe('true');
+    });
+
+    it('編集中（未保存）の内容を映す。入力のたびではなく、少し待ってから描き直す', async () => {
+      vi.useFakeTimers();
+      try {
+        mockApi().install();
+        render(<EditorPane {...props({ files, activePath: 'design/logo.svg' })} />);
+        await settle();
+        act(() => modelOf(SVG).setValue(SVG_NEXT));
+        expect(image()?.getAttribute('src')).toBe(dataUrl(SVG));
+        act(() => vi.advanceTimersByTime(150));
+        expect(image()?.getAttribute('src')).toBe(dataUrl(SVG_NEXT));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('SVG として読み込めないとき（書きかけなど）は、画像の代わりに案内を出し、中身が替わると読み直す', async () => {
+      vi.useFakeTimers();
+      try {
+        mockApi().install();
+        render(<EditorPane {...props({ files, activePath: 'design/logo.svg' })} />);
+        await settle();
+        act(() => modelOf(SVG).setValue('<svg'));
+        act(() => vi.advanceTimersByTime(150));
+        fireEvent.error(image()!);
+        expect(image()).toBeNull();
+        expect(document.querySelector('.svg-preview-invalid')?.textContent).toContain('SVG として読み込めません');
+        act(() => modelOf('<svg').setValue(SVG_NEXT));
+        act(() => vi.advanceTimersByTime(150));
+        expect(document.querySelector('.svg-preview-invalid')).toBeNull();
+        expect(image()?.getAttribute('src')).toBe(dataUrl(SVG_NEXT));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('行を指して開いたときは、その行が見えるようにソースを出す（Markdown と同じ）', async () => {
+      mockApi().install();
+      const p = props({ files, activePath: 'design/logo.svg', reveal: { path: 'design/logo.svg', line: 1, seq: 1 } });
+      render(<EditorPane {...p} />);
+      await settle();
+      expect(mode('ソース').getAttribute('aria-selected')).toBe('true');
+      expect(image()).toBeNull();
+    });
+  });
+
   describe('未保存の変更があるうちに、ディスク上のファイルが変わったとき', () => {
     // 書き換えたあと、ディスク側（Claude Code など）でも変わり、その知らせが届く
     async function conflict() {
