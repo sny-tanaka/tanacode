@@ -205,6 +205,7 @@ const AgentConversation = memo(function AgentConversation({
             bashTasks={NO_RUNS}
             onRewind={null}
             onOpenFile={onOpenFile}
+            sessionId={sessionId}
             onOpenTask={null}
           />
         ),

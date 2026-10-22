@@ -1401,3 +1401,23 @@ describe('貼り付けた長い文の札', () => {
     expect(chips('.chat-input')).toEqual(['ログの 1 行目', 'ログの 1 行目']);
   });
 });
+
+describe('本文のファイルのパス', () => {
+  it('本文に出た実在するファイルのパスは、押すとエディタで開く。確かめるのは今のセッションで、描き直してセッションが変わったら、そのセッションで確かめる', async () => {
+    const onOpenFile = vi.fn();
+    install({
+      'workspace.resolveFiles': (id: string, paths: string[]) => Promise.resolve(paths.map((p) => (p === 'src/a.ts' ? `/work/${id}/src/a.ts` : null))),
+    });
+    const text = '直したのは `src/a.ts:12` です（/api/users は URL の一部）';
+    const view = render(<ClaudePane {...props({ onOpenFile, chat: chatOf({ items: [USER, { kind: 'text', id: 't1', text }] }) })} />);
+    await settle();
+    fireEvent.click(document.querySelector('.chat-response a.file-link')!);
+    expect(onOpenFile.mock.calls).toEqual([['/work/s1/src/a.ts', 12]]);
+    expect(api.argsOf('workspace.resolveFiles').map(([id]) => id)).toEqual(['s1']);
+    // 別のセッションの同じ本文は、そのセッションで確かめる（相対パスはセッションのフォルダで決まる）
+    view.rerender(<ClaudePane {...props({ session: S2, onOpenFile, chat: chatOf({ items: [USER, { kind: 'text', id: 't2', text }] }) })} />);
+    await settle();
+    fireEvent.click(document.querySelector('.chat-response a.file-link')!);
+    expect(onOpenFile.mock.calls.at(-1)).toEqual(['/work/s2/src/a.ts', 12]);
+  });
+});

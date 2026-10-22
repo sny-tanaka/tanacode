@@ -48,6 +48,15 @@ describe('受け口の登録', () => {
   });
 });
 
+describe('本文のパスの実在の確かめ', () => {
+  it('追加したフォルダも渡す。配列でない引数は、空の候補として確かめる', async () => {
+    await boot();
+    manager().addedFoldersOf.mockReturnValue(['/Users/me/lib']);
+    await expect(invoke(IpcChannel.ResolveFiles, 's1', ['lib.ts'])).resolves.toEqual(callIn(cwdOf('s1'), 'workspace.resolveFiles', ['lib.ts'], ['/Users/me/lib']));
+    await expect(invoke(IpcChannel.ResolveFiles, 's1', 'lib.ts')).resolves.toEqual(callIn(cwdOf('s1'), 'workspace.resolveFiles', [], ['/Users/me/lib']));
+  });
+});
+
 describe('Markdown のプレビューの画像', () => {
   it('セッションのフォルダで読み、追加したフォルダも渡す（その中の画像だけを読む）。読めなければ null', async () => {
     await boot();
@@ -168,6 +177,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ReadFile, ['s1', 'README.md'], callIn(cwdOf('s1'), 'workspace.readFile', 'README.md')],
     // 追加したフォルダの中の画像も読めるよう、セッションの追加したフォルダも渡す（下の「Markdown のプレビューの画像」）
     [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png', [])],
+    // 本文のパスの実在の確かめ。相対パスを追加したフォルダからも探せるよう、セッションの追加したフォルダも渡す
+    [IpcChannel.ResolveFiles, ['s1', ['src/a.ts']], callIn(cwdOf('s1'), 'workspace.resolveFiles', ['src/a.ts'], [])],
     // 読んだときの中身（今のディスクと同じときだけ書く）。文字でなければ確かめずに書く（「このまま保存」の null）
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', '前の中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', '前の中身')],
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', null], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', null)],
@@ -406,6 +417,7 @@ describe('フォルダ（新規セッションの画面）', () => {
     state.failingCwds.set(cwdOf('locked'), undefined);
     await expect(invoke(IpcChannel.FolderFiles, '/work/locked')).resolves.toEqual([]);
     await expect(invoke(IpcChannel.ReadImage, 'locked', 'logo.png')).resolves.toBeNull();
+    await expect(invoke(IpcChannel.ResolveFiles, 'locked', ['a.ts'])).resolves.toEqual([]);
     await expect(invoke(IpcChannel.ReadFile, 'locked', 'README.md')).rejects.toThrow('EACCES: workspace.readFile');
     await expect(invoke(IpcChannel.ListFiles, 'locked')).rejects.toThrow('EACCES: workspace.listFiles');
   });

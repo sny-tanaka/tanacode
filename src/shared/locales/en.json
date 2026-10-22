@@ -986,7 +986,8 @@
       "run": "Run",
       "openInBrowser": "Open in default browser",
       "externalImageAlt": "External image ({alt}): {url}",
-      "externalImage": "External image: {url}"
+      "externalImage": "External image: {url}",
+      "openFile": "{path}\nClick to open in the editor"
     }
   },
   "schedule": {

@@ -571,6 +571,7 @@ const modules: Record<string, Record<string, unknown>> = {
       listDir: echoIn('workspace.listDir'),
       readFile: echoIn('workspace.readFile'),
       readImage: echoIn('workspace.readImage'),
+      resolveFiles: echoIn('workspace.resolveFiles'),
       writeFile: echoIn('workspace.writeFile'),
       search: echoIn('workspace.search'),
     }),
