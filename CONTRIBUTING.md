@@ -745,6 +745,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - リンクは `href` を付けず（付けると、チャットのリンクの処理が外のページとして開こうとする）、`role="link"` と `tabindex="0"` で、キーボード（Enter）でも押せます。開くのは `onOpenFile`（作業フォルダの中は相対パスにして開く。`App.tsx` の `openAbsolute`）です。
   - 日本語は、パスのすぐ後ろに助詞が続くので（`/a/b.mdを`）、名前の文字に日本語も入る拾い方では、長い候補が実在しません。拡張子の直後で日本語に変わるところまでの短い候補も添え、長い候補から確かめます。
   - 訳文（`useBlockTranslation`）の中のパスもリンクにします。作業の書き出し（`markdownHtml`）・タスクの結果・チェックリストのカード・ウォークスルーの本文には、付けていません。
+- 本文の URL の自動リンク（GFM）は、`markdown.ts` で、全角の記号（`（）「」、。` など。U+3000〜303F・U+FF00〜FFEF）の手前で切ります。GFM は空白か `<` までを URL とみなすので、日本語のように URL を `（https://…）` と囲んで空白を入れないと、閉じ括弧や、その後ろの文字までリンクになり、リンク先も壊れます。漢字・かな・英数字は URL に入りうる（`https://ja.wikipedia.org/wiki/日本語`）ので、切りません。チャット・Markdown のプレビュー・作業の書き出しが、同じ `marked` を使うので、どれも切れます。
 - 未知のイベント: tanacode が知らない（中身か使い方が分からない）、Claude Code からの行を、捨てずにチャットに出します（`shared/unknown-event.ts` の `UnknownEvent`。画面は `chat/UnknownEventRow.tsx`）。対応を足すときの手がかりにするためのもので、設定は無く、いつも出します。
   - 種類の分け方: どの種類も「使う」「意図して捨てる（理由つき）」「知らない」のどれか 1 か所にだけ書きます（[Claude Code のイベントの一覧](docs/claude-code-events.md) の ✅・⏭・⚠️ と同じ）。中身が分かっている種類は、使うか、理由を書いて捨てるかを決め、どちらとも言えない「受け取るだけ」にはしません。
     - stream-json（`stream/client.ts`）: 使う種類は `messageOf` の case と `SYSTEM_CHECKS`（使う項目の形を確かめる）。意図して捨てる種類は `IGNORED_KINDS`（ほかの道で足りている・tanacode の起動のしかたでは出ない・クラウドや別の機能向け・使い道がない、の理由ごとに並べる）。意図して断る要求は `DECLINED_REQUESTS`（error で返し、数えない）。

@@ -60,6 +60,29 @@ describe('Markdown', () => {
     expect(show('```bash\nls\n```').querySelector('button')).toBeNull();
   });
 
+  // 直す前: GFM の自動リンクは空白か < までが URL なので、URL の後ろの全角の括弧・句読点・その後ろの文字までリンクになり、リンク先も壊れた
+  // （https://…/pull/308（`develop` 向け） が、リンク先 …/308%EF%BC%88%60develop%60 の 1 本のリンクになる）
+  it('URL の自動リンクは、全角の括弧・句読点の手前で切る（前後を囲んでも、リンク先が壊れない）', () => {
+    const links = (text: string) => [...show(text).querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]);
+    expect(links('PR: https://github.com/a/b/pull/308（`develop` 向け）')).toEqual([['https://github.com/a/b/pull/308', 'https://github.com/a/b/pull/308']]);
+    expect(show('PR: https://github.com/a/b/pull/308（`develop` 向け）').textContent).toBe('PR: https://github.com/a/b/pull/308（develop 向け）\n');
+    expect(links('（https://example.com/a）と「https://example.com/b」、https://example.com/c。次')).toEqual([
+      ['https://example.com/a', 'https://example.com/a'],
+      ['https://example.com/b', 'https://example.com/b'],
+      ['https://example.com/c', 'https://example.com/c'],
+    ]);
+    expect(links('www.example.com（本家）')).toEqual([['www.example.com', 'http://www.example.com']]);
+    // これまで通り: 半角の括弧・末尾の記号の扱い・URL の中の日本語・メール
+    expect(links('(https://example.com/a) と https://example.com/wiki/日本語 を https://example.com/d.')).toEqual([
+      ['https://example.com/a', 'https://example.com/a'],
+      ['https://example.com/wiki/日本語', 'https://example.com/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E'],
+      ['https://example.com/d', 'https://example.com/d'],
+    ]);
+    expect(links('me@example.com（連絡先）')).toEqual([['me@example.com', 'mailto:me@example.com']]);
+    // 明示のリンクとコードの中は、そのまま
+    expect(links('[公式（本家）](https://example.com/e) と `https://example.com/f（g）`')).toEqual([['公式（本家）', 'https://example.com/e']]);
+  });
+
   it('日本語の隣でも、** で強調になる', () => {
     expect(show('「重要」**です**。').querySelector('strong')?.textContent).toBe('です');
   });
