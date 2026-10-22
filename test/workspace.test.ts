@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RESOLVE_FILES_MAX } from '../src/shared/ipc';
 import { Workspace } from '../src/main/workspace';
 
 // 右パネルとエディタが使うワークスペース（一覧・書き込み・@ の補完の一覧・全文検索）。
@@ -225,6 +226,47 @@ describe('Workspace', () => {
       put(`a.${ext}`, Buffer.from([9]));
       expect(await ws.readImage(`a.${ext}`)).toBe(`data:${mime};base64,${Buffer.from([9]).toString('base64')}`);
     }
+  });
+
+  it('resolveFiles: 本文のパスの候補のうち、実在するファイルだけ絶対パスで返す（候補と同じ順。フォルダ・無いもの・変な値は null）', async () => {
+    put('src/a.ts', 'a');
+    mkdirSync(join(root, 'docs'));
+    const outside = join(root, '..', 'study', 'slides.md');
+    mkdirSync(join(outside, '..'), { recursive: true });
+    writeFileSync(outside, '# s');
+    const found = await ws.resolveFiles([outside, 'src/a.ts', './src/a.ts', join(root, 'src/a.ts'), 'docs', 'src/none.ts', '/compact', '', '../study/slides.md', 'src/a.ts\0x']);
+    // 相対パスは作業フォルダから解く（./ や .. も）。外のファイルも、実在すれば返す
+    expect(found).toEqual([outside, join(root, 'src/a.ts'), join(root, 'src/a.ts'), join(root, 'src/a.ts'), null, null, null, null, outside, null]);
+    expect(await ws.resolveFiles([123 as unknown as string, null as unknown as string])).toEqual([null, null]);
+    // 中身は読まない（エディタが開くときの上限より大きくても、実在は分かる）
+    put('big.bin', Buffer.alloc(3 * 1024 * 1024));
+    expect(await ws.resolveFiles(['big.bin'])).toEqual([join(root, 'big.bin')]);
+  });
+
+  it('resolveFiles: ~/ はホームから、相対パスは追加したフォルダからも探す。確かめるのは RESOLVE_FILES_MAX 件まで', async () => {
+    const added = join(root, '..', 'added');
+    mkdirSync(added);
+    writeFileSync(join(added, 'lib.ts'), 'l');
+    expect(await ws.resolveFiles(['lib.ts', 'none.ts'], [added])).toEqual([join(added, 'lib.ts'), null]);
+    expect(await ws.resolveFiles(['lib.ts'])).toEqual([null]);
+    // ~/ はホームから（os.homedir() は HOME を見る）
+    const home = join(root, '..', 'home');
+    mkdirSync(join(home, 'notes'), { recursive: true });
+    writeFileSync(join(home, 'notes/a.md'), 'n');
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      expect(homedir()).toBe(home);
+      expect(await ws.resolveFiles(['~/notes/a.md', '~/notes/none.md', '~/notes'])).toEqual([join(home, 'notes/a.md'), null, null]);
+    } finally {
+      process.env.HOME = savedHome;
+    }
+    put('f.ts', 'f');
+    const many = Array.from({ length: RESOLVE_FILES_MAX + 1 }, () => 'f.ts');
+    const found = await ws.resolveFiles(many);
+    expect(found).toHaveLength(RESOLVE_FILES_MAX + 1);
+    expect(found.at(-2)).toBe(join(root, 'f.ts'));
+    expect(found.at(-1)).toBeNull();
   });
 
   it('文字のファイルは 2MB ちょうどまで読む', async () => {

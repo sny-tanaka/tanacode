@@ -3,6 +3,8 @@ import DOMPurify from 'dompurify';
 import { t } from '@shared/i18n';
 import { PlayIcon, iconHtml } from '../icons';
 import { marked, replaceExternalImages } from '../markdown';
+import { fileCandidates, linkFiles } from './filePaths';
+import { foundFiles, resolveFiles } from './fileLinks';
 import { stripControlChars } from './sanitize';
 
 // 実行ボタンを付けるコードブロックの言語（```bash など。言語名の最初の語で見る）
@@ -57,13 +59,25 @@ export function markdownHtml(text: string): string {
   return box.innerHTML;
 }
 
-// onRunCommand: シェルのコードブロック（```bash など）に「実行」ボタンを付け、押したらそのコマンドを渡す
-export function Markdown({ text, onRunCommand }: { text: string; onRunCommand?: (command: string) => void }) {
+type Props = {
+  text: string;
+  // シェルのコードブロック（```bash など）に「実行」ボタンを付け、押したらそのコマンドを渡す
+  onRunCommand?: (command: string) => void;
+  // 文中のファイルのパス（実在するものだけ）を、押すとこれで開くリンクにする。sessionId は、実在を確かめるセッション（相対パスの基点）。
+  // どちらかが無ければ、パスはただの文字
+  sessionId?: string;
+  onOpenFile?: (absPath: string, line?: number) => void;
+};
+
+export function Markdown({ text, onRunCommand, sessionId, onOpenFile }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { html, commands } = useMemo(() => render(text), [text]);
   const runCommand = useRef(onRunCommand);
   runCommand.current = onRunCommand;
   const runnable = !!onRunCommand;
+  const openFile = useRef(onOpenFile);
+  openFile.current = onOpenFile;
+  const linkSession = onOpenFile ? sessionId : undefined;
 
   useLayoutEffect(() => {
     const fragment = DOMPurify.sanitize(html, { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
@@ -89,8 +103,37 @@ export function Markdown({ text, onRunCommand }: { text: string; onRunCommand?: 
       pre.classList.add('runnable');
       pre.appendChild(button);
     });
-    ref.current!.replaceChildren(fragment);
-  }, [html, commands, runnable]);
+    // 実在が確かめ済みのパスは、画面に入れる前にリンクにする（描き直すたびに、あとからリンクになる遅れを出さない）
+    if (linkSession) linkFiles(fragment, foundFiles(linkSession));
+    const root = ref.current!;
+    root.replaceChildren(fragment);
+    if (!linkSession) return;
+    // まだのものは、画面に入れたあとで main に確かめて、実在するファイルだけをリンクにする
+    const candidates = fileCandidates(root);
+    if (!candidates.length) return;
+    let cancelled = false;
+    void resolveFiles(linkSession, candidates).then((files) => {
+      if (!cancelled) linkFiles(root, files);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [html, commands, runnable, linkSession]);
 
-  return <div ref={ref} className="markdown" />;
+  const open = (link: HTMLElement) => openFile.current?.(link.dataset.path!, link.dataset.line ? Number(link.dataset.line) : undefined);
+
+  return (
+    <div
+      ref={ref}
+      className="markdown"
+      onClick={(e) => {
+        const link = (e.target as Element).closest<HTMLElement>('.file-link');
+        if (link) open(link);
+      }}
+      onKeyDown={(e) => {
+        const link = (e.target as Element).closest<HTMLElement>('.file-link');
+        if (link && e.key === 'Enter') open(link);
+      }}
+    />
+  );
 }

@@ -391,12 +391,21 @@ function PreviewPopup({
     const scrolled = (e: Event) => {
       if (!(e.target instanceof Node && element.contains(e.target))) update();
     };
+    // 一覧に出たばかりのカードは、0.22 秒かけて下から上がってくる（global.css の .chat-list > * の transition）。
+    // この動きでは、スクロールも大きさの変化も起きないので、その間にホバーして置いたポップアップは、選択肢から数 px ずれたまま残る。
+    // 動きが終わったときにも置き直す（カードの子の transition の終わりは、ホバーの色などなので、見ない）
+    const card = anchor.current;
+    const settled = (e: TransitionEvent) => {
+      if (e.target === card) update();
+    };
     const resize = new ResizeObserver(update);
-    if (anchor.current) resize.observe(anchor.current);
+    if (card) resize.observe(card);
+    card?.addEventListener('transitionend', settled);
     window.addEventListener('resize', update);
     window.addEventListener('scroll', scrolled, true);
     return () => {
       resize.disconnect();
+      card?.removeEventListener('transitionend', settled);
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', scrolled, true);
     };

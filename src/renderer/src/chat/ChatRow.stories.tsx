@@ -65,6 +65,30 @@ echo "\u202Eabc\u202C" \u001b[2K\u0015npm run typecheck
 
 export const 生のHTMLを含む本文: Story = { args: { item: { kind: 'text', id: 't2', text: rawHtml } } };
 
+// 本文の中の、実在するファイルのパス（青いリンク。押すとエディタで開く）。実在しないパス（/api/users・/Users/you/work/none.md）と、
+// コードブロック・URL の中のパスは、ただの文字のまま
+const filePaths = `スライドは /Users/shunya.tanaka/work/tanacode-study-session/slides.md に書きました。\`/Users/shunya.tanaka/work/tanacode-study-session/slides.md\` を開くと確かめられます。
+
+- 実装: \`src/renderer/src/chat/Markdown.tsx:120\` と src/renderer/src/chat/filePaths.ts#L40
+- 日本語が続いても拾います: /Users/shunya.tanaka/work/tanacode-study-session/slides.mdを開いて
+- 実在しない: /api/users と /Users/you/work/none.md と \`src/none.ts\`
+- URL は今まで通り: https://example.com/docs/slides.md
+
+\`\`\`bash
+open /Users/shunya.tanaka/work/tanacode-study-session/slides.md
+\`\`\``;
+const existing = new Set([
+  '/Users/shunya.tanaka/work/tanacode-study-session/slides.md',
+  'src/renderer/src/chat/Markdown.tsx',
+  'src/renderer/src/chat/filePaths.ts',
+]);
+
+export const 本文_ファイルのパス: Story = {
+  args: { item: { kind: 'text', id: 't9', text: filePaths }, sessionId: 'story' },
+  beforeEach: () =>
+    mockApi({ 'workspace.resolveFiles': (_id, paths) => Promise.resolve((paths as string[]).map((p) => (existing.has(p) ? (p.startsWith('/') ? p : `/Users/shunya.tanaka/work/tanacode/${p}`) : null))) }),
+};
+
 export const お知らせ: Story = { args: { item: { kind: 'info', id: 'i1', text: 'agents-md: no CLAUDE.md found; AGENTS.md loaded: /Users/you/work/tanacode/AGENTS.md' } } };
 
 // Claude Code の警告（system/notification。文は Claude Code のもの）

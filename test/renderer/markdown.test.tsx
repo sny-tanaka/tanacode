@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Markdown, markdownHtml } from '../../src/renderer/src/chat/Markdown';
+import { mockApi } from './mock-api';
 
 // チャットの Markdown の表示。返答は Claude（とその先のページやファイル）が書くので、信用しない。
 // 混ざった HTML は文字のまま出し、外の画像は読みにいかず、実行ボタンはシェルのコードブロックにだけ付ける
@@ -61,6 +62,74 @@ describe('Markdown', () => {
 
   it('日本語の隣でも、** で強調になる', () => {
     expect(show('「重要」**です**。').querySelector('strong')?.textContent).toBe('です');
+  });
+});
+
+// 本文のファイルのパス。実在するもの（main に確かめる）だけを、押すとエディタで開くリンクにする。
+// セッションごとに実在を覚えるので、テストごとに別のセッションで試す
+describe('Markdown のファイルのパス', () => {
+  const resolving = (existing: Record<string, string>) => {
+    const api = mockApi({ 'workspace.resolveFiles': (_id: string, paths: string[]) => Promise.resolve(paths.map((p) => existing[p] ?? null)) });
+    api.install();
+    return api;
+  };
+  const files = (box: Element) => [...box.querySelectorAll<HTMLElement>('a.file-link')].map((a) => [a.textContent, a.dataset.path, a.dataset.line]);
+
+  it('実在するパスだけリンクにして、押すと絶対パスと行で開く（Enter でも）。実在しないものは文字のまま', async () => {
+    const api = resolving({ '/Users/me/slides.md': '/Users/me/slides.md', 'src/a.ts': '/work/repo/src/a.ts' });
+    const onOpenFile = vi.fn();
+    const box = render(<Markdown text={'/Users/me/slides.md を開いて、`src/a.ts:12` も。/no/such.md は無い'} sessionId="files-1" onOpenFile={onOpenFile} />).container;
+    // 最初は文字のまま（確かめが済んでからリンクになる）
+    expect(box.querySelector('a.file-link')).toBeNull();
+    await waitFor(() => expect(files(box)).toHaveLength(2));
+    expect(files(box)).toEqual([
+      ['/Users/me/slides.md', '/Users/me/slides.md', undefined],
+      ['src/a.ts:12', '/work/repo/src/a.ts', '12'],
+    ]);
+    // 確かめるのは、実在を調べる候補だけ（セッション付きで 1 回）
+    expect(api.argsOf('workspace.resolveFiles')).toHaveLength(1);
+    expect(api.argsOf('workspace.resolveFiles')[0][0]).toBe('files-1');
+    expect([...(api.argsOf('workspace.resolveFiles')[0][1] as string[])].sort()).toEqual(['/Users/me/slides.md', '/no/such.md', 'src/a.ts']);
+    const [slides, source] = box.querySelectorAll<HTMLElement>('a.file-link');
+    fireEvent.click(slides);
+    fireEvent.click(source.querySelector('code')!);
+    fireEvent.keyDown(source, { key: 'Enter' });
+    fireEvent.keyDown(source, { key: 'a' });
+    expect(onOpenFile.mock.calls).toEqual([['/Users/me/slides.md', undefined], ['/work/repo/src/a.ts', 12], ['/work/repo/src/a.ts', 12]]);
+    expect(box.textContent?.trim()).toBe('/Users/me/slides.md を開いて、src/a.ts:12 も。/no/such.md は無い');
+  });
+
+  it('実在を確かめたパスは覚えていて、同じ本文を描き直すときは、最初からリンクにする（確かめ直さない候補は呼ばない）', async () => {
+    const api = resolving({ '/Users/me/slides.md': '/Users/me/slides.md' });
+    const first = render(<Markdown text="/Users/me/slides.md" sessionId="files-2" onOpenFile={vi.fn()} />).container;
+    await waitFor(() => expect(files(first)).toHaveLength(1));
+    cleanup();
+    const again = render(<Markdown text="/Users/me/slides.md" sessionId="files-2" onOpenFile={vi.fn()} />).container;
+    expect(files(again)).toHaveLength(1);
+    expect(api.argsOf('workspace.resolveFiles')).toHaveLength(1);
+    // 別のセッションには持ち越さない（相対パスは、セッションのフォルダで決まる）
+    cleanup();
+    expect(files(render(<Markdown text="/Users/me/slides.md" sessionId="files-3" onOpenFile={vi.fn()} />).container)).toHaveLength(0);
+  });
+
+  it('セッションか開く関数が無ければ、確かめず、パスは文字のまま。確かめに失敗しても文字のまま', async () => {
+    const api = resolving({ '/Users/me/slides.md': '/Users/me/slides.md' });
+    expect(files(render(<Markdown text="/Users/me/slides.md" onOpenFile={vi.fn()} />).container)).toEqual([]);
+    expect(files(render(<Markdown text="/Users/me/slides.md" sessionId="files-4" />).container)).toEqual([]);
+    expect(api.argsOf('workspace.resolveFiles')).toEqual([]);
+    cleanup();
+    mockApi({ 'workspace.resolveFiles': () => Promise.reject(new Error('boom')) }).install();
+    const box = render(<Markdown text="/Users/me/slides.md" sessionId="files-5" onOpenFile={vi.fn()} />).container;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(files(box)).toEqual([]);
+    expect(box.textContent?.trim()).toBe('/Users/me/slides.md');
+  });
+
+  it('コードブロックとリンクの中のパスは、リンクにしない（確かめにも出さない）', async () => {
+    const api = resolving({});
+    render(<Markdown text={'```\n/in/block.txt\n```\n\n[/in/link.txt](https://example.com/x)'} sessionId="files-6" onOpenFile={vi.fn()} />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(api.argsOf('workspace.resolveFiles')).toEqual([]);
   });
 });
 
