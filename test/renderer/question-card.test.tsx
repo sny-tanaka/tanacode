@@ -321,15 +321,18 @@ describe('QuestionCard', () => {
     });
 
     // jsdom には大きさが無いので、カード（幅 400）と選択肢の枠を決める。ウインドウは 1024×768 なので、カードの右に場所がある
+    // 返すのは、カード・選択肢をまとめて縦に動かす量（カードが一覧に出る動きの途中を真似る）
     const sized = () => {
       const tops: Record<string, number> = { 縦: 150, 横: 210, 無し: 270 };
+      const moved = { dy: 0 };
       const rect = (left: number, top: number, width: number, height: number) =>
-        ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+        ({ left, top: top + moved.dy, width, height, right: left + width, bottom: top + moved.dy + height, x: left, y: top + moved.dy, toJSON: () => ({}) }) as DOMRect;
       vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
         const top = this.classList.contains('menu-option') ? tops[this.querySelector('.menu-option-label')?.textContent ?? ''] : undefined;
         if (top !== undefined) return rect(10, top, 380, 50);
         return this.classList.contains('menu-card') ? rect(0, 100, 400, 300) : rect(0, 0, 0, 0);
       });
+      return moved;
     };
 
     it('カードの右に場所があれば、カードの右（枠に 1px 重ねる）に、ホバー・フォーカスした選択肢の高さにそろえて出す', () => {
@@ -343,6 +346,28 @@ describe('QuestionCard', () => {
       act(() => option('縦').focus());
       expect(shown()).toBe('縦の図');
       expect(popup()!.style.top).toBe('150px');
+    });
+
+    // 直す前: 一覧に出たばかりのカードは 0.22 秒かけて 4px 下から上がってくる（transform の transition）。その間にホバーして置いた
+    // ポップアップは、動きが終わっても置き直されず、選択肢から数 px ずれたまま残った（スクロールも大きさの変化も起きないため）。
+    // jsdom には transition が無いので、終わりの知らせ（transitionend）を送って確かめる
+    it('カードの動き（transition）が終わったら、ポップアップを置き直す。カードの中の部品の transition の終わりでは置き直さない', () => {
+      const moved = sized();
+      moved.dy = 4;
+      render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+      fireEvent.mouseEnter(option('横'));
+      expect(popup()!.style.top).toBe('214px');
+      // カードが上がりきった（カードの位置が 4px 上がる）
+      moved.dy = 0;
+      fireEvent.transitionEnd(option('横'));
+      expect(popup()!.style.top).toBe('214px');
+      fireEvent.transitionEnd(card());
+      expect(popup()!.style.top).toBe('210px');
+      // ポップアップを閉じたあとは、カードの動きの知らせを見ない
+      fireEvent.mouseLeave(card());
+      moved.dy = 4;
+      fireEvent.transitionEnd(card());
+      expect(popup()).toBeNull();
     });
 
     // 右に出したときは、右へ動かすのがポップアップの向き。真横に動かせばほかの選択肢をまたがないが、高いポップアップの下のほうへ
