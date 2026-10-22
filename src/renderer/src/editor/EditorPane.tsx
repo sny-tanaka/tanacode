@@ -4,9 +4,10 @@ import { shownStep } from '@shared/walkthrough';
 import { t } from '@shared/i18n';
 import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
 import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
-import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
+import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, ExternalLinkIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
 import { DiffDecorations } from './diffDecorations';
 import { MarkdownPreview } from './MarkdownPreview';
+import { PdfView } from './PdfView';
 import { editorTheme, languageFor, monaco } from './monaco';
 
 export type OpenFile = { path: string; content: FileContent };
@@ -370,6 +371,15 @@ export const EditorPane = memo(function EditorPane({
             ))}
           </div>
         )}
+        {active && (
+          // Finder で、このファイルを選んだ状態にして、入っているフォルダを開く。開けなくても（消えたなど）、何も出さない
+          <IconButton
+            size="sm"
+            icon={ExternalLinkIcon}
+            label={t('editor.crumb.revealInFinder')}
+            onClick={() => void window.tanacode.workspace.revealFile(sessionId, active.path).catch(() => {})}
+          />
+        )}
       </div>
       {activePath && conflicts.has(activePath) && (
         <div className="pending-banner">
@@ -415,6 +425,7 @@ export const EditorPane = memo(function EditorPane({
             <img src={active.content.url} alt={active.path} draggable={false} />
           </div>
         )}
+        {active?.content.kind === 'pdf' && <PdfView key={active.path} data={active.content.data} title={active.path} />}
         {active?.content.kind === 'too-large' && (
           <div className="editor-placeholder">
             {t('editor.placeholder.tooLarge', { size: Math.round(active.content.size / 1024 / 1024) })}

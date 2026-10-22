@@ -1482,6 +1482,9 @@
       "source": "ソース",
       "label": "Markdown の表示"
     },
+    "crumb": {
+      "revealInFinder": "Finder で表示"
+    },
     "tabs": {
       "closeConfirm": "{name} の変更を保存せずに閉じますか？",
       "unsaved": "未保存の変更があります（⌘S で保存）",

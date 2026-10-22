@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRef, type ComponentProps } from 'react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
 import { MarkdownPreview } from '../../src/renderer/src/editor/MarkdownPreview';
 import { saveForLeaving, UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
@@ -230,6 +230,101 @@ describe('EditorPane（エディタ）', () => {
     expect(p.onClose).toHaveBeenCalledWith('README.md');
     expect(p.onActivate).not.toHaveBeenCalled();
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  describe('PDF', () => {
+    const pdf = (path: string, bytes: number[]): OpenFile => ({ path, content: { kind: 'pdf', data: new Uint8Array(bytes) } });
+    const viewer = () => document.querySelector<HTMLIFrameElement>('.editor-pdf iframe');
+    // jsdom には Blob の URL が無い。作った Blob と、解放した URL を控える
+    let blobs: Blob[];
+    let revoked: string[];
+    beforeEach(() => {
+      blobs = [];
+      revoked = [];
+      Object.assign(URL, {
+        createObjectURL: vi.fn((blob: Blob) => `blob:pdf-${blobs.push(blob)}`),
+        revokeObjectURL: vi.fn((url: string) => revoked.push(url)),
+      });
+    });
+    afterEach(() => {
+      delete (URL as unknown as Record<string, unknown>).createObjectURL;
+      delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+    });
+
+    it('組み込みの PDF ビューア（iframe）に、PDF の中身を入れた blob: の URL で出す。中身が替わったら開き直し、タブを移ったら URL を解放する', async () => {
+      mockApi().install();
+      const p = props({ files: [pdf('docs/spec.pdf', [0x25, 0x50, 0x44, 0x46]), text('src/app.ts', APP)], activePath: 'docs/spec.pdf' });
+      const view = render(<EditorPane {...p} />);
+      await settle();
+      expect(viewer()?.getAttribute('src')).toBe('blob:pdf-1');
+      expect(viewer()?.title).toBe('docs/spec.pdf');
+      expect(blobs[0].type).toBe('application/pdf');
+      expect(blobs[0].size).toBe(4);
+      // ディスクで変わって読み直した（中身が替わった）
+      view.rerender(<EditorPane {...p} files={[pdf('docs/spec.pdf', [0x25, 0x50, 0x44, 0x46, 0x2d]), text('src/app.ts', APP)]} />);
+      await settle();
+      expect(viewer()?.getAttribute('src')).toBe('blob:pdf-2');
+      expect(revoked).toEqual(['blob:pdf-1']);
+      // 別のファイルへ移る
+      view.rerender(<EditorPane {...p} files={[pdf('docs/spec.pdf', [0x25, 0x50, 0x44, 0x46, 0x2d]), text('src/app.ts', APP)]} activePath="src/app.ts" />);
+      await settle();
+      expect(viewer()).toBeNull();
+      expect(revoked).toEqual(['blob:pdf-1', 'blob:pdf-2']);
+      // PDF を出している間は、文字のエディタの案内も、バイナリの案内も出さない
+      view.rerender(<EditorPane {...p} />);
+      await settle();
+      expect(document.querySelector('.editor-placeholder')).toBeNull();
+    });
+
+    it('PDF のタブが 2 つあるとき、移ると別のビューアに替わる（前の PDF の URL を使い回さない）', async () => {
+      mockApi().install();
+      const files = [pdf('a.pdf', [1]), pdf('b.pdf', [2, 2])];
+      const view = render(<EditorPane {...props({ files, activePath: 'a.pdf' })} />);
+      await settle();
+      expect(viewer()?.title).toBe('a.pdf');
+      view.rerender(<EditorPane {...props({ files, activePath: 'b.pdf' })} />);
+      await settle();
+      expect(viewer()?.title).toBe('b.pdf');
+      expect(blobs.map((b) => b.size)).toEqual([1, 2]);
+    });
+  });
+
+  describe('Finder で表示', () => {
+    const reveal = () => screen.queryByRole<HTMLButtonElement>('button', { name: 'Finder で表示' });
+
+    it('開いているファイルを Finder で表示するよう頼む（セッションとファイルのパスを渡す）。ファイルによらず出る（文字・画像・PDF・バイナリ）', async () => {
+      const api = mockApi({ 'workspace.revealFile': () => Promise.resolve() });
+      api.install();
+      const files: OpenFile[] = [
+        text('src/app.ts', APP),
+        { path: 'design/logo.png', content: { kind: 'image', url: 'data:image/png;base64,AA==' } },
+        { path: 'app.dmg', content: { kind: 'binary' } },
+      ];
+      const view = render(<EditorPane {...props({ files, activePath: 'src/app.ts' })} />);
+      fireEvent.click(reveal()!);
+      for (const path of ['design/logo.png', 'app.dmg']) {
+        view.rerender(<EditorPane {...props({ files, activePath: path })} />);
+        fireEvent.click(reveal()!);
+      }
+      expect(api.argsOf('workspace.revealFile')).toEqual([
+        ['A', 'src/app.ts'],
+        ['A', 'design/logo.png'],
+        ['A', 'app.dmg'],
+      ]);
+    });
+
+    it('開いているファイルが無いときは出さない。頼んで失敗しても（ファイルが消えたなど）、何も出さない', async () => {
+      const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+      const api = mockApi({ 'workspace.revealFile': () => Promise.reject(new Error('ENOENT')) });
+      api.install();
+      const view = render(<EditorPane {...props({ files: [], activePath: null })} />);
+      expect(reveal()).toBeNull();
+      view.rerender(<EditorPane {...props()} />);
+      fireEvent.click(reveal()!);
+      await settle();
+      expect(api.argsOf('workspace.revealFile')).toEqual([['A', 'src/app.ts']]);
+      expect(alert).not.toHaveBeenCalled();
+    });
   });
 
   it('未保存の変更があるタブを閉じるときは確かめ、やめたら閉じない', async () => {

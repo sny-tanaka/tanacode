@@ -572,6 +572,8 @@ const modules: Record<string, Record<string, unknown>> = {
       readFile: echoIn('workspace.readFile'),
       readImage: echoIn('workspace.readImage'),
       resolveFiles: echoIn('workspace.resolveFiles'),
+      // 実物は、相対パスを作業フォルダで解く（ディスクには触れない）。ここでは、つないだ文字列を返して、Finder に渡す先を読めるようにする
+      absolutePath: (self: Created, ...args: unknown[]) => `${String(self.args[0])}/${String(args[0])}`,
       writeFile: echoIn('workspace.writeFile'),
       search: echoIn('workspace.search'),
     }),

@@ -48,6 +48,17 @@ describe('受け口の登録', () => {
   });
 });
 
+describe('Finder で表示（エディタのファイル）', () => {
+  // 絶対パスにするのは Workspace.absolutePath（相対パスは作業フォルダで解き、絶対パスはそのまま、外を指す相対パスは断る）。ここでは、その結果を渡すことを確かめる
+  it('セッションのフォルダの Workspace に絶対パスにしてもらい、Finder に渡す。空・文字でないものは渡さない', async () => {
+    await boot();
+    await invoke(IpcChannel.RevealFile, 's1', 'src/a.ts');
+    await invoke(IpcChannel.RevealFile, 's1', '');
+    await invoke(IpcChannel.RevealFile, 's1', 42 as unknown as string);
+    expect(state.shell.showItemInFolder.mock.calls).toEqual([[`${cwdOf('s1')}/src/a.ts`]]);
+  });
+});
+
 describe('本文のパスの実在の確かめ', () => {
   it('追加したフォルダも渡す。配列でない引数は、空の候補として確かめる', async () => {
     await boot();
@@ -179,6 +190,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png', [])],
     // 本文のパスの実在の確かめ。相対パスを追加したフォルダからも探せるよう、セッションの追加したフォルダも渡す
     [IpcChannel.ResolveFiles, ['s1', ['src/a.ts']], callIn(cwdOf('s1'), 'workspace.resolveFiles', ['src/a.ts'], [])],
+    // エディタのファイルを Finder で表示する（返すものは無い。渡す先は、下の「Finder で表示」で確かめる）
+    [IpcChannel.RevealFile, ['s1', 'src/a.ts'], undefined],
     // 読んだときの中身（今のディスクと同じときだけ書く）。文字でなければ確かめずに書く（「このまま保存」の null）
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', '前の中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', '前の中身')],
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', null], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', null)],

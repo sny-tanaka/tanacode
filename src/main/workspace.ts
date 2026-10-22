@@ -10,6 +10,10 @@ import { git } from './git';
 export const IGNORED_NAMES = new Set(['.git', 'node_modules', '.DS_Store', 'out', 'dist', '.next', '.turbo']);
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// PDF はレンダラーにそのまま渡す（組み込みのビューアが読む）。画像より大きいものが多いので、上限は 50MB
+export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+// PDF の目印。仕様では、ファイルの先頭の 1024 バイトのどこかにあればよい
+const PDF_MAGIC = '%PDF-';
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -49,10 +53,20 @@ export class Workspace {
       if (size > MAX_IMAGE_BYTES) return { kind: 'too-large', size };
       return { kind: 'image', url: await this.imageUrl(abs, IMAGE_TYPES[ext]) };
     }
-    if (size > MAX_FILE_BYTES) return { kind: 'too-large', size };
+    const pdf = ext === '.pdf';
+    if (size > (pdf ? MAX_PDF_BYTES : MAX_FILE_BYTES)) return { kind: 'too-large', size };
     const buf = await readFile(abs);
+    // IPC には、ほかの中身を巻き込まないよう、ちょうどの大きさの配列を渡す（Buffer は共有の領域の一部のことがある）
+    if (pdf && buf.subarray(0, 1024).includes(PDF_MAGIC)) return { kind: 'pdf', data: new Uint8Array(buf) };
+    // 名前だけ .pdf のファイルは、ふつうに読み分ける（PDF の上限を超えない範囲で読んだので、文字の上限をここで確かめる）
+    if (size > MAX_FILE_BYTES) return { kind: 'too-large', size };
     if (buf.includes(0)) return { kind: 'binary' };
     return { kind: 'text', text: buf.toString('utf8') };
+  }
+
+  // エディタのパス（作業フォルダからの相対パスか絶対パス）の絶対パス。フォルダの外を指す相対パス（..）は断る
+  absolutePath(relPath: string): string {
+    return this.resolve(relPath);
   }
 
   // Markdown プレビューに出す画像。レンダラーはファイルを直接読めないので data URL で渡す。

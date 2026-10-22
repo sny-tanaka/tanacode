@@ -576,6 +576,8 @@ export class DemoBackend {
         readFile: (_id, rel) => ok(rel in p.files ? { kind: 'text' as const, text: p.files[rel] } : { kind: 'binary' as const }),
         readImage: () => ok(null),
         resolveFiles: (_id, paths) => ok(paths.map(() => null)),
+        // デモには Finder が無い
+        revealFile: () => ok(undefined),
         // 本物の main と同じく、エディタが読んだあとに Claude が書き換えていたら書かずに今の中身を返す
         writeFile: (_id, rel, text, expected) => {
           if (expected !== null && rel in p.files && p.files[rel] !== expected) return ok({ ok: false as const, disk: { kind: 'text' as const, text: p.files[rel] } });
