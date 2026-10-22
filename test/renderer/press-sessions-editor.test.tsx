@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { createRef, type ComponentProps } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
@@ -289,10 +289,11 @@ describe('EditorPane（エディタ）', () => {
     });
   });
 
-  describe('Finder で表示', () => {
-    const reveal = () => screen.queryByRole<HTMLButtonElement>('button', { name: 'Finder で表示' });
+  describe('Finder で開く', () => {
+    // パンくずの右端のボタン（開けないファイルの案内にも、同じ名前のボタンが出る）
+    const reveal = () => within(document.querySelector<HTMLElement>('.editor-crumb')!).queryByRole<HTMLButtonElement>('button', { name: 'Finder で開く' });
 
-    it('開いているファイルを Finder で表示するよう頼む（セッションとファイルのパスを渡す）。ファイルによらず出る（文字・画像・PDF・バイナリ）', async () => {
+    it('開いているファイルを Finder で開くよう頼む（セッションとファイルのパスを渡す）。ファイルによらず出る（文字・画像・PDF・バイナリ）', async () => {
       const api = mockApi({ 'workspace.revealFile': () => Promise.resolve() });
       api.install();
       const files: OpenFile[] = [
@@ -311,6 +312,30 @@ describe('EditorPane（エディタ）', () => {
         ['A', 'design/logo.png'],
         ['A', 'app.dmg'],
       ]);
+    });
+
+    // 表示できないとき: 嘘にならないよう「バイナリ」と決めつけず、対応していない形式と伝える（0 バイトを含むだけで、画像や PDF のように表示できるものもある）
+    it('開けないファイル（対応していない形式・大きすぎる）は、案内の文と「Finder で開く」のボタンを出す。ボタンは、パンくずのものと同じく、開いているファイルを頼む', async () => {
+      const api = mockApi({ 'workspace.revealFile': () => Promise.resolve() });
+      api.install();
+      const files: OpenFile[] = [
+        { path: 'release/app.dmg', content: { kind: 'binary' } },
+        { path: 'public/intro.mp4', content: { kind: 'too-large', size: 14 * 1024 * 1024 } },
+        text('src/app.ts', APP),
+      ];
+      const placeholder = () => document.querySelector<HTMLElement>('.editor-placeholder.unopenable');
+      const view = render(<EditorPane {...props({ files, activePath: 'release/app.dmg' })} />);
+      expect(placeholder()?.querySelector('span')?.textContent).toBe('対応していないファイル形式です');
+      expect(document.body.textContent).not.toContain('バイナリファイルは表示できません');
+      fireEvent.click(within(placeholder()!).getByRole('button', { name: 'Finder で開く' }));
+      view.rerender(<EditorPane {...props({ files, activePath: 'public/intro.mp4' })} />);
+      expect(placeholder()?.querySelector('span')?.textContent).toBe('ファイルが大きすぎるため表示できません（14MB）');
+      fireEvent.click(within(placeholder()!).getByRole('button', { name: 'Finder で開く' }));
+      expect(api.argsOf('workspace.revealFile')).toEqual([['A', 'release/app.dmg'], ['A', 'public/intro.mp4']]);
+      // 開けるファイルでは出さない（パンくずのボタンだけ）
+      view.rerender(<EditorPane {...props({ files, activePath: 'src/app.ts' })} />);
+      expect(placeholder()).toBeNull();
+      expect(screen.getAllByRole('button', { name: 'Finder で開く' })).toHaveLength(1);
     });
 
     it('開いているファイルが無いときは出さない。頼んで失敗しても（ファイルが消えたなど）、何も出さない', async () => {

@@ -1173,6 +1173,12 @@ body.resizing * {
   background: var(--bg-panel);
   color: var(--text-tertiary);
 }
+/* 開けないファイルの案内（文と、Finder で開くボタン）を、縦に並べて真ん中に置く */
+.editor-placeholder.unopenable {
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+}
 /* 画像。ペインより大きいときは縮めて全体を見せ、小さいときは原寸のまま真ん中に置く */
 .editor-image {
   position: absolute;

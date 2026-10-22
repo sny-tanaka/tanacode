@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
 // エディタで PDF を開く（Electron 組み込みの PDF ビューアを、blob: の iframe で出す）と、SVG を画像（プレビュー）でも見られること、
-// エディタのファイルを Finder で表示するボタン。
+// エディタのファイルを Finder で開くボタン。
 // 組み込みのビューアは、画面の CSP（frame-src）や、main が見張る画面の移動に止められうるので、本物のアプリで確かめる
 
 const PROMPT = 'PDF を見ていてください';
@@ -33,7 +33,7 @@ function miniPdf(): Buffer {
   return Buffer.from(out, 'latin1');
 }
 
-describe('エディタで PDF・SVG を開く・Finder で表示する', () => {
+describe('エディタで PDF・SVG を開く・Finder で開く', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
@@ -88,7 +88,7 @@ describe('エディタで PDF・SVG を開く・Finder で表示する', () => {
     await app.page.locator('.editor .editor-monaco .view-line', { hasText: '<circle' }).first().waitFor();
   });
 
-  it('Finder で表示のボタンは、開いているファイルを Finder に渡す（絶対パスで）', async () => {
+  it('Finder で開くボタンは、開いているファイルを Finder に渡す（絶対パスで）', async () => {
     // 本物の Finder は開かず、main で渡されたパスを控える
     await app.app.evaluate(({ shell }) => {
       (shell as { showItemInFolder: (path: string) => void }).showItemInFolder = (path) => {
@@ -97,13 +97,13 @@ describe('エディタで PDF・SVG を開く・Finder で表示する', () => {
     });
     const revealed = () => app.app.evaluate(() => (globalThis as { e2eRevealed?: string[] }).e2eRevealed ?? []);
     // 前のテストで開いた SVG が、開いているファイル
-    await app.page.getByRole('button', { name: 'Finder で表示' }).click();
+    await app.page.getByRole('button', { name: 'Finder で開く' }).click();
     await expect.poll(revealed).toEqual([join(app.work, 'logo.svg')]);
     // PDF・文字のファイルでも出る
     for (const name of ['spec.pdf', 'note.txt']) {
       await app.page.click(`.tree-row[title="${name}"]`);
       await app.byText('.editor-tab.active', name).waitFor();
-      await app.page.getByRole('button', { name: 'Finder で表示' }).click();
+      await app.page.getByRole('button', { name: 'Finder で開く' }).click();
     }
     await expect.poll(revealed).toEqual([join(app.work, 'logo.svg'), join(app.work, 'spec.pdf'), join(app.work, 'note.txt')]);
   });

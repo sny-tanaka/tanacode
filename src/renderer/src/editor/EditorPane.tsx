@@ -152,6 +152,10 @@ export const EditorPane = memo(function EditorPane({
   const activeText = active?.content.kind === 'text' ? active.content.text : null;
   const previewMode = activePath && activeText !== null && hasPreview(activePath) ? (previewModes.get(activePath) ?? 'preview') : null;
   const change = activePath ? changes[activePath] : undefined;
+  // Finder で、このファイルを選んだ状態にして、入っているフォルダを開く。開けなくても（消えたなど）、何も出さない
+  const openInFinder = () => {
+    if (active) void window.tanacode.workspace.revealFile(sessionId, active.path).catch(() => {});
+  };
 
   useEffect(() => {
     const models = modelsRef.current;
@@ -375,15 +379,7 @@ export const EditorPane = memo(function EditorPane({
             ))}
           </div>
         )}
-        {active && (
-          // Finder で、このファイルを選んだ状態にして、入っているフォルダを開く。開けなくても（消えたなど）、何も出さない
-          <IconButton
-            size="sm"
-            icon={ExternalLinkIcon}
-            label={t('editor.crumb.revealInFinder')}
-            onClick={() => void window.tanacode.workspace.revealFile(sessionId, active.path).catch(() => {})}
-          />
-        )}
+        {active && <IconButton size="sm" icon={ExternalLinkIcon} label={t('editor.openInFinder')} onClick={openInFinder} />}
       </div>
       {activePath && conflicts.has(activePath) && (
         <div className="pending-banner">
@@ -426,7 +422,7 @@ export const EditorPane = memo(function EditorPane({
         )}
         {showWalk && <WalkthroughZone editor={editorInstance!} {...walkthrough!} />}
         {!active && <div className="editor-placeholder">{t('editor.placeholder.noFile')}</div>}
-        {active?.content.kind === 'binary' && <div className="editor-placeholder">{t('editor.placeholder.binary')}</div>}
+        {active?.content.kind === 'binary' && <Unopenable message={t('editor.placeholder.unsupported')} onOpenInFinder={openInFinder} />}
         {active?.content.kind === 'image' && (
           <div className="editor-image">
             <img src={active.content.url} alt={active.path} draggable={false} />
@@ -434,11 +430,21 @@ export const EditorPane = memo(function EditorPane({
         )}
         {active?.content.kind === 'pdf' && <PdfView key={active.path} data={active.content.data} title={active.path} />}
         {active?.content.kind === 'too-large' && (
-          <div className="editor-placeholder">
-            {t('editor.placeholder.tooLarge', { size: Math.round(active.content.size / 1024 / 1024) })}
-          </div>
+          <Unopenable message={t('editor.placeholder.tooLarge', { size: Math.round(active.content.size / 1024 / 1024) })} onOpenInFinder={openInFinder} />
         )}
       </div>
     </section>
   );
 });
+
+// エディタで開けないファイル（対応していない形式・大きすぎる）の案内。ほかのアプリで見られるよう、Finder で開くボタンを添える
+function Unopenable({ message, onOpenInFinder }: { message: string; onOpenInFinder: () => void }) {
+  return (
+    <div className="editor-placeholder unopenable">
+      <span>{message}</span>
+      <button type="button" className="ghost-button" onClick={onOpenInFinder}>
+        {t('editor.openInFinder')}
+      </button>
+    </div>
+  );
+}
