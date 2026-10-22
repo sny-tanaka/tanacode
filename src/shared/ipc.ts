@@ -134,6 +134,7 @@ export const IpcChannel = {
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
+  ResolveFiles: 'fs:resolve-files',
   FilesChanged: 'fs:changed',
   WatchOpenFiles: 'fs:watch-open-files',
   TasksBash: 'tasks:bash',
@@ -458,6 +459,9 @@ export type FileChange = { kind: 'added' | 'modified' | 'deleted'; added: number
 // 基点での内容。exists: false は基点の後に作られたファイル
 export type FileBaseline = { exists: boolean; text: string };
 
+// ResolveFiles で一度に確かめるパスの数
+export const RESOLVE_FILES_MAX = 200;
+
 // 画面の言語を渡す起動の引数（webPreferences.additionalArguments）。画面は待たずに読めるので、起動が遅くならない
 export const LANGUAGE_ARG = '--tanacode-language=';
 
@@ -745,6 +749,9 @@ export type TanacodeApi = {
     readFile(sessionId: string, relPath: string): Promise<FileContent>;
     // 画像を data URL で読む（画像でない・大きすぎるときは null）
     readImage(sessionId: string, relPath: string): Promise<string | null>;
+    // チャットの本文に出たパスの候補（絶対パス・~/・作業フォルダからの相対パス）のうち、実在するファイルの絶対パス（無い・ファイルでないものは null。
+    // 返すのは候補と同じ順）。中身は読まず、あるかどうかだけを見る。一度に確かめるのは RESOLVE_FILES_MAX 件まで
+    resolveFiles(sessionId: string, paths: string[]): Promise<(string | null)[]>;
     // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身で、今のディスクがそれと同じときだけ書く。
     // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
     writeFile(sessionId: string, relPath: string, text: string, expected: string | null): Promise<WriteResult>;
@@ -949,6 +956,7 @@ export type IpcInvoke = {
   [IpcChannel.ListDir]: Api['workspace']['listDir'];
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];
+  [IpcChannel.ResolveFiles]: Api['workspace']['resolveFiles'];
   [IpcChannel.WriteFile]: Api['workspace']['writeFile'];
   [IpcChannel.ListFiles]: Api['workspace']['listFiles'];
   [IpcChannel.Search]: Api['workspace']['search'];

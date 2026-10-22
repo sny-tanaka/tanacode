@@ -204,6 +204,7 @@ const api: TanacodeApi = {
     listDir: (sessionId, relPath) => invoke(IpcChannel.ListDir, sessionId, relPath),
     readFile: (sessionId, relPath) => invoke(IpcChannel.ReadFile, sessionId, relPath),
     readImage: (sessionId, relPath) => invoke(IpcChannel.ReadImage, sessionId, relPath),
+    resolveFiles: (sessionId, paths) => invoke(IpcChannel.ResolveFiles, sessionId, paths),
     writeFile: (sessionId, relPath, text, expected) => invoke(IpcChannel.WriteFile, sessionId, relPath, text, expected),
     addFolder: (sessionId) => invoke(IpcChannel.WorkspaceAddFolder, sessionId),
     removeFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceRemoveFolder, sessionId, folder),

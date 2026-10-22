@@ -904,6 +904,7 @@ export const ClaudePane = memo(function ClaudePane({
                 subagents={subagents}
                 bashTasks={bashTasks}
                 onOpenFile={onOpenFile}
+                sessionId={session.id}
                 onOpenTask={onOpenTask}
                 sessions={sessionLinks}
                 onSelectSession={onSelectSession}

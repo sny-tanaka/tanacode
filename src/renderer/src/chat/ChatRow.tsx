@@ -28,6 +28,8 @@ type Props = {
   // 発言の前まで巻き戻す（発言の ID を渡す）
   onRewind: ((messageId: string) => void) | null;
   onOpenFile: (absPath: string, line?: number) => void;
+  // このチャットのセッション。本文のファイルのパスが実在するかを確かめて、リンクにする（無ければ、パスはただの文字）
+  sessionId?: string;
   // サブエージェント・ワークフロー・バックグラウンドの Bash の中身を開く。null なら開けない（タスクの中身の表示の中など）
   onOpenTask: ((ref: TaskRef) => void) | null;
   // 本文のシェルのコードブロックを、ターミナルで実行する。無ければ実行ボタンを出さない
@@ -63,6 +65,7 @@ function sameRow(a: Props, b: Props): boolean {
     a.item === b.item &&
     a.onRewind === b.onRewind &&
     a.onOpenFile === b.onOpenFile &&
+    a.sessionId === b.sessionId &&
     a.onOpenTask === b.onOpenTask &&
     a.onRunCommand === b.onRunCommand &&
     (!showsSessions(a.item) || (a.sessions === b.sessions && a.onSelectSession === b.onSelectSession && a.parentId === b.parentId)) &&
@@ -79,6 +82,7 @@ export const ChatRow = memo(function ChatRow({
   bashTasks,
   onRewind,
   onOpenFile,
+  sessionId,
   onOpenTask,
   onRunCommand,
   sessions = NO_SESSIONS,
@@ -116,7 +120,7 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'text') {
-    return <ResponseBlock text={item.text} onRunCommand={onRunCommand} settled={item.settled} />;
+    return <ResponseBlock text={item.text} onRunCommand={onRunCommand} sessionId={sessionId} onOpenFile={onOpenFile} settled={item.settled} />;
   }
   if (item.kind === 'notice') {
     // 子セッションからの知らせには、その子へ移るリンクを、チェックリストの知らせには、そのカードを開くリンクを添える
@@ -241,13 +245,19 @@ export function InfoRow({ item }: { item: Extract<ChatItem, { kind: 'info' }> })
   );
 }
 
-function ResponseBlock({ text, onRunCommand, settled }: { text: string; onRunCommand?: (command: string) => void; settled?: boolean }) {
+function ResponseBlock({
+  text,
+  onRunCommand,
+  sessionId,
+  onOpenFile,
+  settled,
+}: Pick<Props, 'onRunCommand' | 'sessionId' | 'onOpenFile'> & { text: string; settled?: boolean }) {
   // 訳文のコードブロックには、実行ボタンを付けない（原文の方にある）
-  const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} />);
+  const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} sessionId={sessionId} onOpenFile={onOpenFile} />);
   return (
     <div className={`chat-response${settled ? ' settled' : ''}`}>
       {translation.button}
-      <Markdown text={text} onRunCommand={onRunCommand} />
+      <Markdown text={text} onRunCommand={onRunCommand} sessionId={sessionId} onOpenFile={onOpenFile} />
       {translation.panel}
     </div>
   );

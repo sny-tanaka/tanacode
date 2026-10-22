@@ -951,7 +951,8 @@
       "run": "実行",
       "openInBrowser": "既定のブラウザで開く",
       "externalImageAlt": "外部の画像（{alt}）: {url}",
-      "externalImage": "外部の画像: {url}"
+      "externalImage": "外部の画像: {url}",
+      "openFile": "{path}\nクリックでエディタに開く"
     }
   },
   "schedule": {

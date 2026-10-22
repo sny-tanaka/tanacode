@@ -1,10 +1,26 @@
-import { marked } from 'marked';
+import { marked, Tokenizer } from 'marked';
 import markedCjkFriendly from 'marked-cjk-friendly';
 import { t } from '@shared/i18n';
 
 // CommonMark では「）**に」「」**です」のように、閉じる ** の前が記号で後ろが文字だと強調にならない。
 // 日本語は単語の間に空白を入れないので、隣が日本語・中国語・韓国語の文字のときだけこの決まりを緩める
 marked.use(markedCjkFriendly());
+
+// 全角の記号（CJK の記号と句読点 U+3000〜303F・全角形 U+FF00〜FFEF。（）「」、。など）。URL には入らない
+const NOT_IN_URL = /[　-〿＀-￯]/;
+
+// 文中の URL の自動リンク。GFM は、空白か < までを URL とみなす。日本語は URL の前後を括弧や句読点で囲み（（https://…）・https://…。）、
+// 空白を入れないので、そのままでは閉じ括弧や句読点、その後ろの文字までリンクになり、リンク先も壊れる。全角の記号の手前で切る
+// （漢字・かな・英数字は URL に入りうる（https://ja.wikipedia.org/wiki/日本語）ので、切らない）
+marked.use({
+  tokenizer: {
+    url(src) {
+      const end = src.search(NOT_IN_URL);
+      // 切る所が無ければ、標準の処理に任せる
+      return end === -1 ? false : Tokenizer.prototype.url.call(this, src.slice(0, end));
+    },
+  },
+});
 
 export { marked };
 

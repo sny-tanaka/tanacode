@@ -869,6 +869,9 @@ function registerIpc(): void {
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
     new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
   );
+  handle(IpcChannel.ResolveFiles, (e, id: string, paths: string[]) =>
+    new Workspace(P(e).cwdOf(id)).resolveFiles(Array.isArray(paths) ? paths : [], P(e).addedFoldersOf(id)).catch(() => []),
+  );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {

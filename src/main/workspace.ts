@@ -1,6 +1,8 @@
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
+import { RESOLVE_FILES_MAX } from '@shared/ipc';
 import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo, WriteResult } from '@shared/ipc';
 import { git } from './git';
 
@@ -62,6 +64,24 @@ export class Workspace {
     const { size } = await stat(abs);
     if (size > MAX_IMAGE_BYTES) return null;
     return this.imageUrl(abs, mime);
+  }
+
+  // チャットの本文に出たパスの候補のうち、実在するファイルの絶対パス（候補と同じ順。無い・ファイルでないものは null）。
+  // ファイルを開くのは人がリンクを押したときで（ReadFile）、ここは、本文のどれをリンクにするかを決めるために、あるかどうかだけを見る。
+  // 中身は読まず、あるかどうかしか返さないので、フォルダの外（~/ や絶対パス）も見る。相対パスは、作業フォルダと追加したフォルダから探す
+  async resolveFiles(candidates: readonly string[], addedFolders: readonly string[] = []): Promise<(string | null)[]> {
+    const isFile = async (abs: string) => (await stat(abs).catch(() => null))?.isFile() === true;
+    const find = async (candidate: unknown): Promise<string | null> => {
+      if (typeof candidate !== 'string' || !candidate || candidate.includes('\0')) return null;
+      const places = candidate.startsWith('~/')
+        ? [join(homedir(), candidate.slice(2))]
+        : isAbsolute(candidate)
+          ? [candidate]
+          : [this.root, ...addedFolders].map((folder) => resolve(folder, candidate));
+      for (const abs of places) if (await isFile(abs)) return resolve(abs);
+      return null;
+    };
+    return Promise.all(candidates.map((candidate, i) => (i < RESOLVE_FILES_MAX ? find(candidate) : null)));
   }
 
   private async imageUrl(abs: string, mime: string): Promise<string> {
