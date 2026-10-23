@@ -8,17 +8,23 @@ export type DemoPage = { title: string; css: string; body: string };
 const TAG = 'demo-webview';
 let pageFor: (url: string) => DemoPage | null = () => null;
 const views = new Set<DemoWebview>();
+// 足あとで見分けるための、作った順の番号
+let viewSeq = 0;
 
 class DemoWebview extends HTMLElement {
   private readonly frame = document.createElement('iframe');
   private url = '';
+  private readonly seq = ++viewSeq;
 
   constructor() {
     super();
     Object.assign(this.frame.style, { width: '100%', height: '100%', border: '0', display: 'block', background: '#fff' });
   }
 
+  // 確かめ（?demo-trace）のときは、つながった・外れた・読み込んだことも足あとに出す（CI の PC のツアーで、スクリーンショットを撮るときに
+  // ページの中身（contentDocument）が無く、落ちたことがあった。手元では再現しなかったので、次に落ちたときに、その前に何が起きたかを見分ける）
   connectedCallback(): void {
+    trace(`ブラウザ ${this.seq}: つながった（iframe ${this.frame.isConnected ? 'あり' : 'なし'}）`);
     this.style.display = this.style.display === 'none' ? 'none' : 'block';
     if (!this.frame.isConnected) this.appendChild(this.frame);
     views.add(this);
@@ -26,6 +32,7 @@ class DemoWebview extends HTMLElement {
   }
 
   disconnectedCallback(): void {
+    trace(`ブラウザ ${this.seq}: 外れた`);
     views.delete(this);
   }
 
@@ -45,6 +52,7 @@ class DemoWebview extends HTMLElement {
 
   private load(withEvents: boolean): void {
     const page = pageFor(this.url);
+    trace(`ブラウザ ${this.seq}: 読み込む ${this.url}${withEvents ? '' : '（描き直し）'}`);
     if (withEvents) this.dispatchEvent(new Event('did-start-loading'));
     this.frame.onload = () => {
       if (!withEvents) return;
@@ -88,8 +96,22 @@ class DemoWebview extends HTMLElement {
   // 確かめ（?demo-trace）のときは、段ごとに足あとを出す（CI のスマホのツアーで、ページで最初にこれを動かす「要素を選ぶ」の直後に、
   // ページの処理が 40 秒応答しないまま落ちたことが 2 回あった。次に止まったときに、どの段で止まったかを見分ける）
   async capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<{ isEmpty(): boolean; toDataURL(): string }> {
-    trace('画像を切り出す: ページを SVG に写す');
-    const doc = this.frame.contentDocument!;
+    trace(`画像を切り出す: ページを SVG に写す（ブラウザ ${this.seq}）`);
+    const doc = this.frame.contentDocument;
+    // ページの中身が無いときは、そのときの様子をエラーに添える（CI の PC のツアーで、ここで落ちたことがあった。上の足あとと合わせて読む）
+    if (!doc) {
+      const state = [
+        `ブラウザ ${this.seq}`,
+        `webview: ${this.isConnected ? 'つながっている' : '外れている'}`,
+        `iframe: ${this.frame.isConnected ? 'つながっている' : '外れている'}・${this.frame.parentNode === this ? 'webview の中' : 'webview の外'}`,
+        `contentWindow: ${this.frame.contentWindow ? 'あり' : 'なし'}`,
+        `srcdoc: ${this.frame.srcdoc.length} 文字`,
+        `URL: ${this.url}`,
+        `display: ${this.style.display || '(なし)'}`,
+        `ブラウザの数: ${views.size}`,
+      ].join('、');
+      throw new Error(`demo: 画像を切り出すページの中身がありません（${state}）`);
+    }
     const width = doc.documentElement.clientWidth;
     const height = doc.documentElement.clientHeight;
     const css = [...doc.querySelectorAll('style')].map((s) => s.textContent).join('\n');

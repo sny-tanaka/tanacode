@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SESSION_EVENT_TAG, sessionToolId } from '@shared/session-tools';
 import type { Block } from '../cli/mock-api';
@@ -22,6 +24,22 @@ describe('アプリを閉じている間に子が作業を終えたら、次の�
   const noticed: string[] = [];
   let childId: string | null = null;
   let childDone = false;
+  // 親と子の記録（userData/sessions.json）のうち、知らせに関わるもの。知らせが来なかったときに、エラーに添える
+  // （CI で 1 回、知らせが来ないまま落ちた。手元では再現しなかったので、前のアプリが終えたときの子の状態（detachedState）が
+  // 作業中だったか（終えるときの問題か、引き継いだあとの問題か）を、次に落ちたときに見分ける）
+  const records = (): string => {
+    try {
+      const { sessions } = JSON.parse(readFileSync(join(app.userData, 'sessions.json'), 'utf8')) as { sessions: Record<string, unknown>[] };
+      return JSON.stringify(
+        sessions.map(({ id, title, parentId, detachedAt, detachedState, waiting, unsent }) => ({ id, title, parentId, detachedAt, detachedState, waiting, unsent })),
+        null,
+        2,
+      );
+    } catch (error) {
+      return `読めませんでした: ${String(error)}`;
+    }
+  };
+  let recordsWhileClosed = '';
 
   const respond = (prompt: string, results: string[]): Block[] | null => {
     const result = results.join('\n');
@@ -73,11 +91,14 @@ describe('アプリを閉じている間に子が作業を終えたら、次の�
       // 前のアプリも、閉じている間も、親に知らせていない。次のアプリを起動する前に確かめる（restart が返るまでに、
       // 次のアプリが子を引き継いで知らせることがある。CI で、引き継いでから 1.5 秒で届き、ここで数えてしまった）
       expect(noticed).toEqual([]);
+      recordsWhileClosed = records();
     });
   });
 
   it('次のアプリが子を引き継いだら、親に知らせが 1 回届く', async () => {
-    await app.waitUntil('親への知らせ', () => noticed.length > 0, 60_000);
+    await app.waitUntil('親への知らせ', () => noticed.length > 0, 60_000).catch((error: unknown) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n# 閉じている間の記録\n${recordsWhileClosed}\n# 今の記録\n${records()}`);
+    });
     expect(noticed).toEqual([childId]);
     await app.byText('.session-list .session-row', PARENT).click();
     await app.byText('.chat-list', PARENT_NOTICED).waitFor();
