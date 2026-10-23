@@ -130,74 +130,241 @@ function createTask(state: ChatState, toolUseId: string, taskId: string | undefi
   return { pendingTasks: rest, todos: taskId ? [...base, { ...pending, id: taskId }] : state.todos };
 }
 
-// 再試行中の API エラーは、応答が来たら（再試行が成功したら）消す
-function withoutRetrying(items: ChatItem[]): ChatItem[] {
-  return items.some((i) => i.kind === 'error' && i.retrying) ? items.filter((i) => !(i.kind === 'error' && i.retrying)) : items;
-}
-
 // 同じ実行の記録か（Stop の要約と出力のあった記録など、同じ実行が 2 つの形で届く）。何も出力しなかったフックは hook_id で見分ける
 // （1 回ずつ別の実行。コマンドが無いので、きっかけとツールが同じでも重ねない）
 const sameRun = (a: HookRun, b: HookRun) =>
   a.hookId !== undefined || b.hookId !== undefined ? a.hookId === b.hookId : a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
 
+// 行の位置の索引。イベントのたびに行を端から探さないため（長い会話ほど重くなる）
+type RowIndex = {
+  // ツールの id ごとの位置（前から順）
+  tools: Map<string, number[]>;
+  // 実行中のツールの位置
+  running: Set<number>;
+  // エラーの行の id ごとの数と、再試行中のエラーの行の数
+  errors: Map<string, number>;
+  retrying: number;
+  // shell と未知のイベントの行の位置（前から順）
+  shells: number[];
+  unknowns: number[];
+};
+
+function indexRow(index: RowIndex, item: ChatItem, at: number): void {
+  switch (item.kind) {
+    case 'tool': {
+      const list = index.tools.get(item.id);
+      if (list) list.push(at);
+      else index.tools.set(item.id, [at]);
+      if (item.status === 'running') index.running.add(at);
+      break;
+    }
+    case 'error':
+      index.errors.set(item.id, (index.errors.get(item.id) ?? 0) + 1);
+      if (item.retrying) index.retrying++;
+      break;
+    case 'shell':
+      index.shells.push(at);
+      break;
+    case 'unknown':
+      index.unknowns.push(at);
+      break;
+  }
+}
+
+function indexRows(items: readonly ChatItem[]): RowIndex {
+  const index: RowIndex = { tools: new Map(), running: new Set(), errors: new Map(), retrying: 0, shells: [], unknowns: [] };
+  items.forEach((item, at) => indexRow(index, item, at));
+  return index;
+}
+
+// 行の配列ごとの索引。次に届いた配信は、前の配列の索引を引き継いで使う（引き継いだら、前の配列からは外す。同じ索引を 2 つの配列で
+// 書き換えないため）。索引の無い配列は、要るときに作る
+const rowIndexes = new WeakMap<readonly ChatItem[], RowIndex>();
+
+// 1 回の配信（いくつかのイベント）で、行の配列を組み立てる。配列は最初に書き換えるときに 1 回だけ写し、あとはその写しを書き換える
+// （イベントのたびに配列を丸ごと写さない）。写した配列は、組み立て終えたら書き換えない（React には新しい配列として渡る）。
+// 変えない行は同じもののまま（ChatRows の memo が効く）、変えた行は新しいものにする
+class Rows {
+  private items: ChatItem[];
+  private own = false;
+  private index: RowIndex | null;
+  // この配信で足した本文・思考の行（書いている途中の文から入れ替わったものの印を付けるため）。外すのはエラーの行だけなので、行をまとめて消したときだけ空にする
+  private added: Extract<ChatItem, { kind: 'text' | 'thinking' }>[] = [];
+
+  constructor(private readonly base: ChatItem[]) {
+    this.items = base;
+    // 引き継いだ索引は、前の配列から外す（組み立て終えたら、できた配列に付け直す）
+    this.index = rowIndexes.get(base) ?? null;
+    rowIndexes.delete(base);
+  }
+
+  private write(): ChatItem[] {
+    if (!this.own) {
+      this.items = this.base.slice();
+      this.own = true;
+    }
+    return this.items;
+  }
+
+  private indexed(): RowIndex {
+    this.index ??= indexRows(this.items);
+    return this.index;
+  }
+
+  get length(): number {
+    return this.items.length;
+  }
+
+  get last(): ChatItem | undefined {
+    return this.items[this.items.length - 1];
+  }
+
+  at(position: number): ChatItem | undefined {
+    return this.items[position];
+  }
+
+  push(item: ChatItem): void {
+    const items = this.write();
+    items.push(item);
+    if (this.index) indexRow(this.index, item, items.length - 1);
+    if (item.kind === 'text' || item.kind === 'thinking') this.added.push(item);
+  }
+
+  // position の行を入れ替える（種類と id は変えない。変わるのはツールの状態だけ）
+  set(position: number, item: ChatItem): void {
+    const items = this.write();
+    const before = items[position];
+    items[position] = item;
+    if (!this.index) return;
+    if (before.kind === 'tool' && before.status === 'running') this.index.running.delete(position);
+    if (item.kind === 'tool' && item.status === 'running') this.index.running.add(position);
+  }
+
+  // 合う行を外す（まれ。索引と、この配信で足した行の位置は作り直す）
+  private remove(drop: (item: ChatItem) => boolean): void {
+    this.items = this.items.filter((item) => !drop(item));
+    this.own = true;
+    this.index = null;
+  }
+
+  clear(): void {
+    this.items = [];
+    this.own = true;
+    this.index = null;
+    this.added = [];
+  }
+
+  // 再試行中の API エラーは、応答が来たら（再試行が成功したら）消す
+  withoutRetrying(): void {
+    if (this.indexed().retrying > 0) this.remove((i) => i.kind === 'error' && i.retrying);
+  }
+
+  withoutError(id: string): void {
+    if (this.indexed().errors.has(id)) this.remove((i) => i.kind === 'error' && i.id === id);
+  }
+
+  // id のツールの位置（前から順）
+  tools(id: string): readonly number[] {
+    return this.indexed().tools.get(id) ?? [];
+  }
+
+  running(): number[] {
+    return [...this.indexed().running];
+  }
+
+  lastShell(): number {
+    const shells = this.indexed().shells;
+    return shells.length > 0 ? shells[shells.length - 1] : -1;
+  }
+
+  // 合う未知のイベントの行のうち、いちばん後ろの位置
+  lastUnknown(match: (item: Extract<ChatItem, { kind: 'unknown' }>) => boolean): number {
+    const unknowns = this.indexed().unknowns;
+    for (let i = unknowns.length - 1; i >= 0; i--) {
+      const item = this.items[unknowns[i]];
+      if (item.kind === 'unknown' && match(item)) return unknowns[i];
+    }
+    return -1;
+  }
+
+  // 組み立て終えた配列と、この配信で足して残っている本文・思考の行
+  done(): { items: ChatItem[]; added: readonly Extract<ChatItem, { kind: 'text' | 'thinking' }>[] } {
+    if (this.index) rowIndexes.set(this.items, this.index);
+    return { items: this.items, added: this.added };
+  }
+}
+
 // hooks はツールのカードに付ける。ツールに付かないものは、直前の同じきっかけの hooks とまとめる。
 // Stop の要約と出力のあった記録は同じ実行なので、重ねない（出力のある方を残す）
-function withHook(items: ChatItem[], id: string, run: HookRun): ChatItem[] {
+function addHook(rows: Rows, id: string, run: HookRun): void {
   const merge = (runs: HookRun[]) => (runs.some((r) => sameRun(r, run)) ? runs : [...runs, run]);
-  const tool = run.toolUseId ? items.findIndex((i) => i.kind === 'tool' && i.id === run.toolUseId) : -1;
+  const tool = run.toolUseId ? (rows.tools(run.toolUseId)[0] ?? -1) : -1;
   // AskUserQuestion の PermissionRequest の決定の記録（コマンドが無い）は、前のアプリが足した質問のフックが答えた印（前の会話ログに残る）。
   // ユーザーのフックではないので出さない（Claude Code は、この記録にコマンドを残さないので、目印の環境変数では見分けられない）
-  const target = items[tool];
-  if (target?.kind === 'tool' && target.name === 'AskUserQuestion' && run.event === 'PermissionRequest' && !run.command) return items;
-  if (tool !== -1) {
-    return items.map((item, i) => (i === tool && item.kind === 'tool' ? { ...item, hooks: merge(item.hooks ?? []) } : item));
+  const target = rows.at(tool);
+  if (target?.kind === 'tool' && target.name === 'AskUserQuestion' && run.event === 'PermissionRequest' && !run.command) return;
+  if (target?.kind === 'tool') {
+    rows.set(tool, { ...target, hooks: merge(target.hooks ?? []) });
+    return;
   }
-  const last = items[items.length - 1];
+  const last = rows.last;
   if (last?.kind === 'hook' && last.runs[0].toolUseId === run.toolUseId && last.runs[0].event === run.event) {
-    return [...items.slice(0, -1), { ...last, runs: merge(last.runs) }];
+    rows.set(rows.length - 1, { ...last, runs: merge(last.runs) });
+    return;
   }
-  return [...items, { kind: 'hook', id, runs: [run] }];
+  rows.push({ kind: 'hook', id, runs: [run] });
 }
 
 // 未知のイベントを足す。同じ行（同じ id）がもう出ていれば（stream と会話ログの両方に出た行）、その行の隣に生の行だけを足す（数は増やさない。
 // 同じところから届き直したものは足さない）。直前の行が同じ種類の未知のイベントなら、そこにまとめる
-function withUnknown(items: ChatItem[], event: UnknownEvent): ChatItem[] {
+function addUnknown(rows: Rows, event: UnknownEvent): void {
   const sample: UnknownSample = { id: event.id, source: event.source, version: event.version, raw: event.raw, truncated: event.truncated };
-  const index = items.findLastIndex((i) => i.kind === 'unknown' && i.samples.some((s) => s.id === event.id));
-  const found = items[index];
+  const index = rows.lastUnknown((i) => i.samples.some((s) => s.id === event.id));
+  const found = rows.at(index);
   if (found?.kind === 'unknown') {
-    if (found.samples.some((s) => s.id === event.id && s.source === event.source)) return items;
+    if (found.samples.some((s) => s.id === event.id && s.source === event.source)) return;
     const at = found.samples.findLastIndex((s) => s.id === event.id) + 1;
-    const samples = [...found.samples.slice(0, at), sample, ...found.samples.slice(at)];
-    return items.map((item, i) => (i === index ? { ...found, samples } : item));
+    rows.set(index, { ...found, samples: [...found.samples.slice(0, at), sample, ...found.samples.slice(at)] });
+    return;
   }
-  const last = items[items.length - 1];
+  const last = rows.last;
   if (last?.kind === 'unknown' && last.name === event.name && last.problem === event.problem) {
-    return [...items.slice(0, -1), { ...last, count: last.count + 1, samples: [...last.samples, sample].slice(-UNKNOWN_SAMPLES) }];
+    rows.set(rows.length - 1, { ...last, count: last.count + 1, samples: [...last.samples, sample].slice(-UNKNOWN_SAMPLES) });
+    return;
   }
-  return [...items, { kind: 'unknown', id: event.id, name: event.name, problem: event.problem, count: 1, samples: [sample] }];
+  rows.push({ kind: 'unknown', id: event.id, name: event.name, problem: event.problem, count: 1, samples: [sample] });
 }
 
 // ! のコマンドの出力を、まだ出力の無い直前の shell に付ける。見つからなければ、出力だけの shell として出す
-function withShellOutput(items: ChatItem[], id: string, output: string): ChatItem[] {
-  const index = items.findLastIndex((i) => i.kind === 'shell');
-  const shell = items[index];
-  if (shell?.kind !== 'shell' || shell.output) return [...items, { kind: 'shell', id, command: '', output }];
-  return items.map((item, i) => (i === index ? { ...shell, output } : item));
+function addShellOutput(rows: Rows, id: string, output: string): void {
+  const index = rows.lastShell();
+  const shell = rows.at(index);
+  if (shell?.kind !== 'shell' || shell.output) rows.push({ kind: 'shell', id, command: '', output });
+  else rows.set(index, { ...shell, output });
+}
+
+// イベントをまとめてチャットに当てる。行の配列は 1 回だけ写す（イベントの数と行の数の和に比例する）
+function applyEvents(state: ChatState, events: readonly ChatEvent[]): { chat: ChatState; added: readonly Extract<ChatItem, { kind: 'text' | 'thinking' }>[] } {
+  const rows = new Rows(state.items);
+  let next = state;
+  for (const event of events) next = apply(next, event, rows);
+  const { items, added } = rows.done();
+  return { chat: items === next.items ? next : { ...next, items }, added };
 }
 
 // 会話ログから作ったイベントをまとめてチャットにする（アーカイブ済みセッションの表示用）
 export function chatFromEvents(events: ChatEvent[]): ChatState {
-  return events.reduce(apply, EMPTY_CHAT);
+  return applyEvents(EMPTY_CHAT, events).chat;
 }
 
 // ToDo の一覧を変えたツールの呼び出し（id）ごとの、変えたあとの一覧。作業の書き出しで、進み具合を途中に挟むのに使う。
 // TaskCreate は結果で番号が分かってから一覧に入るので、結果のところで数える
 export function todoSteps(events: ChatEvent[]): Map<string, TodoItem[]> {
   const steps = new Map<string, TodoItem[]>();
+  const rows = new Rows(EMPTY_CHAT.items);
   let state = EMPTY_CHAT;
   for (const event of events) {
-    const next = apply(state, event);
+    const next = apply(state, event, rows);
     if (next.todos && next.todos !== state.todos && (event.type === 'tool-use' || event.type === 'tool-result')) steps.set(event.id, next.todos);
     state = next;
   }
@@ -209,19 +376,24 @@ function turn(state: ChatState, status: 'idle' | 'running'): SessionStatus {
   return state.status === 'starting' || state.status === 'exited' ? state.status : status;
 }
 
-function apply(state: ChatState, event: ChatEvent): ChatState {
+// イベントを 1 つ当てる。行は rows に組み立て（state.items は読まない。古いまま）、ほかの値は新しい state で返す
+function apply(state: ChatState, event: ChatEvent, rows: Rows): ChatState {
   switch (event.type) {
     case 'thinking':
-      return { ...state, items: [...state.items, { kind: 'thinking', id: event.id, text: event.text }] };
+      rows.push({ kind: 'thinking', id: event.id, text: event.text });
+      return state;
     case 'divider':
-      return { ...state, items: [...state.items, { kind: 'divider', id: event.id, text: event.text }] };
-    case 'api-error': {
+      rows.push({ kind: 'divider', id: event.id, text: event.text });
+      return state;
+    case 'api-error':
       // 同じ知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき、main がターンの終わりと一緒に出し直す）、
       // 前の行を外して今の位置に出す
-      const items = withoutRetrying(state.items).filter((i) => !(i.kind === 'error' && i.id === event.id));
-      return { ...state, items: [...items, { kind: 'error', id: event.id, text: event.text, retrying: event.retrying }] };
-    }
+      rows.withoutRetrying();
+      rows.withoutError(event.id);
+      rows.push({ kind: 'error', id: event.id, text: event.text, retrying: event.retrying });
+      return state;
     case 'process-start':
+      rows.clear();
       return { ...EMPTY_CHAT, status: 'starting' };
     case 'ready':
       // 引き継いだ claude がターンの途中なら、入力を受け付けられても作業中のまま
@@ -229,34 +401,44 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'process-exit':
       return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null };
     case 'user':
-      return {
-        ...state,
-        status: turn(state, 'running'),
-        inTurn: true,
-        items: [...state.items, { kind: 'user', id: event.id, text: event.text, pastes: event.pastes, images: event.images, at: event.at, parent: event.parent }],
-      };
+      rows.push({ kind: 'user', id: event.id, text: event.text, pastes: event.pastes, images: event.images, at: event.at, parent: event.parent });
+      return { ...state, status: turn(state, 'running'), inTurn: true };
     case 'notice':
       // 完了通知を受けて Claude Code が続きを始める
-      return {
-        ...state,
-        status: turn(state, 'running'),
-        inTurn: true,
-        items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail, sessions: event.sessions, cards: event.cards }],
-      };
+      rows.push({ kind: 'notice', id: event.id, text: event.text, detail: event.detail, sessions: event.sessions, cards: event.cards });
+      return { ...state, status: turn(state, 'running'), inTurn: true };
     case 'turn-start':
       return { ...state, status: turn(state, 'running'), inTurn: true };
     // ほかのセッションに結果を返すときの目印。チャットには出さない
     case 'checklist-stop':
       return state;
     case 'info':
-      return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text, detail: event.detail, warning: event.warning, screen: event.screen }] };
+      rows.push({ kind: 'info', id: event.id, text: event.text, detail: event.detail, warning: event.warning, screen: event.screen });
+      return state;
     case 'shell':
-      return { ...state, items: [...state.items, { kind: 'shell', id: event.id, command: event.command, output: event.output }] };
+      rows.push({ kind: 'shell', id: event.id, command: event.command, output: event.output });
+      return state;
     case 'shell-output':
-      return { ...state, items: withShellOutput(state.items, event.id, event.output) };
+      addShellOutput(rows, event.id, event.output);
+      return state;
     case 'assistant-text':
-      return { ...state, items: [...withoutRetrying(state.items), { kind: 'text', id: event.id, text: event.text, at: event.at }] };
+      rows.withoutRetrying();
+      rows.push({ kind: 'text', id: event.id, text: event.text, at: event.at });
+      return state;
     case 'tool-use':
+      rows.withoutRetrying();
+      rows.push({
+        kind: 'tool',
+        id: event.id,
+        name: event.name,
+        target: event.target,
+        description: event.description,
+        filePath: event.filePath,
+        status: 'running',
+        input: event.input,
+        sentFiles: event.sentFiles,
+        startedAt: event.at,
+      });
       return {
         ...state,
         todos: event.todos ?? (event.taskChange?.kind === 'update' ? updateTask(state.todos, event.taskChange) : state.todos),
@@ -264,61 +446,47 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
           event.taskChange?.kind === 'create'
             ? { ...state.pendingTasks, [event.id]: { content: event.taskChange.subject, status: 'pending', activeForm: event.taskChange.activeForm } }
             : state.pendingTasks,
-        items: [
-          ...withoutRetrying(state.items),
-          {
-            kind: 'tool',
-            id: event.id,
-            name: event.name,
-            target: event.target,
-            description: event.description,
-            filePath: event.filePath,
-            status: 'running',
-            input: event.input,
-            sentFiles: event.sentFiles,
-            startedAt: event.at,
-          },
-        ],
       };
     case 'tool-result':
-      return {
-        ...state,
-        ...createTask(state, event.id, event.createdTaskId),
-        items: state.items.map((item) =>
-          item.kind === 'tool' && item.id === event.id
-            ? {
-                ...item,
-                status: event.isError ? 'error' : 'done',
-                added: event.added,
-                removed: event.removed,
-                line: event.line,
-                output: event.output,
-                patch: event.patch,
-                images: event.images,
-                answers: event.answers,
-                endedAt: event.at,
-              }
-            : item,
-        ),
-      };
+      for (const at of rows.tools(event.id)) {
+        const item = rows.at(at);
+        if (item?.kind !== 'tool') continue;
+        rows.set(at, {
+          ...item,
+          status: event.isError ? 'error' : 'done',
+          added: event.added,
+          removed: event.removed,
+          line: event.line,
+          output: event.output,
+          patch: event.patch,
+          images: event.images,
+          answers: event.answers,
+          endedAt: event.at,
+        });
+      }
+      return { ...state, ...createTask(state, event.id, event.createdTaskId) };
     case 'turn-end':
-      return {
-        ...state,
-        status: turn(state, 'idle'),
-        inTurn: false,
-        // 中断されたツールは結果が来ないまま終わるので、実行中表示を残さない
-        items: withoutRetrying(state.items).map((item) =>
-          item.kind === 'tool' && item.status === 'running' ? { ...item, status: 'error' } : item,
-        ),
-      };
+      rows.withoutRetrying();
+      // 中断されたツールは結果が来ないまま終わるので、実行中表示を残さない
+      for (const at of rows.running()) {
+        const item = rows.at(at);
+        if (item?.kind === 'tool') rows.set(at, { ...item, status: 'error' });
+      }
+      return { ...state, status: turn(state, 'idle'), inTurn: false };
     case 'reset':
       // 最適化圧縮の切り替え（アプリが打った /clear）では、チャットを消さない。人が読んでいる途中の答えが、画面から消えないように
       // （前の会話はそのまま残り、再開の知らせの行が区切りになる。ふつうの圧縮と同じ見え方）。人が打った /clear は消す
-      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {} };
-    case 'replace':
-      return event.events.reduce(apply, EMPTY_CHAT);
+      if (!event.compact) rows.clear();
+      return { ...state, todos: null, pendingTasks: {} };
+    case 'replace': {
+      rows.clear();
+      let next = EMPTY_CHAT;
+      for (const e of event.events) next = apply(next, e, rows);
+      return next;
+    }
     case 'hook':
-      return { ...state, items: withHook(state.items, event.id, event.run) };
+      addHook(rows, event.id, event.run);
+      return state;
     case 'remote-control':
       return { ...state, remoteControlUrl: event.url };
     case 'queue':
@@ -327,7 +495,8 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       return state.pr?.url === event.pr.url ? state : { ...state, pr: event.pr };
     // ターンの始まりにも終わりにもしない（作業中・待機中を変えない）
     case 'unknown-event':
-      return { ...state, items: withUnknown(state.items, event) };
+      addUnknown(rows, event);
+      return state;
   }
 }
 
@@ -340,7 +509,7 @@ const CLEARS_PARTIAL = new Set<ChatEvent['type']>(['turn-end', 'process-exit', '
 function withSnapshot(current: Entry | undefined, { fromSeq, events, partial }: SessionSnapshot): Entry | undefined {
   // スナップショット取得中に届いたライブ配信の方が新しければそちらを残す
   if (current && current.nextSeq >= fromSeq + events.length) return current;
-  return { chat: events.reduce(apply, EMPTY_CHAT), partial: partial ?? NO_PARTIAL, nextSeq: fromSeq + events.length };
+  return { chat: chatFromEvents(events), partial: partial ?? NO_PARTIAL, nextSeq: fromSeq + events.length };
 }
 
 // 書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信（途中の文だけ）は、通し番号を進めない。
@@ -351,28 +520,42 @@ function withBatch(current: Entry | undefined, { fromSeq, events, partial }: Cha
   const fresh = skip < events.length ? events.slice(Math.max(0, skip)) : null;
   const latest = partial && fromSeq + events.length >= base.nextSeq ? partial : null;
   if (!fresh && !latest) return current;
-  const chat = fresh ? fresh.reduce(apply, base.chat) : base.chat;
+  const { chat, added } = fresh ? applyEvents(base.chat, fresh) : { chat: base.chat, added: [] as const };
   const nextSeq = fresh ? fromSeq + events.length : base.nextSeq;
   if (!latest) return { chat, partial: fresh?.some((e) => CLEARS_PARTIAL.has(e.type)) ? NO_PARTIAL : base.partial, nextSeq };
   const removed = base.partial.filter((p) => !latest.some((q) => q.id === p.id));
-  const items = settled(chat.items, base.chat.items, removed);
+  const items = settled(chat.items, added, removed);
   // 途中の文しか変わらない配信では、チャットは前のまま（App を描き直さない）
   return { chat: items === chat.items ? chat : { ...chat, items }, partial: latest, nextSeq };
 }
 
-// 外れた途中の文の代わりに、同じ配信で出た本文・思考に印を付ける（main は、会話ログに出たブロックを、その行のイベントと同じ配信で外す。
-// 1 つの配信の中では、外れたブロックと出た行は同じ順に並ぶ）
-function settled(items: ChatItem[], before: ChatItem[], removed: PartialBlock[]): ChatItem[] {
-  if (removed.length === 0) return items;
-  const old = new Set(before);
-  const left = removed.map((p) => (p.kind === 'text' ? 'text' : 'thinking'));
-  return items.map((item) => {
-    if (old.has(item) || (item.kind !== 'text' && item.kind !== 'thinking')) return item;
+// 外れた途中の文の代わりに、同じ配信で出た本文・思考（added。足した順）に印を付ける（main は、会話ログに出たブロックを、その行のイベントと
+// 同じ配信で外す。1 つの配信の中では、外れたブロックと出た行は同じ順に並ぶ）。足した行は後ろの方にあるので、後ろから探す
+function settled(items: ChatItem[], added: readonly Extract<ChatItem, { kind: 'text' | 'thinking' }>[], removed: PartialBlock[]): ChatItem[] {
+  if (removed.length === 0 || added.length === 0) return items;
+  const left = removed.map((p): 'text' | 'thinking' => (p.kind === 'text' ? 'text' : 'thinking'));
+  const marks = new Map<ChatItem, ChatItem>();
+  for (const item of added) {
     const at = left.indexOf(item.kind);
-    if (at === -1) return item;
+    if (at === -1) continue;
     left.splice(at, 1);
-    return { ...item, settled: true };
-  });
+    marks.set(item, { ...item, settled: true });
+  }
+  if (marks.size === 0) return items;
+  const next = items.slice();
+  for (let i = next.length - 1, found = 0; i >= 0 && found < marks.size; i--) {
+    const mark = marks.get(next[i]);
+    if (!mark) continue;
+    next[i] = mark;
+    found++;
+  }
+  // 印を付けても、行の種類と位置は変わらないので、索引はそのまま引き継ぐ
+  const index = rowIndexes.get(items);
+  if (index) {
+    rowIndexes.delete(items);
+    rowIndexes.set(next, index);
+  }
+  return next;
 }
 
 // 選択していないセッションでも描き直す変化。起動待ちの発言の送り出しに関わる
