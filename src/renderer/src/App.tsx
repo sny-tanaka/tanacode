@@ -100,6 +100,8 @@ type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'br
 // エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身か、チェックリストのカード
 type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
 
+const COLUMNS: Column[] = ['sessions', 'claude', 'side'];
+
 export function App() {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -107,7 +109,7 @@ export function App() {
   const listedKey = sessions ? sessions.filter((s) => !s.archived).map((s) => s.id).join(',') : null;
   const listedIds = useMemo(() => (listedKey === null ? null : new Set(listedKey ? listedKey.split(',') : [])), [listedKey]);
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
-  const { chatOf: eventChatOf, load, reset: resetChat } = useSessionChats(selectedId, listedIds);
+  const { chatOf: eventChatOf, partials, load, reset: resetChat } = useSessionChats(selectedId, listedIds);
   // 動いているセッションのチャットの状態は、main が持つ状態（一覧の state）から決める（main が 1 つだけ持つ。設計書 7 節）
   const stateKey = (sessions ?? []).map((s) => `${s.id}:${s.state}`).join(',');
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,14 +135,13 @@ export function App() {
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
   const appUpdate = useAppUpdate();
-  const resizer = (column: Column) => (
-    <Resizer
-      width={columns.widths[column]}
-      onResize={(w) => columns.resize(column, w)}
-      onReset={() => columns.reset(column)}
-      onEnd={columns.save}
-    />
+  // つまみに渡す関数は、カラムごとに同じものを使う（つまみを、幅が変わったときだけ描き直す）
+  const { resize: resizeColumn, reset: resetColumn } = columns;
+  const resizeHandlers = useMemo(
+    () => new Map(COLUMNS.map((column) => [column, { onResize: (w: number) => resizeColumn(column, w), onReset: () => resetColumn(column) }])),
+    [resizeColumn, resetColumn],
   );
+  const resizer = (column: Column) => <Resizer width={columns.widths[column]} {...resizeHandlers.get(column)!} onEnd={columns.save} />;
   // 新規セッションの画面を出している。back: キャンセルで戻るセッション / cwd: 最初に選んでおくフォルダ
   // restore: 始められなかった指示（worktree を作れなかった）。新規セッションの画面の入力欄に戻す
   const [composing, setComposing] = useState<{ back: string | null; cwd: string | null; restore?: PendingSend } | null>(null);
@@ -180,6 +181,14 @@ export function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  // ターミナルモードとチャットを切り替える。裏のタスクが動いているかは、main が切り替えで見るものと同じ数（一覧の backgroundTasks）で決める。
+  // いつも同じ関数を渡す（チャットを、関係の無い描き直しのたびに描き直さない）
+  const toggleTerminalMode = useCallback(() => {
+    const session = selectedRef.current;
+    if (session) void switchTerminalMode(session, (session.backgroundTasks ?? 0) > 0);
+  }, []);
   const liveChat = chatOf(selectedId);
   const chat = selected?.archived && liveChat.status === 'not-started' && archivedChat?.id === selected.id ? archivedChat.chat : liveChat;
   // 右パネル・エディタで扱うもの。選んでいるセッションか、新規セッションの画面で選んでいるフォルダ
@@ -1060,6 +1069,7 @@ export function App() {
             sessions={sessions ?? NO_SESSIONS}
             onSelectSession={select}
             chat={chat}
+            partials={partials}
             question={questionOf(selected.id)}
             permission={permissionOf(selected.id)}
             elicitation={elicitationOf(selected.id)}
@@ -1079,8 +1089,7 @@ export function App() {
             onShowComment={showCommentOf}
             onShowContext={showContext}
             onShowShell={showShell}
-            // 裏のタスクが動いているかは、main が切り替えで見るものと同じ数（一覧の backgroundTasks）で決める
-            onToggleTerminal={() => void switchTerminalMode(selected, (selected.backgroundTasks ?? 0) > 0)}
+            onToggleTerminal={toggleTerminalMode}
             onOpenFile={openAbsolute}
             onResume={openSelected}
             onUnarchive={openSelected}
@@ -1352,7 +1361,7 @@ export function App() {
         exitCode={chat.exitCode}
         branch={(git.state?.isRepo ? git.state.branch : workspace?.branch) ?? null}
         worktree={selected?.worktree ?? null}
-        onOpenScm={() => setSidePanel('scm')}
+        onOpenScm={openScm}
         pr={chat.pr}
         showCursor={activeFile?.content.kind === 'text'}
         language={language}

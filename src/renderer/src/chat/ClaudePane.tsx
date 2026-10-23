@@ -24,9 +24,8 @@ import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatInput, CommentChips, listCompletionFiles, type CompletionSource } from './ChatInput';
-import { ChatRow, InfoRow, PartialRow } from './ChatRow';
-import { HookGroupRow } from './HookGroupRow';
-import { ToolGroupRow } from './ToolGroupRow';
+import { InfoRow } from './ChatRow';
+import { ChatRows, PartialRows } from './ChatRows';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
 import { TodoPanel } from './TodoPanel';
 import type { UnsentPrompt } from '@shared/chat';
@@ -34,7 +33,7 @@ import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from './insertInput';
 import { DoneNote, StartingNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
-import { acceptsInput, type ChatItem, type ChatState } from './chatState';
+import { acceptsInput, NO_PARTIAL_SOURCE, type ChatItem, type ChatState, type PartialSource } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
 import { useParentInstructions } from './parentRole';
@@ -74,6 +73,8 @@ type Props = {
   // ほかのセッションへ移る（チャットの親からの指示・子からの知らせ・@ の参照・セッションのツールのカードから）
   onSelectSession: (id: string) => void;
   chat: ChatState;
+  // Claude が書いている途中の応答の文と思考の読み口（チャットとは別に届く。無ければ出さない）
+  partials?: PartialSource;
   // Claude Code が答えを待っている AskUserQuestion（無ければ null）
   question?: PendingQuestion | null;
   // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認。無ければ null）
@@ -125,6 +126,7 @@ export const ClaudePane = memo(function ClaudePane({
   sessions,
   onSelectSession,
   chat,
+  partials = NO_PARTIAL_SOURCE,
   question = null,
   permission = null,
   elicitation = null,
@@ -359,7 +361,14 @@ export const ClaudePane = memo(function ClaudePane({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (list && stickToBottom.current) toBottom(list);
-  }, [chat.items, chat.partial, chat.status, chat.unsent, scheduled, session.id]);
+  }, [chat.items, chat.status, chat.unsent, scheduled, session.id]);
+  // 書いている途中の文が伸びたときも追いかける（途中の文の行だけが描き直すので、上の effect は動かない）
+  const followRef = useRef(() => {});
+  followRef.current = () => {
+    const list = listRef.current;
+    if (list && stickToBottom.current) toBottom(list);
+  };
+  const follow = useCallback(() => followRef.current(), []);
 
   // 行の中身や一覧の高さが、上の追いかけと関係なく変わったときも、最下部にいれば追いかける
   // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる。
@@ -877,44 +886,23 @@ export const ClaudePane = memo(function ClaudePane({
           }}
         >
           {preparingNote}
-          {rows.map((row) =>
-            row.kind === 'tool-group' ? (
-              <ToolGroupRow
-                key={row.id}
-                group={row}
-                open={openGroups.has(row.id)}
-                onToggle={toggleGroup}
-                workflows={workflows}
-                subagents={subagents}
-                bashTasks={bashTasks}
-                onOpenFile={onOpenFile}
-                onOpenTask={onOpenTask}
-                sessions={sessionLinks}
-                onSelectSession={onSelectSession}
-              />
-            ) : row.kind === 'hook-group' ? (
-              <HookGroupRow key={row.id} group={row} open={openGroups.has(row.id)} onToggle={toggleGroup} />
-            ) : (
-              <ChatRow
-                key={`${row.kind}:${row.id}`}
-                item={row}
-                onRewind={canRewind ? rewindTo : null}
-                onRunCommand={session.archived ? undefined : runCommand}
-                workflows={workflows}
-                subagents={subagents}
-                bashTasks={bashTasks}
-                onOpenFile={onOpenFile}
-                sessionId={session.id}
-                onOpenTask={onOpenTask}
-                sessions={sessionLinks}
-                onSelectSession={onSelectSession}
-                parentId={session.parentId}
-              />
-            ),
-          )}
-          {chat.partial.map((block) => (
-            <PartialRow key={`partial:${block.id}`} block={block} />
-          ))}
+          <ChatRows
+            rows={rows}
+            openGroups={openGroups}
+            onToggleGroup={toggleGroup}
+            onRewind={canRewind ? rewindTo : null}
+            onRunCommand={session.archived ? undefined : runCommand}
+            workflows={workflows}
+            subagents={subagents}
+            bashTasks={bashTasks}
+            onOpenFile={onOpenFile}
+            sessionId={session.id}
+            onOpenTask={onOpenTask}
+            sessions={sessionLinks}
+            onSelectSession={onSelectSession}
+            parentId={session.parentId}
+          />
+          <PartialRows source={partials} sessionId={session.id} onChange={follow} />
           {running && !waiting && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !waiting && <DoneNote />}
           {chat.unsent.map((prompt) => (

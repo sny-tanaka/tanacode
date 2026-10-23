@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PartialBlock, UnsentPrompt } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
@@ -9,7 +9,7 @@ import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
 import type { ReviewComment } from '../review/comments';
 import { ClaudePane } from './ClaudePane';
-import { EMPTY_CHAT, type ChatItem } from './chatState';
+import { EMPTY_CHAT, fixedPartial, NO_PARTIAL, type ChatItem } from './chatState';
 import { insertIntoChat } from './insertInput';
 
 // チャットのペイン全体。長い会話を上へスクロールすると、下端に「最新のメッセージへ」のボタンが出る
@@ -75,7 +75,7 @@ function Pane({
   unsent = [],
   starting = false,
   child = false,
-  partial = [],
+  partial = NO_PARTIAL,
   permission = null,
   question = null,
 }: {
@@ -103,6 +103,7 @@ function Pane({
   useEffect(() => {
     if (input) insertIntoChat(session.id, input);
   }, [input]);
+  const partials = useMemo(() => fixedPartial(partial), [partial]);
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
@@ -116,8 +117,8 @@ function Pane({
           exitReason,
           items,
           unsent,
-          partial,
         }}
+        partials={partials}
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}

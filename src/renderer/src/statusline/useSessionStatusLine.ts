@@ -8,7 +8,10 @@ export function useSessionStatusLine(selectedId: string | null, listed: Readonly
   load: (sessionId: string) => void;
 } {
   const { valueOf, update } = useSessionValues<StatusLineInfo, null>(selectedId, listed, null);
-  useEffect(() => window.tanacode.statusLine.onChanged(({ sessionId, info }) => update(sessionId, () => info)), [update]);
+  useEffect(
+    () => window.tanacode.statusLine.onChanged(({ sessionId, info }) => update(sessionId, (prev) => (prev && sameShown(prev, info) ? prev : info))),
+    [update],
+  );
   const load = useCallback(
     (sessionId: string) => {
       void window.tanacode.statusLine.get(sessionId).then((info) => info && update(sessionId, (prev) => prev ?? info));
@@ -16,4 +19,10 @@ export function useSessionStatusLine(selectedId: string | null, listed: Readonly
     [update],
   );
   return { statusLineOf: valueOf, load };
+}
+
+// 画面が使うもの（モデル・エフォート・コンテキスト）が同じか。応答のたびに時刻と料金だけが変わって届くので、同じなら前のものを使い回す
+// （App を描き直さない）。画面でほかの値を使うときは、ここに足す
+function sameShown(a: StatusLineInfo, b: StatusLineInfo): boolean {
+  return a.model?.id === b.model?.id && a.model?.name === b.model?.name && a.effort === b.effort && JSON.stringify(a.context) === JSON.stringify(b.context);
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { ChatEvent, HookRun, PartialBlock, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem, UnsentPrompt } from '@shared/chat';
 import type { CardRef } from '@shared/checklist-tools';
 import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
@@ -88,9 +88,12 @@ export type ChatState = {
   inTurn: boolean;
   // 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追う）
   unsent: UnsentPrompt[];
-  // Claude が書いている途中の応答の文と思考（main が配信に載せる今の全部。会話ログに出たら、その応答と同じ配信で外れる）
-  partial: PartialBlock[];
 };
+
+// Claude が書いている途中の応答の文と思考（main が配信に載せる今の全部。会話ログに出たら、その応答と同じ配信で外れる）。
+// 応答中は最大 20Hz で届くので、ChatState には入れずに別に持つ（PartialSource）。途中の文しか変わらない配信では、チャット（ChatState）を
+// 入れ替えず、App を描き直さない。途中の文の行（ClaudePane の PartialRows）だけが描き直す
+export const NO_PARTIAL: PartialBlock[] = [];
 
 export const EMPTY_CHAT: ChatState = {
   items: [],
@@ -103,7 +106,6 @@ export const EMPTY_CHAT: ChatState = {
   pendingTasks: {},
   inTurn: false,
   unsent: [],
-  partial: [],
 };
 
 // TaskUpdate を一覧に当てる（deleted は消す）
@@ -225,7 +227,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       // 引き継いだ claude がターンの途中なら、入力を受け付けられても作業中のまま
       return { ...state, status: state.status === 'starting' ? (state.inTurn ? 'running' : 'idle') : state.status };
     case 'process-exit':
-      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null, partial: [] };
+      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null };
     case 'user':
       return {
         ...state,
@@ -304,8 +306,6 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'idle'),
         inTurn: false,
-        // 書きかけのまま会話ログに出なかった文は残さない（main も同じ配信で消す）
-        partial: [],
         // 中断されたツールは結果が来ないまま終わるので、実行中表示を残さない
         items: withoutRetrying(state.items).map((item) =>
           item.kind === 'tool' && item.status === 'running' ? { ...item, status: 'error' } : item,
@@ -314,10 +314,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'reset':
       // 最適化圧縮の切り替え（アプリが打った /clear）では、チャットを消さない。人が読んでいる途中の答えが、画面から消えないように
       // （前の会話はそのまま残り、再開の知らせの行が区切りになる。ふつうの圧縮と同じ見え方）。人が打った /clear は消す
-      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {}, partial: [] };
+      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {} };
     case 'replace':
-      // 巻き戻しで組み立て直しても、書いている途中の文は main が持つものなので残す
-      return { ...event.events.reduce(apply, EMPTY_CHAT), partial: state.partial };
+      return event.events.reduce(apply, EMPTY_CHAT);
     case 'hook':
       return { ...state, items: withHook(state.items, event.id, event.run) };
     case 'remote-control':
@@ -332,26 +331,33 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
   }
 }
 
-type Entry = { chat: ChatState; nextSeq: number };
+type Entry = { chat: ChatState; partial: PartialBlock[]; nextSeq: number };
+
+// 書いている途中の文を消すイベント。ターンの終わり（書きかけのまま会話ログに出なかった文は残さない。main も同じ配信で消す）・終了・/clear・起動。
+// 巻き戻しの組み立て直し（replace）では、書いている途中の文は main が持つものなので残す
+const CLEARS_PARTIAL = new Set<ChatEvent['type']>(['turn-end', 'process-exit', 'reset', 'process-start']);
 
 function withSnapshot(current: Entry | undefined, { fromSeq, events, partial }: SessionSnapshot): Entry | undefined {
   // スナップショット取得中に届いたライブ配信の方が新しければそちらを残す
   if (current && current.nextSeq >= fromSeq + events.length) return current;
-  return { chat: { ...events.reduce(apply, EMPTY_CHAT), partial: partial ?? [] }, nextSeq: fromSeq + events.length };
+  return { chat: events.reduce(apply, EMPTY_CHAT), partial: partial ?? NO_PARTIAL, nextSeq: fromSeq + events.length };
 }
 
 // 書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信（途中の文だけ）は、通し番号を進めない。
 // 持っているものより古い配信（スナップショットに入っていたもの）の途中の文は使わない
 function withBatch(current: Entry | undefined, { fromSeq, events, partial }: ChatBatch): Entry | undefined {
-  const base = current ?? { chat: EMPTY_CHAT, nextSeq: 0 };
+  const base = current ?? { chat: EMPTY_CHAT, partial: NO_PARTIAL, nextSeq: 0 };
   const skip = base.nextSeq - fromSeq;
   const fresh = skip < events.length ? events.slice(Math.max(0, skip)) : null;
   const latest = partial && fromSeq + events.length >= base.nextSeq ? partial : null;
   if (!fresh && !latest) return current;
   const chat = fresh ? fresh.reduce(apply, base.chat) : base.chat;
-  if (!latest) return { chat, nextSeq: fresh ? fromSeq + events.length : base.nextSeq };
-  const removed = base.chat.partial.filter((p) => !latest.some((q) => q.id === p.id));
-  return { chat: { ...chat, items: settled(chat.items, base.chat.items, removed), partial: latest }, nextSeq: fresh ? fromSeq + events.length : base.nextSeq };
+  const nextSeq = fresh ? fromSeq + events.length : base.nextSeq;
+  if (!latest) return { chat, partial: fresh?.some((e) => CLEARS_PARTIAL.has(e.type)) ? NO_PARTIAL : base.partial, nextSeq };
+  const removed = base.partial.filter((p) => !latest.some((q) => q.id === p.id));
+  const items = settled(chat.items, base.chat.items, removed);
+  // 途中の文しか変わらない配信では、チャットは前のまま（App を描き直さない）
+  return { chat: items === chat.items ? chat : { ...chat, items }, partial: latest, nextSeq };
 }
 
 // 外れた途中の文の代わりに、同じ配信で出た本文・思考に印を付ける（main は、会話ログに出たブロックを、その行のイベントと同じ配信で外す。
@@ -414,20 +420,71 @@ export function withStatus(chat: ChatState, state: SessionState | null | undefin
   return next;
 }
 
-// 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ
+// 書いている途中の文の読み口。get: 今の途中の文 / subscribe: 変わったら知らせる（外す関数を返す）
+export type PartialSource = {
+  get: (sessionId: string) => PartialBlock[];
+  subscribe: (sessionId: string, listener: () => void) => () => void;
+};
+
+// いつも同じ途中の文を返す読み口（Storybook・テスト用）
+export function fixedPartial(blocks: PartialBlock[]): PartialSource {
+  return { get: () => blocks, subscribe: () => () => {} };
+}
+
+export const NO_PARTIAL_SOURCE = fixedPartial(NO_PARTIAL);
+
+// 書いている途中の文を読む。読み口から知らせが来たら、この部品だけを描き直す
+export function usePartial(source: PartialSource, sessionId: string): PartialBlock[] {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(sessionId, listener), [source, sessionId]);
+  return useSyncExternalStore(subscribe, () => source.get(sessionId));
+}
+
+// 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ。
+// 書いている途中の文は partials から読む（途中の文だけが変わっても、チャットは変わらず、App も描き直さない）
 export function useSessionChats(selectedId: string | null, listed: ReadonlySet<string> | null): {
   chatOf: (sessionId: string | null) => ChatState;
+  partials: PartialSource;
   load: (sessionId: string) => void;
   // 動いていたときのチャットを捨てて、起動前に戻す
   reset: (sessionId: string) => void;
 } {
-  const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(selectedId, listed, undefined, (prev, next) => !!next && notableChange(prev, next));
+  const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(
+    selectedId,
+    listed,
+    undefined,
+    (prev, next) => !!next && notableChange(prev, next),
+    (prev, next) => prev?.chat !== next?.chat,
+  );
+
+  // 途中の文の聞き手（セッションごと）
+  const listeners = useRef(new Map<string, Set<() => void>>());
+  const partials = useRef<PartialSource>({
+    get: (sessionId) => peek(sessionId)?.partial ?? NO_PARTIAL,
+    subscribe: (sessionId, listener) => {
+      const set = listeners.current.get(sessionId) ?? new Set();
+      set.add(listener);
+      listeners.current.set(sessionId, set);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) listeners.current.delete(sessionId);
+      };
+    },
+  }).current;
+  // 入れ替えて、途中の文が変わったら聞き手に知らせる
+  const change = useCallback(
+    (sessionId: string, next: (prev: Entry | undefined) => Entry | undefined) => {
+      const before = peek(sessionId)?.partial ?? NO_PARTIAL;
+      update(sessionId, next);
+      if ((peek(sessionId)?.partial ?? NO_PARTIAL) !== before) for (const listener of listeners.current.get(sessionId) ?? []) listener();
+    },
+    [peek, update],
+  );
 
   const load = useCallback(
     (sessionId: string) => {
-      void window.tanacode.sessions.snapshot(sessionId).then((snapshot) => update(sessionId, (prev) => withSnapshot(prev, snapshot)));
+      void window.tanacode.sessions.snapshot(sessionId).then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)));
     },
-    [update],
+    [change],
   );
 
   useEffect(
@@ -435,13 +492,13 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
       window.tanacode.sessions.onChat((batch) => {
         // 途中から受け取ったセッションは取りこぼしがあるので、スナップショットで埋める
         if (!peek(batch.sessionId) && batch.fromSeq > 0) load(batch.sessionId);
-        else update(batch.sessionId, (prev) => withBatch(prev, batch));
+        else change(batch.sessionId, (prev) => withBatch(prev, batch));
       }),
-    [load, peek, update],
+    [load, peek, change],
   );
 
-  const reset = useCallback((sessionId: string) => update(sessionId, () => undefined), [update]);
+  const reset = useCallback((sessionId: string) => change(sessionId, () => undefined), [change]);
 
   const chatOf = useCallback((sessionId: string | null) => valueOf(sessionId)?.chat ?? EMPTY_CHAT, [valueOf]);
-  return { chatOf, load, reset };
+  return { chatOf, partials, load, reset };
 }

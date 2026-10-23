@@ -16,6 +16,8 @@ export function useSessionKnowledge(selectedId: string | null, listed: ReadonlyS
         update(sessionId, (old) => {
           // 応答のたびにトークン数だけが変わる。ファイルの一覧が同じなら前のものを使い回す（エクスプローラーを描き直さない）
           const files = old && JSON.stringify(old.files) === JSON.stringify(knowledge.files) ? old.files : knowledge.files;
+          // トークン数も同じなら、前のものをそのまま使う（App を描き直さない）
+          if (old && files === old.files && old.contextTokens === knowledge.contextTokens) return old;
           return { ...knowledge, files };
         }),
       ),
