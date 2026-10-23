@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useRef, useState, type RefObject } from 'react';
 import { t } from '@shared/i18n';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 
@@ -71,8 +71,8 @@ export function useColumnWidths(): {
   return { widths, mainRef, resize, reset, save };
 }
 
-// カラムの右端のつまみ。ドラッグで幅を変え、ダブルクリックで元の幅に戻す
-export function Resizer({
+// カラムの右端のつまみ。ドラッグで幅を変え、ダブルクリックで元の幅に戻す。App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const Resizer = memo(function Resizer({
   width,
   onResize,
   onReset,
@@ -109,4 +109,4 @@ export function Resizer({
       onDoubleClick={onReset}
     />
   );
-}
+});

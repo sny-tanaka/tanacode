@@ -2,11 +2,14 @@ import { useCallback, useRef, useState } from 'react';
 
 // セッションごとの値（チャット・画面・タスクなど）。全セッションの分を持つが、描き直すのは
 // 選択中のセッションの値が変わったときと、notable が真を返したとき（一覧の状態の表示に関わる変化など）だけにする。
-// 裏で動いている別のセッションの出力が届くたびに、画面全体を描き直さないため
+// 裏で動いている別のセッションの出力が届くたびに、画面全体を描き直さないため。
+// shown: 選択中のセッションの値の変化のうち、描き直すものか（無ければすべて描き直す）。画面に出すものを別の道（PartialSource など）で
+// 届けている値の変化で、App を描き直さないため
 export function useSessionValues<T, E = T>(
   selectedId: string | null,
   empty: E,
   notable?: (prev: T | undefined, next: T) => boolean,
+  shown?: (prev: T | undefined, next: T) => boolean,
 ): {
   valueOf: (sessionId: string | null) => T | E;
   // 今の値を読む（描き直しを待たない。IPC の受け取りなどで使う）
@@ -19,6 +22,8 @@ export function useSessionValues<T, E = T>(
   selected.current = selectedId;
   const notableRef = useRef(notable);
   notableRef.current = notable;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
   const [version, setVersion] = useState(0);
 
   const update = useCallback((sessionId: string, change: (prev: T | undefined) => T) => {
@@ -26,7 +31,8 @@ export function useSessionValues<T, E = T>(
     const next = change(prev);
     if (next === prev) return;
     values.current = { ...values.current, [sessionId]: next };
-    if (sessionId === selected.current || notableRef.current?.(prev, next)) setVersion((v) => v + 1);
+    const redraw = sessionId === selected.current ? (shownRef.current?.(prev, next) ?? true) : notableRef.current?.(prev, next);
+    if (redraw) setVersion((v) => v + 1);
   }, []);
   const peek = useCallback((sessionId: string) => values.current[sessionId], []);
   // version が変わったら（描き直すべき変化があったら）作り直す。依存に使っている部品や effect が動くように
