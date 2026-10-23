@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -52,7 +52,8 @@ type Props = {
 
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
-export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, onOpen, onClose }: Props) {
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, onOpen, onClose }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -449,4 +450,4 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
       </div>
     </div>
   );
-}
+});

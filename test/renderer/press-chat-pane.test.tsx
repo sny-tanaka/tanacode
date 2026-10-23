@@ -6,7 +6,7 @@ import type { SessionSummary } from '@shared/ipc';
 import type { PendingQuestion } from '@shared/questions';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
-import { EMPTY_CHAT, type ChatItem, type ChatState } from '../../src/renderer/src/chat/chatState';
+import { EMPTY_CHAT, fixedPartial, type ChatItem, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { closeSettingsFilesDialog } from '../../src/renderer/src/chat/settingsFiles';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
 import './dom';
@@ -558,7 +558,7 @@ describe('ヘッダー', () => {
   });
 
   it('書いている途中の文は、会話の最後（作業中の表示の上）に素の文で出し、伸びたら最下部を追いかける。会話ログに出たら、同じ場所で本文に入れ替わる', () => {
-    const writing = (text: string) => props({ chat: chatOf({ status: 'running', partial: [{ id: 'm:1', kind: 'thinking', text: '考え' }, { id: 'm:2', kind: 'text', text }] }) });
+    const writing = (text: string) => props({ chat: chatOf({ status: 'running' }), partials: fixedPartial([{ id: 'm:1', kind: 'thinking', text: '考え' }, { id: 'm:2', kind: 'text', text }]) });
     const view = render(<ClaudePane {...writing('**パン**は')} />);
     const list = document.querySelector('.chat-list') as HTMLDivElement;
     let height = 1000;
@@ -586,8 +586,8 @@ describe('ヘッダー', () => {
           chat: chatOf({
             status: 'running',
             items: [USER, { kind: 'thinking', id: 'a:0', text: '考え', settled: true }, { kind: 'text', id: 'b:0', text: '**パン**は小麦から', settled: true }],
-            partial: [],
           }),
+          partials: fixedPartial([]),
         })}
       />,
     );

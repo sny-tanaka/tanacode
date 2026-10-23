@@ -248,6 +248,8 @@ PR で、次のものを流します。develop への push では流しません
   - App が `key` で作り直す部品は、テストでも App と同じ組み合わせ（`key` と、一緒に使うフック）で描きます。モーダルのダイアログのように、開いたまま対象が変わらない部品は、閉じて開き直す流れで確かめます。アプリ内ブラウザ（`PreviewPane`）は、`<webview>` を作り物（`getURL`・`executeJavaScript` など）に差し替えて描きます。
   - jest-dom の matcher は使いません。`(el as HTMLButtonElement).disabled` などで確かめます。
 - 部品のテストを足したら、`npm run mutation:ui -- <部品のファイル>` で、その部品のボタン・入力が効かなくなったときに、テストが落ちるかを確かめます（下の「ミューテーションテスト」）。
+- 描き直しの回数のテスト（`render-counts.test.tsx`）。App 全体を描き、Claude の応答中の配信・チャット欄の打鍵・statusLine などの知らせで、関係の無い部品まで描き直していないかを数えます。部品は `render-count.ts` の `countRenders` で数えるものに包みます（`vi.mock` でモジュールの書き出しを差し替える。中身と `memo` のしかたは元のまま）。
+  - jsdom の `act` の中では、優先度の違う描き直しもまとめて流れるので、画面のちらつきそのものは確かめられません。数と書き出しの回数（React の `Profiler`）だけを見ます。
 
 ### カバレッジ
 
@@ -558,6 +560,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
       - 取り消された応答の行が、会話ログに書かれたあと、読む前に消された（その行を親にする取り直しの行が届いた。下の「取り消された応答の行」）。取り直した応答が会話ログから届くのを待たずに外します。
       - あとから始まった応答の行が、会話ログに出た。会話ログは応答の順に書かれるので、それより前の応答の残りは、もう出ません。`abandoned_blocks` の付かない取り消し（ツールの呼び出しの形が壊れた応答の取り直しなど。Claude Code の内部では tombstone）への備えです。Claude Code は、取り消す応答の書きかけのブロックを閉じますが、`abandoned_blocks` は付けません（本体のコードを読んで確かめたもの）。
     - それでも会話ログに出ないまま残ったものは、ターンの終わり・claude の終了・`/clear` で捨てます。
+    - 画面は、途中の文をチャット（`ChatState`）に入れずに別に持ちます（`chat/chatState.ts` の `PartialSource`）。途中の文しか変わらない配信では、チャットを入れ替えず、App も描き直さず、途中の文の行（`chat/ChatRows.tsx` の `PartialRows`）だけが描き直します（0.05 秒に 1 回届くので、エディタで打っているときに取り合わないため）。途中の文が外れて本文になるときに、途中の文も本文も無い画面を挟まない（ちらつかない）ことは、`test/e2e/chat-partial.test.ts` で確かめます。
     - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts`（モックの API は、途中の文が配信されるまで文を書き終えない。`holdText`）、取り消された書きかけが取り直した返事より先に外れることは `test/cli/errors.test.ts` で確かめます。
   - `/clear` のあとの会話は、チャットでは `conversation_reset` のあとの `system/init` の `session_id` で分かります（`new_conversation_id` とは別の値。実測）。ターミナルモードでは、statusLine の `transcript_path` で分かります。Remote Control を使っていれば、新しい会話ログにも同じ `bridge-session` の ID が書かれるので、それでも追います。ただし、一度離れた会話ログへは、この ID では乗り換え直しません（`/clear` のときに Claude Code が前の会話ログにも行を書き足し、その頭にも同じ ID があるため。乗り換え直すと、チャットに前の会話が戻る。実測）。
   - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行と、チャットでは `system/bridge_state` で分かります。Claude Code は `bridge-session` と `pr-link` の行を、1 本の会話ログに何百回も書き足します（`bridge-session` は `lastSequenceNum` だけが違う）。チャットのイベントにするのは、前の同じ種類のものから変わったときだけです（`withoutRepeatedState`。画面は最後のものを使うので、同じものを積んでも変わらず、メモリと配信だけが増える）。

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { PullRequestLink } from '@shared/chat';
 import { t, type MessageKey } from '@shared/i18n';
 import type { SessionWorktree } from '@shared/ipc';
@@ -42,7 +43,8 @@ function CursorPosition() {
   return cursor && <span>Ln {cursor.line}, Col {cursor.column}</span>;
 }
 
-export function StatusBar({
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const StatusBar = memo(function StatusBar({
   status,
   exitCode,
   branch,
@@ -87,4 +89,4 @@ export function StatusBar({
       {language && <span>UTF-8</span>}
     </footer>
   );
-}
+});

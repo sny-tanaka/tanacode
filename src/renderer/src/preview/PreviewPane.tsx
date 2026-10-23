@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserRect } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
@@ -79,7 +79,8 @@ let tabSeq = 0;
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開く（main が知らせてくる）。
 // Claude が操作したセッションの今のタブは、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
 // 透明にして画面の後ろに置き、ブラウザを開いたときと同じ大きさで描かせる
-export function PreviewPane({ sessionId, visible, liveSessionIds, onShow, onClose }: Props) {
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveSessionIds, onShow, onClose }: Props) {
   const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   // タブの ID → webview
@@ -467,7 +468,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onShow, onClos
       </div>
     </div>
   );
-}
+});
 
 type TabInfo = { id: string; title: string; url: string; loading: boolean };
 
