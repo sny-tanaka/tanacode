@@ -4,11 +4,11 @@ import { useSessionValues } from '../sessionValues';
 
 // セッションごとの、Claude Code が答えを待っている AskUserQuestion（質問のカードに出す）。
 // 描き直すのは選択中のセッションが変わったときだけ
-export function useSessionQuestions(selectedId: string | null): {
+export function useSessionQuestions(selectedId: string | null, listed: ReadonlySet<string> | null): {
   questionOf: (sessionId: string | null) => PendingQuestion | null;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<PendingQuestion | null, null>(selectedId, null);
+  const { valueOf, update } = useSessionValues<PendingQuestion | null, null>(selectedId, listed, null);
 
   useEffect(() => window.tanacode.question.onChanged(({ sessionId, question }) => update(sessionId, () => question)), [update]);
 

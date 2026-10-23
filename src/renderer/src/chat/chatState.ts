@@ -415,13 +415,13 @@ export function withStatus(chat: ChatState, state: SessionState | null | undefin
 }
 
 // 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ
-export function useSessionChats(selectedId: string | null): {
+export function useSessionChats(selectedId: string | null, listed: ReadonlySet<string> | null): {
   chatOf: (sessionId: string | null) => ChatState;
   load: (sessionId: string) => void;
   // 動いていたときのチャットを捨てて、起動前に戻す
   reset: (sessionId: string) => void;
 } {
-  const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(selectedId, undefined, (prev, next) => !!next && notableChange(prev, next));
+  const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(selectedId, listed, undefined, (prev, next) => !!next && notableChange(prev, next));
 
   const load = useCallback(
     (sessionId: string) => {

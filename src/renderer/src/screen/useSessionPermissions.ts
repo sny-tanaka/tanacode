@@ -4,11 +4,11 @@ import { useSessionValues } from '../sessionValues';
 
 // セッションごとの、Claude Code が答えを待っている質問でない要求（許可の確認・プランの承認のカード）。
 // 描き直すのは選択中のセッションが変わったときだけ
-export function useSessionPermissions(selectedId: string | null): {
+export function useSessionPermissions(selectedId: string | null, listed: ReadonlySet<string> | null): {
   permissionOf: (sessionId: string | null) => PendingPermission | null;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<PendingPermission | null, null>(selectedId, null);
+  const { valueOf, update } = useSessionValues<PendingPermission | null, null>(selectedId, listed, null);
 
   useEffect(() => window.tanacode.permission.onChanged(({ sessionId, permission }) => update(sessionId, () => permission)), [update]);
 

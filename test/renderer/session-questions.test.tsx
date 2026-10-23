@@ -21,7 +21,7 @@ beforeEach(() => {
 
 describe('useSessionQuestions', () => {
   it('開いたセッションの待っている質問を読み込み、知らせが来たら入れ替える。答え終わったら null', async () => {
-    const { result } = renderHook(() => useSessionQuestions('s1'));
+    const { result } = renderHook(() => useSessionQuestions('s1', null));
     expect(result.current.questionOf('s1')).toBeNull();
     act(() => result.current.load('s1'));
     await act(async () => answerLoad());
@@ -34,7 +34,7 @@ describe('useSessionQuestions', () => {
   });
 
   it('読み込みの返事より先に知らせが来ていたら、古い返事で上書きしない', async () => {
-    const { result } = renderHook(() => useSessionQuestions('s1'));
+    const { result } = renderHook(() => useSessionQuestions('s1', null));
     act(() => result.current.load('s1'));
     act(() => api.emit('question.onChanged', { sessionId: 's1', question: null }));
     await act(async () => answerLoad());
