@@ -23,13 +23,15 @@ export function outsideRules(claudeDir: string | null = null): OutsideRules {
   return { excluded: [...excluded], home: real(homedir()) };
 }
 
-// ファイル file（絶対パス）を出す単位。出さないものは null
-export function outsideReadOf(file: string, rules: OutsideRules): OutsideRead | null {
+// ファイル file（絶対パス）を出す単位。出さないものは null。
+// cwd: セッションのフォルダ。それを含むリポジトリ（worktree のときの元のリポジトリなど）は、ホームと同じく、フォルダとしては出さない
+// （元のリポジトリのファイルを 1 つ読んだだけで、作業フォルダごと元のリポジトリ全体をツリーに出して見張ることになるため）
+export function outsideReadOf(file: string, rules: OutsideRules, cwd: string | null = null): OutsideRead | null {
   if (!isAbsolute(file)) return null;
   const path = normalize(file);
   if (rules.excluded.some((dir) => within(dir, path))) return null;
   const repo = repoRoot(dirname(path));
-  if (repo && !within(repo, rules.home)) return { kind: 'folder', path: repo };
+  if (repo && !within(repo, rules.home) && !(cwd && within(repo, cwd))) return { kind: 'folder', path: repo };
   return { kind: 'file', path };
 }
 

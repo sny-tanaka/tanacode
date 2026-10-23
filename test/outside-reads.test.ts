@@ -37,6 +37,20 @@ describe('outsideReadOf', () => {
     expect(outsideReadOf(join(root, 'home/Downloads/memo.txt'), rules)).toEqual({ kind: 'file', path: join(root, 'home/Downloads/memo.txt') });
   });
 
+  it('セッションのフォルダを含むリポジトリ（worktree のときの元のリポジトリ）は、フォルダにせずファイルとして出す', () => {
+    const main = join(root, 'home/shop');
+    const wt = join(main, '.claude/worktrees/x');
+    mkdirSync(join(main, '.git'), { recursive: true });
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(join(wt, '.git'), 'gitdir: ../../../.git/worktrees/x\n');
+    expect(outsideReadOf(join(main, 'src/a.ts'), rules, wt)).toEqual({ kind: 'file', path: join(main, 'src/a.ts') });
+    // セッションのフォルダを含まないリポジトリは、これまでどおりフォルダ
+    mkdirSync(join(root, 'home/other/.git'), { recursive: true });
+    expect(outsideReadOf(join(root, 'home/other/b.ts'), rules, wt)).toEqual({ kind: 'folder', path: join(root, 'home/other') });
+    // cwd を渡さなければ、元のリポジトリもフォルダ
+    expect(outsideReadOf(join(main, 'src/a.ts'), rules)).toEqual({ kind: 'folder', path: main });
+  });
+
   it('Claude Code の設定のフォルダ・一時フォルダの中と、相対パスは出さない', () => {
     expect(outsideReadOf(join(root, 'home/.claude/settings.json'), rules)).toBeNull();
     expect(outsideReadOf(join(root, 'home/.claude/projects/x/log.jsonl'), rules)).toBeNull();

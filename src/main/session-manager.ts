@@ -1666,7 +1666,7 @@ export class SessionManager {
     if (record.readFolders?.some((folder) => within(folder, path)) || record.readFiles?.includes(path)) return true;
     if (!discover) return false;
     this.outsideRulesCache ??= outsideRules(this.claudeDir);
-    const found = outsideReadOf(path, this.outsideRulesCache);
+    const found = outsideReadOf(path, this.outsideRulesCache, record.cwd);
     if (!found) return false;
     const dismissed = record.dismissedReads?.[found.path];
     if (dismissed !== undefined && at <= dismissed) return false;
