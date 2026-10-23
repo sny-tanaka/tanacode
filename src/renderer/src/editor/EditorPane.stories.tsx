@@ -173,3 +173,23 @@ export const 見出しと図のid: Story = {
 export const HTMLの混ざったMarkdown: Story = {
   render: () => <Pane files={[{ path: 'README.md', content: { kind: 'text', text: readme } }]} />,
 };
+
+// 同じ図が 2 回ある Markdown（描いた図は覚えておいて使い回すが、同じ文書の中の 2 つめは別の id で描く。重なると色や矢印が崩れる）
+const sameDiagramTwice = `# 同じ図を 2 回
+
+\`\`\`mermaid
+flowchart LR
+  A[保存] --> B[読み直し]
+\`\`\`
+
+あいだの段落。
+
+\`\`\`mermaid
+flowchart LR
+  A[保存] --> B[読み直し]
+\`\`\`
+`;
+
+export const 同じ図を2回: Story = {
+  render: () => <Pane files={[{ path: 'docs/同じ図.md', content: { kind: 'text', text: sameDiagramTwice } }]} />,
+};

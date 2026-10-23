@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { REPO_URL, type AppUpdate } from '@shared/app-update';
 import { t } from '@shared/i18n';
 import logo from '../assets/logo.png';
@@ -10,7 +11,8 @@ import { Toggle } from './Toggle';
 // フォルダはセッション一覧とエクスプローラー、ブランチは下のバーで分かるので、ここには出さない。
 // notifications: macOS の通知を出すか（null は、設定を読み込むまで。そのあいだはベルを出さない）
 // update: 新しいバージョンを確かめた結果（null は、まだ分からない・確かめる設定がオフ。そのあいだは印を出さない）
-export function TitleBar({
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const TitleBar = memo(function TitleBar({
   notifications,
   onNotificationsChange,
   update,
@@ -44,4 +46,4 @@ export function TitleBar({
       )}
     </header>
   );
-}
+});

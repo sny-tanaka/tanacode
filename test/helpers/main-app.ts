@@ -229,7 +229,7 @@ function freshState() {
       showMessageBox: vi.fn(async (..._args: unknown[]) => ({ response: 2 })),
       showErrorBox: vi.fn((..._args: unknown[]) => undefined),
     },
-    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined), openPath: vi.fn(async (_path: string) => '') },
+    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined), trashItem: vi.fn(async (_path: string) => undefined), openPath: vi.fn(async (_path: string) => '') },
     netFetch: vi.fn((..._args: unknown[]): unknown => undefined),
     execFileSync: vi.fn((..._args: unknown[]): string => {
       throw new Error('ログインシェルは使えません');
@@ -367,6 +367,7 @@ export const electronModule = {
   shell: {
     openExternal: (url: string) => state.shell.openExternal(url),
     showItemInFolder: (path: string) => state.shell.showItemInFolder(path),
+    trashItem: (path: string) => state.shell.trashItem(path),
     openPath: (path: string) => state.shell.openPath(path),
   },
 };
@@ -386,6 +387,8 @@ const SessionManager = fakeClass('SessionManager', {
   cwdOf: (_self, id: string) => `/sessions/${id}`,
   addedFoldersOf: () => [],
   setAddedFolders: echo('manager.setAddedFolders'),
+  readFoldersOf: () => [],
+  removeOutsideRead: echo('manager.removeOutsideRead'),
   open: echo('manager.open'),
   childrenOf: () => [],
   archive: echo('manager.archive'),
@@ -556,6 +559,7 @@ const modules: Record<string, Record<string, unknown>> = {
     }),
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },
+  'claude-compat': { ClaudeCompatMonitor: fakeClass('ClaudeCompatMonitor', { get: echo('claudeCompat.get'), start: () => undefined, stop: () => undefined }) },
   'claude-version': { ClaudeVersionMonitor: fakeClass('ClaudeVersionMonitor', { get: echo('claudeVersions.get'), start: () => undefined, stop: () => undefined, refresh: async () => undefined }) },
   // 利用枠で止まったセッションの再開の予約。止まったか・通知の中身は、テストが noticeOf を差し替えて決める
   'usage-limit-resume': {
@@ -575,6 +579,12 @@ const modules: Record<string, Record<string, unknown>> = {
       // 実物は、相対パスを作業フォルダで解く（ディスクには触れない）。ここでは、つないだ文字列を返して、Finder に渡す先を読めるようにする
       absolutePath: (self: Created, ...args: unknown[]) => `${String(self.args[0])}/${String(args[0])}`,
       writeFile: echoIn('workspace.writeFile'),
+      createEntry: echoIn('workspace.createEntry'),
+      renameEntry: echoIn('workspace.renameEntry'),
+      // 実物は、確かめた絶対パスを trash に渡す。ここでは、つないだ文字列を渡して、ゴミ箱に入れる先を読めるようにする
+      trashEntry: async (self: Created, ...args: unknown[]) => {
+        await (args[2] as (abs: string) => Promise<void>)(`${String(self.args[0])}/${String(args[0])}`);
+      },
       search: echoIn('workspace.search'),
     }),
   },
@@ -628,6 +638,7 @@ vi.mock('../../src/main/statusline', () => modules.statusline);
 vi.mock('../../src/main/shell-terminals', () => modules['shell-terminals']);
 vi.mock('../../src/main/system-monitor', () => modules['system-monitor']);
 vi.mock('../../src/main/claude-version', () => modules['claude-version']);
+vi.mock('../../src/main/claude-compat', () => modules['claude-compat']);
 vi.mock('../../src/main/translate', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/translate')>()),
   Translator: fakeClass('Translator', { translate: echo('translator.translate') }),

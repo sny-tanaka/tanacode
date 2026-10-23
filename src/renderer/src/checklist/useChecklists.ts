@@ -8,12 +8,12 @@ const NO_LISTS: Checklist[] = [];
 
 // セッションごとのチェックリストと、セッションごとの Claude からの未読の返信の数（セッション一覧とアクティビティバーの印）。
 // リストを描き直すのは選択中のセッションが変わったときだけ
-export function useChecklists(selectedId: string | null): {
+export function useChecklists(selectedId: string | null, listed: ReadonlySet<string> | null): {
   listsOf: (sessionId: string | null) => Checklist[];
   load: (sessionId: string) => void;
   unread: ChecklistUnread;
 } {
-  const { valueOf, update } = useSessionValues<Checklist[], Checklist[]>(selectedId, NO_LISTS);
+  const { valueOf, update } = useSessionValues<Checklist[], Checklist[]>(selectedId, listed, NO_LISTS);
   const [unread, setUnread] = useState<ChecklistUnread>({});
   const set = useCallback(
     (sessionId: string, lists: Checklist[]) => {

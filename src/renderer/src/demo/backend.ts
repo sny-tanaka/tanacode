@@ -500,7 +500,13 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
-      claudeVersion: { get: () => ok(this.claudeVersion), onChanged: (l) => this.ch.claudeVersion.on(l) },
+      // 動作確認済のバージョンは、組み込んだもののまま（デモは対応表を読まない）
+      claudeVersion: {
+        get: () => ok(this.claudeVersion),
+        onChanged: (l) => this.ch.claudeVersion.on(l),
+        getVerified: () => ok(VERIFIED_CLAUDE_CODE_VERSION),
+        onVerifiedChanged: () => () => {},
+      },
       appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l), install: () => ok(undefined), check: () => ok(this.appUpdate !== null), onChecked: () => () => {} },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
       // 設定ファイルは登録しない（選択欄は「標準」のまま）
@@ -578,6 +584,10 @@ export class DemoBackend {
         resolveFiles: (_id, paths) => ok(paths.map(() => null)),
         // デモには Finder が無い
         revealFile: () => ok(undefined),
+        // デモでは、ツリーのファイルを作る・変える・消すことはしない
+        createEntry: () => Promise.reject(new Error('デモでは使えません')),
+        renameEntry: () => Promise.reject(new Error('デモでは使えません')),
+        trashEntry: () => Promise.reject(new Error('デモでは使えません')),
         // 本物の main と同じく、エディタが読んだあとに Claude が書き換えていたら書かずに今の中身を返す
         writeFile: (_id, rel, text, expected) => {
           if (expected !== null && rel in p.files && p.files[rel] !== expected) return ok({ ok: false as const, disk: { kind: 'text' as const, text: p.files[rel] } });
@@ -591,6 +601,8 @@ export class DemoBackend {
         // デモにはフォルダ選択のダイアログが無いので、追加は取りやめと同じ
         addFolder: () => ok(null),
         removeFolder: () => ok([]),
+        keepReadFolder: () => ok([]),
+        dismissRead: () => ok(undefined),
       },
       git: {
         state: () => ok(this.gitState()),

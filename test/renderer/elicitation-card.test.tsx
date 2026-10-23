@@ -208,7 +208,7 @@ describe('useSessionElicitations', () => {
     let answerLoad: () => void = () => {};
     api = mockApi({ 'elicitation.get': () => new Promise((resolve) => (answerLoad = () => resolve(form()))) });
     api.install();
-    const { result } = renderHook(() => useSessionElicitations('s1'));
+    const { result } = renderHook(() => useSessionElicitations('s1', null));
     expect(result.current.elicitationOf('s1')).toBeNull();
     act(() => result.current.load('s1'));
     await act(async () => answerLoad());

@@ -67,6 +67,8 @@ jobs:
   tour:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # ふだんは 2 分ほど。止まったときに既定の 6 時間待たない
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -75,6 +77,9 @@ jobs:
           cache: npm
       # PC のツアーは Electron の画面の外で流すので、Electron の本体も入れる
       - run: npm ci
+      # apt の取り込みが途中で止まったまま待ち続けないよう、つながりを 30 秒で打ち切って、3 回まで取り直す
+      # （playwright install --with-deps の apt が、ミラーからの取り込みの途中で止まったことがある）
+      - run: printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/80-tanacode-retries
       # 画面の外で描いても、Linux では X のディスプレイが要る（下で WebKit を入れるのと apt がぶつからないよう、先に済ませる）
       - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
       # スマホのツアーで使う WebKit は、ビルドと関わりが無いので、ビルドと並べて入れる
@@ -85,7 +90,8 @@ jobs:
           DEMO_OUT_DIR: demo-check
         run: |
           log="$RUNNER_TEMP/webkit.log"
-          npx playwright install --with-deps webkit > "$log" 2>&1 &
+          # 入れるのが止まったまま（ダウンロード・apt の待ち）だとログが出ずに何時間も待つので、10 分で打ち切って、そこまでのログを出す
+          timeout 600 npx playwright install --with-deps webkit > "$log" 2>&1 &
           webkit=$!
           npm run demo:build
           if ! wait "$webkit"; then

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
@@ -221,6 +221,58 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     await editorLine('Claude が直したメモ').waitFor();
     writeFileSync(OUTSIDE(app.work), 'ディスクで書き換えたメモ\n');
     await editorLine('ディスクで書き換えたメモ').waitFor();
+  });
+
+  // エクスプローラーの右クリックのメニュー。作ったファイルは開き、書きかけのまま名前を変えるときは保存してから変えて、タブも新しい名前にする。
+  // ゴミ箱に入れたら、そのタブを閉じる（本当のゴミ箱には入れず、main の shell.trashItem を差し替えて、渡したパスを見る）
+  it('右クリックのメニューで、ファイルを作り、書きかけのまま名前を変え、ゴミ箱に入れる。開いているタブも合わせる', async () => {
+    const row = (path: string) => app.page.locator(`.tree-row[title="${path}"]`);
+    const pick = async (path: string, label: string) => {
+      await row(path).click({ button: 'right' });
+      await app.page.getByRole('menuitem', { name: label }).click();
+    };
+    const confirms: string[] = [];
+    const onDialog = (dialog: import('playwright').Dialog) => {
+      confirms.push(dialog.message());
+      void dialog.accept();
+    };
+    app.page.on('dialog', onDialog);
+    try {
+      // 前のテストの全文検索で、サイドパネルが検索になっている
+      await app.page.click('.activity-bar [aria-label^="エクスプローラー"]');
+      await pick('src', '新規ファイル');
+      await app.page.locator('.tree-input').fill('rate.ts');
+      await app.page.keyboard.press('Enter');
+      await app.byText('.editor-tab.active', 'rate.ts').waitFor();
+      expect(readFileSync(join(app.work, 'src/rate.ts'), 'utf8')).toBe('');
+
+      await app.page.locator('.editor .editor-monaco .view-lines').click();
+      await app.page.keyboard.type('export const RATE = 0.1;');
+      await app.page.locator('.editor-tab.active .editor-tab-dot.dirty').waitFor();
+      await pick('src/rate.ts', '名前を変更');
+      await app.page.locator('.tree-input').fill('rates.ts');
+      await app.page.keyboard.press('Enter');
+      await app.byText('.editor-tab.active', 'rates.ts').waitFor();
+      await row('src/rates.ts').waitFor();
+      expect(confirms).toEqual(['rate.ts に、保存していない変更があります。保存してから名前を変えますか？']);
+      expect(existsSync(join(app.work, 'src/rate.ts'))).toBe(false);
+      expect(readFileSync(join(app.work, 'src/rates.ts'), 'utf8')).toBe('export const RATE = 0.1;');
+      expect(await app.page.locator('.editor-tab.active .editor-tab-dot.dirty').count()).toBe(0);
+
+      await app.app.evaluate(({ shell }) => {
+        const trashed: string[] = [];
+        (globalThis as { e2eTrashed?: string[] }).e2eTrashed = trashed;
+        shell.trashItem = async (path: string) => {
+          trashed.push(path);
+        };
+      });
+      await pick('src/rates.ts', 'ゴミ箱に入れる');
+      await app.byText('.editor-tab', 'rates.ts').waitFor({ state: 'detached' });
+      expect(confirms.at(-1)).toBe('rates.ts をゴミ箱に入れますか？');
+      expect(await app.app.evaluate(() => (globalThis as { e2eTrashed?: string[] }).e2eTrashed)).toEqual([join(realpathSync(app.work), 'src', 'rates.ts')]);
+    } finally {
+      app.page.off('dialog', onDialog);
+    }
   });
 
   // ⌘P の枠を開いたまま落ちると、続くテストの操作が枠に遮られるので、画面を操作するテストの最後に置く

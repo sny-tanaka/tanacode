@@ -37,6 +37,7 @@ import { imageOf } from './image-cache';
 import { DEFAULT_PTY_SIZE } from './session-manager';
 import { readModelCatalog } from './model-catalog';
 import { SystemMonitor } from './system-monitor';
+import { ClaudeCompatMonitor } from './claude-compat';
 import { ClaudeVersionMonitor } from './claude-version';
 import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, translateTexts, Translator } from './translate';
 import { readClaudeAccount } from './claude-account';
@@ -72,6 +73,7 @@ let settings: AppSettings;
 let sharedPrefs: SharedPrefStore;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
+let claudeCompat: ClaudeCompatMonitor;
 let appUpdates: AppUpdateMonitor;
 // Homebrew で入れたときだけ作る（新しいバージョンを裏でダウンロードしておき、終了したあとに入れ替える）
 let homebrew: HomebrewUpdater | null = null;
@@ -789,6 +791,7 @@ function registerIpc(): void {
   handle(IpcChannel.StatusLineGet, (e, id: string) => P(e).manager.statusLine(id));
   handle(IpcChannel.UsageGet, (e) => P(e).usage.get());
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
+  handle(IpcChannel.ClaudeVerifiedGet, () => claudeCompat.get());
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.AppUpdateCheck, () => appUpdates.refresh());
@@ -863,11 +866,14 @@ function registerIpc(): void {
     return folder ? p.addFolder(id, folder) : null;
   });
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
+  handle(IpcChannel.WorkspaceKeepReadFolder, (e, id: string, folder: string) => P(e).keepReadFolder(id, folder));
+  handle(IpcChannel.WorkspaceDismissRead, (e, id: string, path: string) => P(e).manager.removeOutsideRead(id, path));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
-    new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
+    // Claude が読んだリポジトリも、エクスプローラーから開いた Markdown の画像を出せるよう、追加したフォルダと同じく読む
+    new Workspace(P(e).cwdOf(id)).readImage(relPath, [...P(e).addedFoldersOf(id), ...P(e).manager.readFoldersOf(id)]).catch(() => null),
   );
   handle(IpcChannel.ResolveFiles, (e, id: string, paths: string[]) =>
     new Workspace(P(e).cwdOf(id)).resolveFiles(Array.isArray(paths) ? paths : [], P(e).addedFoldersOf(id)).catch(() => []),
@@ -876,6 +882,16 @@ function registerIpc(): void {
   handle(IpcChannel.RevealFile, (e, id: string, relPath: string) => {
     if (typeof relPath === 'string' && relPath) shell.showItemInFolder(new Workspace(P(e).cwdOf(id)).absolutePath(relPath));
   });
+  // エクスプローラーのファイル操作（人がメニューから選んだときだけ）。変えるのは作業フォルダと追加したフォルダの中だけで、Workspace が確かめる
+  handle(IpcChannel.CreateEntry, (e, id: string, dirPath: string, name: string, kind: 'file' | 'dir') =>
+    new Workspace(P(e).cwdOf(id)).createEntry(dirPath, name, kind === 'dir' ? 'dir' : 'file', P(e).addedFoldersOf(id)),
+  );
+  handle(IpcChannel.RenameEntry, (e, id: string, path: string, newName: string) =>
+    new Workspace(P(e).cwdOf(id)).renameEntry(path, newName, P(e).addedFoldersOf(id)),
+  );
+  handle(IpcChannel.TrashEntry, (e, id: string, path: string) =>
+    new Workspace(P(e).cwdOf(id)).trashEntry(path, P(e).addedFoldersOf(id), (abs) => shell.trashItem(abs)),
+  );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
@@ -1032,8 +1048,13 @@ function setUpdateCheck(item: MenuItem): void {
     item.checked = !item.checked;
     return;
   }
-  if (item.checked) appUpdates.start();
-  else appUpdates.stop();
+  if (item.checked) {
+    appUpdates.start();
+    claudeCompat.start();
+  } else {
+    appUpdates.stop();
+    claudeCompat.stop();
+  }
 }
 
 // メニューの「終了するときに新しいバージョンを入れる（Homebrew）」。保存できなかったら、チェックを元に戻す
@@ -1413,6 +1434,15 @@ app.whenReady().then(async () => {
     (url, init) => net.fetch(url, init),
     () => send(IpcChannel.AppUpdateChecked, undefined),
   );
+  // 動作確認済の Claude Code のバージョンの対応表。読む通信は、新しいバージョンの通知と同じ設定で止める
+  claudeCompat = new ClaudeCompatMonitor(
+    app.getVersion(),
+    join(app.getPath('userData'), 'claude-compat.json'),
+    (verified) => send(IpcChannel.ClaudeVerifiedChanged, verified),
+    (url, init) => net.fetch(url, init),
+    // 開発用のビルドでは、読む表を差し替えられる（表の読み方を、develop に置かずに確かめる）
+    (!app.isPackaged && process.env.TANACODE_COMPAT_URL) || undefined,
+  );
   registerIpc();
   buildMenu();
   createWindow();
@@ -1424,7 +1454,10 @@ app.whenReady().then(async () => {
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
   claudeVersions.start();
-  if (settings.updateCheckEnabled()) appUpdates.start();
+  if (settings.updateCheckEnabled()) {
+    appUpdates.start();
+    claudeCompat.start();
+  }
   // Homebrew で入れたアプリなら、新しいバージョンを裏でダウンロードしておく（入れ替えは終了したあと）
   if (app.isPackaged) {
     void HomebrewUpdater.detect({ bundle: resolve(process.execPath, '../../..'), current: app.getVersion(), onChange: () => sendAppUpdate() }).then((updater) => {
@@ -1447,6 +1480,7 @@ app.on('before-quit', (event) => {
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
+  claudeCompat?.stop();
   // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
   // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
   if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchForLanguage });

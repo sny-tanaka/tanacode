@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import type { ContextItem, SessionContext } from '@shared/context';
 import { t } from '@shared/i18n';
 import { tx } from '../i18n';
@@ -23,7 +23,8 @@ type Props = {
 };
 
 // サイドパネルの「コンテキスト」のセッションごとの入れ物。中身を取りに行く（App で key にセッションの id を付け、切り替えたら作り直す）
-export function SessionContextPanel({
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const SessionContextPanel = memo(function SessionContextPanel({
   sessionId,
   visible,
   revision,
@@ -31,7 +32,7 @@ export function SessionContextPanel({
 }: Omit<Props, 'context'> & { sessionId: string; visible: boolean; revision: number }) {
   const context = useSessionContext(sessionId, visible, revision);
   return <ContextPanel {...props} context={context} />;
-}
+});
 
 // 今のコンテキストの中身（何がどれだけ入っているか）を、大きさの帯と一緒に並べる
 export function ContextPanel({ context, tokens, limit }: Props) {

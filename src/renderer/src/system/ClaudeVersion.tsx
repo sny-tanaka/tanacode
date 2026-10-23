@@ -18,22 +18,36 @@ export function useClaudeVersion(): string | null | undefined {
   return version;
 }
 
+// 動作確認済の Claude Code のバージョン（リポジトリの対応表の、このアプリの行。読めなければアプリに組み込んだバージョン）
+export function useVerifiedClaudeVersion(): string {
+  const [verified, setVerified] = useState(VERIFIED_CLAUDE_CODE_VERSION);
+  useEffect(() => {
+    let active = true;
+    void window.tanacode.claudeVersion.getVerified().then((v) => active && setVerified(v));
+    const off = window.tanacode.claudeVersion.onVerifiedChanged(setVerified);
+    return () => {
+      active = false;
+      off();
+    };
+  }, []);
+  return verified;
+}
+
 // ステータスバーの Claude Code のバージョン（「Claude Code 待機中」などの隣に、v2.1.286 の形で出す）。
 // 動作確認済のバージョンと同じならチェックマーク、違えば新しいときと古いときで印と色を分けて知らせる。バージョンにも印にも、マウスを乗せると理由が出る
-export function ClaudeVersion({ version }: { version: string | null | undefined }) {
+export function ClaudeVersion({ version, verified = VERIFIED_CLAUDE_CODE_VERSION }: { version: string | null | undefined; verified?: string }) {
   if (version === undefined) return null;
-  const match = versionMatch(version);
+  const match = versionMatch(version, verified);
   const Mark = MARKS[match];
   return (
-    <span className={`claude-version ${match}`} data-tip={reason(match, version)} data-tip-side="top">
+    <span className={`claude-version ${match}`} data-tip={reason(match, version, verified)} data-tip-side="top">
       <Mark size={12} />
       {version ? `v${version}` : t('app.claudeVersion.notFound')}
     </span>
   );
 }
 
-function reason(match: VersionMatch, version: string | null): string {
-  const verified = VERIFIED_CLAUDE_CODE_VERSION;
+function reason(match: VersionMatch, version: string | null, verified: string): string {
   switch (match) {
     case 'same':
       return t('app.claudeVersion.same', { version: version ?? '' });

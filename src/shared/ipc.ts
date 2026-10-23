@@ -131,11 +131,16 @@ export const IpcChannel = {
   WorkspaceInfo: 'workspace:info',
   WorkspaceAddFolder: 'workspace:add-folder',
   WorkspaceRemoveFolder: 'workspace:remove-folder',
+  WorkspaceKeepReadFolder: 'workspace:keep-read-folder',
+  WorkspaceDismissRead: 'workspace:dismiss-read',
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
   ResolveFiles: 'fs:resolve-files',
   RevealFile: 'fs:reveal-file',
+  CreateEntry: 'fs:create-entry',
+  RenameEntry: 'fs:rename-entry',
+  TrashEntry: 'fs:trash-entry',
   FilesChanged: 'fs:changed',
   WatchOpenFiles: 'fs:watch-open-files',
   TasksBash: 'tasks:bash',
@@ -179,6 +184,8 @@ export const IpcChannel = {
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
   ClaudeVersionChanged: 'claude:version-changed',
+  ClaudeVerifiedGet: 'claude:verified-get',
+  ClaudeVerifiedChanged: 'claude:verified-changed',
   AppUpdateGet: 'app-update:get',
   AppUpdateChanged: 'app-update:changed',
   AppUpdateInstall: 'app-update:install',
@@ -292,6 +299,10 @@ export type SessionSummary = {
   // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。エクスプローラーで cwd の下に並べ、Claude Code にも --add-dir で渡す。
   // 無いもの・空は追加なし
   addedFolders?: string[];
+  // Claude がフォルダの外で読んだ・書いたもの（絶対パス）。readFolders: git のリポジトリのいちばん上（エクスプローラーにツリーで並べる。
+  // --add-dir には渡さない）/ readFiles: どのリポジトリにも入っていないファイル。無いもの・空は無し
+  readFolders?: string[];
+  readFiles?: string[];
   // チェックリストのファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、変更を保存しない。無いものは保存する
   checklistUnsaved?: boolean;
 };
@@ -641,6 +652,10 @@ export type TanacodeApi = {
   claudeVersion: {
     get(): Promise<string | null>;
     onChanged(listener: (version: string | null) => void): () => void;
+    // 動作確認済の Claude Code のバージョン（ステータスバーの印で比べる相手）。リポジトリの対応表（compat.json）の、このアプリの行。
+    // 読めない・新しいバージョンの通知の設定がオフなら、最後に読めた表か、アプリに組み込んだバージョン
+    getVerified(): Promise<string>;
+    onVerifiedChanged(listener: (verified: string) => void): () => void;
   };
   // tanacode の新しいバージョン（GitHub の Releases）。起動時と 1 時間ごとに確かめる。まだ分からない・確かめる設定がオフなら null
   appUpdate: {
@@ -757,6 +772,13 @@ export type TanacodeApi = {
     resolveFiles(sessionId: string, paths: string[]): Promise<(string | null)[]>;
     // エディタで開いているファイルを、Finder で表示する（選んだ状態で、入っているフォルダを開く）。relPath は作業フォルダからの相対パスか絶対パス
     revealFile(sessionId: string, relPath: string): Promise<void>;
+    // エクスプローラーのファイル操作。path・dirPath はツリーの行のパス（作業フォルダからの相対パスか、追加したフォルダの中の絶対パス）。
+    // 変えられるのは、作業フォルダと追加したフォルダの中だけ（main が確かめる）。新規作成と名前の変更は、変えたあとの行のパスを返す。
+    // 同じ名前のものがある・名前が使えない（/ を含むなど）ときは、理由を添えて失敗する
+    createEntry(sessionId: string, dirPath: string, name: string, kind: 'file' | 'dir'): Promise<string>;
+    renameEntry(sessionId: string, path: string, newName: string): Promise<string>;
+    // ゴミ箱に入れる（消さない）
+    trashEntry(sessionId: string, path: string): Promise<void>;
     // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身で、今のディスクがそれと同じときだけ書く。
     // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
     writeFile(sessionId: string, relPath: string, text: string, expected: string | null): Promise<WriteResult>;
@@ -766,6 +788,11 @@ export type TanacodeApi = {
     addFolder(sessionId: string): Promise<string[] | null>;
     // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとのフォルダの一覧を返す
     removeFolder(sessionId: string, folder: string): Promise<string[]>;
+    // Claude がフォルダの外で読んだリポジトリ（SessionSummary.readFolders のどれか）を、手で足した追加フォルダに移す（--add-dir で渡す）。
+    // 追加したあとのフォルダの一覧を返す。readFolders に無いものは断る
+    keepReadFolder(sessionId: string, folder: string): Promise<string[]>;
+    // Claude がフォルダの外で読んだもの（readFolders・readFiles のどれか）をエクスプローラーから消す。Claude がまた触れれば出直す
+    dismissRead(sessionId: string, path: string): Promise<void>;
     onFilesChanged(listener: (payload: FilesChanged) => void): () => void;
     // エディタで開いているタブ（エディタのフォルダ → タブのパス）。main は、フォルダの監視では知らせが来ないもの（フォルダの外・
     // 監視しないフォルダの中・リンク越し）をファイルごとに見張り、変わったら onFilesChanged で知らせる。開いているタブが変わるたびに送る
@@ -926,6 +953,7 @@ export type IpcInvoke = {
   [IpcChannel.PromptsGet]: Api['prompts']['get'];
   [IpcChannel.PromptsUpdate]: Api['prompts']['update'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
+  [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];
   [IpcChannel.AppUpdateCheck]: Api['appUpdate']['check'];
@@ -958,11 +986,16 @@ export type IpcInvoke = {
   [IpcChannel.WorkspaceInfo]: Api['workspace']['info'];
   [IpcChannel.WorkspaceAddFolder]: Api['workspace']['addFolder'];
   [IpcChannel.WorkspaceRemoveFolder]: Api['workspace']['removeFolder'];
+  [IpcChannel.WorkspaceKeepReadFolder]: Api['workspace']['keepReadFolder'];
+  [IpcChannel.WorkspaceDismissRead]: Api['workspace']['dismissRead'];
   [IpcChannel.ListDir]: Api['workspace']['listDir'];
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];
   [IpcChannel.ResolveFiles]: Api['workspace']['resolveFiles'];
   [IpcChannel.RevealFile]: Api['workspace']['revealFile'];
+  [IpcChannel.CreateEntry]: Api['workspace']['createEntry'];
+  [IpcChannel.RenameEntry]: Api['workspace']['renameEntry'];
+  [IpcChannel.TrashEntry]: Api['workspace']['trashEntry'];
   [IpcChannel.WriteFile]: Api['workspace']['writeFile'];
   [IpcChannel.ListFiles]: Api['workspace']['listFiles'];
   [IpcChannel.Search]: Api['workspace']['search'];
@@ -1031,6 +1064,7 @@ export type IpcEvent = {
   [IpcChannel.ScheduledChanged]: Payload<Api['scheduled']['onChanged']>;
   [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
   [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;
+  [IpcChannel.ClaudeVerifiedChanged]: Payload<Api['claudeVersion']['onVerifiedChanged']>;
   [IpcChannel.AppUpdateChanged]: Payload<Api['appUpdate']['onChanged']>;
   [IpcChannel.AppUpdateChecked]: undefined;
   [IpcChannel.StatusLineChanged]: Payload<Api['statusLine']['onChanged']>;

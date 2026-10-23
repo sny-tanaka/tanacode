@@ -107,7 +107,7 @@ There's more, such as restarting just Claude Code while keeping the conversation
 - [Claude Code](https://code.claude.com/docs) (the `claude` CLI)
   - Run `claude` in a terminal once and finish the first-time setup (choosing a theme and logging in)
   - The version verified with tanacode is 2.1.309. If yours is different, the version in the status bar gets a warning mark (hover over it to see why)
-  - Compatibility with the latest Claude Code is checked automatically every day. Even so, a Claude Code update may break some of the display or controls. Anything that stops working in the chat is still available in terminal mode (Claude Code's own screen)
+  - Compatibility with the latest Claude Code is checked automatically every day. If tanacode needs no changes for it, a newly verified version shows up in the status bar mark without updating tanacode. Even so, a Claude Code update may break some of the display or controls. Anything that stops working in the chat is still available in terminal mode (Claude Code's own screen)
 
 ## Installation
 

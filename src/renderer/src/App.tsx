@@ -15,9 +15,10 @@ import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
+import { EMPTY_EDITOR, type EditorState, withEditor, withFile, withOpenFile } from './editor/openFiles';
 import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
-import { Explorer } from './explorer/Explorer';
+import { Explorer, type ExplorerFileOps } from './explorer/Explorer';
 import type { ReviewComment } from './review/LineComments';
 import { DiffPane } from './scm/DiffPane';
 import { branchPaths, ScmPanel } from './scm/ScmPanel';
@@ -38,7 +39,7 @@ import { pendingFolder, preparingLabel } from './sessions/worktree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
-import { useClaudeVersion } from './system/ClaudeVersion';
+import { useClaudeVersion, useVerifiedClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
@@ -72,8 +73,6 @@ import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 
-type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
-const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
@@ -101,17 +100,16 @@ type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'br
 // エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身か、チェックリストのカード
 type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
 
-function withFile(files: OpenFile[], path: string, content: FileContent): OpenFile[] {
-  return files.some((f) => f.path === path)
-    ? files.map((f) => (f.path === path ? { path, content } : f))
-    : [...files, { path, content }];
-}
+const COLUMNS: Column[] = ['sessions', 'claude', 'side'];
 
 export function App() {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 一覧にある（アーカイブしていない）セッション。一覧から消えたセッションの値は、セッションごとの値から捨てる（useSessionValues）
+  const listedKey = sessions ? sessions.filter((s) => !s.archived).map((s) => s.id).join(',') : null;
+  const listedIds = useMemo(() => (listedKey === null ? null : new Set(listedKey ? listedKey.split(',') : [])), [listedKey]);
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
-  const { chatOf: eventChatOf, load, reset: resetChat } = useSessionChats(selectedId);
+  const { chatOf: eventChatOf, partials, load, reset: resetChat } = useSessionChats(selectedId, listedIds);
   // 動いているセッションのチャットの状態は、main が持つ状態（一覧の state）から決める（main が 1 つだけ持つ。設計書 7 節）
   const stateKey = (sessions ?? []).map((s) => `${s.id}:${s.state}`).join(',');
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,27 +122,27 @@ export function App() {
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
-  const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId);
-  const { permissionOf, load: loadPermission } = useSessionPermissions(selectedId);
-  const { elicitationOf, load: loadElicitation } = useSessionElicitations(selectedId);
-  const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
-  const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
-  const { bashOf, load: loadBash } = useSessionBash(selectedId);
-  const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId);
-  const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId);
-  const { listsOf: checklistsOf, load: loadChecklists, unread: checklistUnread } = useChecklists(selectedId);
+  const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId, listedIds);
+  const { permissionOf, load: loadPermission } = useSessionPermissions(selectedId, listedIds);
+  const { elicitationOf, load: loadElicitation } = useSessionElicitations(selectedId, listedIds);
+  const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId, listedIds);
+  const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId, listedIds);
+  const { bashOf, load: loadBash } = useSessionBash(selectedId, listedIds);
+  const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId, listedIds);
+  const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId, listedIds);
+  const { listsOf: checklistsOf, load: loadChecklists, unread: checklistUnread } = useChecklists(selectedId, listedIds);
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
+  const claudeVerified = useVerifiedClaudeVersion();
   const appUpdate = useAppUpdate();
-  const resizer = (column: Column) => (
-    <Resizer
-      width={columns.widths[column]}
-      onResize={(w) => columns.resize(column, w)}
-      onReset={() => columns.reset(column)}
-      onEnd={columns.save}
-    />
+  // つまみに渡す関数は、カラムごとに同じものを使う（つまみを、幅が変わったときだけ描き直す）
+  const { resize: resizeColumn, reset: resetColumn } = columns;
+  const resizeHandlers = useMemo(
+    () => new Map(COLUMNS.map((column) => [column, { onResize: (w: number) => resizeColumn(column, w), onReset: () => resetColumn(column) }])),
+    [resizeColumn, resetColumn],
   );
+  const resizer = (column: Column) => <Resizer width={columns.widths[column]} {...resizeHandlers.get(column)!} onEnd={columns.save} />;
   // 新規セッションの画面を出している。back: キャンセルで戻るセッション / cwd: 最初に選んでおくフォルダ
   // restore: 始められなかった指示（worktree を作れなかった）。新規セッションの画面の入力欄に戻す
   const [composing, setComposing] = useState<{ back: string | null; cwd: string | null; restore?: PendingSend } | null>(null);
@@ -179,13 +177,21 @@ export function App() {
   // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
   const settingsFilesOpen = useSettingsFilesDialogOpen();
   const profilesDialog = useProfilesDialog();
-  // アーカイブ済みセッションのチャット（再開せずに会話ログから作る）
-  const [archivedChats, setArchivedChats] = useState<Record<string, ChatState>>({});
+  // 見ているアーカイブ済みセッションのチャット（再開せずに会話ログから作る）。長い会話のチャットは大きいので、見ている 1 つだけ持つ
+  const [archivedChat, setArchivedChat] = useState<{ id: string; chat: ChatState } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  // ターミナルモードとチャットを切り替える。裏のタスクが動いているかは、main が切り替えで見るものと同じ数（一覧の backgroundTasks）で決める。
+  // いつも同じ関数を渡す（チャットを、関係の無い描き直しのたびに描き直さない）
+  const toggleTerminalMode = useCallback(() => {
+    const session = selectedRef.current;
+    if (session) void switchTerminalMode(session, (session.backgroundTasks ?? 0) > 0);
+  }, []);
   const liveChat = chatOf(selectedId);
-  const chat = selected?.archived && liveChat.status === 'not-started' ? (archivedChats[selected.id] ?? liveChat) : liveChat;
+  const chat = selected?.archived && liveChat.status === 'not-started' && archivedChat?.id === selected.id ? archivedChat.chat : liveChat;
   // 右パネル・エディタで扱うもの。選んでいるセッションか、新規セッションの画面で選んでいるフォルダ
   const viewId = selected?.id ?? draft?.id ?? null;
   // ブラウザとターミナルの持ち主。セッションを見ているときはそのセッション。新規セッションの画面では、いま開いているフォルダ（どのセッションにも紐づかず、画面を閉じると一緒に閉じる）
@@ -213,6 +219,11 @@ export function App() {
   // ワークスペースに追加したフォルダ。一覧が届くたびに配列が作り直されるので、中身が同じなら同じ配列を使う（エクスプローラーを描き直さない）
   const addedKey = (selected ? (selected.addedFolders ?? NO_FOLDERS) : (draft?.added ?? NO_FOLDERS)).join('\0');
   const addedFolders = useMemo(() => (addedKey ? addedKey.split('\0') : NO_FOLDERS), [addedKey]);
+  // Claude がフォルダの外で読んだ・書いたもの（リポジトリとファイル）。同じく、中身が同じなら同じ配列を使う
+  const readFoldersKey = (selected?.readFolders ?? NO_FOLDERS).join('\0');
+  const readFolders = useMemo(() => (readFoldersKey ? readFoldersKey.split('\0') : NO_FOLDERS), [readFoldersKey]);
+  const readFilesKey = (selected?.readFiles ?? NO_FOLDERS).join('\0');
+  const readFiles = useMemo(() => (readFilesKey ? readFilesKey.split('\0') : NO_FOLDERS), [readFilesKey]);
   // フォルダを追加・外せるか（アーカイブしたセッションと、worktree の準備を待っている間は変えない）
   const canEditFolders = !!viewId && !selected?.archived && !folderWait;
   // 選択中のセッションのタスク。ほかのセッションのタスクが動いても、ここは変わらない（stableRuns で参照が保たれる）
@@ -479,18 +490,20 @@ export function App() {
     void window.tanacode.workspace.info(viewId).then((info) => setWorkspaces((prev) => ({ ...prev, [viewId]: info })));
   }, [viewId, workspaces]);
 
+  // アーカイブ済みセッションを選んだら、会話ログから読む。ほかのセッションに移ったり、再開したりしたら捨てる（もう一度選んだら読み直す）
+  const archivedId = selected?.archived ? selected.id : null;
   useEffect(() => {
-    // 再開したら古い表示は捨てる（もう一度アーカイブしたときに読み直す）
-    if (selected && !selected.archived && archivedChats[selected.id]) {
-      setArchivedChats(({ [selected.id]: _, ...rest }) => rest);
-      return;
-    }
-    if (!selected?.archived || archivedChats[selected.id]) return;
-    const id = selected.id;
-    void window.tanacode.sessions
-      .history(id)
-      .then((events) => setArchivedChats((prev) => ({ ...prev, [id]: { ...chatFromEvents(events), status: 'not-started' } })));
-  }, [selected, archivedChats]);
+    setArchivedChat(null);
+    if (!archivedId) return;
+    let current = true;
+    void window.tanacode.sessions.history(archivedId).then((events) => {
+      // 読み終える前に別のセッションに移っていたら、古い返事で上書きしない
+      if (current) setArchivedChat({ id: archivedId, chat: { ...chatFromEvents(events), status: 'not-started' } });
+    });
+    return () => {
+      current = false;
+    };
+  }, [archivedId]);
 
   // セッションを開く（止まっていれば再開する）。開けなかったら理由を出す（登録した設定ファイルが読めないときなど）。
   // 一覧が更新されるたびに開き直すので、同じ理由は 1 回だけ出す
@@ -522,7 +535,7 @@ export function App() {
   }, [selected, chat.status, openSession]);
 
   const updateEditor = useCallback((dir: string, fn: (state: EditorState) => EditorState) => {
-    setEditors((prev) => ({ ...prev, [dir]: fn(prev[dir] ?? EMPTY_EDITOR) }));
+    setEditors((prev) => withEditor(prev, dir, fn));
   }, []);
 
   // line を渡すと、ディスクから読み直したうえでその行を表示する（Claude Code の編集直後に開くため）。
@@ -538,7 +551,7 @@ export function App() {
         if (editorCwdRef.current === cwd && editorRef.current?.unsaved().includes(path)) return;
         const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
         if (!content) return;
-        updateEditor(cwd, (s) => (s.files.some((f) => f.path === path) ? { ...s, files: withFile(s.files, path, content) } : s));
+        updateEditor(cwd, (s) => withOpenFile(s, path, content));
         return;
       }
       const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
@@ -578,9 +591,7 @@ export function App() {
           void window.tanacode.workspace
             .readFile(sessionId, file.path)
             .then((content) =>
-              updateEditor(dir, (s) =>
-                s.files.some((f) => f.path === file.path) ? { ...s, files: withFile(s.files, file.path, content) } : s,
-              ),
+              updateEditor(dir, (s) => withOpenFile(s, file.path, content)),
             )
             .catch(() => {});
         }
@@ -640,6 +651,22 @@ export function App() {
         (folders) => setDraft((d) => (d && d.id === viewId ? { ...d, added: folders } : d)),
         (error: unknown) => window.alert(t('app.sidePanel.removeFolderFailed', { error: errorMessage(error) })),
       );
+    },
+    [viewId],
+  );
+  // Claude が読んだリポジトリを、追加したフォルダに移す / Claude が読んだものを一覧から消す（一覧は main から届き直す）
+  const keepReadFolder = useCallback(
+    (folder: string) => {
+      if (!viewId) return;
+      window.tanacode.workspace
+        .keepReadFolder(viewId, folder)
+        .catch((error: unknown) => window.alert(t('app.sidePanel.addFolderFailed', { error: errorMessage(error) })));
+    },
+    [viewId],
+  );
+  const dismissRead = useCallback(
+    (path: string) => {
+      if (viewId) void window.tanacode.workspace.dismissRead(viewId, path);
     },
     [viewId],
   );
@@ -710,6 +737,44 @@ export function App() {
     },
     [editorCwd, updateEditor],
   );
+
+  // エクスプローラーで名前を変えた・ゴミ箱に入れたものに、開いているタブを合わせる（path はツリーの行のパス。フォルダならその中のファイルも）。
+  // 保存していない変更は黙って失わない。名前を変える前には保存し（人に確かめる）、ゴミ箱に入れたときは、そのタブを開いたまま残す
+  // （保存すると、ファイルを作り直す）。アーカイブしたセッションと、worktree の準備を待っている間は、ファイルを変えない
+  const explorerFileOps = useMemo<ExplorerFileOps | undefined>(() => {
+    if (!canEditFolders || !cwd) return undefined;
+    const under = (path: string) => (p: string) => p === path || p.startsWith(`${path}/`);
+    const unsavedUnder = (path: string) => (editorCwdRef.current === cwd ? (editorRef.current?.unsaved() ?? []) : []).filter(under(path));
+    return {
+      beforeRename: async (path) => {
+        const unsaved = unsavedUnder(path);
+        if (unsaved.length === 0) return true;
+        if (!window.confirm(t('explorer.confirm.saveBeforeRename', { name: path.split('/').pop() ?? path }))) return false;
+        await editorRef.current?.saveAll(unsaved).catch(() => {});
+        if (unsavedUnder(path).length === 0) return true;
+        window.alert(t('explorer.confirm.saveFailed'));
+        return false;
+      },
+      renamed: (from, to) => {
+        const moved = (p: string) => (under(from)(p) ? to + p.slice(from.length) : p);
+        updateEditor(cwd, (s) => ({
+          files: s.files.map((f) => ({ ...f, path: moved(f.path) })),
+          activePath: s.activePath && moved(s.activePath),
+          reveal: s.reveal && { ...s.reveal, path: moved(s.reveal.path) },
+        }));
+      },
+      hasUnsaved: (path) => unsavedUnder(path).length > 0,
+      trashed: (path) => {
+        const keep = new Set(unsavedUnder(path));
+        updateEditor(cwd, (s) => {
+          const files = s.files.filter((f) => !under(path)(f.path) || keep.has(f.path));
+          const index = s.files.findIndex((f) => f.path === s.activePath);
+          const activePath = files.some((f) => f.path === s.activePath) ? s.activePath : (files[Math.min(index, files.length - 1)]?.path ?? null);
+          return { ...s, files, activePath };
+        });
+      },
+    };
+  }, [canEditFolders, cwd, updateEditor]);
 
   // 選んだフォルダで Claude Code を起動し、最初の発言は起動が終わるのを待って送る。
   // worktree で始めるときも、Claude Code が worktree を作るのを待たずにそのセッションに移る（作っている間は、移った先に準備の段階が出る）
@@ -864,7 +929,10 @@ export function App() {
     async (path: string, text: string, expected: string | null) => {
       if (!editorId || !editorCwd) return false;
       const result = await window.tanacode.workspace.writeFile(editorId, path, text, expected);
-      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk) }));
+      updateEditor(editorCwd, (s) => {
+        const files = withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk);
+        return files === s.files ? s : { ...s, files };
+      });
       return result.ok;
     },
     [editorId, editorCwd, updateEditor],
@@ -1002,6 +1070,7 @@ export function App() {
             sessions={sessions ?? NO_SESSIONS}
             onSelectSession={select}
             chat={chat}
+            partials={partials}
             question={questionOf(selected.id)}
             permission={permissionOf(selected.id)}
             elicitation={elicitationOf(selected.id)}
@@ -1021,8 +1090,7 @@ export function App() {
             onShowComment={showCommentOf}
             onShowContext={showContext}
             onShowShell={showShell}
-            // 裏のタスクが動いているかは、main が切り替えで見るものと同じ数（一覧の backgroundTasks）で決める
-            onToggleTerminal={() => void switchTerminalMode(selected, (selected.backgroundTasks ?? 0) > 0)}
+            onToggleTerminal={toggleTerminalMode}
             onOpenFile={openAbsolute}
             onResume={openSelected}
             onUnarchive={openSelected}
@@ -1094,6 +1162,11 @@ export function App() {
                     onOpenFile={openPath}
                     folders={addedFolders}
                     onRemoveFolder={canEditFolders ? removeFolder : undefined}
+                    fileOps={explorerFileOps}
+                    readFolders={readFolders}
+                    readFiles={readFiles}
+                    onKeepReadFolder={canEditFolders ? keepReadFolder : undefined}
+                    onDismissRead={canEditFolders ? dismissRead : undefined}
                   />
                 )}
               </div>
@@ -1289,11 +1362,12 @@ export function App() {
         exitCode={chat.exitCode}
         branch={(git.state?.isRepo ? git.state.branch : workspace?.branch) ?? null}
         worktree={selected?.worktree ?? null}
-        onOpenScm={() => setSidePanel('scm')}
+        onOpenScm={openScm}
         pr={chat.pr}
         showCursor={activeFile?.content.kind === 'text'}
         language={language}
         claudeVersion={claudeVersion}
+        claudeVerified={claudeVerified}
       />
     </div>
   );

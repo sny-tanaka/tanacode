@@ -131,6 +131,8 @@ const api: TanacodeApi = {
   claudeVersion: {
     get: () => invoke(IpcChannel.ClaudeVersionGet),
     onChanged: (listener) => subscribe(IpcChannel.ClaudeVersionChanged, listener),
+    getVerified: () => invoke(IpcChannel.ClaudeVerifiedGet),
+    onVerifiedChanged: (listener) => subscribe(IpcChannel.ClaudeVerifiedChanged, listener),
   },
   appUpdate: {
     get: () => invoke(IpcChannel.AppUpdateGet),
@@ -206,9 +208,14 @@ const api: TanacodeApi = {
     readImage: (sessionId, relPath) => invoke(IpcChannel.ReadImage, sessionId, relPath),
     resolveFiles: (sessionId, paths) => invoke(IpcChannel.ResolveFiles, sessionId, paths),
     revealFile: (sessionId, relPath) => invoke(IpcChannel.RevealFile, sessionId, relPath),
+    createEntry: (sessionId, dirPath, name, kind) => invoke(IpcChannel.CreateEntry, sessionId, dirPath, name, kind),
+    renameEntry: (sessionId, path, newName) => invoke(IpcChannel.RenameEntry, sessionId, path, newName),
+    trashEntry: (sessionId, path) => invoke(IpcChannel.TrashEntry, sessionId, path),
     writeFile: (sessionId, relPath, text, expected) => invoke(IpcChannel.WriteFile, sessionId, relPath, text, expected),
     addFolder: (sessionId) => invoke(IpcChannel.WorkspaceAddFolder, sessionId),
     removeFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceRemoveFolder, sessionId, folder),
+    keepReadFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceKeepReadFolder, sessionId, folder),
+    dismissRead: (sessionId, path) => invoke(IpcChannel.WorkspaceDismissRead, sessionId, path),
     onFilesChanged: (listener) => subscribe(IpcChannel.FilesChanged, listener),
     watchOpenFiles: (tabs) => send(IpcChannel.WatchOpenFiles, tabs),
     listFiles: (sessionId) => invoke(IpcChannel.ListFiles, sessionId),

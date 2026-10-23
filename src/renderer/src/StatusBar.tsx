@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { PullRequestLink } from '@shared/chat';
 import { t, type MessageKey } from '@shared/i18n';
 import type { SessionWorktree } from '@shared/ipc';
@@ -32,6 +33,8 @@ type Props = {
   language: string | null;
   // 入っている Claude Code のバージョン（undefined はまだ確かめていない、null は見つからない）
   claudeVersion: string | null | undefined;
+  // 動作確認済の Claude Code のバージョン（省くと、アプリに組み込んだバージョン）
+  claudeVerified?: string;
 };
 
 // カーソル位置は 1 キーごとに変わるので、ここだけで読む
@@ -40,7 +43,8 @@ function CursorPosition() {
   return cursor && <span>Ln {cursor.line}, Col {cursor.column}</span>;
 }
 
-export function StatusBar({
+// App は応答中に何度も描き直すので、props が変わったときだけ描き直す
+export const StatusBar = memo(function StatusBar({
   status,
   exitCode,
   branch,
@@ -50,6 +54,7 @@ export function StatusBar({
   showCursor,
   language,
   claudeVersion,
+  claudeVerified,
 }: Props) {
   const s = STATUS[status];
   const failed = status === 'exited' && exitCode !== null && exitCode !== 0;
@@ -61,7 +66,7 @@ export function StatusBar({
         <span className={`status-dot${busy ? ' running' : ''}`} style={busy ? undefined : { background: failed ? 'var(--danger)' : s.color }} />
         <span className={busy ? 'flow-text' : undefined}>{failed ? t('app.status.exitedWithCode', { code: exitCode }) : t(s.label)}</span>
       </div>
-      <ClaudeVersion version={claudeVersion} />
+      <ClaudeVersion version={claudeVersion} verified={claudeVerified} />
       {branch && (
         <button
           className={`status-button${worktree ? ' with-icon' : ''}`}
@@ -84,4 +89,4 @@ export function StatusBar({
       {language && <span>UTF-8</span>}
     </footer>
   );
-}
+});

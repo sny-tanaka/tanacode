@@ -48,6 +48,14 @@ describe('受け口の登録', () => {
   });
 });
 
+describe('エクスプローラーのファイル操作', () => {
+  it('ゴミ箱に入れるのは、セッションのフォルダの Workspace が確かめた絶対パス', async () => {
+    await boot();
+    await invoke(IpcChannel.TrashEntry, 's1', 'src/a.ts');
+    expect(state.shell.trashItem.mock.calls).toEqual([[`${cwdOf('s1')}/src/a.ts`]]);
+  });
+});
+
 describe('Finder で表示（エディタのファイル）', () => {
   // 絶対パスにするのは Workspace.absolutePath（相対パスは作業フォルダで解き、絶対パスはそのまま、外を指す相対パスは断る）。ここでは、その結果を渡すことを確かめる
   it('セッションのフォルダの Workspace に絶対パスにしてもらい、Finder に渡す。空・文字でないものは渡さない', async () => {
@@ -72,8 +80,10 @@ describe('Markdown のプレビューの画像', () => {
   it('セッションのフォルダで読み、追加したフォルダも渡す（その中の画像だけを読む）。読めなければ null', async () => {
     await boot();
     manager().addedFoldersOf.mockReturnValue(['/Users/me/lib']);
+    // Claude が読んだリポジトリの中の画像も読む（エクスプローラーから開いた Markdown）
+    manager().readFoldersOf.mockReturnValue(['/Users/me/repo']);
     await expect(invoke(IpcChannel.ReadImage, 's1', '/Users/me/lib/logo.png')).resolves.toEqual(
-      callIn(cwdOf('s1'), 'workspace.readImage', '/Users/me/lib/logo.png', ['/Users/me/lib']),
+      callIn(cwdOf('s1'), 'workspace.readImage', '/Users/me/lib/logo.png', ['/Users/me/lib', '/Users/me/repo']),
     );
     expect(manager().addedFoldersOf.mock.calls).toEqual([['s1']]);
   });
@@ -179,6 +189,7 @@ describe('そのまま渡す受け口', () => {
     // 既定のプロファイルは、アプリの環境変数のままの .claude.json を読む
     [IpcChannel.AccountGet, [], call('readClaudeAccount', join(homedir(), '.claude.json'))],
     [IpcChannel.ClaudeVersionGet, [], call('claudeVersions.get')],
+    [IpcChannel.ClaudeVerifiedGet, [], call('claudeCompat.get')],
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
     [IpcChannel.AppUpdateCheck, [], call('appUpdates.refresh')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],
@@ -192,6 +203,13 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ResolveFiles, ['s1', ['src/a.ts']], callIn(cwdOf('s1'), 'workspace.resolveFiles', ['src/a.ts'], [])],
     // エディタのファイルを Finder で表示する（返すものは無い。渡す先は、下の「Finder で表示」で確かめる）
     [IpcChannel.RevealFile, ['s1', 'src/a.ts'], undefined],
+    // エクスプローラーのファイル操作。変えてよい場所か（作業フォルダと追加したフォルダの中）を Workspace が確かめられるよう、追加したフォルダも渡す。
+    // 種類は file か dir のどちらかにする（ゴミ箱に入れる先は、下の「エクスプローラーのファイル操作」で確かめる）
+    [IpcChannel.CreateEntry, ['s1', 'src', 'a.ts', 'file'], callIn(cwdOf('s1'), 'workspace.createEntry', 'src', 'a.ts', 'file', [])],
+    [IpcChannel.CreateEntry, ['s1', '', 'lib', 'dir'], callIn(cwdOf('s1'), 'workspace.createEntry', '', 'lib', 'dir', [])],
+    [IpcChannel.CreateEntry, ['s1', '', 'x', 'other'], callIn(cwdOf('s1'), 'workspace.createEntry', '', 'x', 'file', [])],
+    [IpcChannel.RenameEntry, ['s1', 'src/a.ts', 'b.ts'], callIn(cwdOf('s1'), 'workspace.renameEntry', 'src/a.ts', 'b.ts', [])],
+    [IpcChannel.TrashEntry, ['s1', 'src/a.ts'], undefined],
     // 読んだときの中身（今のディスクと同じときだけ書く）。文字でなければ確かめずに書く（「このまま保存」の null）
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', '前の中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', '前の中身')],
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', null], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', null)],
@@ -589,6 +607,29 @@ describe('ワークスペースに追加するフォルダ', () => {
     // 追加していないフォルダなら、何も変えない（動いている Claude Code を起動し直させない）
     await expect(invoke(IpcChannel.WorkspaceRemoveFolder, 's1', '/x')).resolves.toEqual(['/a', '/b', '/c']);
     expect(manager().setAddedFolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('Claude が読んだリポジトリは、追加したフォルダの最後に足し（リンクは解く）、Claude が読んだものの一覧から外す。読んだものに無いフォルダは断る', async () => {
+    await boot();
+    const repo = join(state.root, 'repo');
+    mkdirSync(repo);
+    manager().addedFoldersOf.mockReturnValue(['/elsewhere']);
+    manager().readFoldersOf.mockReturnValue([repo]);
+    await expect(invoke(IpcChannel.WorkspaceKeepReadFolder, 's1', repo)).resolves.toEqual(['/elsewhere', repo]);
+    expect(manager().setAddedFolders.mock.calls).toEqual([['s1', ['/elsewhere', repo]]]);
+    // 起動し直して読み直しても出し直さないよう覚えるのは、人が消したときだけ
+    expect(manager().removeOutsideRead.mock.calls).toEqual([['s1', repo, false]]);
+    // ダイアログは出さない
+    expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
+
+    await expect(invoke(IpcChannel.WorkspaceKeepReadFolder, 's1', '/Users/me/other')).rejects.toThrow('not a folder Claude read: /Users/me/other');
+    expect(manager().setAddedFolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('Claude が読んだものを一覧から消すときは、manager に渡す', async () => {
+    await boot();
+    await invoke(IpcChannel.WorkspaceDismissRead, 's1', '/Users/me/memo.txt');
+    expect(manager().removeOutsideRead.mock.calls).toEqual([['s1', '/Users/me/memo.txt']]);
   });
 
   it('新規セッションの画面のフォルダでは、アプリが一覧を覚えて見張る。外す・画面を閉じると見張りをやめる', async () => {
