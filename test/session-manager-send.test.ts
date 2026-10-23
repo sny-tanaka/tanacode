@@ -196,6 +196,33 @@ describe('submit', () => {
     expect(queue(id)).toEqual([{ id: human.uuid, text: '予約していた発言', pastes: [], images: 0, state: 'queued' }]);
   });
 
+  it('queuedMessages: まだ会話に入っていない発言を、送った順に、アプリが預かっているもの（held）と Claude Code に渡したものに分けて返す', async () => {
+    const parent = app.create();
+    const { id, pipe } = app.create({ mode: 'manual' }, parent.id);
+    // 起動が終わる前は、アプリが預かる（最初の指示は本文、親の指示は囲みを外す。知らせは発言でない）
+    const sending = Promise.all([
+      app.manager.submitWhenReady(id, { parent: parent.id, body: '最初の指示', setupNote: true }, 1000),
+      app.manager.submitWhenReady(id, parentMessageText(parent.id, 'テストも直して'), 1000),
+      app.manager.submitWhenReady(id, sessionEventText(['abcdef12'], '知らせ'), 1000),
+    ]);
+    await app.waitFor('預かった', () => app.manager.queuedMessages(id).length === 3);
+    expect(app.manager.queuedMessages(id)).toEqual([
+      { parent: parent.id, text: '最初の指示', held: true, shown: true },
+      { parent: parent.id, text: 'テストも直して', held: true, shown: true },
+      { parent: null, text: expect.stringContaining('知らせ'), held: true, shown: false },
+    ]);
+    await app.ready(id);
+    await sending;
+    expect(app.manager.queuedMessages(id).map((m) => [m.text.slice(0, 7), m.held])).toEqual([
+      ['最初の指示', false],
+      ['テストも直して', false],
+      [expect.any(String), false],
+    ]);
+    // 会話に入ったら外れる
+    for (const prompt of pipe.prompts) app.append(id, { ...line.user('x'), uuid: prompt.uuid, origin: undefined });
+    await app.waitFor('会話に入った', () => app.manager.queuedMessages(id).length === 0);
+  });
+
   it('子セッションの知らせなど、発言でないものは送信中・順番待ちに出さない。会話に出るまでは作業中に数える', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

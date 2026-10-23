@@ -851,6 +851,9 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     {
       "inputSchema": {
         "properties": {
+          "max_response_chars": {
+            "type": "integer",
+          },
           "session_id": {
             "type": "string",
           },
@@ -889,6 +892,9 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     {
       "inputSchema": {
         "properties": {
+          "max_response_chars": {
+            "type": "integer",
+          },
           "session_id": {
             "type": "string",
           },
