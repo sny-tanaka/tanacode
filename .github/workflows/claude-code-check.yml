@@ -6,6 +6,9 @@
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
 # - 行の目録（行の種類とフィールド。test/transcript-inventory.ts）が、動作確認済のバージョンの目録と違えば、PR は作るがマージしない。
 #   差分を PR の本文に載せる（人が仕分けてからマージする）。tanacode が使うフィールドが目録から消えていたら、確認が落ちて Issue が立つ
+# - 同じ PR で、tanacode のバージョンと動作確認済のバージョンの対応表（compat.json）も書き換える（scripts/compat-table.mjs）。
+#   公開済みのアプリは develop の compat.json を読むので、マージすれば、リリースしなくても印が変わる。
+#   いまのアプリの行は、その行のバージョンと目録に差が無いときだけ上げ、差があれば据え置いて、次にリリースするバージョンから上げる
 # 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ。
 # どの台本でも、アプリの知らない種類の行が出たら落ちる）
 # アプリは macOS 専用なので、macOS のランナーで確かめる
@@ -171,6 +174,15 @@ jobs:
             title="test: Claude Code $VERSION の控えを足す"
             summary="動作確認済のバージョン（$VERSION）の控え（か、その目録）がまだ無いので、毎日の互換性の確認で取った控えを足します。"
           fi
+          # 対応表で、公開済みのアプリ（package.json のバージョン）の行も上げたか
+          app=$(node -p "require('./package.json').version")
+          if [ "$action" = bump ] && [ "$(node scripts/compat-table.mjs current)" = "$VERSION" ]; then
+            deliver_note="- 対応表（\`compat.json\`）の、公開済みのアプリ（v$app）の行も $VERSION にします。マージすると、リリースしなくても、公開済みのアプリのステータスバーがこのバージョンでチェックマークになります"
+          elif [ "$action" = bump ]; then
+            deliver_note="- 対応表（\`compat.json\`）の、公開済みのアプリ（v$app）の行は、目録に差があるので据え置きます。$VERSION にするのは次にリリースするバージョンからで、アプリのリリースで利用者に届きます"
+          else
+            deliver_note="- 控えを足すだけなので、アプリの動きは変わりません"
+          fi
           if [ "$inventory" = changed ]; then
             merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違うので、**自動ではマージしません**。下の差分を仕分けて（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ）、手元の本物の会話ログでも確かめてから（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）、マージしてください（CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
           else
@@ -179,7 +191,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
-          git add src/shared/claude-code.ts README.md README.en.md GUIDE.md "test/fixtures/claude-code/$VERSION"
+          git add src/shared/claude-code.ts README.md README.en.md GUIDE.md compat.json "test/fixtures/claude-code/$VERSION"
           git commit -m "$title"
           git push -u origin "$branch"
           body="$summary
@@ -187,7 +199,7 @@ jobs:
           - 確かめた実行: $RUN_URL（\`npm test\` と、本物の claude での \`npm run test:cli\` が通っています）
           - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
           $merge_note
-          - マージしたあと、アプリのリリースで利用者に届きます"
+          $deliver_note"
           if [ "$inventory" = changed ]; then
             body="$body
 

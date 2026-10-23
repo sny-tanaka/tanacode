@@ -559,6 +559,7 @@ const modules: Record<string, Record<string, unknown>> = {
     }),
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },
+  'claude-compat': { ClaudeCompatMonitor: fakeClass('ClaudeCompatMonitor', { get: echo('claudeCompat.get'), start: () => undefined, stop: () => undefined }) },
   'claude-version': { ClaudeVersionMonitor: fakeClass('ClaudeVersionMonitor', { get: echo('claudeVersions.get'), start: () => undefined, stop: () => undefined, refresh: async () => undefined }) },
   // 利用枠で止まったセッションの再開の予約。止まったか・通知の中身は、テストが noticeOf を差し替えて決める
   'usage-limit-resume': {
@@ -637,6 +638,7 @@ vi.mock('../../src/main/statusline', () => modules.statusline);
 vi.mock('../../src/main/shell-terminals', () => modules['shell-terminals']);
 vi.mock('../../src/main/system-monitor', () => modules['system-monitor']);
 vi.mock('../../src/main/claude-version', () => modules['claude-version']);
+vi.mock('../../src/main/claude-compat', () => modules['claude-compat']);
 vi.mock('../../src/main/translate', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/translate')>()),
   Translator: fakeClass('Translator', { translate: echo('translator.translate') }),

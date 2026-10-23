@@ -500,7 +500,13 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
-      claudeVersion: { get: () => ok(this.claudeVersion), onChanged: (l) => this.ch.claudeVersion.on(l) },
+      // 動作確認済のバージョンは、組み込んだもののまま（デモは対応表を読まない）
+      claudeVersion: {
+        get: () => ok(this.claudeVersion),
+        onChanged: (l) => this.ch.claudeVersion.on(l),
+        getVerified: () => ok(VERIFIED_CLAUDE_CODE_VERSION),
+        onVerifiedChanged: () => () => {},
+      },
       appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l), install: () => ok(undefined), check: () => ok(this.appUpdate !== null), onChecked: () => () => {} },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
       // 設定ファイルは登録しない（選択欄は「標準」のまま）

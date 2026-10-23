@@ -184,6 +184,8 @@ export const IpcChannel = {
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
   ClaudeVersionChanged: 'claude:version-changed',
+  ClaudeVerifiedGet: 'claude:verified-get',
+  ClaudeVerifiedChanged: 'claude:verified-changed',
   AppUpdateGet: 'app-update:get',
   AppUpdateChanged: 'app-update:changed',
   AppUpdateInstall: 'app-update:install',
@@ -650,6 +652,10 @@ export type TanacodeApi = {
   claudeVersion: {
     get(): Promise<string | null>;
     onChanged(listener: (version: string | null) => void): () => void;
+    // 動作確認済の Claude Code のバージョン（ステータスバーの印で比べる相手）。リポジトリの対応表（compat.json）の、このアプリの行。
+    // 読めない・新しいバージョンの通知の設定がオフなら、最後に読めた表か、アプリに組み込んだバージョン
+    getVerified(): Promise<string>;
+    onVerifiedChanged(listener: (verified: string) => void): () => void;
   };
   // tanacode の新しいバージョン（GitHub の Releases）。起動時と 1 時間ごとに確かめる。まだ分からない・確かめる設定がオフなら null
   appUpdate: {
@@ -947,6 +953,7 @@ export type IpcInvoke = {
   [IpcChannel.PromptsGet]: Api['prompts']['get'];
   [IpcChannel.PromptsUpdate]: Api['prompts']['update'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
+  [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];
   [IpcChannel.AppUpdateCheck]: Api['appUpdate']['check'];
@@ -1057,6 +1064,7 @@ export type IpcEvent = {
   [IpcChannel.ScheduledChanged]: Payload<Api['scheduled']['onChanged']>;
   [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
   [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;
+  [IpcChannel.ClaudeVerifiedChanged]: Payload<Api['claudeVersion']['onVerifiedChanged']>;
   [IpcChannel.AppUpdateChanged]: Payload<Api['appUpdate']['onChanged']>;
   [IpcChannel.AppUpdateChecked]: undefined;
   [IpcChannel.StatusLineChanged]: Payload<Api['statusLine']['onChanged']>;

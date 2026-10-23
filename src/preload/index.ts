@@ -131,6 +131,8 @@ const api: TanacodeApi = {
   claudeVersion: {
     get: () => invoke(IpcChannel.ClaudeVersionGet),
     onChanged: (listener) => subscribe(IpcChannel.ClaudeVersionChanged, listener),
+    getVerified: () => invoke(IpcChannel.ClaudeVerifiedGet),
+    onVerifiedChanged: (listener) => subscribe(IpcChannel.ClaudeVerifiedChanged, listener),
   },
   appUpdate: {
     get: () => invoke(IpcChannel.AppUpdateGet),
