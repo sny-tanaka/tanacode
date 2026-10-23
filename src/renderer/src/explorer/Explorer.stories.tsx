@@ -7,11 +7,15 @@ import { Explorer } from './Explorer';
 
 // エクスプローラー。セッションのフォルダのツリーの下に、ワークスペースに追加したフォルダのツリーを並べる。
 // 見出しの ＋ でフォルダを追加し、追加したフォルダの行にマウスを乗せると出る × で外す（操作は何もしないモック）。
-// 追加したフォルダの行は絶対パスで持ち、git の色とブランチの変更の印は出さない（src/renderer/src/explorer）
+// 追加したフォルダの行は絶対パスで持ち、git の色とブランチの変更の印は出さない（src/renderer/src/explorer）。
+// その下に、Claude がフォルダの外で読んだ・書いたものを見出しを分けて並べる（git のリポジトリはツリー、それ以外はファイル）。
+// リポジトリの行の ＋ で追加したフォルダに移し、× で一覧から消す
 
 const ROOT = '/Users/me/work/shop';
 const API = '/Users/me/work/shop-api';
 const DESIGN = '/Users/me/work/design-tokens';
+const READ_REPO = '/Users/me/oss/payment-sdk';
+const READ_FILES = ['/Users/me/Downloads/invoice-format.csv', '/Users/me/notes/2026-10-shop-meeting.md'];
 
 const dir = (parent: string, name: string): DirEntry => ({ name, path: parent ? `${parent}/${name}` : name, isDir: true });
 const file = (parent: string, name: string): DirEntry => ({ name, path: parent ? `${parent}/${name}` : name, isDir: false });
@@ -22,11 +26,15 @@ const DIRS: Record<string, DirEntry[]> = {
   [API]: [dir(API, 'routes'), file(API, 'package.json')],
   [`${API}/routes`]: [file(`${API}/routes`, 'orders.ts'), file(`${API}/routes`, 'prices.ts')],
   [DESIGN]: [file(DESIGN, 'colors.json'), file(DESIGN, 'spacing.json')],
+  [READ_REPO]: [dir(READ_REPO, 'src'), file(READ_REPO, 'README.md')],
+  [`${READ_REPO}/src`]: [file(`${READ_REPO}/src`, 'client.ts')],
 };
 
 const CHANGES: Record<string, FileChange> = { 'src/tax.ts': { kind: 'modified', added: 4, removed: 1 } };
 
-function Demo({ folders, editable = true, activePath = null }: { folders: string[]; editable?: boolean; activePath?: string | null }) {
+type DemoProps = { folders: string[]; readFolders?: string[]; readFiles?: string[]; editable?: boolean; activePath?: string | null };
+
+function Demo({ folders, readFolders, readFiles, editable = true, activePath = null }: DemoProps) {
   return (
     <div className="explorer" style={{ height: 520, border: '1px solid var(--border-subtle)' }}>
       <div className="side-panel">
@@ -41,11 +49,15 @@ function Demo({ folders, editable = true, activePath = null }: { folders: string
             rootName="shop"
             activePath={activePath}
             changes={CHANGES}
-            knowledge={{ 'src/tax.ts': 'edited', [`${API}/routes/prices.ts`]: 'read' }}
+            knowledge={{ 'src/tax.ts': 'edited', [`${API}/routes/prices.ts`]: 'read', [READ_FILES[0]]: 'read', [READ_FILES[1]]: 'edited' }}
             gitMarks={{ 'src/tax.ts': 'modified' }}
             onOpenFile={() => {}}
             folders={folders}
             onRemoveFolder={editable ? () => {} : undefined}
+            readFolders={readFolders}
+            readFiles={readFiles}
+            onKeepReadFolder={editable ? () => {} : undefined}
+            onDismissRead={editable ? () => {} : undefined}
           />
         </div>
       </div>
@@ -70,3 +82,7 @@ export const 追加したフォルダなし: Story = { args: { folders: [] } };
 export const 追加したフォルダあり: Story = { args: { folders: [API, DESIGN], activePath: `${API}/routes/prices.ts` } };
 // アーカイブしたセッション（と worktree の準備を待っている間）は、追加も外すこともできない
 export const 変えられないとき: Story = { args: { folders: [API, DESIGN], editable: false } };
+// Claude がフォルダの外で読んだもの。リポジトリ（payment-sdk）は閉じて始め、それ以外のファイルは入っているフォルダを薄く添える
+export const Claudeが読んだもの: Story = { args: { folders: [API], readFolders: [READ_REPO], readFiles: READ_FILES } };
+// アーカイブしたセッションでは、＋ も × も出さない
+export const Claudeが読んだもの_変えられないとき: Story = { args: { folders: [], readFolders: [READ_REPO], readFiles: READ_FILES, editable: false } };

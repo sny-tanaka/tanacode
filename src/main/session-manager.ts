@@ -71,6 +71,7 @@ import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
+import { outsideReadOf, outsideRules, within, type OutsideRules } from './outside-reads';
 import { askQuestionsOf, elicitationOf, elicitationResult, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
@@ -423,6 +424,8 @@ export class SessionManager {
   private readonly runtimes = new Map<string, Runtime>();
   private focusedId: string | null = null;
   private closed = false;
+  // Claude がフォルダの外で読んだものを、エクスプローラーに出さない場所（初めて要るときに決める）
+  private outsideRulesCache: OutsideRules | null = null;
   // 最後に get_usage を聞いた時刻
   private usageAt = 0;
 
@@ -566,6 +569,8 @@ export class SessionManager {
             : null,
           parentId: r.parentId ?? null,
           addedFolders: r.addedFolders ?? [],
+          readFolders: r.readFolders ?? [],
+          readFiles: r.readFiles ?? [],
           ...(this.checklistUnsaved(r.id) ? { checklistUnsaved: true } : {}),
         };
       });
@@ -1639,10 +1644,64 @@ export class SessionManager {
     const record = this.store.get(id);
     if (!record) throw new Error(`unknown session: ${id}`);
     const rt = this.runtimes.get(id);
-    this.store.update(id, { addedFolders: folders, ...(rt?.process ? { addedFoldersPending: true } : {}) });
-    if (rt && !record.archived) this.watchFolders(rt, folders);
+    // Claude が読んだものは、追加したフォルダの中に入ったら、追加したフォルダのほうに出す
+    const covered = (path: string) => folders.some((folder) => within(folder, path));
+    this.store.update(id, {
+      addedFolders: folders,
+      ...(rt?.process ? { addedFoldersPending: true } : {}),
+      ...(record.readFolders?.some(covered) ? { readFolders: record.readFolders.filter((f) => !covered(f)) } : {}),
+      ...(record.readFiles?.some(covered) ? { readFiles: record.readFiles.filter((f) => !covered(f)) } : {}),
+    });
+    if (rt && !record.archived) this.watchFolders(rt, this.shownFolders(id));
     this.emitSessions();
     this.restartForFoldersIfIdle(id);
+  }
+
+  // Claude がフォルダの外で読んだ・書いたファイル path（絶対パス）を、エクスプローラーに出しているか（KnowledgeTracker から呼ぶ）。
+  // discover なら、まだ出していなければ出す（git のリポジトリの中ならそのいちばん上、無ければファイル。outside-reads.ts）。
+  // ただし、エクスプローラーから消したものは、消したあとの行（at）でまた触れたときだけ出し直す（起動し直して読み直す会話では出さない）
+  private noteOutsideRead(id: string, path: string, at: number, discover: boolean): boolean {
+    const record = this.store.get(id);
+    if (!record) return false;
+    if (record.readFolders?.some((folder) => within(folder, path)) || record.readFiles?.includes(path)) return true;
+    if (!discover) return false;
+    this.outsideRulesCache ??= outsideRules(this.claudeDir);
+    const found = outsideReadOf(path, this.outsideRulesCache);
+    if (!found) return false;
+    const dismissed = record.dismissedReads?.[found.path];
+    if (dismissed !== undefined && at <= dismissed) return false;
+    const { [found.path]: _, ...rest } = record.dismissedReads ?? {};
+    const key = found.kind === 'folder' ? 'readFolders' : 'readFiles';
+    this.store.update(id, { [key]: [...(record[key] ?? []), found.path], dismissedReads: rest });
+    const rt = this.runtimes.get(id);
+    if (rt && found.kind === 'folder' && !record.archived) this.watchFolders(rt, this.shownFolders(id));
+    this.emitSessions();
+    return true;
+  }
+
+  // Claude がフォルダの外で読んだもの（readFolders・readFiles のどれか）を、エクスプローラーから消す。
+  // dismiss なら、消した時刻を覚えて、それより前の行では出し直さない（追加フォルダに移したときは覚えない）。出していないものなら何もしない
+  removeOutsideRead(id: string, path: string, dismiss = true): void {
+    const record = this.store.get(id);
+    if (!record || !(record.readFolders?.includes(path) || record.readFiles?.includes(path))) return;
+    this.store.update(id, {
+      readFolders: (record.readFolders ?? []).filter((f) => f !== path),
+      readFiles: (record.readFiles ?? []).filter((f) => f !== path),
+      ...(dismiss ? { dismissedReads: { ...record.dismissedReads, [path]: Date.now() } } : {}),
+    });
+    const rt = this.runtimes.get(id);
+    if (rt && !record.archived) this.watchFolders(rt, this.shownFolders(id));
+    this.emitSessions();
+  }
+
+  readFoldersOf(id: string): string[] {
+    return this.store.get(id)?.readFolders ?? [];
+  }
+
+  // エクスプローラーにツリーで出すフォルダ（追加したフォルダと、Claude が読んだリポジトリ）。見張るのはこれ
+  private shownFolders(id: string): string[] {
+    const record = this.store.get(id);
+    return [...(record?.addedFolders ?? []), ...(record?.readFolders ?? [])];
   }
 
   // 追加フォルダを渡すための起動し直しを待っていて、手が空いていれば起動し直す。
@@ -2192,6 +2251,7 @@ export class SessionManager {
           record.cwd,
           (value) => this.listeners.onKnowledge(id, value),
           () => this.store.get(id)?.addedFolders ?? [],
+          (path, at, discover) => this.noteOutsideRead(id, path, at, discover),
         ),
         context: new ContextTracker(record.cwd),
         statusLine: null,
@@ -2286,7 +2346,7 @@ export class SessionManager {
     rt.checklistMcp = adopted ? null : !!checklist;
     // worktree は、Claude Code が作るまでフォルダが無い（作ったあとで見張る）
     this.watch(rt, record.cwd);
-    this.watchFolders(rt, record.addedFolders ?? []);
+    this.watchFolders(rt, this.shownFolders(id));
     // 新しく起動する claude には、今の追加フォルダを --add-dir で渡す（引き継ぐ claude は前の引数のままなので、待ちを残す）
     if (!adopted && record.addedFoldersPending) this.store.update(id, { addedFoldersPending: false });
     rt.events = [];

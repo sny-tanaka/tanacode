@@ -420,6 +420,15 @@ export class Profile {
     return current.includes(folder) ? this.setAddedFolders(id, current.filter((f) => f !== folder)) : current;
   }
 
+  // Claude がフォルダの外で読んだリポジトリを、手で足した追加フォルダに移す（--add-dir で渡す）。追加したあとの一覧を返す。
+  // Claude が読んだものとして出していないフォルダは断る（画面から好きなパスを渡させない）
+  async keepReadFolder(id: string, folder: string): Promise<string[]> {
+    if (!this.manager.readFoldersOf(id).includes(folder)) throw new Error(`not a folder Claude read: ${folder}`);
+    const folders = await this.addFolder(id, folder);
+    this.manager.removeOutsideRead(id, folder, false);
+    return folders;
+  }
+
   private setAddedFolders(id: string, folders: string[]): string[] {
     if (!this.folderViews.has(id)) {
       this.manager.setAddedFolders(id, folders);

@@ -135,6 +135,44 @@ describe('KnowledgeTracker', () => {
     expect(withFolders.current().files['/work/lib/d.ts']).toBeUndefined();
   });
 
+  it('それより外のファイルは、道具で読んだ・書いたときだけ outside に覚えさせ（行の時刻を添える）、覚えたものは絶対パスのまま数える', () => {
+    const calls: [string, number, boolean][] = [];
+    const known = new Set<string>();
+    const outside = (path: string, at: number, discover: boolean) => {
+      calls.push([path, at, discover]);
+      if (discover && !path.includes('/skip/')) known.add(path);
+      return known.has(path);
+    };
+    const withOutside = new KnowledgeTracker(CWD, () => {}, () => ['/work/lib'], outside);
+    const at = '2026-10-23T01:02:03.000Z';
+    withOutside.handle(reply([toolUse('Read', { file_path: '/other/repo/a.ts' })], undefined, { timestamp: at }));
+    withOutside.handle(reply([toolUse('Write', { file_path: '/other/memo.txt' })]));
+    withOutside.handle(reply([toolUse('NotebookEdit', { notebook_path: '/other/book.ipynb' })]));
+    withOutside.handle(reply([toolUse('Read', { file_path: '/skip/x.ts' })]));
+    // 添付（@ の添付・CLAUDE.md の自動の読み込み）は、覚えているものに印を付けるだけ
+    withOutside.handle(nested('/other/repo/CLAUDE.md'));
+    withOutside.handle(file('/other/repo/a.ts'));
+    // セッションのフォルダ・追加したフォルダの中のもの、相対パスは聞かない
+    withOutside.handle(reply([toolUse('Read', { file_path: `${CWD}/in.ts` })]));
+    withOutside.handle(reply([toolUse('Read', { file_path: '/work/lib/in.ts' })]));
+    withOutside.handle(reply([toolUse('Read', { file_path: 'rel.ts' })]));
+    expect(calls).toEqual([
+      ['/other/repo/a.ts', Date.parse(at), true],
+      ['/other/memo.txt', 0, true],
+      ['/other/book.ipynb', 0, true],
+      ['/skip/x.ts', 0, true],
+      ['/other/repo/CLAUDE.md', 0, false],
+      ['/other/repo/a.ts', 0, false],
+    ]);
+    expect(withOutside.current().files).toEqual({
+      '/other/repo/a.ts': 'read',
+      '/other/memo.txt': 'edited',
+      '/other/book.ipynb': 'edited',
+      'in.ts': 'read',
+      '/work/lib/in.ts': 'read',
+    });
+  });
+
   it('使用量は、入力・キャッシュの作成・キャッシュの読み込みの合計。0 や同じ量では変えない', () => {
     tracker.handle(reply([{ type: 'text', text: 'はい' }], { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 3, output_tokens: 20 }));
     expect(tracker.current().contextTokens).toBe(123);

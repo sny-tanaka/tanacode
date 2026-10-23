@@ -1530,7 +1530,15 @@
       "addedInBranch": "このブランチで新規作成",
       "modifiedInBranch": "このブランチで変更",
       "removeFolder": "ワークスペースから外す",
-      "removeFolderTip": "ワークスペースから外す\nフォルダそのものは消しません"
+      "removeFolderTip": "ワークスペースから外す\nフォルダそのものは消しません",
+      "readFolders": "Claude が読んだフォルダ",
+      "readFoldersTip": "Claude がフォルダの外で読んだ・書いたファイルの入っている git のリポジトリ\nClaude Code には作業できるフォルダとして渡していません",
+      "readFiles": "フォルダ外で Claude が読み書きしたファイル",
+      "readFilesTip": "Claude がフォルダの外で読んだ・書いたファイルのうち、git のリポジトリに入っていないもの",
+      "keepReadFolder": "ワークスペースに追加",
+      "keepReadFolderTip": "ワークスペースに追加\n手で追加したフォルダと同じく、Claude Code にも作業できるフォルダとして渡します",
+      "dismissRead": "一覧から消す",
+      "dismissReadTip": "一覧から消す\nClaude がまた読み書きすると、もう一度出ます"
     },
     "knowledge": {
       "read": "Claude が読んだファイル（今の会話で中身を知っている）",

@@ -1579,7 +1579,15 @@
       "addedInBranch": "Added in this branch",
       "modifiedInBranch": "Modified in this branch",
       "removeFolder": "Remove from Workspace",
-      "removeFolderTip": "Remove from workspace\nThe folder itself isn't deleted"
+      "removeFolderTip": "Remove from workspace\nThe folder itself isn't deleted",
+      "readFolders": "Folders Claude Read",
+      "readFoldersTip": "Git repositories containing files Claude read or wrote outside the folder\nNot passed to Claude Code as working folders",
+      "readFiles": "Files Claude Read or Wrote Outside the Folder",
+      "readFilesTip": "Files Claude read or wrote outside the folder that aren't in a git repository",
+      "keepReadFolder": "Add to Workspace",
+      "keepReadFolderTip": "Add to workspace\nLike a folder you added yourself, Claude Code can work in it too",
+      "dismissRead": "Remove from List",
+      "dismissReadTip": "Remove from list\nIt shows up again if Claude reads or writes it again"
     },
     "knowledge": {
       "read": "Read by Claude (contents known in the current conversation)",
