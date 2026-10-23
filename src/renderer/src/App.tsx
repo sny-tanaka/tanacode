@@ -15,6 +15,7 @@ import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
+import { EMPTY_EDITOR, type EditorState, withEditor, withFile, withOpenFile } from './editor/openFiles';
 import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
 import { Explorer, type ExplorerFileOps } from './explorer/Explorer';
@@ -72,8 +73,6 @@ import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 
-type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
-const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
@@ -100,20 +99,6 @@ let revealSeq = 0;
 type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'branch'; path: string };
 // エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身か、チェックリストのカード
 type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
-
-function withFile(files: OpenFile[], path: string, content: FileContent): OpenFile[] {
-  const open = files.find((f) => f.path === path);
-  // 中身が同じなら入れ替えない（保存のあとの変更の知らせで読み直したときなど。入れ替えると App とエディタが描き直される）
-  if (open?.content.kind === 'text' && content.kind === 'text' && open.content.text === content.text) return files;
-  return open ? files.map((f) => (f.path === path ? { path, content } : f)) : [...files, { path, content }];
-}
-
-// 開いているタブの path の中身を content にする（開いていなければ、そのまま）
-function withOpenFile(state: EditorState, path: string, content: FileContent): EditorState {
-  if (!state.files.some((f) => f.path === path)) return state;
-  const files = withFile(state.files, path, content);
-  return files === state.files ? state : { ...state, files };
-}
 
 export function App() {
   const sessions = useSessions();
@@ -535,10 +520,7 @@ export function App() {
   }, [selected, chat.status, openSession]);
 
   const updateEditor = useCallback((dir: string, fn: (state: EditorState) => EditorState) => {
-    setEditors((prev) => {
-      const next = fn(prev[dir] ?? EMPTY_EDITOR);
-      return next === prev[dir] ? prev : { ...prev, [dir]: next };
-    });
+    setEditors((prev) => withEditor(prev, dir, fn));
   }, []);
 
   // line を渡すと、ディスクから読み直したうえでその行を表示する（Claude Code の編集直後に開くため）。

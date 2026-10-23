@@ -1781,6 +1781,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・SVG の画像（`SvgPreview.tsx`）・PDF の表示（`PdfView.tsx`）・ファイルツリー・検索
     - Markdown プレビュー（`MarkdownPreview.tsx`）の消毒は、チャット（`chat/Markdown.tsx` の `SANITIZE`）と同じく明示の許可リスト。リポジトリの文書に混ざる HTML のうち、GitHub が描くもの（中央寄せ・折りたたみ・キー・上付きなど）は残し、`class` はコードの言語の印（`language-*`。色付けと mermaid に使う）だけ、入力欄はタスクリストのチェックボックスだけを残します。`id`・`name` は、GitHub と同じく前置き（`user-content-`。DOMPurify の `SANITIZE_NAMED_PROPS`）を付けて残します。見出しに付ける id（`addHeadingIds`）にも同じ前置きを付けます。アプリの画面の id や、mermaid が図を描くときの id（`mermaid-1` など。mermaid は、同じ id の要素を消してから描く）とぶつけないためです。`#目印` のリンクは、前置きを付けた id・name を探します（URL として読めないもの（`#100%` など）は、書いたままの名前で。前置きまで書いたもの（`#user-content-install`）は、書いたままの名前でも）。画像は main の `Workspace.readImage` が、作業フォルダと追加したフォルダの中（リンクを解いた場所で確かめる）のものだけを読みます
+    - Markdown プレビューは、打っている間も少し待ってから（150ms ごとに）描き直します。描き直すたびにやり直さないよう、読み込んだ画像（ディスク上で何か変わったら捨てる）・色付けしたコード・描いた mermaid の図を覚えておきます。mermaid の図は、文書の中で同じ図の何回目かも合わせて覚えます。mermaid の SVG は描いたときの id で色と矢印の形を当てるので、同じ図を 2 つ並べるときに id を重ねないためです
   - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル）と、ターミナルモードの Claude Code の生の画面（`ClaudeScreen`）と切り替え（`terminalMode.ts`）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）

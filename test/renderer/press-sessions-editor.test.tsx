@@ -143,6 +143,10 @@ const fake = vi.hoisted(() => {
   return { monaco, made, lenient };
 });
 
+// mermaid は jsdom では描けないので、渡された id を付けた SVG を返す偽物にする（mermaid の SVG は、その id で色と矢印の形を当てる）
+const mermaidRender = vi.hoisted(() => vi.fn(async (id: string, text: string) => ({ svg: `<svg id="${id}"><desc>${text}</desc></svg>` })));
+vi.mock('mermaid', () => ({ default: { initialize() {}, render: mermaidRender } }));
+
 vi.mock('../../src/renderer/src/editor/monaco', () => ({
   monaco: fake.monaco,
   editorTheme: () => 'tanacode-test',
@@ -726,6 +730,22 @@ describe('MarkdownPreview（Markdown のプレビュー）', () => {
       ['A', 'img/logo.png'],
       ['A', 'img/logo.png'],
     ]);
+  });
+
+  it('同じ mermaid の図が 2 回あっても、別の id で描く（id が重なると色や矢印が崩れる）。打って描き直しても、描き直さずに同じ id のまま', async () => {
+    const diagram = ['```mermaid', 'flowchart LR', '  A[同じ図] --> B[2 回]', '```'].join('\n');
+    const text = ['# 図', '', diagram, '', 'あいだ', '', diagram].join('\n');
+    const before = mermaidRender.mock.calls.length;
+    const { doc } = preview(text);
+    const ids = () => [...doc.querySelectorAll('.markdown-mermaid > svg')].map((svg) => svg.id);
+    await vi.waitFor(() => expect(ids()).toHaveLength(2));
+    const first = ids();
+    expect(new Set(first).size).toBe(2);
+    expect(mermaidRender.mock.calls.length - before).toBe(2);
+    act(() => fake.made.models.at(-1)!.setValue(`${text}\n\n本文`));
+    await vi.waitFor(() => expect(doc.textContent).toContain('本文'));
+    await vi.waitFor(() => expect(ids()).toEqual(first));
+    expect(mermaidRender.mock.calls.length - before).toBe(2);
   });
 });
 

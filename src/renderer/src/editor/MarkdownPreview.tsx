@@ -115,9 +115,16 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
         if (!cancelled && loaded) img.src = loaded;
       });
     }
+    // 同じ図が文書の中に何回目に出てきたか（図ごとに覚えておくので、2 回目からは別に描く）
+    const diagrams = new Map<string, number>();
     for (const code of root.querySelectorAll<HTMLElement>('pre > code')) {
       const lang = /language-([\w+#-]+)/.exec(code.className)?.[1]?.toLowerCase();
-      if (lang === 'mermaid') void renderMermaid(code, () => cancelled);
+      if (lang === 'mermaid') {
+        const source = code.textContent ?? '';
+        const nth = diagrams.get(source) ?? 0;
+        diagrams.set(source, nth + 1);
+        void renderMermaid(code, nth, () => cancelled);
+      }
       else if (lang) void colorize(code, lang, () => cancelled);
     }
     return () => {
@@ -245,10 +252,11 @@ async function colorize(code: HTMLElement, lang: string, cancelled: () => boolea
 
 let mermaidLoader: Promise<typeof import('mermaid').default> | null = null;
 let mermaidSeq = 0;
-// 図の文 → 描いた SVG（描けなければ、そのエラー）
+// 図の文（と、文書の中で何回目か）→ 描いた SVG（描けなければ、そのエラー）。mermaid の SVG は、描いたときの id（mermaid-1 など）で
+// 色と矢印の形を当てるので、同じ図が 1 つの文書に 2 回あるときは、2 つめを別の id で描く（同じ SVG を並べると id が重なる）
 const mermaidDrawn = new Map<string, Promise<{ svg: string } | { error: unknown }>>();
 
-async function renderMermaid(code: HTMLElement, cancelled: () => boolean): Promise<void> {
+async function renderMermaid(code: HTMLElement, nth: number, cancelled: () => boolean): Promise<void> {
   // 大きいので、図があるときだけ読み込む
   mermaidLoader ??= import('mermaid').then(({ default: mermaid }) => {
     // 図の色もアプリのトークンに合わせる（base テーマに色を渡す）
@@ -274,10 +282,11 @@ async function renderMermaid(code: HTMLElement, cancelled: () => boolean): Promi
   const loader = mermaidLoader;
   const pre = code.parentElement!;
   const source = code.textContent ?? '';
-  const drawn = await (mermaidDrawn.get(source) ??
+  const key = `${nth}\n${source}`;
+  const drawn = await (mermaidDrawn.get(key) ??
     remember(
       mermaidDrawn,
-      source,
+      key,
       loader.then((mermaid) => mermaid.render(`mermaid-${++mermaidSeq}`, source)).then(
         ({ svg }) => ({ svg }),
         (error: unknown) => ({ error }),
