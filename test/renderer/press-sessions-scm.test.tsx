@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DirEntry, GitBranches, GitState, SearchResult } from '@shared/ipc';
-import { Explorer } from '../../src/renderer/src/explorer/Explorer';
+import { Explorer, type ExplorerFileOps } from '../../src/renderer/src/explorer/Explorer';
 import { ScmPanel } from '../../src/renderer/src/scm/ScmPanel';
 import { QuickOpen } from '../../src/renderer/src/search/QuickOpen';
 import { SearchPanel } from '../../src/renderer/src/search/SearchPanel';
@@ -602,6 +602,248 @@ describe('Explorer（エクスプローラー）', () => {
         ['A', LIB],
         ['A', `${LIB}/src`],
       ]);
+    });
+  });
+
+  describe('右クリックのメニュー（ファイル操作）', () => {
+    const LIB = '/work/lib';
+    const libDirs: Record<string, DirEntry[]> = { [LIB]: [{ name: 'index.ts', path: `${LIB}/index.ts`, isDir: false }] };
+    const fileOps = (over: Partial<ExplorerFileOps> = {}): ExplorerFileOps => ({
+      beforeRename: vi.fn(async () => true),
+      renamed: vi.fn(),
+      hasUnsaved: vi.fn(() => false),
+      trashed: vi.fn(),
+      ...over,
+    });
+    const setupOps = (responses: Record<string, (...args: never[]) => unknown> = {}) => {
+      const api = mockApi({ 'workspace.listDir': (_id: never, dir: never) => Promise.resolve(dirs[dir] ?? libDirs[dir]), ...responses });
+      api.install();
+      return api;
+    };
+    const rowOf = (name: string) => screen.getAllByText(name)[0].closest<HTMLElement>('.tree-row')!;
+    const menuLabels = () => screen.getAllByRole('menuitem').map((b) => b.textContent);
+    const pick = (label: string) => fireEvent.click(screen.getByRole('menuitem', { name: label }));
+    const input = () => document.querySelector<HTMLInputElement>('.tree-input')!;
+
+    it('ファイルの行では、作る・変える・捨てる・コピー・Finder を出す。フォルダそのものの行では、名前の変更・ゴミ箱・相対パスを出さない。ファイル操作が無ければ、コピーと Finder だけ', async () => {
+      setupOps();
+      const view = render(<Explorer {...props({ fileOps: fileOps() })} />);
+      fireEvent.contextMenu(await screen.findByText('README.md'));
+      expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', '名前を変更', 'ゴミ箱に入れる', 'パスをコピー', '相対パスをコピー', 'Finder で表示']);
+      expect(rowOf('README.md').classList.contains('menu-target')).toBe(true);
+      fireEvent.contextMenu(rootRow());
+      expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', 'パスをコピー', 'Finder で表示']);
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByRole('menu')).toBeNull();
+      view.rerender(<Explorer {...props()} />);
+      fireEvent.contextMenu(screen.getByText('README.md'));
+      expect(menuLabels()).toEqual(['パスをコピー', '相対パスをコピー', 'Finder で表示']);
+      // メニューの上での右クリックは、ブラウザのメニューを出さず、メニューも閉じない
+      expect(fireEvent.contextMenu(screen.getByRole('menu'))).toBe(false);
+      expect(screen.queryByRole('menu')).not.toBeNull();
+      // 外を押すと閉じる
+      fireEvent.mouseDown(document.body);
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('パスのコピーは絶対パスと、ツリーのフォルダからの相対パス。Finder には絶対パスを渡す（追加したフォルダでも）', async () => {
+      const api = setupOps();
+      const writeText = vi.fn(async () => undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      render(<Explorer {...props({ folders: [LIB], fileOps: fileOps() })} />);
+      fireEvent.contextMenu(await screen.findByText('README.md'));
+      pick('パスをコピー');
+      fireEvent.contextMenu(screen.getByText('README.md'));
+      pick('相対パスをコピー');
+      fireEvent.contextMenu(await screen.findByText('index.ts'));
+      pick('相対パスをコピー');
+      fireEvent.contextMenu(screen.getByText('index.ts'));
+      pick('Finder で表示');
+      fireEvent.contextMenu(rootRow());
+      pick('Finder で表示');
+      expect(writeText.mock.calls).toEqual([['/work/shop/README.md'], ['README.md'], ['index.ts']]);
+      expect(api.argsOf('workspace.revealFile')).toEqual([
+        ['A', `${LIB}/index.ts`],
+        ['A', '/work/shop'],
+      ]);
+    });
+
+    it('新規ファイルは、ファイルの行なら入っているフォルダの中に名前を入れる行を出す。Enter で作って開く。Esc ではやめる', async () => {
+      const api = setupOps({ 'workspace.createEntry': () => Promise.resolve('src/new.ts') });
+      const p = props({ fileOps: fileOps() });
+      render(<Explorer {...p} />);
+      fireEvent.click(await screen.findByText('src'));
+      fireEvent.contextMenu(await screen.findByText('main.ts'));
+      pick('新規ファイル');
+      fireEvent.keyDown(input(), { key: 'Escape' });
+      expect(input()).toBeNull();
+      fireEvent.contextMenu(screen.getByText('main.ts'));
+      pick('新規ファイル');
+      expect(document.activeElement).toBe(input());
+      fireEvent.change(input(), { target: { value: 'new.ts' } });
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await settle();
+      expect(api.argsOf('workspace.createEntry')).toEqual([['A', 'src', 'new.ts', 'file']]);
+      expect(p.onOpenFile).toHaveBeenCalledWith('src/new.ts');
+      expect(input()).toBeNull();
+      expect(api.argsOf('workspace.listDir').at(-1)).toEqual(['A', 'src']);
+    });
+
+    it('作れなかったら、理由を欄の下に出して入れ直させる。新規フォルダは開かない', async () => {
+      let fail = true;
+      const api = setupOps({
+        'workspace.createEntry': () => (fail ? Promise.reject(new Error('同じ名前のものがすでにあります: src')) : Promise.resolve('lib')),
+      });
+      const p = props({ fileOps: fileOps() });
+      render(<Explorer {...p} />);
+      fireEvent.contextMenu(rootRow());
+      pick('新規フォルダ');
+      fireEvent.change(input(), { target: { value: 'src' } });
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await settle();
+      expect(screen.getByText('同じ名前のものがすでにあります: src')).not.toBeNull();
+      expect(input().getAttribute('aria-invalid')).toBe('true');
+      fail = false;
+      fireEvent.change(input(), { target: { value: 'lib' } });
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await settle();
+      expect(api.argsOf('workspace.createEntry')).toEqual([
+        ['A', '', 'src', 'dir'],
+        ['A', '', 'lib', 'dir'],
+      ]);
+      expect(input()).toBeNull();
+      expect(p.onOpenFile).not.toHaveBeenCalled();
+    });
+
+    it('名前の変更は、その行で名前を入れる（拡張子の前までを選ぶ）。保存の確かめ（beforeRename）が通ったら変えて、タブに知らせる', async () => {
+      const api = setupOps({ 'workspace.renameEntry': () => Promise.resolve('src/app.ts') });
+      const ops = fileOps();
+      render(<Explorer {...props({ fileOps: ops })} />);
+      fireEvent.click(await screen.findByText('src'));
+      fireEvent.contextMenu(await screen.findByText('main.ts'));
+      pick('名前を変更');
+      expect(input().value).toBe('main.ts');
+      expect([input().selectionStart, input().selectionEnd]).toEqual([0, 4]);
+      // 名前を変えずに決めたら、何もしない
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await settle();
+      expect(input()).toBeNull();
+      fireEvent.contextMenu(screen.getByText('main.ts'));
+      pick('名前を変更');
+      fireEvent.change(input(), { target: { value: 'app.ts' } });
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await settle();
+      expect(ops.beforeRename).toHaveBeenCalledWith('src/main.ts');
+      expect(api.argsOf('workspace.renameEntry')).toEqual([['A', 'src/main.ts', 'app.ts']]);
+      expect(ops.renamed).toHaveBeenCalledWith('src/main.ts', 'src/app.ts');
+      expect(input()).toBeNull();
+    });
+
+    it('名前を入れている欄を押しても、フォルダを開け閉めせず、ファイルも開かない', async () => {
+      setupOps();
+      const p = props({ fileOps: fileOps() });
+      render(<Explorer {...p} />);
+      fireEvent.click(await screen.findByText('src'));
+      await screen.findByText('main.ts');
+      fireEvent.contextMenu(screen.getByText('src'));
+      pick('名前を変更');
+      fireEvent.click(input());
+      expect(screen.queryByText('main.ts')).not.toBeNull();
+      expect(input().value).toBe('src');
+      fireEvent.keyDown(input(), { key: 'Escape' });
+      fireEvent.contextMenu(screen.getByText('main.ts'));
+      pick('名前を変更');
+      fireEvent.click(input());
+      expect(p.onOpenFile).not.toHaveBeenCalled();
+      expect(input().value).toBe('main.ts');
+    });
+
+    it('保存の確かめでやめたら、名前を変えない。欄から離れたときも決める', async () => {
+      const api = setupOps();
+      const ops = fileOps({ beforeRename: vi.fn(async () => false) });
+      render(<Explorer {...props({ fileOps: ops })} />);
+      fireEvent.contextMenu(await screen.findByText('README.md'));
+      pick('名前を変更');
+      fireEvent.change(input(), { target: { value: 'NOTES.md' } });
+      fireEvent.blur(input());
+      await settle();
+      expect(ops.beforeRename).toHaveBeenCalledWith('README.md');
+      expect(api.argsOf('workspace.renameEntry')).toEqual([]);
+      expect(ops.renamed).not.toHaveBeenCalled();
+      expect(input()).toBeNull();
+    });
+
+    it('ゴミ箱に入れる前に確かめる（保存していない変更があれば、そう書く）。入れたらタブに知らせる。やめたら入れない', async () => {
+      const api = setupOps();
+      const messages: string[] = [];
+      let answer = false;
+      vi.spyOn(window, 'confirm').mockImplementation((message) => {
+        messages.push(String(message));
+        return answer;
+      });
+      const ops = fileOps({ hasUnsaved: vi.fn((path: string) => path === 'src') });
+      render(<Explorer {...props({ fileOps: ops })} />);
+      fireEvent.contextMenu(await screen.findByText('README.md'));
+      pick('ゴミ箱に入れる');
+      await settle();
+      expect(api.argsOf('workspace.trashEntry')).toEqual([]);
+      answer = true;
+      fireEvent.contextMenu(screen.getByText('src'));
+      pick('ゴミ箱に入れる');
+      await settle();
+      expect(messages[0]).toBe('README.md をゴミ箱に入れますか？');
+      expect(messages[1]).toContain('保存していない変更のあるタブは、開いたまま残します');
+      expect(api.argsOf('workspace.trashEntry')).toEqual([['A', 'src']]);
+      expect(ops.trashed).toHaveBeenCalledWith('src');
+    });
+
+    // Claude が読んだもの（Claude に許可した場所ではない）は、書き換えさせない。main も、作業フォルダと追加したフォルダの中しか書き換えない
+    describe('Claude が読んだもの', () => {
+      const REPO = '/work/oss';
+      const OUTSIDE = '/notes/memo.md';
+      const readDirs: Record<string, DirEntry[]> = {
+        [REPO]: [{ name: 'index.ts', path: `${REPO}/index.ts`, isDir: false }],
+      };
+      const setupRead = () => {
+        const api = mockApi({ 'workspace.listDir': (_id: never, dir: never) => Promise.resolve(dirs[dir] ?? readDirs[dir]) });
+        api.install();
+        const writeText = vi.fn(async (_text: string) => undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        return { api, writeText };
+      };
+
+      it('Claude が読んだリポジトリの行は、書き換えの項目を出さない（ファイル操作を渡していても）', async () => {
+        const { writeText } = setupRead();
+        render(<Explorer {...props({ readFolders: [REPO], fileOps: fileOps() })} />);
+        fireEvent.contextMenu(await screen.findByText('oss'));
+        expect(menuLabels()).toEqual(['パスをコピー', 'Finder で表示']);
+        pick('パスをコピー');
+        expect(writeText.mock.calls).toEqual([[REPO]]);
+        fireEvent.click(screen.getByText('oss'));
+        fireEvent.contextMenu(await screen.findByText('index.ts'));
+        expect(menuLabels()).toEqual(['パスをコピー', '相対パスをコピー', 'Finder で表示']);
+        // セッションのフォルダの行では、これまでどおり書き換えの項目を出す
+        fireEvent.contextMenu(screen.getByText('README.md'));
+        expect(menuLabels()).toContain('名前を変更');
+      });
+
+      it('フォルダ外のファイルの行は、絶対パスのコピーと Finder で表示だけ', async () => {
+        const { api, writeText } = setupRead();
+        const p = props({ readFiles: [OUTSIDE], fileOps: fileOps() });
+        render(<Explorer {...p} />);
+        const row = (await screen.findByText('memo.md')).closest<HTMLElement>('.tree-row')!;
+        fireEvent.contextMenu(row);
+        expect(menuLabels()).toEqual(['パスをコピー', 'Finder で表示']);
+        expect(row.classList.contains('menu-target')).toBe(true);
+        pick('パスをコピー');
+        fireEvent.contextMenu(row);
+        pick('Finder で表示');
+        expect(screen.queryByRole('menu')).toBeNull();
+        expect(writeText.mock.calls).toEqual([[OUTSIDE]]);
+        expect(api.argsOf('workspace.revealFile')).toEqual([['A', OUTSIDE]]);
+        // 右クリックでは、ファイルを開かない
+        expect(p.onOpenFile).not.toHaveBeenCalled();
+      });
     });
   });
 });

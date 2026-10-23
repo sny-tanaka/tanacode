@@ -1042,6 +1042,90 @@ body.resizing * {
   border-radius: 50%;
   background: var(--claude);
 }
+/* 右クリックしている行 */
+.tree-row.menu-target {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+/* 新規作成・名前の変更で、行の中で名前を入れる欄 */
+.tree-row.editing,
+.tree-row:has(.tree-input-wrap) {
+  cursor: default;
+}
+/* 名前を入れている間は、欄を行の右端まで伸ばす */
+.tree-row:has(.tree-input-wrap) .tree-fill {
+  display: none;
+}
+.tree-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--ide);
+  border-radius: 3px;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+}
+.tree-input.invalid {
+  border-color: var(--danger);
+}
+.tree-input-error {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  padding: 3px 6px;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  background: var(--danger-tint);
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: normal;
+}
+
+/* 右クリックのメニュー（body に出す） */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.context-menu button {
+  width: 100%;
+  display: block;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu button:hover {
+  background: var(--bg-hover);
+}
+.context-menu button.danger {
+  color: var(--danger);
+}
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-strong);
+}
 
 /* 中央（エディタ + デバッグ用ターミナル） */
 .center {

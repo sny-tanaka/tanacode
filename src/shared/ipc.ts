@@ -138,6 +138,9 @@ export const IpcChannel = {
   ReadImage: 'fs:read-image',
   ResolveFiles: 'fs:resolve-files',
   RevealFile: 'fs:reveal-file',
+  CreateEntry: 'fs:create-entry',
+  RenameEntry: 'fs:rename-entry',
+  TrashEntry: 'fs:trash-entry',
   FilesChanged: 'fs:changed',
   WatchOpenFiles: 'fs:watch-open-files',
   TasksBash: 'tasks:bash',
@@ -763,6 +766,13 @@ export type TanacodeApi = {
     resolveFiles(sessionId: string, paths: string[]): Promise<(string | null)[]>;
     // エディタで開いているファイルを、Finder で表示する（選んだ状態で、入っているフォルダを開く）。relPath は作業フォルダからの相対パスか絶対パス
     revealFile(sessionId: string, relPath: string): Promise<void>;
+    // エクスプローラーのファイル操作。path・dirPath はツリーの行のパス（作業フォルダからの相対パスか、追加したフォルダの中の絶対パス）。
+    // 変えられるのは、作業フォルダと追加したフォルダの中だけ（main が確かめる）。新規作成と名前の変更は、変えたあとの行のパスを返す。
+    // 同じ名前のものがある・名前が使えない（/ を含むなど）ときは、理由を添えて失敗する
+    createEntry(sessionId: string, dirPath: string, name: string, kind: 'file' | 'dir'): Promise<string>;
+    renameEntry(sessionId: string, path: string, newName: string): Promise<string>;
+    // ゴミ箱に入れる（消さない）
+    trashEntry(sessionId: string, path: string): Promise<void>;
     // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身で、今のディスクがそれと同じときだけ書く。
     // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
     writeFile(sessionId: string, relPath: string, text: string, expected: string | null): Promise<WriteResult>;
@@ -976,6 +986,9 @@ export type IpcInvoke = {
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];
   [IpcChannel.ResolveFiles]: Api['workspace']['resolveFiles'];
   [IpcChannel.RevealFile]: Api['workspace']['revealFile'];
+  [IpcChannel.CreateEntry]: Api['workspace']['createEntry'];
+  [IpcChannel.RenameEntry]: Api['workspace']['renameEntry'];
+  [IpcChannel.TrashEntry]: Api['workspace']['trashEntry'];
   [IpcChannel.WriteFile]: Api['workspace']['writeFile'];
   [IpcChannel.ListFiles]: Api['workspace']['listFiles'];
   [IpcChannel.Search]: Api['workspace']['search'];
