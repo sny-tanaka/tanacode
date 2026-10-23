@@ -1,6 +1,6 @@
-import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
 import { RESOLVE_FILES_MAX } from '@shared/ipc';
 import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo, WriteResult } from '@shared/ipc';
@@ -119,6 +119,34 @@ export class Workspace {
     return { ok: true };
   }
 
+  // エクスプローラーでの新規作成。dirPath（ツリーの行のパス。作業フォルダからの相対パスか、追加したフォルダの中の絶対パス）の中に、
+  // name のファイル（中身は空）かフォルダを作る。同じ名前のものがあれば作らない。返すのは、作ったもののツリーの行のパス
+  async createEntry(dirPath: string, name: string, kind: 'file' | 'dir', addedFolders: readonly string[] = []): Promise<string> {
+    const dir = await this.dirInside(this.entryAbs(dirPath, true), addedFolders);
+    const abs = join(dir, checkName(name));
+    if (await exists(abs)) throw new Error(t('main.files.exists', { name }));
+    if (kind === 'dir') await mkdir(abs);
+    else await writeFile(abs, '', { flag: 'wx' });
+    return joinPath(dirPath, name);
+  }
+
+  // エクスプローラーでの名前の変更（同じフォルダの中だけ。移動はしない）。同じ名前のものがあれば上書きしない
+  // （大文字と小文字だけを変えるときは、macOS では同じものに見えるので、同じものなら変える）。返すのは、変えたあとのツリーの行のパス
+  async renameEntry(path: string, newName: string, addedFolders: readonly string[] = []): Promise<string> {
+    const abs = await this.entryInside(path, addedFolders);
+    const target = join(dirname(abs), checkName(newName));
+    if (target === abs) return path;
+    const [from, to] = await Promise.all([lstat(abs), lstat(target).catch(() => null)]);
+    if (to && !(to.ino === from.ino && to.dev === from.dev)) throw new Error(t('main.files.exists', { name: newName }));
+    await rename(abs, target);
+    return joinPath(parentPath(path), newName);
+  }
+
+  // エクスプローラーでゴミ箱に入れる。ゴミ箱に入れるのは Electron（shell.trashItem）なので、確かめた絶対パスを trash に渡す
+  async trashEntry(path: string, addedFolders: readonly string[], trash: (abs: string) => Promise<void>): Promise<void> {
+    await trash(await this.entryInside(path, addedFolders));
+  }
+
   // @ファイル名の補完用。git 管理下なら追跡中と未追跡（.gitignore を除く）、そうでなければフォルダをたどる。
   // git の一覧は -z で読む（無いと、日本語などのファイル名を "\343\203\241.md" のようにエスケープして返す）
   async listFiles(): Promise<string[]> {
@@ -202,10 +230,59 @@ export class Workspace {
     throw new Error(`outside workspace: ${relPath}`);
   }
 
+  // ツリーの行のパスの絶対パス（リンクは解かない）。allowRoot: 作業フォルダそのもの（''）も受ける
+  private entryAbs(path: string, allowRoot = false): string {
+    if (typeof path !== 'string' || path.includes('\0') || (!path && !allowRoot)) throw new Error(t('main.files.outside', { path: String(path) }));
+    return isAbsolute(path) ? resolve(path) : this.resolve(path);
+  }
+
+  // フォルダのリンクを解いた場所。作業フォルダか追加したフォルダ（そのものか、その中）でなければ投げる
+  private async dirInside(abs: string, addedFolders: readonly string[]): Promise<string> {
+    const real = await realpath(abs);
+    for (const folder of [this.root, ...addedFolders]) {
+      const root = await realpath(folder).catch(() => null);
+      if (!root) continue;
+      const rel = relative(root, real);
+      if (rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) return real;
+    }
+    throw new Error(t('main.files.outside', { path: abs }));
+  }
+
+  // 名前を変える・ゴミ箱に入れるもの。入っているフォルダが作業フォルダか追加したフォルダの中のもので、フォルダそのものは受けない。
+  // そのもの（最後の名前）のリンクは解かない（リンクを変えるときに、リンクの先を変えないため）
+  private async entryInside(path: string, addedFolders: readonly string[]): Promise<string> {
+    const abs = this.entryAbs(path);
+    const name = basename(abs);
+    if (!name || name === '..') throw new Error(t('main.files.outside', { path }));
+    const entry = join(await this.dirInside(dirname(abs), addedFolders), name);
+    await lstat(entry);
+    return entry;
+  }
+
   private async branch(): Promise<string | null> {
     const head = await readFile(join(this.root, '.git', 'HEAD'), 'utf8').catch(() => null);
     if (!head) return null;
     const ref = head.match(/^ref: refs\/heads\/(.+)$/m)?.[1];
     return ref ?? head.trim().slice(0, 7);
   }
+}
+
+// 新規作成・名前の変更で使える名前（1 つの名前だけ。/ を含むもの・. と .. は断る）
+function checkName(name: string): string {
+  if (typeof name !== 'string' || !name || name === '.' || name === '..' || /[/\0]/.test(name)) throw new Error(t('main.files.invalidName', { name: String(name) }));
+  return name;
+}
+
+async function exists(abs: string): Promise<boolean> {
+  return (await lstat(abs).catch(() => null)) !== null;
+}
+
+// ツリーの行のパスは / でつなぐ（セッションのフォルダの直下は、名前だけ）
+function joinPath(dir: string, name: string): string {
+  return dir ? `${dir}/${name}` : name;
+}
+
+function parentPath(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? '' : path.slice(0, i);
 }

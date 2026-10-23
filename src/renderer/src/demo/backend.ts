@@ -578,6 +578,10 @@ export class DemoBackend {
         resolveFiles: (_id, paths) => ok(paths.map(() => null)),
         // デモには Finder が無い
         revealFile: () => ok(undefined),
+        // デモでは、ツリーのファイルを作る・変える・消すことはしない
+        createEntry: () => Promise.reject(new Error('デモでは使えません')),
+        renameEntry: () => Promise.reject(new Error('デモでは使えません')),
+        trashEntry: () => Promise.reject(new Error('デモでは使えません')),
         // 本物の main と同じく、エディタが読んだあとに Claude が書き換えていたら書かずに今の中身を返す
         writeFile: (_id, rel, text, expected) => {
           if (expected !== null && rel in p.files && p.files[rel] !== expected) return ok({ ok: false as const, disk: { kind: 'text' as const, text: p.files[rel] } });

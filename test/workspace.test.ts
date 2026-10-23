@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESOLVE_FILES_MAX } from '../src/shared/ipc';
 import { Workspace } from '../src/main/workspace';
 
@@ -294,5 +294,89 @@ describe('Workspace', () => {
     expect(result.truncated).toBe(true);
     expect(result.files).toHaveLength(1);
     expect(result.files[0].matches).toHaveLength(2000);
+  });
+});
+
+// エクスプローラーのファイル操作。変えてよいのは作業フォルダと追加したフォルダの中だけ（画面から好きなパスを渡させない）
+describe('Workspace のファイル操作', () => {
+  it('createEntry: フォルダの中に空のファイル・フォルダを作り、ツリーの行のパスを返す。同じ名前のものがあれば作らない', async () => {
+    put('src/a.ts', 'a');
+    await expect(ws.createEntry('src', 'b.ts', 'file')).resolves.toBe('src/b.ts');
+    expect(readFileSync(join(root, 'src/b.ts'), 'utf8')).toBe('');
+    await expect(ws.createEntry('', 'lib', 'dir')).resolves.toBe('lib');
+    expect(statSync(join(root, 'lib')).isDirectory()).toBe(true);
+    await expect(ws.createEntry('src', 'a.ts', 'file')).rejects.toThrow('a.ts');
+    await expect(ws.createEntry('', 'src', 'dir')).rejects.toThrow('src');
+    expect(readFileSync(join(root, 'src/a.ts'), 'utf8')).toBe('a');
+  });
+
+  it('createEntry・renameEntry: / を含む名前・. と ..・空の名前は断る', async () => {
+    put('a.txt', 'a');
+    for (const name of ['', '.', '..', 'x/y', '../x', 'a\0b']) {
+      await expect(ws.createEntry('', name, 'file')).rejects.toThrow();
+      await expect(ws.renameEntry('a.txt', name)).rejects.toThrow();
+    }
+    expect(readdirSync(join(root, '..')).sort()).toEqual(['repo']);
+    expect(readdirSync(root)).toEqual(['a.txt']);
+  });
+
+  it('作業フォルダと追加したフォルダの外（.. ・絶対パス・外を指すリンク）は、作りも変えも捨てもしない', async () => {
+    const outside = join(root, '..', 'outside');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(outside, join(root, 'link'));
+    const trash = vi.fn(async () => undefined);
+    await expect(ws.createEntry('..', 'x.txt', 'file')).rejects.toThrow();
+    await expect(ws.createEntry(outside, 'x.txt', 'file')).rejects.toThrow();
+    await expect(ws.createEntry('link', 'x.txt', 'file')).rejects.toThrow();
+    await expect(ws.renameEntry(join(outside, 'secret.txt'), 'y.txt')).rejects.toThrow();
+    await expect(ws.renameEntry('link/secret.txt', 'y.txt')).rejects.toThrow();
+    await expect(ws.trashEntry(join(outside, 'secret.txt'), [], trash)).rejects.toThrow();
+    await expect(ws.trashEntry('../outside/secret.txt', [], trash)).rejects.toThrow();
+    // フォルダそのもの（作業フォルダ・追加したフォルダ）は、名前を変えたり捨てたりしない
+    await expect(ws.trashEntry('', [], trash)).rejects.toThrow();
+    await expect(ws.trashEntry(root, [], trash)).rejects.toThrow();
+    await expect(ws.trashEntry(outside, [outside], trash)).rejects.toThrow();
+    await expect(ws.renameEntry(outside, 'y', [outside])).rejects.toThrow();
+    expect(trash).not.toHaveBeenCalled();
+    expect(readdirSync(outside)).toEqual(['secret.txt']);
+  });
+
+  it('追加したフォルダの中は、絶対パスで作り・変え・捨てられる', async () => {
+    const added = join(root, '..', 'added');
+    mkdirSync(added);
+    await expect(ws.createEntry(added, 'a.txt', 'file', [added])).resolves.toBe(`${added}/a.txt`);
+    await expect(ws.renameEntry(`${added}/a.txt`, 'b.txt', [added])).resolves.toBe(`${added}/b.txt`);
+    const trash = vi.fn(async (_abs: string) => undefined);
+    await ws.trashEntry(`${added}/b.txt`, [added], trash);
+    expect(trash.mock.calls).toEqual([[join(added, 'b.txt')]]);
+  });
+
+  it('renameEntry: 同じフォルダの中で名前を変える（フォルダも）。同じ名前のものがあれば上書きしない。大文字と小文字だけの違いは変える', async () => {
+    put('src/a.ts', 'a');
+    put('src/b.ts', 'b');
+    await expect(ws.renameEntry('src/a.ts', 'b.ts')).rejects.toThrow('b.ts');
+    expect(readFileSync(join(root, 'src/b.ts'), 'utf8')).toBe('b');
+    await expect(ws.renameEntry('src/a.ts', 'A.ts')).resolves.toBe('src/A.ts');
+    expect(readdirSync(join(root, 'src')).sort()).toEqual(['A.ts', 'b.ts']);
+    await expect(ws.renameEntry('src', 'lib')).resolves.toBe('lib');
+    expect(readdirSync(join(root, 'lib')).sort()).toEqual(['A.ts', 'b.ts']);
+    await expect(ws.renameEntry('lib/b.ts', 'b.ts')).resolves.toBe('lib/b.ts');
+  });
+
+  it('リンクの名前を変える・捨てるときは、リンクそのものを扱う（リンクの先は変えない）', async () => {
+    put('target.txt', 't');
+    symlinkSync(join(root, 'target.txt'), join(root, 'link.txt'));
+    await expect(ws.renameEntry('link.txt', 'link2.txt')).resolves.toBe('link2.txt');
+    expect(readdirSync(root).sort()).toEqual(['link2.txt', 'target.txt']);
+    const trash = vi.fn(async (_abs: string) => undefined);
+    await ws.trashEntry('link2.txt', [], trash);
+    expect(trash.mock.calls).toEqual([[join(root, 'link2.txt')]]);
+  });
+
+  it('trashEntry: 無いものは捨てない', async () => {
+    const trash = vi.fn(async () => undefined);
+    await expect(ws.trashEntry('nothing.txt', [], trash)).rejects.toThrow();
+    expect(trash).not.toHaveBeenCalled();
   });
 });

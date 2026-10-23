@@ -879,6 +879,16 @@ function registerIpc(): void {
   handle(IpcChannel.RevealFile, (e, id: string, relPath: string) => {
     if (typeof relPath === 'string' && relPath) shell.showItemInFolder(new Workspace(P(e).cwdOf(id)).absolutePath(relPath));
   });
+  // エクスプローラーのファイル操作（人がメニューから選んだときだけ）。変えるのは作業フォルダと追加したフォルダの中だけで、Workspace が確かめる
+  handle(IpcChannel.CreateEntry, (e, id: string, dirPath: string, name: string, kind: 'file' | 'dir') =>
+    new Workspace(P(e).cwdOf(id)).createEntry(dirPath, name, kind === 'dir' ? 'dir' : 'file', P(e).addedFoldersOf(id)),
+  );
+  handle(IpcChannel.RenameEntry, (e, id: string, path: string, newName: string) =>
+    new Workspace(P(e).cwdOf(id)).renameEntry(path, newName, P(e).addedFoldersOf(id)),
+  );
+  handle(IpcChannel.TrashEntry, (e, id: string, path: string) =>
+    new Workspace(P(e).cwdOf(id)).trashEntry(path, P(e).addedFoldersOf(id), (abs) => shell.trashItem(abs)),
+  );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {

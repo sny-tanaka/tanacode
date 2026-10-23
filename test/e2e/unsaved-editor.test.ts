@@ -154,7 +154,9 @@ describe('保存していない変更があるうちに、別のフォルダの�
     expect(readFileSync(join(app.work, 'note.txt'), 'utf8')).toBe('Claude が書いた\n');
   });
 
-  // 監視しないフォルダ（out）のファイルは、ディスクで変わっても知らせが来ないので、確かめを出す時点では衝突と分からない
+  // ディスクの変更の知らせ（fs:changed）が届く前に「保存して移る」を押したときは、確かめを出す時点では衝突と分からない。
+  // 開いているタブは、監視しないフォルダ（out）の中でも見張っていて、知らせはすぐ届くので、main で知らせを止めてこの場面を作る
+  // （止めないと、知らせが届く早さ次第で、確かめを出す時点で衝突と分かり、「保存して移る」が押せないことがある）
   it('「保存して移る」で保存しようとして、ディスク側でも変わっていたと分かったファイルは書かず、移らない。「やめる」でそのファイルを開き、衝突の知らせを見せる', async () => {
     const report = join(app.work, 'out', 'report.txt');
     const conflictBanner = () => app.byText('.pending-banner', '未保存の変更があるうちに、ディスク上のファイルが変更されました');
@@ -173,18 +175,33 @@ describe('保存していない変更があるうちに、別のフォルダの�
     await app.page.keyboard.press('End');
     await app.page.keyboard.type(' 手で直した');
     await dirtyTab().waitFor();
-    writeFileSync(report, 'Claude が書いた報告\n');
-    await row(SECOND).click();
-    await dialog().waitFor();
-    expect(await dialog().innerText()).toContain('out/report.txt');
-    // 保存できなかった理由は window.alert で出る（押したボタンのクリックは、alert を閉じるまで終わらないので、受けたらすぐ閉じる）
-    const alerts: string[] = [];
-    app.page.once('dialog', (shown) => {
-      alerts.push(shown.message());
-      void shown.accept();
+    // 画面へのファイルの変更の知らせを、main で止める
+    await app.app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const send = contents.send.bind(contents);
+      (globalThis as { e2eRestoreSend?: () => void }).e2eRestoreSend = () => {
+        contents.send = send;
+      };
+      contents.send = (channel: string, ...args: unknown[]) => {
+        if (channel !== 'fs:changed') send(channel, ...args);
+      };
     });
-    await dialog().getByRole('button', { name: '保存して移る' }).click();
-    await expect.poll(() => alerts.length, { timeout: 30_000 }).toBe(1);
+    const alerts: string[] = [];
+    try {
+      writeFileSync(report, 'Claude が書いた報告\n');
+      await row(SECOND).click();
+      await dialog().waitFor();
+      expect(await dialog().innerText()).toContain('out/report.txt');
+      // 保存できなかった理由は window.alert で出る（押したボタンのクリックは、alert を閉じるまで終わらないので、受けたらすぐ閉じる）
+      app.page.once('dialog', (shown) => {
+        alerts.push(shown.message());
+        void shown.accept();
+      });
+      await dialog().getByRole('button', { name: '保存して移る' }).click();
+      await expect.poll(() => alerts.length, { timeout: 30_000 }).toBe(1);
+    } finally {
+      await app.app.evaluate(() => (globalThis as { e2eRestoreSend?: () => void }).e2eRestoreSend?.());
+    }
     expect(alerts[0]).toContain('out/report.txt は、ディスク側（Claude など）でも変わっています');
     await dialog().getByRole('button', { name: '保存して移る', disabled: false }).waitFor();
     await title(FIRST).waitFor();
