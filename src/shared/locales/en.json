@@ -240,6 +240,11 @@
     "search": {
       "invalidRegex": "Invalid regular expression"
     },
+    "files": {
+      "invalidName": "This name can't be used: {name}",
+      "exists": "An item with the same name already exists: {name}",
+      "outside": "Can't change anything outside the workspace: {path}"
+    },
     "subagent": {
       "omitted": "… (truncated)"
     },
@@ -1580,6 +1585,21 @@
       "modifiedInBranch": "Modified in this branch",
       "removeFolder": "Remove from Workspace",
       "removeFolderTip": "Remove from workspace\nThe folder itself isn't deleted"
+    },
+    "menu": {
+      "newFile": "New File",
+      "newFolder": "New Folder",
+      "rename": "Rename",
+      "trash": "Move to Trash",
+      "copyPath": "Copy Path",
+      "copyRelativePath": "Copy Relative Path",
+      "reveal": "Reveal in Finder"
+    },
+    "confirm": {
+      "trash": "Move “{name}” to the Trash?",
+      "trashUnsaved": "Move “{name}” to the Trash?\nTabs with unsaved changes stay open (saving them creates the files again).",
+      "saveBeforeRename": "“{name}” has unsaved changes. Save them and rename?",
+      "saveFailed": "Some files couldn't be saved, so nothing was renamed."
     },
     "knowledge": {
       "read": "Read by Claude (contents known in the current conversation)",

@@ -17,7 +17,7 @@ import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
 import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
-import { Explorer } from './explorer/Explorer';
+import { Explorer, type ExplorerFileOps } from './explorer/Explorer';
 import type { ReviewComment } from './review/LineComments';
 import { DiffPane } from './scm/DiffPane';
 import { branchPaths, ScmPanel } from './scm/ScmPanel';
@@ -711,6 +711,44 @@ export function App() {
     [editorCwd, updateEditor],
   );
 
+  // エクスプローラーで名前を変えた・ゴミ箱に入れたものに、開いているタブを合わせる（path はツリーの行のパス。フォルダならその中のファイルも）。
+  // 保存していない変更は黙って失わない。名前を変える前には保存し（人に確かめる）、ゴミ箱に入れたときは、そのタブを開いたまま残す
+  // （保存すると、ファイルを作り直す）。アーカイブしたセッションと、worktree の準備を待っている間は、ファイルを変えない
+  const explorerFileOps = useMemo<ExplorerFileOps | undefined>(() => {
+    if (!canEditFolders || !cwd) return undefined;
+    const under = (path: string) => (p: string) => p === path || p.startsWith(`${path}/`);
+    const unsavedUnder = (path: string) => (editorCwdRef.current === cwd ? (editorRef.current?.unsaved() ?? []) : []).filter(under(path));
+    return {
+      beforeRename: async (path) => {
+        const unsaved = unsavedUnder(path);
+        if (unsaved.length === 0) return true;
+        if (!window.confirm(t('explorer.confirm.saveBeforeRename', { name: path.split('/').pop() ?? path }))) return false;
+        await editorRef.current?.saveAll(unsaved).catch(() => {});
+        if (unsavedUnder(path).length === 0) return true;
+        window.alert(t('explorer.confirm.saveFailed'));
+        return false;
+      },
+      renamed: (from, to) => {
+        const moved = (p: string) => (under(from)(p) ? to + p.slice(from.length) : p);
+        updateEditor(cwd, (s) => ({
+          files: s.files.map((f) => ({ ...f, path: moved(f.path) })),
+          activePath: s.activePath && moved(s.activePath),
+          reveal: s.reveal && { ...s.reveal, path: moved(s.reveal.path) },
+        }));
+      },
+      hasUnsaved: (path) => unsavedUnder(path).length > 0,
+      trashed: (path) => {
+        const keep = new Set(unsavedUnder(path));
+        updateEditor(cwd, (s) => {
+          const files = s.files.filter((f) => !under(path)(f.path) || keep.has(f.path));
+          const index = s.files.findIndex((f) => f.path === s.activePath);
+          const activePath = files.some((f) => f.path === s.activePath) ? s.activePath : (files[Math.min(index, files.length - 1)]?.path ?? null);
+          return { ...s, files, activePath };
+        });
+      },
+    };
+  }, [canEditFolders, cwd, updateEditor]);
+
   // 選んだフォルダで Claude Code を起動し、最初の発言は起動が終わるのを待って送る。
   // worktree で始めるときも、Claude Code が worktree を作るのを待たずにそのセッションに移る（作っている間は、移った先に準備の段階が出る）
   const composingRef = useRef(composing);
@@ -1094,6 +1132,7 @@ export function App() {
                     onOpenFile={openPath}
                     folders={addedFolders}
                     onRemoveFolder={canEditFolders ? removeFolder : undefined}
+                    fileOps={explorerFileOps}
                   />
                 )}
               </div>

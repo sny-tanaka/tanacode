@@ -229,7 +229,7 @@ function freshState() {
       showMessageBox: vi.fn(async (..._args: unknown[]) => ({ response: 2 })),
       showErrorBox: vi.fn((..._args: unknown[]) => undefined),
     },
-    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined), openPath: vi.fn(async (_path: string) => '') },
+    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined), trashItem: vi.fn(async (_path: string) => undefined), openPath: vi.fn(async (_path: string) => '') },
     netFetch: vi.fn((..._args: unknown[]): unknown => undefined),
     execFileSync: vi.fn((..._args: unknown[]): string => {
       throw new Error('ログインシェルは使えません');
@@ -367,6 +367,7 @@ export const electronModule = {
   shell: {
     openExternal: (url: string) => state.shell.openExternal(url),
     showItemInFolder: (path: string) => state.shell.showItemInFolder(path),
+    trashItem: (path: string) => state.shell.trashItem(path),
     openPath: (path: string) => state.shell.openPath(path),
   },
 };
@@ -575,6 +576,12 @@ const modules: Record<string, Record<string, unknown>> = {
       // 実物は、相対パスを作業フォルダで解く（ディスクには触れない）。ここでは、つないだ文字列を返して、Finder に渡す先を読めるようにする
       absolutePath: (self: Created, ...args: unknown[]) => `${String(self.args[0])}/${String(args[0])}`,
       writeFile: echoIn('workspace.writeFile'),
+      createEntry: echoIn('workspace.createEntry'),
+      renameEntry: echoIn('workspace.renameEntry'),
+      // 実物は、確かめた絶対パスを trash に渡す。ここでは、つないだ文字列を渡して、ゴミ箱に入れる先を読めるようにする
+      trashEntry: async (self: Created, ...args: unknown[]) => {
+        await (args[2] as (abs: string) => Promise<void>)(`${String(self.args[0])}/${String(args[0])}`);
+      },
       search: echoIn('workspace.search'),
     }),
   },

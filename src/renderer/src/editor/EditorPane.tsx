@@ -34,8 +34,9 @@ export type EditorHandle = {
   conflicts(): string[];
   // 保存していない変更を、タブの順に保存する。衝突中のものは書かない（エディタで、どちらを残すか選ばせる。
   // 今のタブでなければ衝突の知らせが見えないので、Claude が書き換えた中身を黙って上書きしないため）。保存しようとして衝突が分かったもの
-  // （変更の知らせが届く前にディスク側で変わっていた）も書かず、保存していないまま残す。書けなかったら、そこで止めて投げる
-  saveAll(): Promise<void>;
+  // （変更の知らせが届く前にディスク側で変わっていた）も書かず、保存していないまま残す。書けなかったら、そこで止めて投げる。
+  // paths を渡すと、そのファイルだけを保存する（エクスプローラーで名前を変える前など）
+  saveAll(paths?: string[]): Promise<void>;
 };
 
 type Props = {
@@ -255,8 +256,8 @@ export const EditorPane = memo(function EditorPane({
   useImperativeHandle(handle, () => ({
     unsaved,
     conflicts: () => unsaved().filter((path) => conflictsRef.current.has(path)),
-    saveAll: async () => {
-      for (const path of unsaved()) if (!conflictsRef.current.has(path)) await save(path);
+    saveAll: async (paths) => {
+      for (const path of unsaved()) if (!conflictsRef.current.has(path) && (!paths || paths.includes(path))) await save(path);
     },
   }));
 

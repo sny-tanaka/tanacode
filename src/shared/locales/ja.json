@@ -238,6 +238,11 @@
     "search": {
       "invalidRegex": "正規表現が正しくありません"
     },
+    "files": {
+      "invalidName": "この名前は使えません: {name}",
+      "exists": "同じ名前のものがすでにあります: {name}",
+      "outside": "ワークスペースの外は変えられません: {path}"
+    },
     "subagent": {
       "omitted": "…（省略）"
     },
@@ -1531,6 +1536,21 @@
       "modifiedInBranch": "このブランチで変更",
       "removeFolder": "ワークスペースから外す",
       "removeFolderTip": "ワークスペースから外す\nフォルダそのものは消しません"
+    },
+    "menu": {
+      "newFile": "新規ファイル",
+      "newFolder": "新規フォルダ",
+      "rename": "名前を変更",
+      "trash": "ゴミ箱に入れる",
+      "copyPath": "パスをコピー",
+      "copyRelativePath": "相対パスをコピー",
+      "reveal": "Finder で表示"
+    },
+    "confirm": {
+      "trash": "{name} をゴミ箱に入れますか？",
+      "trashUnsaved": "{name} をゴミ箱に入れますか？\n保存していない変更のあるタブは、開いたまま残します（保存すると、ファイルを作り直します）。",
+      "saveBeforeRename": "{name} に、保存していない変更があります。保存してから名前を変えますか？",
+      "saveFailed": "保存できなかったファイルがあるため、名前を変えませんでした。"
     },
     "knowledge": {
       "read": "Claude が読んだファイル（今の会話で中身を知っている）",
