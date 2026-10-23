@@ -90,11 +90,33 @@ jobs:
           DEMO_OUT_DIR: demo-check
         run: |
           log="$RUNNER_TEMP/webkit.log"
-          # 入れるのが止まったまま（ダウンロード・apt の待ち）だとログが出ずに何時間も待つので、10 分で打ち切って、そこまでのログを出す
-          timeout 600 npx playwright install --with-deps webkit > "$log" 2>&1 &
+          # 入れるのが止まったまま（ダウンロード・apt の待ち）だとログが出ずに何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す。
+          # apt の 30 秒の打ち切り（上）でも、取り直しのまま 10 分止まったことがある（2.1.309 の PR。ミラーの取り込みの途中）。
+          # 止まり続けたのか、少しずつ届いていたのかを見分けられるよう、ログの各行に時刻を付ける（打ち切った時刻も）
+          stamp() { while IFS= read -r line; do printf '%(%T)T %s\n' -1 "$line"; done; }
+          install_webkit() {
+            local attempt status
+            for attempt in 1 2; do
+              echo "== $attempt 回目を始める" | stamp
+              # -k: 打ち切りの合図で止まらなければ、30 秒後に強制で止める（apt を道連れに、プロセスのまとまりごと）。
+              # ステップの bash は -eo pipefail なので、パイプの終了コード（timeout のもの）は || で受ける
+              status=0
+              timeout -k 30 240 npx playwright install --with-deps webkit 2>&1 | stamp || status=$?
+              [ "$status" -eq 0 ] && return 0
+              echo "== $attempt 回目は終了コード $status（124 は打ち切り、137 は強制で止めた）" | stamp
+              # 打ち切った apt が残した、設定の途中のパッケージを片付けてから入れ直す
+              sudo dpkg --configure -a 2>&1 | stamp || true
+            done
+            return 1
+          }
+          install_webkit > "$log" 2>&1 &
           webkit=$!
           npm run demo:build
-          if ! wait "$webkit"; then
+          if wait "$webkit"; then
+            # 入れ直したときも、何が止まったかを後から読めるよう、通ったときもログを畳んで出す
+            echo "::group::WebKit を入れたログ"; cat "$log"; echo "::endgroup::"
+            if grep -q '== 2 回目を始める' "$log"; then echo "::warning::WebKit を入れるのが 1 回目で打ち切られ、入れ直しました（ログは「WebKit を入れたログ」）"; fi
+          else
             cat "$log"
             echo "::error::WebKit を入れられませんでした"
             exit 1
