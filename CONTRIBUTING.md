@@ -1787,6 +1787,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/renderer/src`: React の UI
   - `sessionValues.ts`: セッションごとの値（チャット・質問・許可・チェックリスト・statusLine など）の入れ物 `useSessionValues`。全セッションの分を持ち、描き直すのは選んでいるセッションの値が変わったときだけ。一覧から消えた（削除・アーカイブした）セッションの値は、選んでいなければ捨てます（選び直したら読み直す）。アーカイブ済みのセッションのチャット（会話ログから作る）も、`App.tsx` が見ている 1 つだけを持ちます
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン・巻き戻しの確かめのカード `RewindCard`・作業中と起動中の進み具合 `WorkingNote`・「親にする」で読ませる TANACODE_PARENT.md があるかを調べる `parentRole.ts`・本文のファイルのパスを拾ってリンクにする `filePaths.ts` と、実在を確かめて覚える `fileLinks.ts`）
+    - チャットの行は、main から届いたイベントを `chatState.ts` の `apply` で当てて組み立てます。1 回の配信（スナップショットも）で行の配列を写すのは 1 回だけで、ツールの結果・hooks・ターンの終わりなどで書き換える行は、位置の索引（`RowIndex`）で探します（イベントのたびに配列を丸ごと写したり端から探したりすると、長い会話ほど重く、スナップショットはイベントの数の 2 乗で遅くなるため。2 万個で 0.9 秒 → 4ms）。索引は次の配信に引き継ぎます。前の配列は書き換えず、変えない行は同じもののままにします（React と、行の memo のため）
   - `screen/`: Claude Code が答えを待っている要求のカード。質問のカード（`QuestionCard`）と、許可の確認・プランの承認のカード（`MenuCard`）と、MCP サーバーの質問のカード（`ElicitationCard`）。待っている質問（`useSessionQuestions`）と、許可の確認（`useSessionPermissions`）と、MCP サーバーの質問（`useSessionElicitations`）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
