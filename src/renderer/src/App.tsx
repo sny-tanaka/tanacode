@@ -105,8 +105,11 @@ const COLUMNS: Column[] = ['sessions', 'claude', 'side'];
 export function App() {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 一覧にある（アーカイブしていない）セッション。一覧から消えたセッションの値は、セッションごとの値から捨てる（useSessionValues）
+  const listedKey = sessions ? sessions.filter((s) => !s.archived).map((s) => s.id).join(',') : null;
+  const listedIds = useMemo(() => (listedKey === null ? null : new Set(listedKey ? listedKey.split(',') : [])), [listedKey]);
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
-  const { chatOf: eventChatOf, partials, load, reset: resetChat } = useSessionChats(selectedId);
+  const { chatOf: eventChatOf, partials, load, reset: resetChat } = useSessionChats(selectedId, listedIds);
   // 動いているセッションのチャットの状態は、main が持つ状態（一覧の state）から決める（main が 1 つだけ持つ。設計書 7 節）
   const stateKey = (sessions ?? []).map((s) => `${s.id}:${s.state}`).join(',');
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,15 +122,15 @@ export function App() {
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
-  const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId);
-  const { permissionOf, load: loadPermission } = useSessionPermissions(selectedId);
-  const { elicitationOf, load: loadElicitation } = useSessionElicitations(selectedId);
-  const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
-  const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
-  const { bashOf, load: loadBash } = useSessionBash(selectedId);
-  const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId);
-  const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId);
-  const { listsOf: checklistsOf, load: loadChecklists, unread: checklistUnread } = useChecklists(selectedId);
+  const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId, listedIds);
+  const { permissionOf, load: loadPermission } = useSessionPermissions(selectedId, listedIds);
+  const { elicitationOf, load: loadElicitation } = useSessionElicitations(selectedId, listedIds);
+  const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId, listedIds);
+  const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId, listedIds);
+  const { bashOf, load: loadBash } = useSessionBash(selectedId, listedIds);
+  const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId, listedIds);
+  const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId, listedIds);
+  const { listsOf: checklistsOf, load: loadChecklists, unread: checklistUnread } = useChecklists(selectedId, listedIds);
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
@@ -174,8 +177,8 @@ export function App() {
   // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
   const settingsFilesOpen = useSettingsFilesDialogOpen();
   const profilesDialog = useProfilesDialog();
-  // アーカイブ済みセッションのチャット（再開せずに会話ログから作る）
-  const [archivedChats, setArchivedChats] = useState<Record<string, ChatState>>({});
+  // 見ているアーカイブ済みセッションのチャット（再開せずに会話ログから作る）。長い会話のチャットは大きいので、見ている 1 つだけ持つ
+  const [archivedChat, setArchivedChat] = useState<{ id: string; chat: ChatState } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
@@ -188,7 +191,7 @@ export function App() {
     if (session) void switchTerminalMode(session, (session.backgroundTasks ?? 0) > 0);
   }, []);
   const liveChat = chatOf(selectedId);
-  const chat = selected?.archived && liveChat.status === 'not-started' ? (archivedChats[selected.id] ?? liveChat) : liveChat;
+  const chat = selected?.archived && liveChat.status === 'not-started' && archivedChat?.id === selected.id ? archivedChat.chat : liveChat;
   // 右パネル・エディタで扱うもの。選んでいるセッションか、新規セッションの画面で選んでいるフォルダ
   const viewId = selected?.id ?? draft?.id ?? null;
   // ブラウザとターミナルの持ち主。セッションを見ているときはそのセッション。新規セッションの画面では、いま開いているフォルダ（どのセッションにも紐づかず、画面を閉じると一緒に閉じる）
@@ -487,18 +490,20 @@ export function App() {
     void window.tanacode.workspace.info(viewId).then((info) => setWorkspaces((prev) => ({ ...prev, [viewId]: info })));
   }, [viewId, workspaces]);
 
+  // アーカイブ済みセッションを選んだら、会話ログから読む。ほかのセッションに移ったり、再開したりしたら捨てる（もう一度選んだら読み直す）
+  const archivedId = selected?.archived ? selected.id : null;
   useEffect(() => {
-    // 再開したら古い表示は捨てる（もう一度アーカイブしたときに読み直す）
-    if (selected && !selected.archived && archivedChats[selected.id]) {
-      setArchivedChats(({ [selected.id]: _, ...rest }) => rest);
-      return;
-    }
-    if (!selected?.archived || archivedChats[selected.id]) return;
-    const id = selected.id;
-    void window.tanacode.sessions
-      .history(id)
-      .then((events) => setArchivedChats((prev) => ({ ...prev, [id]: { ...chatFromEvents(events), status: 'not-started' } })));
-  }, [selected, archivedChats]);
+    setArchivedChat(null);
+    if (!archivedId) return;
+    let current = true;
+    void window.tanacode.sessions.history(archivedId).then((events) => {
+      // 読み終える前に別のセッションに移っていたら、古い返事で上書きしない
+      if (current) setArchivedChat({ id: archivedId, chat: { ...chatFromEvents(events), status: 'not-started' } });
+    });
+    return () => {
+      current = false;
+    };
+  }, [archivedId]);
 
   // セッションを開く（止まっていれば再開する）。開けなかったら理由を出す（登録した設定ファイルが読めないときなど）。
   // 一覧が更新されるたびに開き直すので、同じ理由は 1 回だけ出す

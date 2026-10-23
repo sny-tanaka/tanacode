@@ -1785,6 +1785,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
+  - `sessionValues.ts`: セッションごとの値（チャット・質問・許可・チェックリスト・statusLine など）の入れ物 `useSessionValues`。全セッションの分を持ち、描き直すのは選んでいるセッションの値が変わったときだけ。一覧から消えた（削除・アーカイブした）セッションの値は、選んでいなければ捨てます（選び直したら読み直す）。アーカイブ済みのセッションのチャット（会話ログから作る）も、`App.tsx` が見ている 1 つだけを持ちます
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン・巻き戻しの確かめのカード `RewindCard`・作業中と起動中の進み具合 `WorkingNote`・「親にする」で読ませる TANACODE_PARENT.md があるかを調べる `parentRole.ts`・本文のファイルのパスを拾ってリンクにする `filePaths.ts` と、実在を確かめて覚える `fileLinks.ts`）
   - `screen/`: Claude Code が答えを待っている要求のカード。質問のカード（`QuestionCard`）と、許可の確認・プランの承認のカード（`MenuCard`）と、MCP サーバーの質問のカード（`ElicitationCard`）。待っている質問（`useSessionQuestions`）と、許可の確認（`useSessionPermissions`）と、MCP サーバーの質問（`useSessionElicitations`）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）

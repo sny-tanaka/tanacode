@@ -5,11 +5,11 @@ import type { SessionKnowledge } from '@shared/knowledge';
 const NO_KNOWLEDGE: SessionKnowledge = { files: {}, contextTokens: null };
 
 // セッションごとの、Claude が読んだ・書いたファイルとコンテキストの使用量。描き直すのは選択中のセッションが変わったときだけ
-export function useSessionKnowledge(selectedId: string | null): {
+export function useSessionKnowledge(selectedId: string | null, listed: ReadonlySet<string> | null): {
   knowledgeOf: (sessionId: string | null) => SessionKnowledge;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<SessionKnowledge, SessionKnowledge>(selectedId, NO_KNOWLEDGE);
+  const { valueOf, update } = useSessionValues<SessionKnowledge, SessionKnowledge>(selectedId, listed, NO_KNOWLEDGE);
   useEffect(
     () =>
       window.tanacode.knowledge.onChanged(({ sessionId, knowledge }) =>

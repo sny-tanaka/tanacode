@@ -8,11 +8,11 @@ export type WorkflowRuns = ReadonlyMap<string, WorkflowRun>;
 const NO_RUNS: WorkflowRuns = new Map();
 
 // 描き直すのは選択中のセッションが変わったときだけ
-export function useSessionWorkflows(selectedId: string | null): {
+export function useSessionWorkflows(selectedId: string | null, listed: ReadonlySet<string> | null): {
   workflowsOf: (sessionId: string | null) => WorkflowRuns;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<WorkflowRuns, WorkflowRuns>(selectedId, NO_RUNS);
+  const { valueOf, update } = useSessionValues<WorkflowRuns, WorkflowRuns>(selectedId, listed, NO_RUNS);
   const set = useCallback((sessionId: string, list: WorkflowRun[]) => update(sessionId, (prev) => stableRuns(prev, list)), [update]);
   useEffect(() => window.tanacode.workflows.onChanged(({ sessionId, runs: list }) => set(sessionId, list)), [set]);
   const load = useCallback(
