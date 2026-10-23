@@ -88,37 +88,52 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
           VITE_DEMO_WAIT: 0
           DEMO_OUT_DIR: demo-check
+        # 下の打ち切りが効かなかったときも、既定の 30 分（ジョブの上限）まで待たない。ふつうは 1 分ほど
+        timeout-minutes: 12
         run: |
-          log="$RUNNER_TEMP/webkit.log"
-          # 入れるのが止まったまま（ダウンロード・apt の待ち）だとログが出ずに何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す。
+          # 入れるのが止まったまま（ダウンロード・apt の待ち）だと何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す。
           # apt の 30 秒の打ち切り（上）でも、取り直しのまま 10 分止まったことがある（2.1.309 の PR。ミラーの取り込みの途中）。
-          # 止まり続けたのか、少しずつ届いていたのかを見分けられるよう、ログの各行に時刻を付ける（打ち切った時刻も）
-          stamp() { while IFS= read -r line; do printf '%(%T)T %s\n' -1 "$line"; done; }
+          # 止まり続けたのか、少しずつ届いていたのかを見分けられるよう、出力の各行に時刻を付けて、ファイルに溜めずにステップのログへそのまま出す
+          # （取り消されたときも、そこまでが残る。デモのビルドの出力と混ざるので、[WebKit] を付ける）
+          stamp() { while IFS= read -r line; do printf '%(%T)T [WebKit] %s\n' -1 "$line"; done; }
+          # 打ち切る 1 回。$1 が root なら root で動かす。ステップの bash は -e なので、終了コードは || で受ける。
+          # 出力はパイプでなくプロセス置換で stamp に渡し、書き口が閉じるのを待たない（打ち切りで残ったプロセスがあっても、ここで止まらない）
+          attempt() {
+            local as=$1 status=0
+            shift
+            if [ "$as" = root ]; then
+              sudo env "PATH=$PATH" timeout -k 30 240 "$@" > >(stamp) 2>&1 || status=$?
+            else
+              timeout -k 30 240 "$@" > >(stamp) 2>&1 || status=$?
+            fi
+            return "$status"
+          }
           install_webkit() {
-            local attempt status
-            for attempt in 1 2; do
-              echo "== $attempt 回目を始める" | stamp
-              # -k: 打ち切りの合図で止まらなければ、30 秒後に強制で止める（apt を道連れに、プロセスのまとまりごと）。
-              # ステップの bash は -eo pipefail なので、パイプの終了コード（timeout のもの）は || で受ける
+            local n status
+            for n in 1 2; do
+              echo "== $n 回目を始める" | stamp
+              # apt（install-deps）は、timeout ごと root で動かす。利用者の timeout からは root の apt に合図を送れず、sudo も、
+              # 同じプロセスのまとまりからの合図は命令に伝えない（届いたとみなす）。打ち切っても apt が残り、ログのパイプを持ち続けて、
+              # ステップが 30 分終わらなかった（#327 の最初の CI）。root で動かすと Playwright は sudo を挟まないので、apt も timeout のまとまりに入る
               status=0
-              timeout -k 30 240 npx playwright install --with-deps webkit 2>&1 | stamp || status=$?
-              [ "$status" -eq 0 ] && return 0
-              echo "== $attempt 回目は終了コード $status（124 は打ち切り、137 は強制で止めた）" | stamp
+              attempt root npx playwright install-deps webkit || status=$?
+              if [ "$status" -eq 0 ]; then attempt user npx playwright install webkit || status=$?; fi
+              if [ "$status" -eq 0 ]; then
+                # 入れ直しで通ったときも、止まったことが隠れないようにする
+                if [ "$n" -gt 1 ]; then echo "::warning::WebKit を入れるのが 1 回目で打ち切られ、入れ直しました（ログの [WebKit] の行）"; fi
+                return 0
+              fi
+              echo "== $n 回目は終了コード $status（124 は打ち切り、137 は強制で止めた）" | stamp
               # 打ち切った apt が残した、設定の途中のパッケージを片付けてから入れ直す
-              sudo dpkg --configure -a 2>&1 | stamp || true
+              sudo dpkg --configure -a > >(stamp) 2>&1 || true
             done
             return 1
           }
-          install_webkit > "$log" 2>&1 &
+          install_webkit &
           webkit=$!
           npm run demo:build
-          if wait "$webkit"; then
-            # 入れ直したときも、何が止まったかを後から読めるよう、通ったときもログを畳んで出す
-            echo "::group::WebKit を入れたログ"; cat "$log"; echo "::endgroup::"
-            if grep -q '== 2 回目を始める' "$log"; then echo "::warning::WebKit を入れるのが 1 回目で打ち切られ、入れ直しました（ログは「WebKit を入れたログ」）"; fi
-          else
-            cat "$log"
-            echo "::error::WebKit を入れられませんでした"
+          if ! wait "$webkit"; then
+            echo "::error::WebKit を入れられませんでした（ログの [WebKit] の行）"
             exit 1
           fi
       # 止まったら、そのときの画面の様子を tour-evidence に書き出す（scripts/demo-tour-evidence.mjs）
