@@ -15,6 +15,7 @@ import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
+import { EMPTY_EDITOR, type EditorState, withEditor, withFile, withOpenFile } from './editor/openFiles';
 import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
 import { Explorer, type ExplorerFileOps } from './explorer/Explorer';
@@ -72,8 +73,6 @@ import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 
-type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
-const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
@@ -100,12 +99,6 @@ let revealSeq = 0;
 type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'branch'; path: string };
 // エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身か、チェックリストのカード
 type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
-
-function withFile(files: OpenFile[], path: string, content: FileContent): OpenFile[] {
-  return files.some((f) => f.path === path)
-    ? files.map((f) => (f.path === path ? { path, content } : f))
-    : [...files, { path, content }];
-}
 
 export function App() {
   const sessions = useSessions();
@@ -527,7 +520,7 @@ export function App() {
   }, [selected, chat.status, openSession]);
 
   const updateEditor = useCallback((dir: string, fn: (state: EditorState) => EditorState) => {
-    setEditors((prev) => ({ ...prev, [dir]: fn(prev[dir] ?? EMPTY_EDITOR) }));
+    setEditors((prev) => withEditor(prev, dir, fn));
   }, []);
 
   // line を渡すと、ディスクから読み直したうえでその行を表示する（Claude Code の編集直後に開くため）。
@@ -543,7 +536,7 @@ export function App() {
         if (editorCwdRef.current === cwd && editorRef.current?.unsaved().includes(path)) return;
         const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
         if (!content) return;
-        updateEditor(cwd, (s) => (s.files.some((f) => f.path === path) ? { ...s, files: withFile(s.files, path, content) } : s));
+        updateEditor(cwd, (s) => withOpenFile(s, path, content));
         return;
       }
       const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
@@ -583,9 +576,7 @@ export function App() {
           void window.tanacode.workspace
             .readFile(sessionId, file.path)
             .then((content) =>
-              updateEditor(dir, (s) =>
-                s.files.some((f) => f.path === file.path) ? { ...s, files: withFile(s.files, file.path, content) } : s,
-              ),
+              updateEditor(dir, (s) => withOpenFile(s, file.path, content)),
             )
             .catch(() => {});
         }
@@ -923,7 +914,10 @@ export function App() {
     async (path: string, text: string, expected: string | null) => {
       if (!editorId || !editorCwd) return false;
       const result = await window.tanacode.workspace.writeFile(editorId, path, text, expected);
-      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk) }));
+      updateEditor(editorCwd, (s) => {
+        const files = withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk);
+        return files === s.files ? s : { ...s, files };
+      });
       return result.ok;
     },
     [editorId, editorCwd, updateEditor],
