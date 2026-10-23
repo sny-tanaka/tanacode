@@ -190,6 +190,8 @@ const WORKTREE_FAILURE: Record<WorktreeFailure, string> = {
   noName: 'no unused name for a new worktree could be found',
   locked: 'the worktree is locked',
   closedWhileCreating: 'the session was archived or removed from the session list while its worktree was being created',
+  submoduleChanges:
+    'removing the worktree would lose uncommitted changes, untracked files, stashes or commits that are on no remote inside the submodules listed in parentheses. Commit and push them inside each submodule, or discard them, before removing the worktree',
 };
 
 // ターンが終わった状態（親が止めた印を片付ける）

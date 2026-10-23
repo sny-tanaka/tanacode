@@ -162,7 +162,8 @@
       "noCommit": "worktree で始めるには、リポジトリにコミットが 1 つ以上必要です",
       "noName": "worktree の名前を決められませんでした",
       "locked": "worktree がロックされているため、消しませんでした",
-      "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）"
+      "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）",
+      "submoduleChanges": "submodule {paths} の中に、消すと失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があるため、worktree を消しませんでした"
     },
     "settingsFile": {
       "unusable": "設定ファイル「{name}」（{path}）を使えません: {reason}",
@@ -1284,6 +1285,7 @@
       "unpushed": "プッシュしていないコミット",
       "contentIn": "コミットは手元にしかありませんが、中身は {branch} に入っています",
       "nothingLeft": "残っている変更やコミットはありません",
+      "submodules": "submodule {paths} の中に、削除すると失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があります。このままでは worktree を削除できません",
       "leftoverCount": "{count} 件",
       "prUnknown": "PR は調べられませんでした（gh が無い・ログインしていないなど）",
       "prNone": "このブランチの PR はありません",

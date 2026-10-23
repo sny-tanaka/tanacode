@@ -441,6 +441,7 @@ describe('worktree の片付けと作り直し', () => {
       untracked: 1,
       unpushed: 0,
       contentIn: null,
+      submodules: [],
       pr: { state: 'unknown' },
     });
     expect(await app.manager.worktreeLeftovers('nope')).toBeNull();

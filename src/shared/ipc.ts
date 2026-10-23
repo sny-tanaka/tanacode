@@ -327,6 +327,9 @@ export type WorktreeLeftovers = {
   // スカッシュマージ・cherry-pick など）0 で、contentIn にそのブランチの名前（そうでなければ null）
   unpushed: number;
   contentIn: string | null;
+  // 中に、worktree を消すと失われるもの（未コミットの変更・未追跡のファイル・stash・手元にしか無いコミット）がある submodule の、
+  // worktree からのパス（入れ子のものも）。あれば worktree は消せない
+  submodules: string[];
   pr: WorktreePr;
 };
 

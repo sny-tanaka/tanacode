@@ -126,10 +126,14 @@ function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
   const contentIn = leftovers.contentIn && (
     <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.contentIn', { branch: leftovers.contentIn })}</p>
   );
+  // submodule の中に失われるものがあると、削除は断られる（控えに入らないため）
+  const submodules = leftovers.submodules.length > 0 && (
+    <p className="worktree-dialog-status warn">{t('sessions.worktreeDialog.submodules', { paths: leftovers.submodules.join(', ') })}</p>
+  );
   if (left.length === 0) {
     return (
       <>
-        <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.nothingLeft')}</p>
+        {submodules || <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.nothingLeft')}</p>}
         {contentIn}
       </>
     );
@@ -144,6 +148,7 @@ function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
           </li>
         ))}
       </ul>
+      {submodules}
       {contentIn}
     </>
   );

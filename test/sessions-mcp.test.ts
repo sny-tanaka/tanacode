@@ -1524,6 +1524,7 @@ describe('ツールの実行（SessionsControl）', () => {
       untracked: 0,
       unpushed: 0,
       contentIn: null,
+      submodules: [],
       pr: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12', after: 0 },
       ...patch,
     });
@@ -1612,6 +1613,19 @@ describe('ツールの実行（SessionsControl）', () => {
       host.removal = new WorktreeError('locked', 'worktree がロックされているため、消しませんでした（外付けのディスク）', '外付けのディスク');
       const ended = jsonOf<{ worktree: { error: string } }>(await end());
       expect(ended.worktree).toMatchObject({ folder: 'not_removed', error: 'the worktree is locked (外付けのディスク)' });
+    });
+
+    it('submodule の中に失われるものがあって消せなかったときは、その submodule のパスと、次にすることを英語で返す', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = leftovers();
+      host.removal = new WorktreeError('submoduleChanges', 'submodule lib, lib/nested の中に…', 'lib, lib/nested');
+      const ended = jsonOf<{ worktree: { error: string }; note: string }>(await end());
+      expect(ended.worktree).toMatchObject({
+        folder: 'not_removed',
+        error:
+          'removing the worktree would lose uncommitted changes, untracked files, stashes or commits that are on no remote inside the submodules listed in parentheses. Commit and push them inside each submodule, or discard them, before removing the worktree (lib, lib/nested)',
+      });
+      expect(ended.note).toContain('Could not remove its worktree');
     });
 
     it('worktree を消せなかったとき（ユーザーが付けたロックなど）: アーカイブはしたうえで、理由を返す', async () => {

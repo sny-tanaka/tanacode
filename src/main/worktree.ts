@@ -3,15 +3,15 @@ import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { t } from '@shared/i18n';
 import type { WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc';
-import { defaultBranch, git, userGit } from './git';
+import { defaultBranch, git, submodulesOf, userGit } from './git';
 import { type PullRequest, pullRequestsOf } from './github';
 
 // worktree を作れない・消せない理由。message は画面の言語の文（画面に出す）。Claude に返すときは、reason と detail から英語の文を作る
 // （sessions-control.ts。Claude に返す文は英語で書く決まり）。detail: ロックの理由など、添える言葉（人やツールが書いたもの）
-export type WorktreeFailure = 'notRepo' | 'noCommit' | 'noName' | 'locked' | 'closedWhileCreating';
+export type WorktreeFailure = 'notRepo' | 'noCommit' | 'noName' | 'locked' | 'closedWhileCreating' | 'submoduleChanges';
 export class WorktreeError extends Error {
   constructor(
     readonly reason: WorktreeFailure,
@@ -360,7 +360,8 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
   let uncommitted = 0;
   let untracked = 0;
   if (exists) {
-    const parts = (await git(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).catch(() => '')).split('\0');
+    // submodule の ignore の設定（submodule.<name>.ignore）があっても、submodule の中の変更を見落とさない
+    const parts = (await git(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none']).catch(() => '')).split('\0');
     for (let i = 0; i < parts.length; i++) {
       const item = parts[i];
       if (item.length < 4) continue;
@@ -381,7 +382,63 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
     const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
     pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
   }
-  return { exists, branch: ref.branch, uncommitted, untracked, unpushed: local.count ?? 0, contentIn: local.contentIn, pr };
+  const submodules = exists ? await initializedSubmodules(path)
+        .then((list) => submodulesWithLeftovers(path, list))
+        .catch(() => []) : [];
+  return { exists, branch: ref.branch, uncommitted, untracked, unpushed: local.count ?? 0, contentIn: local.contentIn, submodules, pr };
+}
+
+// worktree の中の、初期化した submodule（入れ子のものも）の、worktree からのパス。gitlink（mode 160000）のうち、中に .git
+// （ファイルかフォルダ）があるもの。初期化していないもの（空のフォルダ）は、git worktree remove を止めない
+async function initializedSubmodules(path: string, dir = path): Promise<string[]> {
+  const found: string[] = [];
+  // 衝突中は、同じパスが段ごとに並ぶ
+  for (const sub of new Set(await submodulesOf(dir))) {
+    found.push(relative(path, sub), ...(await initializedSubmodules(path, sub)));
+  }
+  return found;
+}
+
+// worktree を消すと失われるものが中にある submodule の、worktree からのパス。未コミットの変更・未追跡のファイル・stash と、
+// 手元にしか無いコミット（submodule のどのリモートにも、元のフォルダの submodule（.git/modules/<名前>）にも無いもの）。
+// worktree の submodule の git のデータは .git/worktrees/<id>/modules/ にあり、git worktree remove が worktree と一緒に消す
+async function submodulesWithLeftovers(path: string, submodules: string[]): Promise<string[]> {
+  if (submodules.length === 0) return [];
+  const [worktreeGitDir, common] = (await git(path, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split('\n');
+  const commonDir = resolve(path, common);
+  const found: string[] = [];
+  for (const rel of submodules) {
+    if (await submoduleHasLeftovers(join(path, rel), worktreeGitDir, commonDir)) found.push(rel);
+  }
+  return found;
+}
+
+// status --porcelain=v2 の 1 件が、入れ子の submodule の中だけの変更（入れ子の submodule の今のコミットは変わらず、中に変更や
+// 未追跡のファイルがある）か。それは入れ子の submodule の中を見るときに数えるので、外側の submodule の変更とはみなさない。
+// 「1 XY sub …」の sub は、submodule なら「S<コミットが変わった C><中の変更 M><未追跡 U>」（違えば .）
+function nestedChangeOnly(record: string): boolean {
+  const [type, xy, sub] = record.split(' ');
+  return type === '1' && xy?.[0] === '.' && sub?.startsWith('S') === true && sub[1] === '.';
+}
+
+async function submoduleHasLeftovers(dir: string, worktreeGitDir: string, commonDir: string): Promise<boolean> {
+  const status = await git(dir, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none']);
+  if (status.split('\0').some((record) => record !== '' && !nestedChangeOnly(record))) return true;
+  const refs = (await git(dir, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/stash'])).split('\n').filter(Boolean);
+  if (refs.some((line) => line.startsWith('refs/stash '))) return true;
+  const [head, gitDir] = (await git(dir, ['rev-parse', 'HEAD', '--absolute-git-dir'])).trim().split('\n');
+  // 今のコミットと手元のブランチの先頭のうち、submodule のリモート（を最後に取り込んだ時点）に無いコミットを含むもの
+  const tips = [...new Set([head, ...refs.map((line) => line.slice(line.lastIndexOf(' ') + 1))])];
+  const counts = await Promise.all(tips.map((tip) => countCommits(dir, [tip, '--not', '--remotes'])));
+  const local = tips.filter((_, i) => counts[i] !== 0);
+  if (local.length === 0) return false;
+  // 元のフォルダの submodule にあれば、消しても失われない。worktree の submodule の git のデータ（.git/worktrees/<id>/modules/<名前>）に
+  // 対応する、元のフォルダのもの（.git/modules/<名前>）で、その先頭がどれかの ref から辿れるかを見る（無いコミットなら数えられず、失われる側に倒す）
+  const modules = join(worktreeGitDir, 'modules') + '/';
+  if (!gitDir.startsWith(modules)) return true;
+  const original = join(commonDir, 'modules', gitDir.slice(modules.length));
+  if (!existsSync(original)) return true;
+  return (await countCommits(original, [...local, '--not', '--all'])) !== 0;
 }
 
 type LocalOnly = {
@@ -508,7 +565,9 @@ async function safeToDelete(root: string, branch: string): Promise<boolean> {
 // 1. 未コミットの変更や未追跡のファイルがあれば、一時的なインデックスでコミットにし、refs/tanacode/backup/<名前> に控えを残す
 // 2. gitignore されたフォルダ（node_modules など）を、.git の中のごみ箱へ動かす。git worktree remove に消させると、
 //    ファイルの多い node_modules で 20〜30 秒かかる（APFS のファイル削除が遅い）。動かすだけなら一瞬で、中身の削除は 5. で裏に回す
-// 3. git worktree remove。中身が残っているときだけ、控えを取ったうえで --force。失敗したら、2. で動かしたものを戻す
+// 3. git worktree remove。中身が残っているときと、初期化した submodule があるとき（--force でしか消せない）だけ、--force。
+//    失敗したら、2. で動かしたものを戻す
+// （1. の前に、submodule の中に失われるもの（控えに入らない）があれば、何も変えずに断る）
 // 4. git branch -d。上流か今のブランチにマージ済みのときだけ消える。消えなくても、手元にしか無いコミットが無ければ（PR をスカッシュマージした・
 //    リモートの別のブランチに直接プッシュした・手元でデフォルトブランチにスカッシュマージしたなど）-D で消す。手元にしか無いコミットがあれば、
 //    ブランチごと残す
@@ -518,17 +577,20 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
   let backupRef: string | null = null;
   const listed = await findWorktree(ref.root, path);
   if (listed && existsSync(path)) {
-    if (listed.locked !== null) {
-      if (!CLAUDE_LOCK.test(listed.locked)) {
-        throw new WorktreeError('locked', listed.locked ? t('main.worktree.lockedWithReason', { reason: listed.locked }) : t('main.worktree.locked'), listed.locked || null);
-      }
-      await git(ref.root, ['worktree', 'unlock', path]);
+    if (listed.locked !== null && !CLAUDE_LOCK.test(listed.locked)) {
+      throw new WorktreeError('locked', listed.locked ? t('main.worktree.lockedWithReason', { reason: listed.locked }) : t('main.worktree.locked'), listed.locked || null);
     }
-    const dirty = (await git(path, ['status', '--porcelain', '--untracked-files=all'])).trim() !== '';
+    // 初期化した submodule があると、git worktree remove は --force でしか消せない（中に変更が無くても断る）。--force は
+    // submodule の中も確かめずに消すので、中に失われるもの（控えに入らない）があれば、何も変えずに断る
+    const submodules = await initializedSubmodules(path);
+    const left = await submodulesWithLeftovers(path, submodules);
+    if (left.length > 0) throw new WorktreeError('submoduleChanges', t('main.worktree.submoduleChanges', { paths: left.join(', ') }), left.join(', '));
+    if (listed.locked !== null) await git(ref.root, ['worktree', 'unlock', path]);
+    const dirty = (await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none'])) !== '';
     if (dirty) backupRef = await backupChanges(ref, path);
     const aside = await setAsideIgnoredDirs(ref, path);
     try {
-      await git(ref.root, ['worktree', 'remove', ...(dirty ? ['--force'] : []), path]);
+      await git(ref.root, ['worktree', 'remove', ...(dirty || submodules.length > 0 ? ['--force'] : []), path]);
     } catch (error) {
       await aside.restore();
       throw error;

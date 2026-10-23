@@ -190,6 +190,7 @@ describe('残っているもの', () => {
       untracked: 0,
       unpushed: 0,
       contentIn: null,
+      submodules: [],
       pr: { state: 'unknown' },
     });
     writeFileSync(join(plan.path, 'b.txt'), 'b\n');
@@ -272,6 +273,7 @@ describe('残っているもの', () => {
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({
         unpushed: 0,
         contentIn: null,
+        submodules: [],
         pr: { state: 'merged', number: 7, base: 'main', url: 'https://github.com/me/repo/pull/7', after: 0 },
       });
       expect(prs).toHaveBeenLastCalledWith(repo, plan.branch);
@@ -316,6 +318,7 @@ describe('残っているもの', () => {
         untracked: 0,
         unpushed: 0,
         contentIn: null,
+        submodules: [],
         pr: { state: 'open', number: 9, base: 'main', url: 'https://github.com/me/repo/pull/9', after: 0 },
       });
     });
@@ -680,6 +683,126 @@ describe('削除', () => {
     rmSync(plan.path, { recursive: true, force: true });
     expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
     expect(git(repo, 'worktree', 'list')).not.toContain(plan.name);
+  });
+
+  // submodule を作って初期化するので、git を多く動かす（プロセスの起動が遅い Mac では、1 件に数秒かかる）
+  describe('submodule', { timeout: 30_000 }, () => {
+    const sub = (cwd: string, ...args: string[]) => git(cwd, '-c', 'protocol.file.allow=always', 'submodule', ...args);
+    // コミットできるリポジトリを作る
+    const newRepo = (dir: string) => {
+      mkdirSync(dir);
+      git(dir, 'init', '-q', '-b', 'main');
+      git(dir, 'config', 'user.email', 'me@example.com');
+      git(dir, 'config', 'user.name', 'me');
+      commitIn(dir, 'init.txt');
+    };
+    // repo に submodule の lib を足してコミットし、worktree を作る。nested: lib の中に入れ子の submodule の nested も入れる。
+    // init: worktree の中でも初期化する
+    const withSubmodule = async ({ init = true, nested = false } = {}) => {
+      const lib = join(root, 'lib');
+      newRepo(lib);
+      if (nested) {
+        newRepo(join(root, 'nested'));
+        sub(lib, 'add', '-q', join(root, 'nested'), 'nested');
+        git(lib, 'commit', '-qm', 'nested');
+      }
+      sub(repo, 'add', '-q', lib, 'lib');
+      git(repo, 'commit', '-qm', 'lib');
+      const plan = await create();
+      if (!init) return plan;
+      sub(plan.path, 'update', '-q', '--init', '--recursive');
+      git(join(plan.path, 'lib'), 'config', 'user.email', 'me@example.com');
+      git(join(plan.path, 'lib'), 'config', 'user.name', 'me');
+      return plan;
+    };
+    // 消さずに断られ、フォルダもブランチも残っていて、控えも作っていない
+    const expectRefused = async (plan: WorktreePlan, paths: string) => {
+      await expect(removeWorktree(plan, plan.path)).rejects.toMatchObject({ reason: 'submoduleChanges', detail: paths });
+      expect(existsSync(plan.path)).toBe(true);
+      expect(git(repo, 'branch', '--list', plan.branch)).not.toBe('');
+      expect(git(repo, 'for-each-ref', 'refs/tanacode/')).toBe('');
+    };
+
+    it('初期化した submodule があっても、中に何も残っていなければ消して、ブランチも消す', async () => {
+      const plan = await withSubmodule({ nested: true });
+      expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
+      expect(existsSync(plan.path)).toBe(false);
+      expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
+      expect(git(repo, 'worktree', 'list')).not.toContain(plan.name);
+    });
+
+    it('初期化していない submodule は、今までどおり消せる', async () => {
+      const plan = await withSubmodule({ init: false, nested: true });
+      expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
+      expect(existsSync(plan.path)).toBe(false);
+    });
+
+    it('submodule の中に未コミットの変更があれば、消さずに断る', async () => {
+      const plan = await withSubmodule();
+      writeFileSync(join(plan.path, 'lib', 'init.txt'), 'changed\n');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('submodule の中の変更は、submodule の ignore の設定があっても見落とさない', async () => {
+      const plan = await withSubmodule();
+      git(repo, 'config', 'submodule.lib.ignore', 'all');
+      writeFileSync(join(plan.path, 'lib', 'init.txt'), 'changed\n');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('入れ子の submodule の中の未追跡のファイルも見て、断る', async () => {
+      const plan = await withSubmodule({ nested: true });
+      writeFileSync(join(plan.path, 'lib', 'nested', 'new.txt'), 'new\n');
+      await expectRefused(plan, 'lib/nested');
+    });
+
+    it('submodule に、どのリモートにも無いコミットがあれば断る', async () => {
+      const plan = await withSubmodule();
+      commitIn(join(plan.path, 'lib'), 'local.txt');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('submodule のコミットが、元のフォルダの submodule にもあれば消す', async () => {
+      const plan = await withSubmodule();
+      const inner = join(plan.path, 'lib');
+      git(inner, 'switch', '-q', '-c', 'work');
+      commitIn(inner, 'local.txt');
+      // 元のフォルダの submodule（.git/modules/lib）に取り込んでおく
+      git(join(repo, 'lib'), 'fetch', '-q', inner, 'work:work');
+      await removeWorktree(plan, plan.path);
+      expect(existsSync(plan.path)).toBe(false);
+    });
+
+    it('submodule に stash があれば断る', async () => {
+      const plan = await withSubmodule();
+      writeFileSync(join(plan.path, 'lib', 'init.txt'), 'changed\n');
+      git(join(plan.path, 'lib'), 'stash', '-q');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('元のフォルダ側も submodule の中も変わっていれば、控えも作らず、--force せずに断る', async () => {
+      const plan = await withSubmodule();
+      writeFileSync(join(plan.path, 'a.txt'), 'changed\n');
+      writeFileSync(join(plan.path, 'lib', 'init.txt'), 'changed\n');
+      await expectRefused(plan, 'lib');
+      expect(readFileSync(join(plan.path, 'a.txt'), 'utf8')).toBe('changed\n');
+    });
+
+    it('submodule の中に何も残っていなければ、元のフォルダ側の変更は控えを残して消す', async () => {
+      const plan = await withSubmodule();
+      writeFileSync(join(plan.path, 'a.txt'), 'changed\n');
+      expect((await removeWorktree(plan, plan.path)).backupRef).toBe(`refs/tanacode/backup/${plan.name}`);
+      expect(existsSync(plan.path)).toBe(false);
+      expect(git(repo, 'show', `refs/tanacode/backup/${plan.name}:a.txt`)).toBe('changed');
+    });
+
+    it('残っているものに、中に失われるものがある submodule を並べる', async () => {
+      const plan = await withSubmodule({ nested: true });
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 0, untracked: 0, submodules: [] });
+      git(repo, 'config', 'submodule.lib.ignore', 'all');
+      writeFileSync(join(plan.path, 'lib', 'nested', 'new.txt'), 'new\n');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 1, submodules: ['lib/nested'] });
+    });
   });
 });
 
