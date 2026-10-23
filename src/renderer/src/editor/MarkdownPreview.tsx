@@ -7,6 +7,8 @@ import { editorTheme, monaco } from './monaco';
 
 // 入力のたびに描き直さないよう、少し待ってからまとめて描く
 const RENDER_DELAY_MS = 150;
+// 描き直すたびに、コードの色付け・mermaid の図をやり直さないよう、できたものを中身ごとに覚えておく（上限を超えたら古いものから捨てる）
+const CACHE_LIMIT = 200;
 
 // プレビューで描いてよいタグと属性（チャットの SANITIZE と同じ考え方で、明示の許可リストにする）。リポジトリの文書には HTML が
 // 混ざるので、チャットより少し広く、GitHub が描くもの（中央寄せ・折りたたみ・キー・上付きなど）は残す。
@@ -54,6 +56,18 @@ type Props = {
 export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [text, setText] = useState(() => model.getValue());
+  // 読み込んだ画像（パス → data URL）。描き直すたびに main から読み直さない。ディスク上で何か変わったら捨てて、次に描くときに読み直す
+  const images = useRef(new Map<string, Promise<string | null>>());
+
+  useEffect(() => {
+    const cache = images.current;
+    cache.clear();
+    const off = window.tanacode.workspace.onFilesChanged(() => cache.clear());
+    return () => {
+      off();
+      cache.clear();
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     setText(model.getValue());
@@ -91,8 +105,14 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
     root.replaceChildren(fragment);
 
     for (const img of root.querySelectorAll<HTMLImageElement>('img[data-path]')) {
-      void window.tanacode.workspace.readImage(sessionId, img.dataset.path!).then((url) => {
-        if (!cancelled && url) img.src = url;
+      const target = img.dataset.path!;
+      let url = images.current.get(target);
+      if (!url) {
+        url = window.tanacode.workspace.readImage(sessionId, target).catch(() => null);
+        images.current.set(target, url);
+      }
+      void url.then((loaded) => {
+        if (!cancelled && loaded) img.src = loaded;
       });
     }
     for (const code of root.querySelectorAll<HTMLElement>('pre > code')) {
@@ -181,7 +201,12 @@ function addHeadingIds(root: DocumentFragment): void {
   }
 }
 
+// コードの言語の印 → Monaco の言語（描き直すたびに、コードごとに言語の一覧を探さない）
+const languageIds = new Map<string, string | null>();
+
 function languageId(lang: string): string | null {
+  const known = languageIds.get(lang);
+  if (known !== undefined) return known;
   const found = monaco.languages
     .getLanguages()
     .find(
@@ -190,20 +215,38 @@ function languageId(lang: string): string | null {
         l.aliases?.some((a) => a.toLowerCase() === lang) ||
         l.extensions?.some((ext) => ext.toLowerCase() === `.${lang}`),
     );
-  return found?.id ?? null;
+  return remember(languageIds, lang, found?.id ?? null);
 }
+
+// key → できたもの。上限を超えたら、いちばん古く入れたものを捨てる
+function remember<T>(cache: Map<string, T>, key: string, value: T): T {
+  cache.set(key, value);
+  if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+  return value;
+}
+
+// 言語とコード → 色付けした HTML
+const colorized = new Map<string, Promise<string>>();
+let themeSet = false;
 
 async function colorize(code: HTMLElement, lang: string, cancelled: () => boolean): Promise<void> {
   const id = languageId(lang);
   if (!id) return;
-  // 色付けは今のテーマを使うので、エディタより先に開いたときもアプリのテーマにしておく
-  monaco.editor.setTheme(editorTheme());
-  const html = await monaco.editor.colorize(code.textContent ?? '', id, { tabSize: 2 });
+  // 色付けは今のテーマを使うので、エディタより先に開いたときもアプリのテーマにしておく（テーマは変わらないので、はじめの 1 回だけ）
+  if (!themeSet) {
+    monaco.editor.setTheme(editorTheme());
+    themeSet = true;
+  }
+  const text = code.textContent ?? '';
+  const key = `${id}\n${text}`;
+  const html = await (colorized.get(key) ?? remember(colorized, key, monaco.editor.colorize(text, id, { tabSize: 2 })));
   if (!cancelled()) code.innerHTML = html;
 }
 
 let mermaidLoader: Promise<typeof import('mermaid').default> | null = null;
 let mermaidSeq = 0;
+// 図の文 → 描いた SVG（描けなければ、そのエラー）
+const mermaidDrawn = new Map<string, Promise<{ svg: string } | { error: unknown }>>();
 
 async function renderMermaid(code: HTMLElement, cancelled: () => boolean): Promise<void> {
   // 大きいので、図があるときだけ読み込む
@@ -228,17 +271,26 @@ async function renderMermaid(code: HTMLElement, cancelled: () => boolean): Promi
     });
     return mermaid;
   });
+  const loader = mermaidLoader;
   const pre = code.parentElement!;
-  try {
-    const mermaid = await mermaidLoader;
-    const { svg } = await mermaid.render(`mermaid-${++mermaidSeq}`, code.textContent ?? '');
-    if (cancelled()) return;
+  const source = code.textContent ?? '';
+  const drawn = await (mermaidDrawn.get(source) ??
+    remember(
+      mermaidDrawn,
+      source,
+      loader.then((mermaid) => mermaid.render(`mermaid-${++mermaidSeq}`, source)).then(
+        ({ svg }) => ({ svg }),
+        (error: unknown) => ({ error }),
+      ),
+    ));
+  if (cancelled()) return;
+  if ('svg' in drawn) {
     const figure = document.createElement('div');
     figure.className = 'markdown-mermaid';
-    figure.innerHTML = svg;
+    figure.innerHTML = drawn.svg;
     pre.replaceWith(figure);
-  } catch (err) {
-    if (cancelled()) return;
+  } else {
+    const err = drawn.error;
     const note = document.createElement('div');
     note.className = 'markdown-mermaid-error';
     note.textContent = t('editor.markdownPreview.diagramFailed', { error: err instanceof Error ? err.message : String(err) });

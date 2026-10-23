@@ -699,6 +699,34 @@ describe('MarkdownPreview（Markdown のプレビュー）', () => {
       ['checkbox', false, true],
     ]);
   });
+
+  it('打って描き直しても、同じ画像は読み直さず、同じコードは色付けし直さない。ディスク上で何か変わったら、次に描くときに画像を読み直す', async () => {
+    // 色付けできる言語（偽物の Monaco は言語を持たない。言語の印は覚えておくので、ほかのテストで使わない名前にする）
+    vi.spyOn(fake.monaco.languages, 'getLanguages').mockReturnValue([{ id: 'cachedlang' }] as never);
+    const colorize = vi.spyOn(fake.monaco.editor, 'colorize');
+    const before = colorize.mock.calls.length;
+    const text = ['# 見出し', '', '![ロゴ](../img/logo.png)', '', '```cachedlang', 'const cached = 1;', '```'].join('\n');
+    const { api, doc } = preview(text);
+    await settle();
+    const model = fake.made.models.at(-1)!;
+    // プレビューは少し待ってから描き直す（RENDER_DELAY_MS）
+    const typed = async (next: string) => {
+      act(() => model.setValue(next));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    };
+    await typed(`${text}\n\n本文`);
+    expect(doc.textContent).toContain('本文');
+    expect(api.argsOf('workspace.readImage')).toEqual([['A', 'img/logo.png']]);
+    expect(colorize.mock.calls.length - before).toBe(1);
+    await settle();
+    expect(doc.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==');
+    act(() => api.emit('workspace.onFilesChanged', { root: '/work/a', paths: ['img/logo.png'] }));
+    await typed(`${text}\n\n本文の続き`);
+    expect(api.argsOf('workspace.readImage')).toEqual([
+      ['A', 'img/logo.png'],
+      ['A', 'img/logo.png'],
+    ]);
+  });
 });
 
 describe('MarkdownPreview の目印へのリンク', () => {

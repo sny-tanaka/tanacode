@@ -102,9 +102,17 @@ type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'br
 type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
 
 function withFile(files: OpenFile[], path: string, content: FileContent): OpenFile[] {
-  return files.some((f) => f.path === path)
-    ? files.map((f) => (f.path === path ? { path, content } : f))
-    : [...files, { path, content }];
+  const open = files.find((f) => f.path === path);
+  // 中身が同じなら入れ替えない（保存のあとの変更の知らせで読み直したときなど。入れ替えると App とエディタが描き直される）
+  if (open?.content.kind === 'text' && content.kind === 'text' && open.content.text === content.text) return files;
+  return open ? files.map((f) => (f.path === path ? { path, content } : f)) : [...files, { path, content }];
+}
+
+// 開いているタブの path の中身を content にする（開いていなければ、そのまま）
+function withOpenFile(state: EditorState, path: string, content: FileContent): EditorState {
+  if (!state.files.some((f) => f.path === path)) return state;
+  const files = withFile(state.files, path, content);
+  return files === state.files ? state : { ...state, files };
 }
 
 export function App() {
@@ -527,7 +535,10 @@ export function App() {
   }, [selected, chat.status, openSession]);
 
   const updateEditor = useCallback((dir: string, fn: (state: EditorState) => EditorState) => {
-    setEditors((prev) => ({ ...prev, [dir]: fn(prev[dir] ?? EMPTY_EDITOR) }));
+    setEditors((prev) => {
+      const next = fn(prev[dir] ?? EMPTY_EDITOR);
+      return next === prev[dir] ? prev : { ...prev, [dir]: next };
+    });
   }, []);
 
   // line を渡すと、ディスクから読み直したうえでその行を表示する（Claude Code の編集直後に開くため）。
@@ -543,7 +554,7 @@ export function App() {
         if (editorCwdRef.current === cwd && editorRef.current?.unsaved().includes(path)) return;
         const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
         if (!content) return;
-        updateEditor(cwd, (s) => (s.files.some((f) => f.path === path) ? { ...s, files: withFile(s.files, path, content) } : s));
+        updateEditor(cwd, (s) => withOpenFile(s, path, content));
         return;
       }
       const content = await window.tanacode.workspace.readFile(viewId, path).catch(() => null);
@@ -583,9 +594,7 @@ export function App() {
           void window.tanacode.workspace
             .readFile(sessionId, file.path)
             .then((content) =>
-              updateEditor(dir, (s) =>
-                s.files.some((f) => f.path === file.path) ? { ...s, files: withFile(s.files, file.path, content) } : s,
-              ),
+              updateEditor(dir, (s) => withOpenFile(s, file.path, content)),
             )
             .catch(() => {});
         }
@@ -923,7 +932,10 @@ export function App() {
     async (path: string, text: string, expected: string | null) => {
       if (!editorId || !editorCwd) return false;
       const result = await window.tanacode.workspace.writeFile(editorId, path, text, expected);
-      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk) }));
+      updateEditor(editorCwd, (s) => {
+        const files = withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk);
+        return files === s.files ? s : { ...s, files };
+      });
       return result.ok;
     },
     [editorId, editorCwd, updateEditor],
