@@ -8,6 +8,7 @@ import type { BashTask } from '@shared/task';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import type { ChatItem } from '../../src/renderer/src/chat/chatState';
 import { needsAttention, scheduledOf } from '../../src/renderer/src/chat/scheduled';
+import { EMPTY_EDITOR, type EditorState, withEditor, withFile, withOpenFile } from '../../src/renderer/src/editor/openFiles';
 import { errorMessage } from '../../src/renderer/src/errorMessage';
 import { describePicked } from '../../src/renderer/src/preview/picker';
 import { normalizeUrl } from '../../src/renderer/src/preview/PreviewPane';
@@ -206,5 +207,31 @@ describe('レビューコメントと予約とソース管理', () => {
     act(() => first.result.current[1]('tree'));
     expect(first.result.current[0]).toBe('tree');
     expect(renderHook(() => useScmView()).result.current[0]).toBe('tree');
+  });
+});
+
+describe('エディタのタブ（App が持つ、フォルダごとの状態）', () => {
+  const text = (value: string) => ({ kind: 'text' as const, text: value });
+  const state: EditorState = { files: [{ path: 'a.ts', content: text('一') }, { path: 'b.ts', content: text('二') }], activePath: 'a.ts', reveal: null };
+  const editors: Record<string, EditorState> = { '/work/a': state };
+  // 変更の知らせで、開いているタブを読み直したとき（App の reloadFiles と同じ）
+  const reload = (path: string, value: string) => withEditor(editors, '/work/a', (s) => withOpenFile(s, path, text(value)));
+
+  it('保存のあとの変更の知らせで読み直した中身が同じなら、editors を入れ替えない（App とエディタを描き直さない）', () => {
+    expect(reload('a.ts', '一')).toBe(editors);
+    // 開いていないファイルの知らせでも、入れ替えない
+    expect(reload('c.ts', '三')).toBe(editors);
+  });
+
+  it('中身が違えば、そのタブだけを入れ替える（ほかのタブ・ほかのフォルダはそのまま）', () => {
+    const other: EditorState = { ...EMPTY_EDITOR, files: [{ path: 'x.ts', content: text('x') }] };
+    const next = withEditor({ ...editors, '/work/b': other }, '/work/a', (s) => withOpenFile(s, 'a.ts', text('一の続き')));
+    expect(next['/work/a'].files).toEqual([{ path: 'a.ts', content: text('一の続き') }, { path: 'b.ts', content: text('二') }]);
+    expect(next['/work/a'].files[1]).toBe(state.files[1]);
+    expect(next['/work/b']).toBe(other);
+    // 文字でないもの（画像など）は、中身を比べずに入れ替える
+    expect(withFile(state.files, 'a.ts', { kind: 'image', url: 'data:image/png;base64,AA==' })).not.toBe(state.files);
+    // 開いていないファイルを開くと、うしろに足す
+    expect(withFile(state.files, 'c.ts', text('三')).map((f) => f.path)).toEqual(['a.ts', 'b.ts', 'c.ts']);
   });
 });

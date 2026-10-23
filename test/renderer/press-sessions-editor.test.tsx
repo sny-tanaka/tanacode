@@ -143,6 +143,10 @@ const fake = vi.hoisted(() => {
   return { monaco, made, lenient };
 });
 
+// mermaid は jsdom では描けないので、渡された id を付けた SVG を返す偽物にする（mermaid の SVG は、その id で色と矢印の形を当てる）
+const mermaidRender = vi.hoisted(() => vi.fn(async (id: string, text: string) => ({ svg: `<svg id="${id}"><desc>${text}</desc></svg>` })));
+vi.mock('mermaid', () => ({ default: { initialize() {}, render: mermaidRender } }));
+
 vi.mock('../../src/renderer/src/editor/monaco', () => ({
   monaco: fake.monaco,
   editorTheme: () => 'tanacode-test',
@@ -698,6 +702,50 @@ describe('MarkdownPreview（Markdown のプレビュー）', () => {
       ['checkbox', true, true],
       ['checkbox', false, true],
     ]);
+  });
+
+  it('打って描き直しても、同じ画像は読み直さず、同じコードは色付けし直さない。ディスク上で何か変わったら、次に描くときに画像を読み直す', async () => {
+    // 色付けできる言語（偽物の Monaco は言語を持たない。言語の印は覚えておくので、ほかのテストで使わない名前にする）
+    vi.spyOn(fake.monaco.languages, 'getLanguages').mockReturnValue([{ id: 'cachedlang' }] as never);
+    const colorize = vi.spyOn(fake.monaco.editor, 'colorize');
+    const before = colorize.mock.calls.length;
+    const text = ['# 見出し', '', '![ロゴ](../img/logo.png)', '', '```cachedlang', 'const cached = 1;', '```'].join('\n');
+    const { api, doc } = preview(text);
+    await settle();
+    const model = fake.made.models.at(-1)!;
+    // プレビューは少し待ってから描き直す（RENDER_DELAY_MS）
+    const typed = async (next: string) => {
+      act(() => model.setValue(next));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    };
+    await typed(`${text}\n\n本文`);
+    expect(doc.textContent).toContain('本文');
+    expect(api.argsOf('workspace.readImage')).toEqual([['A', 'img/logo.png']]);
+    expect(colorize.mock.calls.length - before).toBe(1);
+    await settle();
+    expect(doc.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==');
+    act(() => api.emit('workspace.onFilesChanged', { root: '/work/a', paths: ['img/logo.png'] }));
+    await typed(`${text}\n\n本文の続き`);
+    expect(api.argsOf('workspace.readImage')).toEqual([
+      ['A', 'img/logo.png'],
+      ['A', 'img/logo.png'],
+    ]);
+  });
+
+  it('同じ mermaid の図が 2 回あっても、別の id で描く（id が重なると色や矢印が崩れる）。打って描き直しても、描き直さずに同じ id のまま', async () => {
+    const diagram = ['```mermaid', 'flowchart LR', '  A[同じ図] --> B[2 回]', '```'].join('\n');
+    const text = ['# 図', '', diagram, '', 'あいだ', '', diagram].join('\n');
+    const before = mermaidRender.mock.calls.length;
+    const { doc } = preview(text);
+    const ids = () => [...doc.querySelectorAll('.markdown-mermaid > svg')].map((svg) => svg.id);
+    await vi.waitFor(() => expect(ids()).toHaveLength(2));
+    const first = ids();
+    expect(new Set(first).size).toBe(2);
+    expect(mermaidRender.mock.calls.length - before).toBe(2);
+    act(() => fake.made.models.at(-1)!.setValue(`${text}\n\n本文`));
+    await vi.waitFor(() => expect(doc.textContent).toContain('本文'));
+    await vi.waitFor(() => expect(ids()).toEqual(first));
+    expect(mermaidRender.mock.calls.length - before).toBe(2);
   });
 });
 
