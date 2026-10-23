@@ -472,9 +472,14 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 会話ログは読むだけです。リポジトリには入れず、決まりを破った行は、ファイルと行の番号だけを出します。終わりに、見たファイルと行の数・未知のイベントの種類ごとの数・意図して捨てる行のツールの写しの数（API の要求の控えなど。読み手には渡していない）を出します。
   - 1 つのプロセスで、ファイルを 1 つずつ読みます（2 週間分・千ほどのファイルで数秒）。CI では流しません（会話ログは開発者の手元にしか無い）。
   - 流すとき: 動作確認済のバージョンを上げる PR を人がマージするとき（行の目録に差があったとき。下）は、マージの前に流します。差が無くて自動でマージされたバージョンも、手元の Claude Code がそのバージョンになって数日使ったら流します（`TANACODE_CHECK_VERSION=<バージョン> npm run check:transcripts`）。決まりを破ったものがあれば、`test/transcript-checks.test.ts` に同じ形の行で台本を足してから、読み取りを直します。
-- tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っているバージョンがこれと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
+- tanacode で動作確認済のバージョンは、アプリに組み込んだ `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION` と、アプリを配信しなくても上げられる対応表（リポジトリの直下の `compat.json`）。ステータスバーは、入っているバージョンが動作確認済のバージョンと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
+  - 対応表は、tanacode のバージョンの範囲ごとに、動作確認済の Claude Code のバージョンを 1 つ書きます（`{ "rows": [{ "app": ">=2.2.3 <2.2.4", "claudeCode": "2.1.305" }, { "app": ">=2.2.4", "claudeCode": "2.1.306" }] }`。範囲は下限を含み、上限を含まない。古い順に並べて重ねず、最後の行には上限を付けない）。形は `src/shared/claude-compat.ts` の `parseCompatTable` が厳しく確かめ、少しでも違えば表ごと使いません。
+  - アプリ（main の `claude-compat.ts`）は、develop の `compat.json` を `raw.githubusercontent.com` から起動時と 1 時間ごとに読み（`net.fetch`。15 秒で打ち切り、64K 文字より長い返事は読まない）、`app.getVersion()` を含む行のバージョンを使います（IPC の `claudeVersion.getVerified`・`onVerifiedChanged`）。読めないときは最後に読めた表の控え（userData の `claude-compat.json`。読んだアプリのバージョンと違えば使わない）、それも無いときと、表にこのアプリの行が無いときは `VERIFIED_CLAUDE_CODE_VERSION`。画面には何も出しません。表のバージョンが組み込んだものより古くても、表に従います（取り下げられるように）。
+  - 署名は付けません（表が変えるのはステータスバーの印だけ）。HTTPS で読み、形を確かめるだけです。メニューの「新しいバージョンが出たら通知する」（`updateCheckEnabled`）をオフにすると、読まずに `VERIFIED_CLAUDE_CODE_VERSION` を使います。
+  - 開発用のビルド（パッケージしていないもの）では、読む表を環境変数 `TANACODE_COMPAT_URL` で差し替えられます（表の読み方を、develop に置かずに確かめるため）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しいバージョンで通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします（行の目録が、動作確認済のバージョンの目録と違うときは、マージしない。下）。
     - `VERIFIED_CLAUDE_CODE_VERSION`
+    - 対応表（`scripts/compat-table.mjs`）。次にリリースするバージョン（`package.json` のバージョンの patch を 1 つ上げたもの）の行は、いつも新しいバージョンにします（`npm test` の `claude-compat.test.ts` が、組み込んだバージョンと揃っているかを確かめる）。いまのアプリ（`package.json` のバージョン。公開済み）の行は、その行のバージョンの目録と新しいバージョンの目録に差が無いときだけ上げます。マージすると、リリースしなくても公開済みのアプリの印が変わります。差があれば据え置き、2 つが同じ行なら、次にリリースするバージョンで行を分けます（直したアプリを、リリースで届ける）。それより古いアプリの行は書き換えません
     - README と GUIDE の「動作確認済」の行と、英語の README の「verified」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」・「Verified」を入れてあるので一緒に変わる）
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`。行の目録も）
   - 動作確認済のバージョンの控えが無いと、`npm test` が落ちます（上の `recorded.test.ts`・`statusline.test.ts`・`context.test.ts`）。
@@ -1646,6 +1651,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | Claude Code のプロファイルのフォルダと、セッションのフォルダ（worktree なら元のフォルダも）の直下の `TANACODE.md`・`TANACODE_PARENT.md` | TANACODE.md は、Claude Code が動かすアプリのフックが読み、Claude に渡す（会話ログの最後に渡したものの印も、後ろから読む）。TANACODE_PARENT.md は、「親にする」を押したときにアプリが読んで送る（あるかどうかは、ボタンを出すときに見る） |
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
 | `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと・タイトルバーのチェックを押したとき。メニューの「新しいバージョンが出たら通知する」で止められる） |
+| `https://raw.githubusercontent.com/sny-tanaka/tanacode/develop/compat.json` | 動作確認済の Claude Code のバージョンの対応表（起動時・1 時間ごと。同じメニューで止められる。下の「Claude Code との互換性の確かめ方」） |
 | Homebrew（`brew info`・`brew update`・`brew fetch`・`brew upgrade`。tap と GitHub の Releases） | Homebrew で入れたか、新しいバージョンのダウンロードと入れ替え（Homebrew で入れたときだけ。入れ替えはアプリが終わってから） |
 
 チャットの翻訳では、ボタンを押したブロックの文字を、同梱の補助プログラム（`Contents/Resources/tanacode-translate`）に標準入力で渡し、macOS 標準の翻訳で Mac の中で訳します。外へは送りません。訳文は画面のメモリにだけ持ち、どこにも書きません。
@@ -1671,6 +1677,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
 | `stream-logs/<id>.log`・`<id>.log.1` | チャットの claude との stream-json の送受信の控え（不具合を調べるため。発言・ツールの入出力がそのまま入る。`0600`。4MB を超えたら `.1` に回す。セッションを一覧から削除すると消す） |
 | `usage.json` | 最後に分かった利用枠 |
+| `claude-compat.json` | 最後に読めた、Claude Code の対応表（`compat.json`）と、読んだアプリのバージョン（アプリを入れ替えたあとは使わない） |
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態・送れなかった理由。変わるたびに書く）。読めない・形の分からないとき・壊れた JSON の扱いは、チェックリストと同じ（保存しないときは、画面に渡す予約に `unsaved` を付けて予約の枠に「保存できません」を出し、`schedule_wakeup`・`list_wakeups` の結果にも、セッションごとに最初の 1 回だけ添える） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
@@ -1762,6 +1769,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンド（worktree の `npm install`・`yarn install` など。画面に出さずに動かし、失敗・入力待ち・人が見たいときだけタブに出す）。Claude が読めるよう、出力を `@xterm/headless` に控える。シグナルで終わったコマンド（タブを閉じて止めた）は、node-pty が終了コードを 0 で返すので、シェルと同じく 128 + シグナルの番号にします（止めた install を、済んだことにしない）
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、終了するときに新しいバージョンを入れるか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか、Claude にターミナルを使わせるか、Claude に送る文のうち利用者が変えたもの、画面の言語）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと・タイトルバーのチェックを押したとき）
+  - `claude-compat.ts`: 動作確認済の Claude Code のバージョンの対応表（develop の `compat.json`。起動時・1 時間ごと。読めなければ控えか組み込みのバージョン）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
   - `shared-prefs.ts`: プロファイルをまたいで同じにする表示設定（`shared-prefs.json`）。キーは `src/shared/prefs.ts` の `SHARED_PREF_KEYS`（画面の localStorage のキーと同じ）
@@ -1793,10 +1801,10 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログの行の種類の分け方（`transcript-line.ts`）、会話ログからチャットへの変換（`chat.ts`）、サブエージェントの報告（`SubagentHandback`）の読み取り（`handback.ts`）、未知のイベントの型と作り方（`unknown-event.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、Claude に送る文のうち利用者が変えられるものの欄・既定の文・受け取った値の検査（`prompts.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、貼り付けた文の扱い（`paste.ts`。札にする境目・ターミナルモードの TUI に貼るときのブラケットペースト・制御文字の除去）、権限モードと作業の進み具合と、通知に使う確認の形（`screen.ts`）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、Claude Code が答えを待っている質問・許可の確認と、その返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）、MCP サーバーの質問の型・項目の読み取り・入力の確かめ（`elicitation.ts`）
+- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログの行の種類の分け方（`transcript-line.ts`）、会話ログからチャットへの変換（`chat.ts`）、サブエージェントの報告（`SubagentHandback`）の読み取り（`handback.ts`）、未知のイベントの型と作り方（`unknown-event.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、Claude に送る文のうち利用者が変えられるものの欄・既定の文・受け取った値の検査（`prompts.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、貼り付けた文の扱い（`paste.ts`。札にする境目・ターミナルモードの TUI に貼るときのブラケットペースト・制御文字の除去）、権限モードと作業の進み具合と、通知に使う確認の形（`screen.ts`）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）と、その対応表の読み方（`claude-compat.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、Claude Code が答えを待っている質問・許可の確認と、その返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）、MCP サーバーの質問の型・項目の読み取り・入力の確かめ（`elicitation.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）、Claude Code の行の目録の比べ方（`inventory-diff.mjs`）
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンと対応表の書き換え（`update-verified-version.mjs`・`compat-table.mjs`）、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）、Claude Code の行の目録の比べ方（`inventory-diff.mjs`）
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）と、カバレッジの下限（`coverage-thresholds.json`。上の「テストと CI」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）

@@ -189,6 +189,7 @@ describe('そのまま渡す受け口', () => {
     // 既定のプロファイルは、アプリの環境変数のままの .claude.json を読む
     [IpcChannel.AccountGet, [], call('readClaudeAccount', join(homedir(), '.claude.json'))],
     [IpcChannel.ClaudeVersionGet, [], call('claudeVersions.get')],
+    [IpcChannel.ClaudeVerifiedGet, [], call('claudeCompat.get')],
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
     [IpcChannel.AppUpdateCheck, [], call('appUpdates.refresh')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],

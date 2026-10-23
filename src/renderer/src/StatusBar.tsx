@@ -32,6 +32,8 @@ type Props = {
   language: string | null;
   // 入っている Claude Code のバージョン（undefined はまだ確かめていない、null は見つからない）
   claudeVersion: string | null | undefined;
+  // 動作確認済の Claude Code のバージョン（省くと、アプリに組み込んだバージョン）
+  claudeVerified?: string;
 };
 
 // カーソル位置は 1 キーごとに変わるので、ここだけで読む
@@ -50,6 +52,7 @@ export function StatusBar({
   showCursor,
   language,
   claudeVersion,
+  claudeVerified,
 }: Props) {
   const s = STATUS[status];
   const failed = status === 'exited' && exitCode !== null && exitCode !== 0;
@@ -61,7 +64,7 @@ export function StatusBar({
         <span className={`status-dot${busy ? ' running' : ''}`} style={busy ? undefined : { background: failed ? 'var(--danger)' : s.color }} />
         <span className={busy ? 'flow-text' : undefined}>{failed ? t('app.status.exitedWithCode', { code: exitCode }) : t(s.label)}</span>
       </div>
-      <ClaudeVersion version={claudeVersion} />
+      <ClaudeVersion version={claudeVersion} verified={claudeVerified} />
       {branch && (
         <button
           className={`status-button${worktree ? ' with-icon' : ''}`}

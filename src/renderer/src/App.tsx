@@ -39,7 +39,7 @@ import { pendingFolder, preparingLabel } from './sessions/worktree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
-import { useClaudeVersion } from './system/ClaudeVersion';
+import { useClaudeVersion, useVerifiedClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
@@ -129,6 +129,7 @@ export function App() {
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
+  const claudeVerified = useVerifiedClaudeVersion();
   const appUpdate = useAppUpdate();
   const resizer = (column: Column) => (
     <Resizer
@@ -1352,6 +1353,7 @@ export function App() {
         showCursor={activeFile?.content.kind === 'text'}
         language={language}
         claudeVersion={claudeVersion}
+        claudeVerified={claudeVerified}
       />
     </div>
   );

@@ -34,6 +34,8 @@ export const 異常終了: Story = { args: { status: 'exited', exitCode: 1 } };
 export const 版が新しい: Story = { args: { claudeVersion: shifted(3) } };
 export const 版が古い: Story = { args: { claudeVersion: shifted(-3) } };
 export const Claudeが見つからない: Story = { args: { claudeVersion: null } };
+// 対応表（compat.json）で、アプリに組み込んだものより新しいバージョンが動作確認済になった（アプリを更新しなくてもチェックマーク）
+export const 対応表で上がった版: Story = { args: { claudeVersion: shifted(1), claudeVerified: shifted(1) } };
 
 // CPU・メモリの桁数が変わっても、右隣（言語・文字コード）が動かないこと。どのストーリーでも、右端の項目の位置が同じになる
 const GB = 1024 ** 3;
