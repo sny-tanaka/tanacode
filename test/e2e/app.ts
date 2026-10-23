@@ -48,6 +48,9 @@ type Options = {
   trusted?: boolean;
   // PATH の先頭に置くコマンド（名前 → スクリプトの中身）。gh など、外とやりとりするコマンドの代わり
   commands?: Record<string, string>;
+  // アプリ（と Claude Code）の一時フォルダ（TMPDIR）を、試しのフォルダの中の tmp にする。試しのフォルダは一時フォルダの中にあるので、
+  // 一時フォルダの中を扱わないもの（Claude がフォルダの外で読んだもの）を、試しのフォルダの中のファイルで確かめるとき
+  ownTmp?: boolean;
 };
 
 export class E2EApp {
@@ -94,6 +97,7 @@ export class E2EApp {
     mkdirSync(join(this.home, '.claude'), { recursive: true });
     mkdirSync(this.work, { recursive: true });
     mkdirSync(this.userData, { recursive: true });
+    if (this.options.ownTmp) mkdirSync(join(this.root, 'tmp'));
     // 最初の案内（テーマの選択）と API キーの確認は済んだことにする
     writeFileSync(
       join(this.home, '.claude.json'),
@@ -143,6 +147,7 @@ export class E2EApp {
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       ...(BACKGROUND ? { TANACODE_BACKGROUND: '1' } : {}),
+      ...(this.options.ownTmp ? { TMPDIR: `${join(this.root, 'tmp')}/` } : {}),
       // メインプロセス・pty ホスト・MCP の中継（どれも Node）は、終わるときにカバレッジをここに書く
       ...(COVERAGE ? { NODE_V8_COVERAGE: join(COVERAGE_RAW, 'v8') } : {}),
     };

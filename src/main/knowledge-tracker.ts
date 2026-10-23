@@ -23,6 +23,9 @@ export class KnowledgeTracker {
     private readonly onChange: (knowledge: SessionKnowledge) => void,
     // ワークスペースに追加したフォルダ。その中のファイルは、絶対パスのまま覚える（エクスプローラーが、追加したフォルダの行を絶対パスで持つため）
     private readonly addedFolders: () => readonly string[] = () => [],
+    // それより外のファイル（絶対パス）を、エクスプローラーに出すものとして覚えているか。discover: Claude が道具で読んだ・書いたもので、
+    // まだ覚えていなければ覚える（at: その行の時刻。ミリ秒、無ければ 0）。true のものは絶対パスのまま覚える
+    private readonly outside: (path: string, at: number, discover: boolean) => boolean = () => false,
   ) {}
 
   current(): SessionKnowledge {
@@ -40,8 +43,11 @@ export class KnowledgeTracker {
   handle(entry: ConversationEntry): void {
     if (entry.isSidechain) return;
     let changed = false;
-    const mark = (path: unknown, knowledge: FileKnowledge) => {
-      const rel = typeof path === 'string' ? this.relative(path) : null;
+    const at = entry.timestamp ? Date.parse(entry.timestamp) || 0 : 0;
+    // discover: Claude が道具で読んだ・書いたもの（外のファイルを、エクスプローラーに出すものとして覚える）。
+    // 添付（CLAUDE.md の自動の読み込みなど）は、Claude が自分から触れたものではないので、覚えているものに印を付けるだけ
+    const mark = (path: unknown, knowledge: FileKnowledge, discover = false) => {
+      const rel = typeof path === 'string' ? this.relative(path, at, discover) : null;
       // 書いたことは、あとで読んだだけの印で上書きしない
       if (!rel || this.files.get(rel) === knowledge || (knowledge === 'read' && this.files.get(rel) === 'edited')) return;
       this.files.set(rel, knowledge);
@@ -80,8 +86,8 @@ export class KnowledgeTracker {
       const content = entry.message?.content;
       for (const block of Array.isArray(content) ? content : []) {
         if (block.type !== 'tool_use' || !block.name) continue;
-        if (READ_TOOLS.has(block.name)) mark(block.input?.file_path, 'read');
-        if (EDIT_TOOLS.has(block.name)) mark(block.input?.file_path ?? block.input?.notebook_path, 'edited');
+        if (READ_TOOLS.has(block.name)) mark(block.input?.file_path, 'read', true);
+        if (EDIT_TOOLS.has(block.name)) mark(block.input?.file_path ?? block.input?.notebook_path, 'edited', true);
       }
       const usage = (entry.message as { usage?: Usage } | undefined)?.usage;
       if (usage) {
@@ -102,11 +108,12 @@ export class KnowledgeTracker {
     }, EMIT_DELAY_MS);
   }
 
-  private relative(path: string): string | null {
+  private relative(path: string, at: number, discover: boolean): string | null {
     if (!isAbsolute(path)) return null;
     const rel = relative(this.cwd, path);
     if (inside(rel)) return rel;
-    return this.addedFolders().some((folder) => inside(relative(folder, path))) ? path : null;
+    if (this.addedFolders().some((folder) => inside(relative(folder, path)))) return path;
+    return this.outside(path, at, discover) ? path : null;
   }
 }
 

@@ -4,7 +4,7 @@ import type { FileKnowledge } from '@shared/knowledge';
 import type { FileChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
-import { CloseIcon, DisclosureIcon, IconButton } from '../icons';
+import { AddIcon, CloseIcon, DisclosureIcon, IconButton } from '../icons';
 import { errorMessage } from '../errorMessage';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 
@@ -38,14 +38,23 @@ type Props = {
   onRemoveFolder?: (folder: string) => void;
   // ファイル操作。無ければ、右クリックのメニューにはパスのコピーと Finder で表示だけを出す（アーカイブしたセッション）
   fileOps?: ExplorerFileOps;
+  // Claude がフォルダの外で読んだ・書いたもの（絶対パス）。readFolders: git のリポジトリのいちばん上（見出しを分けてツリーを並べる）/
+  // readFiles: どのリポジトリにも入っていないファイル（見出しを分けて 1 行ずつ並べる）
+  readFolders?: string[];
+  readFiles?: string[];
+  // Claude が読んだリポジトリを、追加したフォルダに移す / Claude が読んだものを一覧から消す。無ければボタンを出さない
+  onKeepReadFolder?: (folder: string) => void;
+  onDismissRead?: (path: string) => void;
 };
 
-// 右クリックした行。path はツリーの行のパス（フォルダそのものの行は base）
+// 右クリックした行。path はツリーの行のパス（フォルダそのものの行は base）。フォルダ外で Claude が読み書きしたファイルの行は、base が READ_FILES
 type MenuState = { base: string; path: string; isDir: boolean; isRoot: boolean; x: number; y: number };
 // ツリーの行の中で名前を入れているもの（新規作成は dir の中に行を足し、名前の変更は path の行で入れる）
 type EditState = { base: string; kind: 'file' | 'dir'; dir: string } | { base: string; kind: 'rename'; path: string };
 
 const NO_FOLDERS: string[] = [];
+// フォルダ外で Claude が読み書きしたファイルの行の、メニューの base（ツリーの行のパスにはならない値）
+const READ_FILES = '\0read-files';
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_MARKS: Record<string, GitMark> = {};
 
@@ -62,6 +71,10 @@ export const Explorer = memo(function Explorer({
   folders = NO_FOLDERS,
   onRemoveFolder,
   fileOps,
+  readFolders = NO_FOLDERS,
+  readFiles = NO_FOLDERS,
+  onKeepReadFolder,
+  onDismissRead,
 }: Props) {
   // メニューと名前を入れる行は、ツリーをまたいで一度に 1 つだけ
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -99,15 +112,82 @@ export const Explorer = memo(function Explorer({
           {...shared}
         />
       ))}
+      {readFolders.length > 0 && (
+        <div className="tree-section" title={t('explorer.tree.readFoldersTip')}>
+          {t('explorer.tree.readFolders')}
+        </div>
+      )}
+      {/* Claude が読んだリポジトリは Claude に許可した場所ではないので、書き換え（新規作成・名前の変更・ゴミ箱）はさせない。
+          main も、作業フォルダと追加したフォルダの中しか書き換えない（＋ で追加したフォルダに移せば、書き換えられる） */}
+      {readFolders.map((folder) => (
+        <RootTree
+          key={folder}
+          sessionId={sessionId}
+          root={folder}
+          base={folder}
+          name={baseName(folder)}
+          activePath={activePath}
+          changes={NO_CHANGES}
+          knowledge={knowledge}
+          gitMarks={NO_MARKS}
+          onOpenFile={onOpenFile}
+          read
+          onKeep={onKeepReadFolder && (() => onKeepReadFolder(folder))}
+          onRemove={onDismissRead && (() => onDismissRead(folder))}
+          {...shared}
+          fileOps={undefined}
+        />
+      ))}
+      {readFiles.length > 0 && (
+        <div className="tree-section" title={t('explorer.tree.readFilesTip')}>
+          {t('explorer.tree.readFiles')}
+        </div>
+      )}
+      {readFiles.map((file) => (
+        <div
+          key={file}
+          className={`tree-row${file === activePath ? ' active' : ''}${onDismissRead ? ' reveal-host' : ''}${menu?.base === READ_FILES && menu.path === file ? ' menu-target' : ''}`}
+          style={{ paddingLeft: 10 }}
+          onClick={() => onOpenFile(file)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenu({ base: READ_FILES, path: file, isDir: false, isRoot: false, x: e.clientX, y: e.clientY });
+          }}
+          title={file}
+        >
+          <span className="tree-chevron">{knowledge[file] && <KnowledgeDot state={knowledge[file]} />}</span>
+          <span className="tree-label">{baseName(file)}</span>
+          <span className="tree-read-dir">{parentOf(file)}</span>
+          <span className="tree-fill" />
+          {onDismissRead && <DismissButton onClick={() => onDismissRead(file)} />}
+        </div>
+      ))}
+      {/* フォルダ外のファイルは、どのツリーにも入っていないので、相対パスは無い。書き換えもさせない */}
+      {menu?.base === READ_FILES && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[
+            { label: t('explorer.menu.copyPath'), onSelect: () => void navigator.clipboard.writeText(menu.path).catch(() => {}) },
+            'separator',
+            { label: t('explorer.menu.reveal'), onSelect: () => void window.tanacode.workspace.revealFile(sessionId, menu.path).catch(() => {}) },
+          ]}
+          onClose={closeMenu}
+        />
+      )}
     </div>
   );
 });
 
-type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder'> & {
+type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder' | 'readFolders' | 'readFiles' | 'onKeepReadFolder' | 'onDismissRead'> & {
   // ツリーの行のパスの頭。セッションのフォルダは ''（相対パス）、追加したフォルダは、そのフォルダの絶対パス（行も絶対パスで持つ）
   base: string;
   name: string;
   onRemove?: () => void;
+  // Claude が読んだリポジトリのツリー（閉じて始める。× は一覧から消す）。onKeep: 追加したフォルダに移す
+  read?: boolean;
+  onKeep?: () => void;
   // 右クリックのメニューと、名前を入れている行（どのツリーのものかは base で分ける）
   menu: MenuState | null;
   onMenu: (menu: MenuState) => void;
@@ -128,6 +208,8 @@ function RootTree({
   gitMarks,
   onOpenFile,
   onRemove,
+  read,
+  onKeep,
   fileOps,
   menu: anyMenu,
   onMenu,
@@ -136,7 +218,8 @@ function RootTree({
   onEdit,
 }: RootProps) {
   const [children, setChildren] = useState(new Map<string, DirEntry[]>());
-  const [expanded, setExpanded] = useState(new Set<string>([base]));
+  // Claude が読んだリポジトリは、いくつも並ぶことがあるので閉じて始める
+  const [expanded, setExpanded] = useState(new Set<string>(read ? [] : [base]));
   const childrenRef = useRef(children);
   childrenRef.current = children;
   const menu = anyMenu?.base === base ? anyMenu : null;
@@ -158,8 +241,8 @@ function RootTree({
   );
 
   useEffect(() => {
-    void load(base);
-  }, [load, base]);
+    if (!read) void load(base);
+  }, [load, base, read]);
 
   // ファイルの追加・削除を反映するため、変更があった場所の親フォルダを読み直す
   useEffect(
@@ -360,7 +443,7 @@ function RootTree({
   return (
     <>
       <div
-        className={`tree-row dir${onRemove ? ' reveal-host' : ''}${menu?.isRoot ? ' menu-target' : ''}`}
+        className={`tree-row dir${onRemove || onKeep ? ' reveal-host' : ''}${menu?.isRoot ? ' menu-target' : ''}`}
         style={{ paddingLeft: 10 }}
         onClick={() => toggle(base)}
         onContextMenu={(e) => openMenu(e, { path: base, isDir: true, isRoot: true })}
@@ -371,7 +454,21 @@ function RootTree({
         </span>
         <span className="tree-label">{name}</span>
         <span className="tree-fill" />
-        {onRemove && (
+        {onKeep && (
+          <IconButton
+            reveal
+            size="sm"
+            icon={AddIcon}
+            label={t('explorer.tree.keepReadFolder')}
+            tip={t('explorer.tree.keepReadFolderTip')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onKeep();
+            }}
+          />
+        )}
+        {onRemove && read && <DismissButton onClick={onRemove} />}
+        {onRemove && !read && (
           <IconButton
             reveal
             size="sm"
@@ -455,6 +552,23 @@ function NameInput({
       />
       {error && <span className="tree-input-error">{error}</span>}
     </span>
+  );
+}
+
+// Claude が読んだものを一覧から消すボタン（行を押したときの動きは止める）
+function DismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <IconButton
+      reveal
+      size="sm"
+      icon={CloseIcon}
+      label={t('explorer.tree.dismissRead')}
+      tip={t('explorer.tree.dismissReadTip')}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    />
   );
 }
 

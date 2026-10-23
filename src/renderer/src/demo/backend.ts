@@ -595,6 +595,8 @@ export class DemoBackend {
         // デモにはフォルダ選択のダイアログが無いので、追加は取りやめと同じ
         addFolder: () => ok(null),
         removeFolder: () => ok([]),
+        keepReadFolder: () => ok([]),
+        dismissRead: () => ok(undefined),
       },
       git: {
         state: () => ok(this.gitState()),

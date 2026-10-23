@@ -796,6 +796,55 @@ describe('Explorer（エクスプローラー）', () => {
       expect(api.argsOf('workspace.trashEntry')).toEqual([['A', 'src']]);
       expect(ops.trashed).toHaveBeenCalledWith('src');
     });
+
+    // Claude が読んだもの（Claude に許可した場所ではない）は、書き換えさせない。main も、作業フォルダと追加したフォルダの中しか書き換えない
+    describe('Claude が読んだもの', () => {
+      const REPO = '/work/oss';
+      const OUTSIDE = '/notes/memo.md';
+      const readDirs: Record<string, DirEntry[]> = {
+        [REPO]: [{ name: 'index.ts', path: `${REPO}/index.ts`, isDir: false }],
+      };
+      const setupRead = () => {
+        const api = mockApi({ 'workspace.listDir': (_id: never, dir: never) => Promise.resolve(dirs[dir] ?? readDirs[dir]) });
+        api.install();
+        const writeText = vi.fn(async (_text: string) => undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        return { api, writeText };
+      };
+
+      it('Claude が読んだリポジトリの行は、書き換えの項目を出さない（ファイル操作を渡していても）', async () => {
+        const { writeText } = setupRead();
+        render(<Explorer {...props({ readFolders: [REPO], fileOps: fileOps() })} />);
+        fireEvent.contextMenu(await screen.findByText('oss'));
+        expect(menuLabels()).toEqual(['パスをコピー', 'Finder で表示']);
+        pick('パスをコピー');
+        expect(writeText.mock.calls).toEqual([[REPO]]);
+        fireEvent.click(screen.getByText('oss'));
+        fireEvent.contextMenu(await screen.findByText('index.ts'));
+        expect(menuLabels()).toEqual(['パスをコピー', '相対パスをコピー', 'Finder で表示']);
+        // セッションのフォルダの行では、これまでどおり書き換えの項目を出す
+        fireEvent.contextMenu(screen.getByText('README.md'));
+        expect(menuLabels()).toContain('名前を変更');
+      });
+
+      it('フォルダ外のファイルの行は、絶対パスのコピーと Finder で表示だけ', async () => {
+        const { api, writeText } = setupRead();
+        const p = props({ readFiles: [OUTSIDE], fileOps: fileOps() });
+        render(<Explorer {...p} />);
+        const row = (await screen.findByText('memo.md')).closest<HTMLElement>('.tree-row')!;
+        fireEvent.contextMenu(row);
+        expect(menuLabels()).toEqual(['パスをコピー', 'Finder で表示']);
+        expect(row.classList.contains('menu-target')).toBe(true);
+        pick('パスをコピー');
+        fireEvent.contextMenu(row);
+        pick('Finder で表示');
+        expect(screen.queryByRole('menu')).toBeNull();
+        expect(writeText.mock.calls).toEqual([[OUTSIDE]]);
+        expect(api.argsOf('workspace.revealFile')).toEqual([['A', OUTSIDE]]);
+        // 右クリックでは、ファイルを開かない
+        expect(p.onOpenFile).not.toHaveBeenCalled();
+      });
+    });
   });
 });
 

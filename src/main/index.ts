@@ -863,11 +863,14 @@ function registerIpc(): void {
     return folder ? p.addFolder(id, folder) : null;
   });
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
+  handle(IpcChannel.WorkspaceKeepReadFolder, (e, id: string, folder: string) => P(e).keepReadFolder(id, folder));
+  handle(IpcChannel.WorkspaceDismissRead, (e, id: string, path: string) => P(e).manager.removeOutsideRead(id, path));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
-    new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
+    // Claude が読んだリポジトリも、エクスプローラーから開いた Markdown の画像を出せるよう、追加したフォルダと同じく読む
+    new Workspace(P(e).cwdOf(id)).readImage(relPath, [...P(e).addedFoldersOf(id), ...P(e).manager.readFoldersOf(id)]).catch(() => null),
   );
   handle(IpcChannel.ResolveFiles, (e, id: string, paths: string[]) =>
     new Workspace(P(e).cwdOf(id)).resolveFiles(Array.isArray(paths) ? paths : [], P(e).addedFoldersOf(id)).catch(() => []),

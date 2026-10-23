@@ -387,6 +387,8 @@ const SessionManager = fakeClass('SessionManager', {
   cwdOf: (_self, id: string) => `/sessions/${id}`,
   addedFoldersOf: () => [],
   setAddedFolders: echo('manager.setAddedFolders'),
+  readFoldersOf: () => [],
+  removeOutsideRead: echo('manager.removeOutsideRead'),
   open: echo('manager.open'),
   childrenOf: () => [],
   archive: echo('manager.archive'),

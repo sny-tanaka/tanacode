@@ -131,6 +131,8 @@ export const IpcChannel = {
   WorkspaceInfo: 'workspace:info',
   WorkspaceAddFolder: 'workspace:add-folder',
   WorkspaceRemoveFolder: 'workspace:remove-folder',
+  WorkspaceKeepReadFolder: 'workspace:keep-read-folder',
+  WorkspaceDismissRead: 'workspace:dismiss-read',
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
@@ -295,6 +297,10 @@ export type SessionSummary = {
   // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。エクスプローラーで cwd の下に並べ、Claude Code にも --add-dir で渡す。
   // 無いもの・空は追加なし
   addedFolders?: string[];
+  // Claude がフォルダの外で読んだ・書いたもの（絶対パス）。readFolders: git のリポジトリのいちばん上（エクスプローラーにツリーで並べる。
+  // --add-dir には渡さない）/ readFiles: どのリポジトリにも入っていないファイル。無いもの・空は無し
+  readFolders?: string[];
+  readFiles?: string[];
   // チェックリストのファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、変更を保存しない。無いものは保存する
   checklistUnsaved?: boolean;
 };
@@ -776,6 +782,11 @@ export type TanacodeApi = {
     addFolder(sessionId: string): Promise<string[] | null>;
     // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとのフォルダの一覧を返す
     removeFolder(sessionId: string, folder: string): Promise<string[]>;
+    // Claude がフォルダの外で読んだリポジトリ（SessionSummary.readFolders のどれか）を、手で足した追加フォルダに移す（--add-dir で渡す）。
+    // 追加したあとのフォルダの一覧を返す。readFolders に無いものは断る
+    keepReadFolder(sessionId: string, folder: string): Promise<string[]>;
+    // Claude がフォルダの外で読んだもの（readFolders・readFiles のどれか）をエクスプローラーから消す。Claude がまた触れれば出直す
+    dismissRead(sessionId: string, path: string): Promise<void>;
     onFilesChanged(listener: (payload: FilesChanged) => void): () => void;
     // エディタで開いているタブ（エディタのフォルダ → タブのパス）。main は、フォルダの監視では知らせが来ないもの（フォルダの外・
     // 監視しないフォルダの中・リンク越し）をファイルごとに見張り、変わったら onFilesChanged で知らせる。開いているタブが変わるたびに送る
@@ -968,6 +979,8 @@ export type IpcInvoke = {
   [IpcChannel.WorkspaceInfo]: Api['workspace']['info'];
   [IpcChannel.WorkspaceAddFolder]: Api['workspace']['addFolder'];
   [IpcChannel.WorkspaceRemoveFolder]: Api['workspace']['removeFolder'];
+  [IpcChannel.WorkspaceKeepReadFolder]: Api['workspace']['keepReadFolder'];
+  [IpcChannel.WorkspaceDismissRead]: Api['workspace']['dismissRead'];
   [IpcChannel.ListDir]: Api['workspace']['listDir'];
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];

@@ -213,6 +213,11 @@ export function App() {
   // ワークスペースに追加したフォルダ。一覧が届くたびに配列が作り直されるので、中身が同じなら同じ配列を使う（エクスプローラーを描き直さない）
   const addedKey = (selected ? (selected.addedFolders ?? NO_FOLDERS) : (draft?.added ?? NO_FOLDERS)).join('\0');
   const addedFolders = useMemo(() => (addedKey ? addedKey.split('\0') : NO_FOLDERS), [addedKey]);
+  // Claude がフォルダの外で読んだ・書いたもの（リポジトリとファイル）。同じく、中身が同じなら同じ配列を使う
+  const readFoldersKey = (selected?.readFolders ?? NO_FOLDERS).join('\0');
+  const readFolders = useMemo(() => (readFoldersKey ? readFoldersKey.split('\0') : NO_FOLDERS), [readFoldersKey]);
+  const readFilesKey = (selected?.readFiles ?? NO_FOLDERS).join('\0');
+  const readFiles = useMemo(() => (readFilesKey ? readFilesKey.split('\0') : NO_FOLDERS), [readFilesKey]);
   // フォルダを追加・外せるか（アーカイブしたセッションと、worktree の準備を待っている間は変えない）
   const canEditFolders = !!viewId && !selected?.archived && !folderWait;
   // 選択中のセッションのタスク。ほかのセッションのタスクが動いても、ここは変わらない（stableRuns で参照が保たれる）
@@ -640,6 +645,22 @@ export function App() {
         (folders) => setDraft((d) => (d && d.id === viewId ? { ...d, added: folders } : d)),
         (error: unknown) => window.alert(t('app.sidePanel.removeFolderFailed', { error: errorMessage(error) })),
       );
+    },
+    [viewId],
+  );
+  // Claude が読んだリポジトリを、追加したフォルダに移す / Claude が読んだものを一覧から消す（一覧は main から届き直す）
+  const keepReadFolder = useCallback(
+    (folder: string) => {
+      if (!viewId) return;
+      window.tanacode.workspace
+        .keepReadFolder(viewId, folder)
+        .catch((error: unknown) => window.alert(t('app.sidePanel.addFolderFailed', { error: errorMessage(error) })));
+    },
+    [viewId],
+  );
+  const dismissRead = useCallback(
+    (path: string) => {
+      if (viewId) void window.tanacode.workspace.dismissRead(viewId, path);
     },
     [viewId],
   );
@@ -1133,6 +1154,10 @@ export function App() {
                     folders={addedFolders}
                     onRemoveFolder={canEditFolders ? removeFolder : undefined}
                     fileOps={explorerFileOps}
+                    readFolders={readFolders}
+                    readFiles={readFiles}
+                    onKeepReadFolder={canEditFolders ? keepReadFolder : undefined}
+                    onDismissRead={canEditFolders ? dismissRead : undefined}
                   />
                 )}
               </div>

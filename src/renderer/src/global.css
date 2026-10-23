@@ -1008,6 +1008,26 @@ body.resizing * {
 .tree-fill {
   flex: 1;
 }
+/* Claude がフォルダの外で読んだもの（リポジトリ・ファイル）の小見出し。手で足したフォルダと分ける */
+.tree-section {
+  padding: 12px 12px 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+/* Claude がフォルダの外で読んだファイルの、入っているフォルダ（名前の右に薄く。狭ければ、名前より先に縮める） */
+.tree-read-dir {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
 /* Claude Code による変更（M: 変更 / A: 新規作成） */
 .tree-mark {
   flex: none;
