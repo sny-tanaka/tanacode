@@ -434,7 +434,7 @@ function NameInput({
   };
 
   return (
-    <span className="tree-input-wrap" onClick={(e) => e.stopPropagation()}>
+    <span className="tree-input-wrap">
       <input
         ref={ref}
         className={`tree-input${error ? ' invalid' : ''}`}

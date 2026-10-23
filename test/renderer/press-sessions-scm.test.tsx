@@ -638,6 +638,9 @@ describe('Explorer（エクスプローラー）', () => {
       view.rerender(<Explorer {...props()} />);
       fireEvent.contextMenu(screen.getByText('README.md'));
       expect(menuLabels()).toEqual(['パスをコピー', '相対パスをコピー', 'Finder で表示']);
+      // メニューの上での右クリックは、ブラウザのメニューを出さず、メニューも閉じない
+      expect(fireEvent.contextMenu(screen.getByRole('menu'))).toBe(false);
+      expect(screen.queryByRole('menu')).not.toBeNull();
       // 外を押すと閉じる
       fireEvent.mouseDown(document.body);
       expect(screen.queryByRole('menu')).toBeNull();
@@ -734,6 +737,25 @@ describe('Explorer（エクスプローラー）', () => {
       expect(api.argsOf('workspace.renameEntry')).toEqual([['A', 'src/main.ts', 'app.ts']]);
       expect(ops.renamed).toHaveBeenCalledWith('src/main.ts', 'src/app.ts');
       expect(input()).toBeNull();
+    });
+
+    it('名前を入れている欄を押しても、フォルダを開け閉めせず、ファイルも開かない', async () => {
+      setupOps();
+      const p = props({ fileOps: fileOps() });
+      render(<Explorer {...p} />);
+      fireEvent.click(await screen.findByText('src'));
+      await screen.findByText('main.ts');
+      fireEvent.contextMenu(screen.getByText('src'));
+      pick('名前を変更');
+      fireEvent.click(input());
+      expect(screen.queryByText('main.ts')).not.toBeNull();
+      expect(input().value).toBe('src');
+      fireEvent.keyDown(input(), { key: 'Escape' });
+      fireEvent.contextMenu(screen.getByText('main.ts'));
+      pick('名前を変更');
+      fireEvent.click(input());
+      expect(p.onOpenFile).not.toHaveBeenCalled();
+      expect(input().value).toBe('main.ts');
     });
 
     it('保存の確かめでやめたら、名前を変えない。欄から離れたときも決める', async () => {
