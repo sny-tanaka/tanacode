@@ -48,6 +48,12 @@ export type SessionRecord = {
   // 追加したフォルダを変えたが、動いている claude にはまだ渡していない（手が空いたら --resume で起動し直す）。
   // アプリを動かしたまま終了して、次のアプリが claude を引き継いだときも、起動し直すまで残す
   addedFoldersPending?: boolean;
+  // Claude がフォルダの外で読んだ・書いたもの（outside-reads.ts）。readFolders: git のリポジトリのいちばん上 / readFiles: どのリポジトリにも
+  // 入っていないファイル。どれも絶対パス。エクスプローラーに出すだけで、--add-dir には渡さない（人が追加フォルダに移したら渡す）
+  readFolders?: string[];
+  readFiles?: string[];
+  // エクスプローラーから消したもの（パス → 消した時刻のミリ秒）。起動し直して会話を読み直しても、消す前の行では出し直さない
+  dismissedReads?: Record<string, number>;
   // 最後に起動したチャットの claude（initialize の返事の pid と、起動したときの会話の ID）。常駐のホストが止める間もなく落ちると
   // claude だけが残るので、開き直す前に残っていないかを確かめて止める（leftover-claude.ts）
   claudeProcess?: ClaudeProcess | null;

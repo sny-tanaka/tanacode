@@ -4,7 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceWatchers } from '../src/main/workspace-watcher';
 import { INIT_RESPONSE, line, ScriptedApp, type ScriptedPipe } from './helpers/scripted-claude';
 
-// ワークスペースに追加したフォルダ（SessionManager）: 記録・一覧・--add-dir での受け渡しと、変えたときの起動し直しの時期・見張り
+// ワークスペースに追加したフォルダ（SessionManager）: 記録・一覧・--add-dir での受け渡しと、変えたときの起動し直しの時期・見張り。
+// Claude がフォルダの外で読んだもの（readFolders・readFiles）も
+
+// 試しのフォルダは一時フォルダの中にあるので、Claude が読んだものを出さない場所は、試しのホームの ~/.claude だけにする
+vi.mock('../src/main/outside-reads', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/outside-reads')>();
+  const { join: joinPath } = await import('node:path');
+  return { ...actual, outsideRules: () => ({ excluded: [joinPath(process.env.HOME ?? '', '.claude')], home: process.env.HOME ?? '' }) };
+});
 
 let app: ScriptedApp;
 let a: string;
@@ -185,5 +193,86 @@ describe('見張り', () => {
     retain.mockClear();
     app.manager.setAddedFolders(id, [a]);
     expect(retain).not.toHaveBeenCalled();
+  });
+});
+
+describe('Claude がフォルダの外で読んだもの', () => {
+  // 外のリポジトリと、どのリポジトリにも入っていないフォルダ（試しのフォルダは一時フォルダの中なので、出さない場所は ~/.claude だけにする）
+  let repo: string;
+  let loose: string;
+  beforeEach(() => {
+    repo = join(app.root, 'repo');
+    loose = join(app.root, 'loose');
+    mkdirSync(join(repo, '.git'), { recursive: true });
+    mkdirSync(join(repo, 'src'));
+    mkdirSync(loose);
+  });
+  const reads = (id: string) => ({ folders: app.manager.summary(id)?.readFolders, files: app.manager.summary(id)?.readFiles });
+  const at = (ms: number) => ({ timestamp: new Date(ms).toISOString() });
+  // 会話ログを読み終えたのを、そのあとに書いた文がチャットに出たことで確かめる
+  async function caughtUp(id: string, text: string): Promise<void> {
+    app.say(id, line.text(text));
+    await app.waitFor(text, () => JSON.stringify(app.manager.snapshot(id).events).includes(text));
+  }
+
+  it('リポジトリの中のものはそのいちばん上、外のものはファイルを覚えて一覧に出す。--add-dir には渡さず、起動し直さない', async () => {
+    const retain = vi.spyOn(WorkspaceWatchers.prototype, 'retain');
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(
+      id,
+      line.toolUse('t1', 'Read', { file_path: join(repo, 'src/a.ts') }),
+      line.toolUse('t2', 'Edit', { file_path: join(repo, 'README.md') }),
+      line.toolUse('t3', 'Write', { file_path: join(loose, 'memo.txt') }),
+      line.toolUse('t4', 'Read', { file_path: join(app.home, '.claude/settings.json') }),
+      line.toolUse('t5', 'Read', { file_path: join(app.cwd, 'in.ts') }),
+    );
+    await caughtUp(id, '読みました');
+    expect(reads(id)).toEqual({ folders: [repo], files: [join(loose, 'memo.txt')] });
+    expect(app.sessions.find((s) => s.id === id)?.readFolders).toEqual([repo]);
+    // リポジトリはエクスプローラーのツリーに出すので見張る
+    expect(retain.mock.calls).toContainEqual([repo]);
+    await settle();
+    expect(spawnedFor(id)).toBe(1);
+    expect(addDirs(pipe)).toBeNull();
+    expect(app.manager.addedFoldersOf(id)).toEqual([]);
+  });
+
+  it('消したものは、起動し直して会話を読み直しても出さない。消したあとにまた触れたら出し直す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const past = Date.now() - 60_000;
+    app.say(id, { ...line.toolUse('t1', 'Read', { file_path: join(repo, 'a.ts') }), ...at(past) });
+    app.say(id, { ...line.toolUse('t2', 'Read', { file_path: join(loose, 'b.txt') }), ...at(past + 1) });
+    await caughtUp(id, '読みました');
+    expect(reads(id)).toEqual({ folders: [repo], files: [join(loose, 'b.txt')] });
+    app.manager.removeOutsideRead(id, repo);
+    app.manager.removeOutsideRead(id, join(loose, 'b.txt'));
+    expect(reads(id)).toEqual({ folders: [], files: [] });
+    // 出していないものを消しても、何も変えない
+    app.manager.removeOutsideRead(id, '/nowhere');
+
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await app.manager.open(id);
+    await app.ready(id);
+    await caughtUp(id, '読み直しのあと');
+    expect(reads(id)).toEqual({ folders: [], files: [] });
+
+    app.say(id, { ...line.toolUse('t3', 'Read', { file_path: join(repo, 'src/c.ts') }), ...at(Date.now() + 60_000) });
+    await caughtUp(id, 'また読みました');
+    expect(reads(id)).toEqual({ folders: [repo], files: [] });
+  });
+
+  it('追加したフォルダに入ったものは一覧から外し、その中を読んでも出さない', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    app.say(id, line.toolUse('t1', 'Read', { file_path: join(repo, 'a.ts') }), line.toolUse('t2', 'Read', { file_path: join(loose, 'b.txt') }));
+    await caughtUp(id, '読みました');
+    app.manager.setAddedFolders(id, [repo]);
+    expect(reads(id)).toEqual({ folders: [], files: [join(loose, 'b.txt')] });
+    app.say(id, line.toolUse('t3', 'Read', { file_path: join(repo, 'd.ts') }));
+    await caughtUp(id, 'また読みました');
+    expect(reads(id)).toEqual({ folders: [], files: [join(loose, 'b.txt')] });
   });
 });

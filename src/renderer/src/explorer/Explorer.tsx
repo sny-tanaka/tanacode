@@ -4,7 +4,7 @@ import type { FileKnowledge } from '@shared/knowledge';
 import type { FileChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
-import { CloseIcon, DisclosureIcon, IconButton } from '../icons';
+import { AddIcon, CloseIcon, DisclosureIcon, IconButton } from '../icons';
 
 type Props = {
   sessionId: string;
@@ -22,6 +22,13 @@ type Props = {
   folders?: string[];
   // 追加したフォルダを外す。無ければ外すボタンを出さない（アーカイブしたセッション）
   onRemoveFolder?: (folder: string) => void;
+  // Claude がフォルダの外で読んだ・書いたもの（絶対パス）。readFolders: git のリポジトリのいちばん上（見出しを分けてツリーを並べる）/
+  // readFiles: どのリポジトリにも入っていないファイル（見出しを分けて 1 行ずつ並べる）
+  readFolders?: string[];
+  readFiles?: string[];
+  // Claude が読んだリポジトリを、追加したフォルダに移す / Claude が読んだものを一覧から消す。無ければボタンを出さない
+  onKeepReadFolder?: (folder: string) => void;
+  onDismissRead?: (path: string) => void;
 };
 
 const NO_FOLDERS: string[] = [];
@@ -40,6 +47,10 @@ export const Explorer = memo(function Explorer({
   onOpenFile,
   folders = NO_FOLDERS,
   onRemoveFolder,
+  readFolders = NO_FOLDERS,
+  readFiles = NO_FOLDERS,
+  onKeepReadFolder,
+  onDismissRead,
 }: Props) {
   return (
     <div className="tree">
@@ -70,21 +81,67 @@ export const Explorer = memo(function Explorer({
           onRemove={onRemoveFolder && (() => onRemoveFolder(folder))}
         />
       ))}
+      {readFolders.length > 0 && (
+        <div className="tree-section" title={t('explorer.tree.readFoldersTip')}>
+          {t('explorer.tree.readFolders')}
+        </div>
+      )}
+      {readFolders.map((folder) => (
+        <RootTree
+          key={folder}
+          sessionId={sessionId}
+          root={folder}
+          base={folder}
+          name={baseName(folder)}
+          activePath={activePath}
+          changes={NO_CHANGES}
+          knowledge={knowledge}
+          gitMarks={NO_MARKS}
+          onOpenFile={onOpenFile}
+          read
+          onKeep={onKeepReadFolder && (() => onKeepReadFolder(folder))}
+          onRemove={onDismissRead && (() => onDismissRead(folder))}
+        />
+      ))}
+      {readFiles.length > 0 && (
+        <div className="tree-section" title={t('explorer.tree.readFilesTip')}>
+          {t('explorer.tree.readFiles')}
+        </div>
+      )}
+      {readFiles.map((file) => (
+        <div
+          key={file}
+          className={`tree-row${file === activePath ? ' active' : ''}${onDismissRead ? ' reveal-host' : ''}`}
+          style={{ paddingLeft: 10 }}
+          onClick={() => onOpenFile(file)}
+          title={file}
+        >
+          <span className="tree-chevron">{knowledge[file] && <KnowledgeDot state={knowledge[file]} />}</span>
+          <span className="tree-label">{baseName(file)}</span>
+          <span className="tree-read-dir">{parentOf(file)}</span>
+          <span className="tree-fill" />
+          {onDismissRead && <DismissButton onClick={() => onDismissRead(file)} />}
+        </div>
+      ))}
     </div>
   );
 });
 
-type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder'> & {
+type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder' | 'readFolders' | 'readFiles' | 'onKeepReadFolder' | 'onDismissRead'> & {
   // ツリーの行のパスの頭。セッションのフォルダは ''（相対パス）、追加したフォルダは、そのフォルダの絶対パス（行も絶対パスで持つ）
   base: string;
   name: string;
   onRemove?: () => void;
+  // Claude が読んだリポジトリのツリー（閉じて始める。× は一覧から消す）。onKeep: 追加したフォルダに移す
+  read?: boolean;
+  onKeep?: () => void;
 };
 
 // 1 つのフォルダのツリー。フォルダのパス（base からのもの）を鍵に、開いたフォルダの中身だけを読む
-function RootTree({ sessionId, root, base, name, activePath, changes, knowledge, gitMarks, onOpenFile, onRemove }: RootProps) {
+function RootTree({ sessionId, root, base, name, activePath, changes, knowledge, gitMarks, onOpenFile, onRemove, read, onKeep }: RootProps) {
   const [children, setChildren] = useState(new Map<string, DirEntry[]>());
-  const [expanded, setExpanded] = useState(new Set<string>([base]));
+  // Claude が読んだリポジトリは、いくつも並ぶことがあるので閉じて始める
+  const [expanded, setExpanded] = useState(new Set<string>(read ? [] : [base]));
   const childrenRef = useRef(children);
   childrenRef.current = children;
   // root からの相対パスを、ツリーの行のパスにする
@@ -104,8 +161,8 @@ function RootTree({ sessionId, root, base, name, activePath, changes, knowledge,
   );
 
   useEffect(() => {
-    void load(base);
-  }, [load, base]);
+    if (!read) void load(base);
+  }, [load, base, read]);
 
   // ファイルの追加・削除を反映するため、変更があった場所の親フォルダを読み直す
   useEffect(
@@ -198,13 +255,27 @@ function RootTree({ sessionId, root, base, name, activePath, changes, knowledge,
 
   return (
     <>
-      <div className={`tree-row dir${onRemove ? ' reveal-host' : ''}`} style={{ paddingLeft: 10 }} onClick={() => toggle(base)} title={base || undefined}>
+      <div className={`tree-row dir${onRemove || onKeep ? ' reveal-host' : ''}`} style={{ paddingLeft: 10 }} onClick={() => toggle(base)} title={base || undefined}>
         <span className="tree-chevron">
           <DisclosureIcon open={expanded.has(base)} />
         </span>
         <span className="tree-label">{name}</span>
         <span className="tree-fill" />
-        {onRemove && (
+        {onKeep && (
+          <IconButton
+            reveal
+            size="sm"
+            icon={AddIcon}
+            label={t('explorer.tree.keepReadFolder')}
+            tip={t('explorer.tree.keepReadFolderTip')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onKeep();
+            }}
+          />
+        )}
+        {onRemove && read && <DismissButton onClick={onRemove} />}
+        {onRemove && !read && (
           <IconButton
             reveal
             size="sm"
@@ -220,6 +291,23 @@ function RootTree({ sessionId, root, base, name, activePath, changes, knowledge,
       </div>
       {expanded.has(base) && renderDir(base, 1)}
     </>
+  );
+}
+
+// Claude が読んだものを一覧から消すボタン（行を押したときの動きは止める）
+function DismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <IconButton
+      reveal
+      size="sm"
+      icon={CloseIcon}
+      label={t('explorer.tree.dismissRead')}
+      tip={t('explorer.tree.dismissReadTip')}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    />
   );
 }
 
