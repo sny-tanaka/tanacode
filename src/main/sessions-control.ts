@@ -148,6 +148,8 @@ type Deps = {
   followUpMs?: number;
   // 起動中のまま、end_session で終えられるようになるまで（テストでは短くする）
   stuckStartingMs?: number;
+  // 今の時刻（起動中の時間を数える。テストでは差し替える）
+  now?: () => number;
 };
 
 // 質問に答えたあと、子が続けて出す次の質問を待つ上限。子は、答えを受け取ってから数秒で次の質問を出す
@@ -174,8 +176,9 @@ const WAIT_DEFAULT_SECONDS = 30;
 // get_session・read_session で返す、最後の応答の文字数（既定と、max_response_chars で上げられる上限）。長いものは真ん中を切る
 const RESPONSE_CHARS = 4000;
 const MAX_RESPONSE_CHARS = 50_000;
-// 起動中のまま、end_session で終えられるようになるまでの時間。ふつうの起動（worktree の準備・依存の install も）は、これより早く終わる。
-// 止まった起動（Claude Code が立ち上がらない・準備が終わらない）の子を、親が片付けられるように
+// 起動中のまま、end_session で終えられるようになるまでの時間。ふつうの起動（worktree を作る・Claude Code の立ち上がり）は、これより早く終わる。
+// 止まった起動（Claude Code が立ち上がらない・準備が終わらない）の子を、親が片付けられるように。
+// worktree の依存の install の間は、時間のかかるふつうの install を止まったとみなさないよう、最初の指示を待つ上限（30 分）まで待つ
 const STUCK_STARTING_MS = 5 * 60_000;
 // list_wakeups で返す、予約の本文の文字数の上限
 const MAX_WAKEUP_TEXT_CHARS = 300;
@@ -186,6 +189,8 @@ const WAKEUPS_UNSAVED =
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 // 起動が終わる前（予約・報告の受け手を作る前）に届いた呼び出しに返すもの
 const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try again.';
+// 送れなかった指示を親への知らせに入れる長さ（親が見分けて送り直せるように。知らせは 1 行なので、長いものは頭だけ）
+const MAX_FAILED_MESSAGE_CHARS = 300;
 // send_message で預かった指示の、届くまでの確かめ方と、送れなかったとき
 const QUEUED_NOTE =
   'Until the child receives it, get_session shows it in queued_messages, so do not send it again. If it cannot be sent (for example, the child does not become free in time or the user switches it to terminal mode), a notice tells you why.';
@@ -265,7 +270,7 @@ export class SessionsControl {
   private readonly backgroundTold = new Set<string>();
   // 起動中になった時刻（起動中の子だけ）。長く起動中のままの子を、end_session で終えられるようにする
   private readonly startingSince = new Map<string, number>();
-  // end_session で終えた子。預かっていた指示を送れなかったことを、終えた親に知らせ直さない
+  // end_session で終えた子。預かっていた指示を送れなかったことを、終えた親に知らせ直さない。人がアーカイブから戻した・一覧から消したら外す
   private readonly ended = new Set<string>();
   // 予約を保存しないことを結果に添えたセッション。Claude が呼ぶたびに人へ伝え直さないよう、最初の 1 回だけ添える（画面の予約にも出ている）
   private readonly wakeupsUnsavedNoted = new Set<string>();
@@ -523,7 +528,9 @@ export class SessionsControl {
     void host.submitWhenReady(id, { parent: caller.id, body: prompt, setupNote: true }, FIRST_PROMPT_TIMEOUT_MS, { keep: true }).catch((error: unknown) => {
       console.error('子セッションに最初の指示を送れませんでした', error);
       // 送れなかったこと（準備が長すぎた・止まったなど）は、親に知らせる（親は、送られるものとして待っている）。親が end_session で終えたなら知らせない
-      if (parentId && !this.ended.has(id)) this.notices.add(caller.id, `first:${id}`, { child: id, state: 'idle', at: Date.now(), firstPrompt: error instanceof Error ? error.message : String(error) });
+      if (!parentId || this.ended.has(id) || !this.summary(id)) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.notices.add(caller.id, `first:${id}`, { child: id, state: 'idle', at: Date.now(), firstPrompt: reason, firstMessage: prompt });
     });
     const child = this.summary(id);
     // worktree の準備は、最初の指示より前に済む。親が子に準備（作る・依存を入れる）を頼まないように伝える。
@@ -586,7 +593,8 @@ export class SessionsControl {
     // 送れなかったこと（子の手が空かない・人がターミナルモードに切り替えたなど）は、理由を添えて親に知らせる（親は、送られるものとして待っている）
     void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS, { keep: true }).catch((error: unknown) => {
       console.error('子セッションに指示を送れませんでした', error);
-      if (this.ended.has(child.id)) return;
+      // 終えた子・一覧から消えた子には、もう送れないので知らせない
+      if (this.ended.has(child.id) || !this.summary(child.id)) return;
       const reason = error instanceof Error ? error.message : String(error);
       this.notices.add(caller.id, `send:${child.id}:${randomUUID()}`, { child: child.id, state: 'idle', at: Date.now(), sendFailed: { message, reason } });
     });
@@ -834,12 +842,15 @@ export class SessionsControl {
     const check = () => {
       const state = host.stateOf(child.id) ?? 'exited';
       if (state === 'starting') {
-        // 長く起動中のままの子は、起動が止まったものとして終えられる（アーカイブで Claude Code も止まる）
-        const since = this.startingSince.get(child.id) ?? Date.now();
-        const waited = Date.now() - since;
-        if (waited >= this.stuckStartingMs()) return state;
+        // 長く起動中のままの子は、起動が止まったものとして終えられる（アーカイブで Claude Code も止まる）。
+        // worktree の依存の install の間は、最初の指示を待つ上限まで待つ（時間のかかるふつうの install を止めない）
+        const installing = this.summary(child.id)?.worktree?.preparing === 'installing';
+        const limit = installing ? FIRST_PROMPT_TIMEOUT_MS : this.stuckStartingMs();
+        const waited = this.now() - (this.startingSince.get(child.id) ?? this.now());
+        if (waited >= limit) return state;
+        const doing = installing ? 'is still installing the dependencies of its worktree' : 'is still starting up';
         throw new ToolError(
-          `${who} is still starting up (for ${secondsText(waited)}), so it was not ended. Wait until it is idle (check with get_session), then call end_session again. If it is still starting ${secondsText(this.stuckStartingMs() - waited)} from now (its start is stuck), end_session ends it.`,
+          `${who} ${doing} (starting for ${secondsText(waited)} so far), so it was not ended. Wait until it is idle (check with get_session), then call end_session again. If it is still starting ${secondsText(limit - waited)} from now (its start is stuck), end_session ends it.`,
         );
       }
       if (!ENDABLE_STATES.has(state)) throw new ToolError(`${who} ${END_REFUSAL[state] ?? `cannot be ended while it is ${SESSION_STATE_LABEL[state]}.`}`);
@@ -857,7 +868,8 @@ export class SessionsControl {
     // アーカイブで、預かっていた指示（起動中の子への最初の指示など）は送れなくなる。終えた親には、そのことを知らせない
     this.ended.add(child.id);
     try {
-      removal = await this.deps.archive(child.id, { removeWorktree });
+      // 起動中の子は、worktree を残すときも、tanacode が準備のために動かしているもの（依存の install など）を止める
+      removal = await this.deps.archive(child.id, { removeWorktree, ...(before === 'starting' || state === 'starting' ? { stopSetup: true } : {}) });
     } catch (error) {
       failure = errorText(error);
     }
@@ -866,12 +878,17 @@ export class SessionsControl {
       this.ended.delete(child.id);
       throw new ToolError(`Could not archive ${who}: ${failure ?? 'unknown error'}`);
     }
-    this.notices.remove(caller.id, child.id);
+    // 子の状態の知らせも、預かった指示・最初の指示を送れなかった知らせも取り下げる（終えたあとに届かないように）
+    this.notices.removeWhere(caller.id, (key, event) => key === child.id || event.child === child.id);
     this.stopped.delete(child.id);
     this.backgroundTold.delete(`${caller.id}:${child.id}`);
     const alreadyArchived = before === 'archived';
     const notes = [alreadyArchived ? 'It was already archived.' : `Archived. The user can restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`];
-    if (before === 'starting') notes.push('It had been starting up for a long time (its start seemed stuck), so its Claude Code was stopped before it received its instructions.');
+    if (before === 'starting') {
+      notes.push(
+        'It had been starting up for a long time (its start seemed stuck). Its Claude Code and anything tanacode was running to set it up (such as installing dependencies) were stopped, and the instructions still waiting to be sent to it were not sent.',
+      );
+    }
     if (tasks.length > 0) {
       notes.push(
         `Stopped its ${tasks.length} background ${tasks.length === 1 ? 'task' : 'tasks'} together with Claude Code. Processes it detached from Claude Code (for example with nohup or open) are not tracked and may still be running.`,
@@ -1050,6 +1067,8 @@ export class SessionsControl {
     const detached = state && state !== 'starting' && state !== 'exited' ? (this.deps.host.takeDetachedState?.(id) ?? null) : null;
     const before = detached ?? this.lastState.get(id);
     this.trackState(id, state);
+    // 終えた子を人がアーカイブから戻した・一覧から消したら、終えた印を外す（戻した子への指示を送れなかったことは、また知らせる）
+    if (state === null || (before === 'archived' && state !== 'archived')) this.ended.delete(id);
     const parentId = this.deps.host.parentOf(id);
     // 子がまた動き出したら、まだ送っていない知らせは取り下げる。最適化圧縮の流れ（仕上げ・再開のターン）で作業中に見えているだけなら、
     // 取り下げない（ターンの終わりの自動の切り替えは、子が作業を終えた直後に始まる。親が忙しくて、まだ送れていない知らせが消える）
@@ -1118,8 +1137,14 @@ export class SessionsControl {
         const child = childOf(item);
         const summary = all.find((s) => s.id === child);
         if (event.scheduled) return scheduledTroubleText(summary, child, event.scheduled);
-        if (event.firstPrompt !== undefined) return t('tools.notice.childFirstPromptFailed', { ...nameParams(summary, child), reason: event.firstPrompt });
-        if (event.sendFailed) return t('tools.notice.childMessageFailed', { ...nameParams(summary, child), message: messageHead(event.sendFailed.message), reason: event.sendFailed.reason });
+        // 前のバージョンが残した知らせには、指示の文が無い
+        if (event.firstPrompt !== undefined && event.firstMessage === undefined) return t('tools.notice.childFirstPromptFailed', { ...nameParams(summary, child), reason: event.firstPrompt });
+        if (event.firstPrompt !== undefined) {
+          return t('tools.notice.childFirstPromptFailedWith', { ...nameParams(summary, child), message: messageHead(event.firstMessage ?? '', MAX_FAILED_MESSAGE_CHARS), reason: event.firstPrompt });
+        }
+        if (event.sendFailed) {
+          return t('tools.notice.childMessageFailed', { ...nameParams(summary, child), message: messageHead(event.sendFailed.message, MAX_FAILED_MESSAGE_CHARS), reason: event.sendFailed.reason });
+        }
         return event.limit && (event.state === 'idle' || event.state === 'background')
           ? limitNoticeText(summary, child, event.limit, this.usageResumeAt(child))
           : noticeText(summary, child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null);
@@ -1133,7 +1158,11 @@ export class SessionsControl {
   private trackState(id: string, state: SessionState | null): void {
     this.lastState.set(id, state);
     if (state !== 'starting') this.startingSince.delete(id);
-    else if (!this.startingSince.has(id)) this.startingSince.set(id, Date.now());
+    else if (!this.startingSince.has(id)) this.startingSince.set(id, this.now());
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   private stuckStartingMs(): number {
@@ -1844,8 +1873,17 @@ const startsTurn = (e: ChatEvent): boolean => e.type === 'user' || e.type === 'n
 
 // 親に知らせる、子の出来事。limit: 利用枠に当たって止まった（その知らせ）
 // 親に知らせる子の出来事。キーは子の ID（子の状態の知らせ）か、別のキー（予約・最初の指示を送れなかった知らせ。child に子の ID）
-// sendFailed: send_message で預かった指示を送れなかった（送ろうとした指示と、送れなかった理由）
-type ChildNotice = { child?: string; state: SessionState; at: number; limit?: UsageLimitStop; scheduled?: ScheduledMessage; firstPrompt?: string; sendFailed?: { message: string; reason: string } };
+// firstPrompt: 最初の指示を送れなかった理由 / firstMessage: その指示 / sendFailed: send_message で預かった指示を送れなかった（送ろうとした指示と、送れなかった理由）
+type ChildNotice = {
+  child?: string;
+  state: SessionState;
+  at: number;
+  limit?: UsageLimitStop;
+  scheduled?: ScheduledMessage;
+  firstPrompt?: string;
+  firstMessage?: string;
+  sendFailed?: { message: string; reason: string };
+};
 
 // 最後のターンが、プランの利用枠に当たって止まったなら、その知らせ（あきらめた API エラーのあとに、応答もツールの呼び出しも無い）
 function usageLimitStopOf(events: ChatEvent[]): UsageLimitStop | null {

@@ -88,6 +88,14 @@ export class SessionNotices<T> {
     this.keep(target);
   }
 
+  // 当てはまる知らせをまとめて取り下げる
+  removeWhere(target: string, match: (key: string, item: T) => boolean): void {
+    const queue = this.pending.get(target);
+    if (!queue) return;
+    for (const [key, item] of queue) if (match(key, item)) queue.delete(key);
+    this.keep(target);
+  }
+
   // 預かっている知らせを、送り先の記録に残す（列の名前があるときだけ）
   private keep(target: string): void {
     if (this.deps.channel) this.deps.host.saveNotices?.(this.deps.channel, target, [...(this.pending.get(target) ?? [])]);

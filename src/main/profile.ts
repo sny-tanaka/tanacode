@@ -516,8 +516,9 @@ export class Profile {
   archiveSession(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
     // 子セッションも一緒にアーカイブされる
     for (const target of [id, ...this.manager.childrenOf(id)]) this.browser.forget(target);
-    // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
-    if (options?.removeWorktree) this.shells.killOwner(id);
+    // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）。起動中の子を終えるときは、
+    // worktree を残しても、準備のために動かしているもの（依存の install。持ち主はそのセッション）を止める
+    if (options?.removeWorktree || options?.stopSetup) this.shells.killOwner(id);
     return this.manager.archive(id, options);
   }
 
