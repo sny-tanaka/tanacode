@@ -343,7 +343,7 @@ describe('main からの配信（useSessionChats）', () => {
   });
 
   it('届いた配信をつなげ、同じ通し番号のものは重ねない', () => {
-    const { result } = renderHook(() => useSessionChats('s1'));
+    const { result } = renderHook(() => useSessionChats('s1', null));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }, { type: 'user', id: 'u2', text: '二' }], live: true }));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [{ type: 'user', id: 'u2', text: '二' }], live: true }));
@@ -352,7 +352,7 @@ describe('main からの配信（useSessionChats）', () => {
   });
 
   it('書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信でも置き換え、通し番号は進めない', () => {
-    const { result } = renderHook(() => useSessionChats('s1'));
+    const { result } = renderHook(() => useSessionChats('s1', null));
     const partial = (text: string) => [{ id: 'm:0', kind: 'text' as const, text }];
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [], live: true, partial: partial('パ') }));
@@ -378,7 +378,7 @@ describe('main からの配信（useSessionChats）', () => {
     let renders = 0;
     const { result } = renderHook(() => {
       renders += 1;
-      return useSessionChats('s1');
+      return useSessionChats('s1', null);
     });
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
     act(() => api.emit('sessions.onChat', { sessionId: 's2', fromSeq: 0, events: [{ type: 'user', id: 'v1', text: '別の' }], live: true }));
@@ -416,7 +416,7 @@ describe('main からの配信（useSessionChats）', () => {
     ];
     cases.forEach(([event, kept], n) => {
       const id = `s${n + 10}`;
-      const { result } = renderHook(() => useSessionChats(id));
+      const { result } = renderHook(() => useSessionChats(id, null));
       act(() => api.emit('sessions.onChat', { sessionId: id, fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true, partial }));
       act(() => api.emit('sessions.onChat', { sessionId: id, fromSeq: 1, events: [event], live: true }));
       expect(result.current.partials.get(id)).toEqual(kept ? partial : []);
@@ -424,7 +424,7 @@ describe('main からの配信（useSessionChats）', () => {
   });
 
   it('途中の文が外れた配信の行の印は、外れたブロックと同じ種類・同じ数だけ、出た順に付ける（途中の文の無かった行には付けない）', () => {
-    const { result } = renderHook(() => useSessionChats('s1'));
+    const { result } = renderHook(() => useSessionChats('s1', null));
     const thinking = { id: 'm:0', kind: 'thinking' as const, text: '考え' };
     const text = { id: 'm:1', kind: 'text' as const, text: '答え' };
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true, partial: [thinking, text] }));
@@ -452,7 +452,7 @@ describe('main からの配信（useSessionChats）', () => {
 
   it('スナップショットの途中の文も受け取る', async () => {
     mockApi({ 'sessions.snapshot': () => Promise.resolve({ sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], partial: [{ id: 'm:0', kind: 'text', text: '書きかけ' }] }) }).install();
-    const { result } = renderHook(() => useSessionChats('s1'));
+    const { result } = renderHook(() => useSessionChats('s1', null));
     await act(async () => {
       result.current.load('s1');
       await Promise.resolve();
@@ -461,7 +461,7 @@ describe('main からの配信（useSessionChats）', () => {
   });
 
   it('途中から受けたセッションは、取りこぼした分をスナップショットで埋める', async () => {
-    const { result } = renderHook(() => useSessionChats('s1'));
+    const { result } = renderHook(() => useSessionChats('s1', null));
     await act(async () => {
       api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [{ type: 'user', id: 'u2', text: '二' }], live: true });
       await Promise.resolve();

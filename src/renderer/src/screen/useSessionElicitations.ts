@@ -4,11 +4,11 @@ import { useSessionValues } from '../sessionValues';
 
 // セッションごとの、MCP サーバーから人への質問（フォーム・URL のカード。完了を待っている URL の形の質問も）。
 // 描き直すのは選択中のセッションが変わったときだけ
-export function useSessionElicitations(selectedId: string | null): {
+export function useSessionElicitations(selectedId: string | null, listed: ReadonlySet<string> | null): {
   elicitationOf: (sessionId: string | null) => PendingElicitation | null;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<PendingElicitation | null, null>(selectedId, null);
+  const { valueOf, update } = useSessionValues<PendingElicitation | null, null>(selectedId, listed, null);
 
   useEffect(() => window.tanacode.elicitation.onChanged(({ sessionId, elicitation }) => update(sessionId, () => elicitation)), [update]);
 

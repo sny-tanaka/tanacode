@@ -101,6 +101,7 @@ describe('起動', () => {
     expect(argsOf('ScheduledMessages')[0]).toBe(u('scheduled-messages.json'));
     expect(argsOf('ScheduledMessages')[1]).toBe(manager());
     expect(argsOf('UsageMonitor')[0]).toBe(u('usage.json'));
+    expect(argsOf('ClaudeCompatMonitor')[1]).toBe(u('claude-compat.json'));
     expect(allOf('McpBridge').map((c) => c.args[0])).toEqual([
       u('browser.sock'),
       u('sessions.sock'),
@@ -259,8 +260,11 @@ describe('起動', () => {
   it('新しいバージョンの通知をオフにしていれば、GitHub に問い合わせない', async () => {
     await boot({ settings: { updateCheck: false } });
     expect(the('AppUpdateMonitor').start).not.toHaveBeenCalled();
+    // Claude Code の対応表も読まない（組み込んだバージョンで印を出す）
+    expect(the('ClaudeCompatMonitor').start).not.toHaveBeenCalled();
     await boot();
     expect(the('AppUpdateMonitor').start).toHaveBeenCalledTimes(1);
+    expect(the('ClaudeCompatMonitor').start).toHaveBeenCalledTimes(1);
   });
 
   it('ウインドウが前に出たら Claude Code のバージョンを読み直す。Dock のアイコンを押したら、ウインドウを出す（閉じていれば作る）', async () => {
@@ -395,6 +399,7 @@ describe('部品から画面への知らせ', () => {
     optionsOf('WalkthroughControl').onChange('s1', { id: 'w1' });
     fnArg('UsageMonitor', 1)({ fiveHour: 10 });
     fnArg('ClaudeVersionMonitor', 0)('2.1.300');
+    fnArg('ClaudeCompatMonitor', 2)('2.1.301');
     fnArg('AppUpdateMonitor', 1)({ latest: '9.9.0' });
     fnArg('SystemMonitor', 0)({ cpu: 1 });
     const shells = optionsOf('ShellTerminals');
@@ -411,6 +416,7 @@ describe('部品から画面への知らせ', () => {
       [IpcChannel.WalkthroughChanged, { sessionId: 's1', walkthrough: { id: 'w1' } }],
       [IpcChannel.UsageChanged, { fiveHour: 10 }],
       [IpcChannel.ClaudeVersionChanged, '2.1.300'],
+      [IpcChannel.ClaudeVerifiedChanged, '2.1.301'],
       [IpcChannel.AppUpdateChanged, { latest: '9.9.0' }],
       [IpcChannel.SystemStats, { cpu: 1 }],
       [IpcChannel.ShellData, { id: 'sh1', data: 'ls' }],
@@ -1331,15 +1337,19 @@ describe('メニュー', () => {
     expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
-  it('「新しいバージョンが出たら通知する」: オンで問い合わせを始め、オフでやめる。設定に保存する', async () => {
+  it('「新しいバージョンが出たら通知する」: オンで問い合わせ（と Claude Code の対応表を読むの）を始め、オフでやめる。設定に保存する', async () => {
     await boot();
     const monitor = the('AppUpdateMonitor');
+    const compat = the('ClaudeCompatMonitor');
     monitor.start.mockClear();
+    compat.start.mockClear();
     toggle('新しいバージョンが出たら通知する');
     expect(monitor.stop).toHaveBeenCalledTimes(1);
+    expect(compat.stop).toHaveBeenCalledTimes(1);
     expect(savedSettings().updateCheck).toBe(false);
     toggle('新しいバージョンが出たら通知する');
     expect(monitor.start).toHaveBeenCalledTimes(1);
+    expect(compat.start).toHaveBeenCalledTimes(1);
     expect(savedSettings().updateCheck).toBe(true);
   });
 
@@ -1565,6 +1575,7 @@ describe('終了', () => {
     expect(the('SystemMonitor').stop).toHaveBeenCalledTimes(1);
     expect(the('ClaudeVersionMonitor').stop).toHaveBeenCalledTimes(1);
     expect(the('AppUpdateMonitor').stop).toHaveBeenCalledTimes(1);
+    expect(the('ClaudeCompatMonitor').stop).toHaveBeenCalledTimes(1);
     expect(manager().closeAll.mock.calls).toEqual([[false]]);
     expect(state.ptyHost.close).toHaveBeenCalledTimes(1);
     expect(state.ptyHost.shutdown).not.toHaveBeenCalled();

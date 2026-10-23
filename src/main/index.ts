@@ -37,6 +37,7 @@ import { imageOf } from './image-cache';
 import { DEFAULT_PTY_SIZE } from './session-manager';
 import { readModelCatalog } from './model-catalog';
 import { SystemMonitor } from './system-monitor';
+import { ClaudeCompatMonitor } from './claude-compat';
 import { ClaudeVersionMonitor } from './claude-version';
 import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, translateTexts, Translator } from './translate';
 import { readClaudeAccount } from './claude-account';
@@ -72,6 +73,7 @@ let settings: AppSettings;
 let sharedPrefs: SharedPrefStore;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
+let claudeCompat: ClaudeCompatMonitor;
 let appUpdates: AppUpdateMonitor;
 // Homebrew で入れたときだけ作る（新しいバージョンを裏でダウンロードしておき、終了したあとに入れ替える）
 let homebrew: HomebrewUpdater | null = null;
@@ -789,6 +791,7 @@ function registerIpc(): void {
   handle(IpcChannel.StatusLineGet, (e, id: string) => P(e).manager.statusLine(id));
   handle(IpcChannel.UsageGet, (e) => P(e).usage.get());
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
+  handle(IpcChannel.ClaudeVerifiedGet, () => claudeCompat.get());
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.AppUpdateCheck, () => appUpdates.refresh());
@@ -1045,8 +1048,13 @@ function setUpdateCheck(item: MenuItem): void {
     item.checked = !item.checked;
     return;
   }
-  if (item.checked) appUpdates.start();
-  else appUpdates.stop();
+  if (item.checked) {
+    appUpdates.start();
+    claudeCompat.start();
+  } else {
+    appUpdates.stop();
+    claudeCompat.stop();
+  }
 }
 
 // メニューの「終了するときに新しいバージョンを入れる（Homebrew）」。保存できなかったら、チェックを元に戻す
@@ -1426,6 +1434,15 @@ app.whenReady().then(async () => {
     (url, init) => net.fetch(url, init),
     () => send(IpcChannel.AppUpdateChecked, undefined),
   );
+  // 動作確認済の Claude Code のバージョンの対応表。読む通信は、新しいバージョンの通知と同じ設定で止める
+  claudeCompat = new ClaudeCompatMonitor(
+    app.getVersion(),
+    join(app.getPath('userData'), 'claude-compat.json'),
+    (verified) => send(IpcChannel.ClaudeVerifiedChanged, verified),
+    (url, init) => net.fetch(url, init),
+    // 開発用のビルドでは、読む表を差し替えられる（表の読み方を、develop に置かずに確かめる）
+    (!app.isPackaged && process.env.TANACODE_COMPAT_URL) || undefined,
+  );
   registerIpc();
   buildMenu();
   createWindow();
@@ -1437,7 +1454,10 @@ app.whenReady().then(async () => {
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
   claudeVersions.start();
-  if (settings.updateCheckEnabled()) appUpdates.start();
+  if (settings.updateCheckEnabled()) {
+    appUpdates.start();
+    claudeCompat.start();
+  }
   // Homebrew で入れたアプリなら、新しいバージョンを裏でダウンロードしておく（入れ替えは終了したあと）
   if (app.isPackaged) {
     void HomebrewUpdater.detect({ bundle: resolve(process.execPath, '../../..'), current: app.getVersion(), onChange: () => sendAppUpdate() }).then((updater) => {
@@ -1460,6 +1480,7 @@ app.on('before-quit', (event) => {
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
+  claudeCompat?.stop();
   // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
   // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
   if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchForLanguage });

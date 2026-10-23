@@ -441,7 +441,7 @@ export function usePartial(source: PartialSource, sessionId: string): PartialBlo
 
 // 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ。
 // 書いている途中の文は partials から読む（途中の文だけが変わっても、チャットは変わらず、App も描き直さない）
-export function useSessionChats(selectedId: string | null): {
+export function useSessionChats(selectedId: string | null, listed: ReadonlySet<string> | null): {
   chatOf: (sessionId: string | null) => ChatState;
   partials: PartialSource;
   load: (sessionId: string) => void;
@@ -450,6 +450,7 @@ export function useSessionChats(selectedId: string | null): {
 } {
   const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(
     selectedId,
+    listed,
     undefined,
     (prev, next) => !!next && notableChange(prev, next),
     (prev, next) => prev?.chat !== next?.chat,

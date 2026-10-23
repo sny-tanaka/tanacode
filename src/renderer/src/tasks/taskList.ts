@@ -93,11 +93,11 @@ export function buildTasks(
 
 // セッションごとのバックグラウンドの Bash。キーは起動した Bash ツールの tool_use ID
 // 描き直すのは選択中のセッションが変わったときだけ
-export function useSessionBash(selectedId: string | null): {
+export function useSessionBash(selectedId: string | null, listed: ReadonlySet<string> | null): {
   bashOf: (sessionId: string | null) => ReadonlyMap<string, BashTask>;
   load: (sessionId: string) => void;
 } {
-  const { valueOf, update } = useSessionValues<ReadonlyMap<string, BashTask>, ReadonlyMap<string, BashTask>>(selectedId, NO_TASKS);
+  const { valueOf, update } = useSessionValues<ReadonlyMap<string, BashTask>, ReadonlyMap<string, BashTask>>(selectedId, listed, NO_TASKS);
   const set = useCallback((sessionId: string, list: BashTask[]) => update(sessionId, (prev) => stableRuns(prev, list)), [update]);
   useEffect(() => window.tanacode.tasks.onBashChanged(({ sessionId, tasks: list }) => set(sessionId, list)), [set]);
   const load = useCallback((sessionId: string) => void window.tanacode.tasks.bash(sessionId).then((list) => set(sessionId, list)), [set]);
