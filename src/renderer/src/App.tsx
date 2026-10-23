@@ -39,7 +39,7 @@ import { pendingFolder, preparingLabel } from './sessions/worktree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
-import { useClaudeVersion } from './system/ClaudeVersion';
+import { useClaudeVersion, useVerifiedClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
@@ -134,6 +134,7 @@ export function App() {
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
+  const claudeVerified = useVerifiedClaudeVersion();
   const appUpdate = useAppUpdate();
   // つまみに渡す関数は、カラムごとに同じものを使う（つまみを、幅が変わったときだけ描き直す）
   const { resize: resizeColumn, reset: resetColumn } = columns;
@@ -1366,6 +1367,7 @@ export function App() {
         showCursor={activeFile?.content.kind === 'text'}
         language={language}
         claudeVersion={claudeVersion}
+        claudeVerified={claudeVerified}
       />
     </div>
   );
