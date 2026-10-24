@@ -33,6 +33,7 @@
   "test/e2e/restart.test.ts": 17,
   "test/e2e/rewind.test.ts": 10,
   "test/e2e/scm.test.ts": 10,
+  "test/e2e/send-next-step.test.ts": 39,
   "test/e2e/session-ops.test.ts": 11,
   "test/e2e/sessions.test.ts": 67,
   "test/e2e/single-instance.test.ts": 6,
