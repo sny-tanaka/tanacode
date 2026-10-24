@@ -6,16 +6,22 @@ import { SUPPRESS_OUTPUT } from './hook-output';
 import { hostExecutable } from './pty-host-client';
 
 // Claude が worktree やブランチを消す操作の歯止め。アプリが起動する Claude Code に、--settings で Bash の PreToolUse のフックとして足す。
-// 次の 3 つは、権限モード（auto・bypassPermissions を含む）にかかわらず、Claude Code の許可の確認を出させる（permissionDecision: ask）。
-// - git worktree remove の --force（-f）
+// 次のものは、権限モード（auto・bypassPermissions を含む）にかかわらず、Claude Code の許可の確認を出させる（permissionDecision: ask）。
+// - git worktree remove の --force（-f。長いオプションの省略形も）
 // - git branch -D（--delete --force も）
-// - worktree の rm -rf（パスの区切りの 1 つがちょうど worktrees のもの。グロブ・中括弧・変数を含み、worktrees の入る区切りも。worktree の中では . や .. や * も）
-// ただし、はじめの 2 つは、消して失うものが無いと確かめられたら確認を出させない（何も決めず、Claude Code のふだんの許可の決まりに任せる）。
+// - worktree の rm -r（パスの区切りの 1 つがちょうど worktrees のもの。グロブ・中括弧・変数を含み、worktrees の入る区切りも。.claude ごと
+//   消すものも。worktree の中では . や .. や * も）
+// - 消す先や消し方を awk で確かめられない形で、コマンドのどこかに worktree か .claude の文字があるもの（loose）。引数に $ ` \ や
+//   グロブ・中括弧のある rm（rm の名前に付いたものも）・xargs の後の rm・find -delete・前に cd のある rm -r・引数に $ ` \ などの
+//   ある git branch / git worktree remove。worktree か .claude の文字の無いもの（前のコマンドで変数に入れたパスを消すものなど）は
+//   見分けられない（ふだんの rm -rf "$tmp" のたびに確認が出ないよう、今のフォルダが worktree の中かは見ない）
+// ただし、git の 2 つは、消して失うものが無いと確かめられたら確認を出させない（何も決めず、Claude Code のふだんの許可の決まりに任せる）。
 // 止めはしない。ユーザーが確認して許せば、そのまま動く。
 // 2 段で見る。
 // 1. awk でざっと見る。Bash のたびに動くので速いものにする。Claude Code の hooks には JSON が標準入力で届く。Node が入っているとは
 //    限らないので、macOS に必ずある awk で読む。コマンドは ; && || | などで区切り、区切りごとに見る（$(...) やクォートの中も、
-//    区切りとしてざっと見る）。ここで何も無ければ、それで終わり
+//    区切りとしてざっと見る）。シェルの \ は、JSON の \\ を先に \001 に置き換えて見分ける（\n などの JSON の書き方と取り違えない
+//    ように）。ここで何も無ければ、それで終わり
 // 2. awk が確認を出させると決めたときだけ、tanacode 本体を Node として、確かめの入り口（worktree-guard-hook.js）を動かす。シェルの
 //    文法で読み直し、すべてが許す形でできていて、消す操作に失うものが無いと git で確かめられたときだけ pass と答える
 //    （worktree-guard-check.ts）。pass と答えたときだけ、確認を出させない。それ以外は、awk の決めたとおり確認を出させる
@@ -23,38 +29,62 @@ import { hostExecutable } from './pty-host-client';
 const program = (reason: string) => String.raw`
 function unq(v) { sub(/^"[a-z_]*"[[:space:]]*:[[:space:]]*"/, "", v); sub(/"$/, "", v); return v }
 function flag(a, c) { return a ~ "^-[a-zA-Z]*" c "[a-zA-Z]*$" }
-function risky(p, d,   t, m, k, j, a, git, rm, r, f, del, force, ns, seg, q) {
+function long(a, full) { return length(a) > 2 && index(full, a) == 1 }
+function rmword(a) { gsub(/\001/, "", a); sub(/^[(!]+/, "", a); return a == "rm" || a ~ /\/rm$/ || a ~ /^rm[{$` + '`' + String.raw`]/ }
+function opaque(a) { return a ~ /[$` + '`' + String.raw`\001*?{}]/ || index(a, "[") > 0 }
+function risky(p, d,   t, m, k, j, a, git, rm, r, del, force, ns, seg, q) {
   m = split(p, t, /[[:space:]]+/)
   for (k = 1; k <= m; k++) {
     a = t[k]
     if (a == "git" || a ~ /\/git$/) git = 1
     if (git && a == "worktree" && t[k + 1] == "remove")
-      for (j = k + 2; j <= m; j++) if (t[j] == "--force" || flag(t[j], "f")) return 1
+      for (j = k + 2; j <= m; j++) if (long(t[j], "--force") || flag(t[j], "f")) return 1
     if (git && a == "branch") {
       for (j = k + 1; j <= m; j++) {
         if (flag(t[j], "D")) return 1
-        if (t[j] == "--delete" || flag(t[j], "d")) del = 1
-        if (t[j] == "--force" || flag(t[j], "f")) force = 1
+        if (long(t[j], "--delete") || flag(t[j], "d")) del = 1
+        if (long(t[j], "--force") || flag(t[j], "f")) force = 1
       }
       if (del && force) return 1
     }
     if (a == "rm" || a ~ /\/rm$/) rm = k
   }
   if (!rm) return 0
-  for (j = rm + 1; j <= m; j++) {
-    a = t[j]
-    if (a == "--recursive" || flag(a, "[rR]")) r = 1
-    if (a == "--force" || flag(a, "f")) f = 1
-  }
-  if (!r || !f) return 0
+  for (j = rm + 1; j <= m; j++) if (long(t[j], "--recursive") || flag(t[j], "[rR]")) r = 1
+  if (!r) return 0
   for (j = rm + 1; j <= m; j++) {
     a = t[j]
     if (a == "" || a ~ /^-/) continue
     ns = split(a, seg, "/")
     for (q = 1; q <= ns; q++) if (seg[q] == "worktrees" || (seg[q] ~ /worktrees/ && (seg[q] ~ /[*?{}$]/ || index(seg[q], "[") > 0))) return 1
+    sub(/\/+$/, "", a)
+    if (a ~ /(^|\/)\.claude$/) return 1
     if (d ~ /\/\.claude\/worktrees\// && (a ~ /^\.\.?\/?$/ || a ~ /^\.\.\// || a ~ /^(\.\/)?\*$/ || a == d)) return 1
   }
   return 0
+}
+function loose(p,   t, m, k, j, a, git, xargs, rm, r, hidden) {
+  m = split(p, t, /[[:space:]]+/)
+  for (k = 1; k <= m; k++) {
+    a = t[k]
+    sub(/^[(!{]+/, "", a)
+    if (a == "cd" || a == "pushd") moved = 1
+    if (a == "xargs") xargs = 1
+    if (a == "find") for (j = k + 1; j <= m; j++) if (t[j] == "-delete") return 1
+    if (a == "git" || a ~ /\/git$/) git = 1
+    if (git && opaque(a) && p ~ /branch|remove/) return 1
+    if (!rm && rmword(t[k])) { rm = k; if (xargs || opaque(t[k])) return 1 }
+  }
+  if (!rm) return 0
+  for (j = rm + 1; j <= m; j++) {
+    if (opaque(t[j])) hidden = 1
+    if (long(t[j], "--recursive") || flag(t[j], "[rR]")) r = 1
+  }
+  return hidden || (r && moved)
+}
+function ask() {
+  print "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${reason}\"},\"suppressOutput\":true}"
+  exit 0
 }
 { s = s $0 " " }
 END {
@@ -62,14 +92,17 @@ END {
   c = unq(substr(s, RSTART, RLENGTH))
   d = ""
   if (match(s, /"cwd"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) d = unq(substr(s, RSTART, RLENGTH))
+  gsub(/\\\\/, "\001", c)
   gsub(/\\[nr]/, ";", c)
   gsub(/\\t/, " ", c)
-  gsub(/\\"|\047|\\\\/, "", c)
-  n = split(c, parts, /&&|\|\||[;|&()` + '`' + String.raw`]|\$\(/)
-  for (i = 1; i <= n; i++) if (risky(parts[i], d)) {
-    print "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${reason}\"},\"suppressOutput\":true}"
-    exit 0
-  }
+  gsub(/\\"|\047/, "", c)
+  e = c
+  gsub(/\001/, "", e)
+  n = split(e, parts, /&&|\|\||[;|&()` + '`' + String.raw`]|\$\(/)
+  for (i = 1; i <= n; i++) if (risky(parts[i], d)) ask()
+  if (c !~ /worktree|\.claude/) { print "{\"suppressOutput\":true}"; exit 0 }
+  n = split(c, parts, /&&|\|\||[;|&]/)
+  for (i = 1; i <= n; i++) if (loose(parts[i])) ask()
   print "{\"suppressOutput\":true}"
 }
 `;
