@@ -334,6 +334,21 @@ describe('WorktreeCleanupDialog（worktree の片付け）', () => {
     expect(screen.queryByText('すべて削除')).toBeNull();
   });
 
+  it('Esc・枠の外で閉じる。枠の中を押しても、変換中の Esc でも閉じない', async () => {
+    mockApi({ 'sessions.worktreeCleanup': () => Promise.resolve({ worktrees: [], backups: [] }) }).install();
+    const onClose = vi.fn();
+    render(<WorktreeCleanupDialog onClose={onClose} />);
+    await screen.findByText('控えはありません');
+    const dialog = screen.getByRole('dialog', { name: 'worktree の片付け' });
+    fireEvent.mouseDown(dialog);
+    fireEvent.keyDown(dialog, { key: 'Escape', isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.mouseDown(document.querySelector('.overlay')!);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it('どのブランチにも無いコミットが親の控えは、そのコミットも失われることを添えて確かめる', async () => {
     mockApi({ 'sessions.worktreeCleanup': () => Promise.resolve({ worktrees: [], backups: [backup('refs/tanacode/backup/tc-d', { strays: true })] }) }).install();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
