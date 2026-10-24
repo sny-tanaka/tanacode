@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,7 +69,7 @@ describe('シェルで動くアプリのフック', () => {
   // Claude Code（2.1.302）は、フックの入力を書き終える前にフックが標準入力を閉じると（EPIPE）、そのフックを失敗として扱い、
   // 標準出力も捨てる。ツールの結果は大きいことがある（PostToolUse の入力に入る）ので、パイプに入りきらない大きさの入力で確かめる
   // （読まずに終わるフックは、必ず EPIPE になる）
-  it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', () => {
+  it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', async () => {
     const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
     // 子セッションの起動の確認は、印のファイルがあるとき（allow）と無いとき（ask）の両方で
     const noAsk = join(dir, 'sessions-start-no-ask');
@@ -84,22 +84,18 @@ describe('シェルで動くアプリのフック', () => {
       [NOTIFICATION_FILE_COMMAND, ''],
       [IDLE_FILE_COMMAND, ''],
     ]) {
-      // timeout: 一度だけ、手元の Mac で重い負荷がかかっていたときに、Node が 1MB の入力を書き終えたのに標準入力を閉じず
-      // （ソケットに残りは無いのに、書く側を持ったまま）、フックの cat が入力の終わりを待ち続けて、テストの流れ全体が 20 分止まった。
-      // 3 回流し直しても再現しなかったので、次に起きたときに、どのコマンドで止まったか（ETIMEDOUT）が分かる失敗にする。
-      // 2026-10-21 に、npm test の全体で 1 回だけまた止まった（テストは 10029ms で、1 つのコマンドが 10 秒止まり、ほかはふだんどおり 20ms ほど。
-      // 負荷で全体が遅れたのではない）。単独では 3 回とも通った。どのコマンドかは、出力を絞っていて残らなかった。
-      // 次に止まったら、失敗の文で、かかった時間と、そのときまでの標準出力・標準エラーを読む。標準出力に答え（suppressOutput）があれば、
-      // フックは入力の終わりを受け取って答えを書いたあと（sh が終わらなかった）、空なら答えを書く前（入力の終わりを待っていた・動き出していなかった）
-      const started = performance.now();
-      const result = spawnSync('sh', ['-c', command], {
-        input,
-        timeout: 10_000,
-        encoding: 'utf8',
-        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+      // 入力は、非同期の spawn で書いて閉じる（stdin.end）。前は spawnSync の input で渡していて、手元の Mac で、1MB の入力を書き終えたのに
+      // 標準入力が閉じず、フックの cat が入力の終わりを待ち続けて 10 秒の時間切れになることがあった（2026-10-21 に npm test の全体で 1 回、
+      // 2026-10-24 にこのファイルを含む 3 つを並べて流して 7 回に 2 回。どのフックでも、ただの `cat >/dev/null; printf` でも起きる。
+      // spawnSync では 1MB の入力で 150 回に 1〜2 回止まり、16KB では止まらず、非同期の spawn では 1MB を 450 回流して一度も止まらなかった）。
+      // フックではなく、テストの渡し方の問題なので、渡し方を変えた。時間切れは、止まったときに分かるよう残す
+      const result = await runHook(command, input, {
+        ...process.env,
+        [ASK_FILE_ENV]: join(dir, 's1.ask.json'),
+        [SESSIONS_NO_ASK_ENV]: noAskFile,
+        PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':'),
       });
-      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout?.slice(-200))}・stderr ${JSON.stringify(result.stderr?.slice(-500))}`;
-      expect({ command, noAskFile, error: result.error?.message, status: result.status }, detail).toEqual({ command, noAskFile, error: undefined, status: 0 });
+      expect({ command, noAskFile, error: result.error, status: result.status }, result.detail).toEqual({ command, noAskFile, error: undefined, status: 0 });
     }
   });
 
@@ -116,3 +112,28 @@ describe('シェルで動くアプリのフック', () => {
     expect(JSON.parse(sh(restartGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
   });
 });
+
+// フックを sh で動かし、入力を書いて閉じる。error: 入力を書けなかった（フックが読まずに閉じた EPIPE）・10 秒で終わらなかった
+function runHook(command: string, input: string, env: NodeJS.ProcessEnv): Promise<{ status: number | null; error: string | undefined; detail: string }> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    const child = spawn('sh', ['-c', command], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let error: string | undefined;
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+    child.stdin.on('error', (e: NodeJS.ErrnoException) => (error ??= e.code ?? e.message));
+    const timer = setTimeout(() => {
+      error ??= 'timed out';
+      child.kill('SIGTERM');
+    }, 10_000);
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      // 止まったら、標準出力に答え（suppressOutput）があるかで、答えを書いたあと（sh が終わらなかった）か、前（入力の終わりを待っていた）かが分かる
+      const detail = `${Math.round(performance.now() - started)}ms・signal ${signal}・stdout ${JSON.stringify(stdout.slice(-200))}・stderr ${JSON.stringify(stderr.slice(-500))}`;
+      resolve({ status, error, detail });
+    });
+    child.stdin.end(input);
+  });
+}
