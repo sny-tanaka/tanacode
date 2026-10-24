@@ -8,6 +8,7 @@ import {
   bridgeUrlOf,
   isTranscriptEntry,
   lineChatEvents,
+  promptDisplayText,
   retractedUuidsOf,
   transcriptTitle,
   unsentView,
@@ -25,7 +26,7 @@ import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
 import type { TurnActivity } from '@shared/checklist-reminder';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
-import { modeWithin, parentMessageText, type SessionState } from '@shared/session-tools';
+import { modeWithin, parentMessageText, parseParentMessage, type SessionState } from '@shared/session-tools';
 import { INSTRUCTIONS_FILE, PARENT_INSTRUCTIONS_FILE, parentRoleText, parseParentRole } from '@shared/project-instructions';
 import type {
   ArchiveOptions,
@@ -2029,6 +2030,21 @@ export class SessionManager {
   // 親の指示の囲みに入れる（子の Claude が、依存が足りないことを知るため。囲みの外に足すと、親からの指示と読めなくなる）
   private waitingText(id: string, text: WaitingText): string {
     return typeof text === 'string' ? text : parentMessageText(text.parent, withSetupNote(text.body, this.setupTrouble.get(id) ?? null));
+  }
+
+  // まだ会話に入っていない、送る発言（送った順）。held: アプリが預かっていて、まだ Claude Code に渡していない（起動・手が空くのを待っている。
+  // 止まっている子では、次に起動したら送る記録の分も）/ 渡したもの: Claude Code が順番待ちにしていて、今のターンが終わったら受け取る。
+  // parent: 親の指示なら親の ID / shown: チャットに出す発言（人の発言・親の指示。知らせ・予約は出さない）。get_session で親に見せる
+  queuedMessages(id: string): { parent: string | null; text: string; held: boolean; shown: boolean }[] {
+    const rt = this.runtimes.get(id);
+    const kept = (this.store.get(id)?.waiting ?? []).map((w) => w.text);
+    const held = [...kept, ...(rt?.waiting ?? []).map((w) => w.text)].map((text) => {
+      if (typeof text !== 'string') return { parent: text.parent, text: text.body, held: true, shown: true };
+      const fromParent = parseParentMessage(text);
+      return { parent: fromParent?.parent ?? null, text: promptDisplayText(text), held: true, shown: !!fromParent };
+    });
+    const sent = [...(rt?.unsent.values() ?? [])].map((prompt) => ({ parent: prompt.parent ?? null, text: prompt.text, held: false, shown: prompt.shown }));
+    return [...held, ...sent];
   }
 
   // 送る前にアプリを終えた親の指示（記録の waiting）を、起動を待って、待ち始めた順に送り直す。送れなかったら、チャットに知らせる

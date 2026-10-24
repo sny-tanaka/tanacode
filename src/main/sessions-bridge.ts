@@ -25,10 +25,12 @@ export type SessionsMcpLaunch = McpLaunch & { child?: boolean; noAskFile?: strin
 // アプリが起動していないとき、中継が Claude に返す文
 export const SESSIONS_CLOSED_MESSAGE = 'tanacode is not running. To work with other sessions, ask the user to start tanacode.';
 
-// 子セッションを待つ（wait_sessions）上限。アプリはこの時間で待つのをやめて、そのときの状態を返す
-export const WAIT_MAX_SECONDS = 600;
-// 中継が 1 回の呼び出しを待つ上限と、Claude Code が中継を待つ上限（--mcp-config の timeout）。アプリの待ちより長くする
-export const SESSIONS_CALL_TIMEOUT_MS = (WAIT_MAX_SECONDS + 60) * 1000;
+// 子セッションを待つ（wait_sessions）上限。アプリはこの時間で待つのをやめて、そのときの状態を返す。
+// 待っている間は人の発言が届かないので、長く待たせない（子の作業の終わりは、親への知らせと予約で待つ）
+export const WAIT_MAX_SECONDS = 60;
+// 中継が 1 回の呼び出しを待つ上限と、Claude Code が中継を待つ上限（--mcp-config の timeout）。wait_sessions の待ちより長く、
+// 時間のかかるほかのツール（end_session の worktree の削除・PR の問い合わせなど）も収まるよう、11 分にしておく
+export const SESSIONS_CALL_TIMEOUT_MS = 11 * 60_000;
 const CLAUDE_TIMEOUT_MS = SESSIONS_CALL_TIMEOUT_MS + 60_000;
 
 // 子セッションの起動（start_session）の前のフック（--settings の PreToolUse）。印のファイル（SESSIONS_NO_ASK_ENV）が無ければ、

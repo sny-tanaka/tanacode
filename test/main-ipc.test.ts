@@ -679,6 +679,9 @@ describe('アーカイブ・一覧から消す', () => {
     expect(the('ShellTerminals').killOwner).not.toHaveBeenCalled();
     await invoke(IpcChannel.SessionsArchive, 's1', { removeWorktree: true });
     expect(the('ShellTerminals').killOwner.mock.calls).toEqual([['s1']]);
+    // 起動中の子を end_session で終えるときは、worktree を残しても、準備のシェル（依存の install）を止める
+    await invoke(IpcChannel.SessionsArchive, 's2', { removeWorktree: false, stopSetup: true });
+    expect(the('ShellTerminals').killOwner.mock.calls).toEqual([['s1'], ['s2']]);
   });
 
   it('一覧から消すと、シェルとブラウザを閉じ、消えたセッション（子も）のチェックリストとウォークスルーを捨てる。残ったものは残す', async () => {
