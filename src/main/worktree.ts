@@ -474,7 +474,7 @@ async function inspectBranches(root: string, roles: BranchRole[], context: Branc
         // PR のあとに、手元で足したコミット。PR のコミットが手元に 1 つも無ければ数えられない
         const mine = new Set(prCommits(found));
         const known = heads.filter((h) => mine.has(h));
-        const after = !exists ? 0 : known.length > 0 ? await countCommits(root, [role.name, '--not', ...known]) : null;
+        const after = !exists ? 0 : known.length > 0 ? await countCommits(root, [`refs/heads/${role.name}`, '--not', ...known]) : null;
         const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
         pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
       }
@@ -623,22 +623,26 @@ type LocalOnly = {
 // heads（PR の head と PR のコミットのうち、手元にあるもの）から辿れるコミットは、マージのあとにリモートのブランチを消していても
 // GitHub にあるので数えない（PR のコミットも見るのは、update-branch で PR の head が手元より先に進み、head が手元に無いときのため）。
 // それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、
-// 中身がデフォルトブランチ（base）に入っているかを比べ、入っていれば 0 とみなす
+// 中身がデフォルトブランチ（base）に入っているかを比べ、入っていれば 0 とみなす。
+// 数える・比べるときは、ブランチを refs/heads/<名前> で渡す（名前のままだと、git は同じ名前のタグなどを先に読む）
 async function localOnlyCommits(root: string, branch: string, heads: string[], together: string[], base: string | null): Promise<LocalOnly> {
-  const tracked = await git(root, ['rev-parse', '--abbrev-ref', `${branch}@{u}`]).then(
+  const ref = `refs/heads/${branch}`;
+  // <名前>@{u} は、名前をブランチとして読む（refs/heads/<名前>@{u} とは書けない）。上流は、ほかの ref と取り違えないよう、完全な名前で受け取る
+  const tracked = await git(root, ['rev-parse', '--symbolic-full-name', `${branch}@{u}`]).then(
     (out) => out.trim() || null,
     () => null,
   );
   // 上流が、一緒に消すかもしれない手元のブランチなら（git switch -c --track worktree-<名前> など）、上流として使わない
-  const upstream = tracked && !together.includes(tracked) ? tracked : null;
+  const upstream = tracked?.startsWith('refs/') && !together.some((name) => tracked === `refs/heads/${name}`) ? tracked : null;
+  // --branches に付ける --exclude は、refs/heads/ を除いた名前で書く
   const excludes = [...new Set([branch, ...together])].map((name) => `--exclude=${name}`);
   const count = await countCommits(
     root,
-    upstream ? [branch, '--not', upstream, ...heads] : [branch, '--not', ...heads, '--remotes', ...excludes, '--branches'],
+    upstream ? [ref, '--not', upstream, ...heads] : [ref, '--not', ...heads, '--remotes', ...excludes, '--branches'],
   );
   if (!count) return { count, contentIn: null };
   const targets = base ? await defaultBranchRefs(root, base) : [];
-  if (targets.length > 0 && (await mergedInto(root, branch, targets))) return { count: 0, contentIn: base };
+  if (targets.length > 0 && (await mergedInto(root, ref, targets))) return { count: 0, contentIn: base };
   return { count, contentIn: null };
 }
 
@@ -712,7 +716,7 @@ async function partialClone(root: string): Promise<boolean> {
 // branch の中身が、もう targets（デフォルトブランチ）に入っているか。スカッシュマージ・cherry-pick ではコミットが作り直されて
 // ハッシュが変わるので、中身で比べる。targets の、branch と分かれたあとの時点（今の先頭と、branch が変えたファイルに触れたコミットを
 // 古い順に）のどこかで、branch をマージしても何も変わらなければ、入っている（マージのあとにデフォルトブランチで同じところを
-// 変えていても見つかる）。衝突を直してからマージしたものは見分けられず、入っていない側に倒れる
+// 変えていても見つかる）。衝突を直してからマージしたものは見分けられず、入っていない側に倒れる。branch: refs/heads/<名前>
 async function mergedInto(root: string, branch: string, targets: string[]): Promise<boolean> {
   const ahead = await countCommits(root, [branch, '--not', ...targets]);
   if (ahead === 0) return true;
@@ -745,8 +749,9 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
 // worktree-guard（worktree-guard-check.ts）: Claude が打った git branch -D で、消して失うものが無いか。worktree の片付けと同じく、
 // 手元にしか無いコミット（PR のコミット・update-branch のあとの PR のコミット・リモート・ほかのブランチにあるもの、中身が
 // デフォルトブランチに入っているものは数えない）が無く、幹のブランチでも、ほかの worktree で取り出しているブランチでもないときだけ
-// true。手元に無いブランチは、git branch -D が失敗するだけなので true（names は、refs/heads/<名前> としてそのまま読める名前だけを
-// 渡すこと。@{-1} などは、別のブランチを指す）。removing: 同じコマンドで消す worktree（そこで取り出している
+// true。確かめるのは refs/heads/<名前>（同じ名前のタグなどがあっても、git branch -D が消すのはこれ）で、それが無ければ、
+// git branch -D が失敗するだけなので true（names は、refs/heads/<名前> として読む名前だけを渡すこと。@{-1}・HEAD・
+// refs/… などは、別の ref を指したり、git が別の読み方をしたりする）。removing: 同じコマンドで消す worktree（そこで取り出している
 // ブランチは、取り出していないものとして数える）
 export async function branchesSafeToDelete(cwd: string, names: string[], removing: string[]): Promise<boolean> {
   const roles: BranchRole[] = [...new Set(names)].map((name) => ({ name, launched: false, current: false }));

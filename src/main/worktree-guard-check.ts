@@ -27,8 +27,9 @@ class Unsupported extends Error {}
 
 // 名前・パスに使えない文字（クォートの中にあっても、展開・別の意味になりうるもの）
 const UNSAFE = /[$`*?[\]{}~\\\n]|@\{/;
-// git branch -D で読む名前。refs/heads/<名前> として読めて、git branch -D がそれを消すと言い切れるものだけ
-const BRANCH_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/+-]+$/;
+// git branch -D で読む名前。refs/heads/<名前> として読めて、git branch -D がそれを消すと言い切れるものだけ。
+// HEAD と、refs/・heads/・tags/・remotes/ で始まる名前は、git がほかの ref として読むことがあるので断る
+const BRANCH_NAME = /^(?!-)(?!HEAD$)(?!(refs|heads|tags|remotes)\/)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/+-]+$/;
 
 // コマンドの文字列を、&& ; 改行で区切ったコマンド（単語の並び）にする。受け付けるのは、書いたとおりの単語・単一引用符・
 // 二重引用符（中に $ ` \ の無いもの）・単語の頭からのコメントだけ。ほかの記号（| & ( ) < > $ ` \ など）があれば Unsupported。
@@ -94,9 +95,11 @@ export function guardDeletes(command: string, cwd: string): Delete[] | null {
   for (const [index, words] of commands.entries()) {
     if (words.some((w) => w === '' || UNSAFE.test(w))) return null;
     if (words[0] === 'cd') {
-      // 先頭の 1 つだけ。引数は 1 つ（zsh の cd 古い 新しい・オプションは読まない）
-      if (index !== 0 || words.length !== 2 || words[1].startsWith('-')) return null;
-      dir = resolve(cwd, words[1]);
+      // 先頭の 1 つだけ。引数は 1 つ（zsh の cd 古い 新しい・オプションは読まない）。行き先は、絶対パスか、./ ../ で始まるもの
+      // だけ（ほかの相対パスは、CDPATH（zsh の cdpath）で別のフォルダに移ることがある。zsh の + = で始まるものも読まない）
+      const target = words[1];
+      if (index !== 0 || words.length !== 2 || !(isAbsolute(target) || /^\.\.?\//.test(target) || target === '.' || target === '..')) return null;
+      dir = resolve(cwd, target);
       continue;
     }
     const del = deleteOf(words, dir);

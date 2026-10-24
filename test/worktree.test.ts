@@ -609,6 +609,15 @@ describe('削除', () => {
     expect(git(repo, 'log', '-1', '--format=%s', plan.branch)).toBe('b');
   });
 
+  it('ブランチと同じ名前のタグ（main の上）があっても、ブランチの手元にしか無いコミットを数えて、ブランチごと残す', async () => {
+    const plan = await create();
+    // 名前のまま数えると、git はタグの方を読む（main の上なので、手元にしか無いコミットは 0 になる）
+    git(repo, 'tag', plan.branch, 'main');
+    commitIn(plan.path, 'b.txt');
+    expect(await removeWorktree(plan, plan.path)).toMatchObject({ backupRef: null, branches: [launched(plan, 'localOnly')] });
+    expect(git(repo, 'log', '-1', '--format=%s', `refs/heads/${plan.branch}`)).toBe('b.txt');
+  });
+
   it('PR をスカッシュマージしたブランチは、手元のコミットがすべてその PR に入っていれば消す', async () => {
     const plan = await create();
     commitIn(plan.path, 'b.txt');

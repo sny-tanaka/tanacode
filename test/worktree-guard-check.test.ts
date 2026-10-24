@@ -32,6 +32,9 @@ describe('コマンドの読み方', () => {
     ['git branch --d --f foo', ['branch@/r/proj:foo']],
     ['cd /r/other && git branch -D foo', ['branch@/r/other:foo']],
     ['cd ../x && git branch -D foo', ['branch@/r/x:foo']],
+    ['cd ./sub && git branch -D foo', ['branch@/r/proj/sub:foo']],
+    ['cd .. && git branch -D foo', ['branch@/r:foo']],
+    ['cd . && git branch -D foo', ['branch@/r/proj:foo']],
     ["cd '/r/my dir'; git branch -D foo", ['branch@/r/my dir:foo']],
     ['# 片付け\ngit branch -D foo\n\ngit branch -D bar # あと', ['branch@/r/proj:foo', 'branch@/r/proj:bar']],
     ['git worktree remove --force .claude/worktrees/a && git branch -D worktree-a', ['worktree@/r/proj:/r/proj/.claude/worktrees/a', 'branch@/r/proj:worktree-a']],
@@ -65,6 +68,16 @@ describe('コマンドの読み方', () => {
     'git branch -D foo && cd /b',
     'cd && git branch -D foo',
     'cd -P /x && git branch -D foo',
+    // CDPATH（zsh の cdpath）で別のフォルダに移りうる相対パス・zsh の + = で始まるもの
+    'cd sub && git branch -D foo',
+    'cd +1 && git branch -D foo',
+    'cd =git && git branch -D foo',
+    // git がほかの ref として読みうる名前
+    'git branch -D HEAD',
+    'git branch -D refs/heads/foo',
+    'git branch -D heads/foo',
+    'git branch -D tags/v1',
+    'git branch -D remotes/origin/foo',
     'cd ~/x && git branch -D foo',
     // zsh の小文字の変数・git の別名
     'path=(/x) git branch -D unsafe',
@@ -370,8 +383,24 @@ describe('確かめ', () => {
     git(repo, 'switch', '-q', '-c', 'fix/z');
     commit(repo, 'z.txt');
     git(repo, 'switch', '-q', 'main');
-    expect(await verifyCommand('cd repo && git branch -D fix/z', root)).toBe('ask');
-    expect(await verifyCommand('cd repo && git branch -D no-such-branch', root)).toBe('pass');
+    expect(await verifyCommand('cd ./repo && git branch -D fix/z', root)).toBe('ask');
+    expect(await verifyCommand('cd ./repo && git branch -D no-such-branch', root)).toBe('pass');
+  });
+
+  it('同じ名前のタグがあっても、ブランチ（refs/heads/<名前>）の手元にしか無いコミットを数える', async () => {
+    // タグ v1 は main の上（リモートにある）、ブランチ v1 には手元にしか無いコミットがある
+    git(repo, 'tag', 'v1');
+    git(repo, 'switch', '-q', '-c', 'v1');
+    commit(repo, 'v.txt');
+    git(repo, 'switch', '-q', 'main');
+    expect(await verifyCommand('git branch -D v1', repo)).toBe('ask');
+    // 上流のあるブランチでも（上流と同じなら消してよい。上流のあとに手元で足したコミットがあれば確認）
+    git(repo, 'push', '-q', '-u', 'origin', 'refs/heads/v1:refs/heads/v1');
+    expect(await verifyCommand('git branch -D v1', repo)).toBe('pass');
+    git(repo, 'switch', '-q', 'v1');
+    commit(repo, 'w.txt');
+    git(repo, 'switch', '-q', 'main');
+    expect(await verifyCommand('git branch -D v1', repo)).toBe('ask');
   });
 
   describe('git worktree remove --force', () => {
