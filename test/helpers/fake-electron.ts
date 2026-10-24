@@ -262,13 +262,16 @@ export const HOST = {
     this.backgroundThrottling = allowed;
     this.throttling.push(allowed);
   },
-  // 画面の中のタブの webview の左上（executeJavaScript の答え。null は見つからない）と、画面の拡大の倍率と、受けたスクリプト
+  // 画面の中のタブの webview の左上（executeJavaScript の答え。null は見つからない）と、画面の拡大の倍率と、受けたスクリプト。
   webviewAt: { x: 0, y: 0 } as { x: number; y: number } | null,
+  // そのうち、画面に出ている所（アプリの画面の CSS の px。null なら、どこまでも出ている）
+  webviewShown: null as { left: number; top: number; right: number; bottom: number } | null,
   zoom: 1,
   scripts: [] as string[],
   async executeJavaScript(code: string): Promise<unknown> {
     this.scripts.push(code);
-    return this.webviewAt;
+    const at = this.webviewAt;
+    return at && { ...at, visible: this.webviewShown ?? { left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 } };
   },
   getZoomFactor(): number {
     return this.zoom;

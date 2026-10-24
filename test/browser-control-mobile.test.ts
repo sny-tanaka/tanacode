@@ -17,6 +17,7 @@ beforeEach(() => {
   images.buffers.length = 0;
   images.fromBuffer = new FakeImage(800, 2000, 'fullPage');
   HOST.webviewAt = { x: 0, y: 0 };
+  HOST.webviewShown = null;
   HOST.zoom = 1;
   HOST.scripts.length = 0;
 });
@@ -50,6 +51,9 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     expect(commands(page, 'Emulation.')).toEqual([
       { method: 'Emulation.setDeviceMetricsOverride', width: 393, height: 852, deviceScaleFactor: 3, mobile: true },
       { method: 'Emulation.setTouchEmulationEnabled', enabled: true, maxTouchPoints: 5 },
+      // ページの拡大率を 1 にする（当てたときと、画面が枠を変えてページが描き直したあと）
+      { method: 'Emulation.setPageScaleFactor', pageScaleFactor: 1 },
+      { method: 'Emulation.setPageScaleFactor', pageScaleFactor: 1 },
     ]);
     expect(sentOn<BrowserViewportChange>(IpcChannel.BrowserViewport)).toEqual([
       { sessionId: 'S1', width: 393, custom: { height: 852, deviceScaleFactor: 3, device: 'iPhone 15' } },
@@ -92,7 +96,14 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     await call('set_viewport', { device: 'Pixel 7' });
     await call('set_viewport', { device: 'Pixel 7' });
     await call('get_text');
-    expect(commands(page, 'Emulation.')).toHaveLength(2);
+    // 大きさは 1 回だけ当てる（拡大率を 1 にするのは、set_viewport のたびに）
+    expect(commands(page, 'Emulation.').map((c) => c.method)).toEqual([
+      'Emulation.setDeviceMetricsOverride',
+      'Emulation.setTouchEmulationEnabled',
+      'Emulation.setPageScaleFactor',
+      'Emulation.setPageScaleFactor',
+      'Emulation.setPageScaleFactor',
+    ]);
   });
 
   it('知らない機種・範囲の外の数字は断り、画面にも CDP にも送らない。機種の名前の一覧を添える', async () => {
@@ -300,6 +311,33 @@ describe('タッチ（touch）', () => {
     expect(touches(page)).toEqual([]);
   });
 
+  it('指の位置（動かす先も）が、アプリの画面に出ていない所（枠のスクロールの外など）なら、送らずに断り、出ている範囲を伝える', async () => {
+    const { call, open } = setup();
+    const page = plain(open('http://localhost:3000/'));
+    // webview の左上は (100, 50)、画面に出ているのは、そこから 150×300 だけ
+    HOST.webviewAt = { x: 100, y: 50 };
+    HOST.webviewShown = { left: 100, top: 50, right: 250, bottom: 350 };
+    expect(await call('touch', { action: 'tap', x: 200, y: 100 })).toEqual(
+      textResult(
+        'x=200 y=100 is not shown in the tanacode window, so a touch there would not reach the page. ' +
+          'The browser pane shows only x 0–150 and y 0–300 of the visible area of the page (the pane is smaller than the viewport). ' +
+          'Touch inside that part (scroll the page to bring the spot into it), or set a smaller viewport with set_viewport.',
+        true,
+      ),
+    );
+    expect(textOf(await call('touch', { action: 'swipe', x: 10, y: 10, toX: 160, toY: 10 }))).toMatch(/^x=160 y=10 is not shown/);
+    expect(touches(page)).toEqual([]);
+    expect(textOf(await call('touch', { action: 'swipe', x: 10, y: 10, toX: 140, toY: 290 }))).toMatch(/^Swiped/);
+    // 拡大していて、大きさを決めたタブでは、タブの中の位置を倍率で割った所で見る
+    HOST.zoom = 2;
+    await call('set_viewport', { device: 'iPhone 15' });
+    expect(textOf(await call('touch', { action: 'tap', x: 290, y: 10 }))).toMatch(/^Tapped/);
+    expect(textOf(await call('touch', { action: 'tap', x: 310, y: 10 }))).toContain('shows only x 0–300 and y 0–600 of');
+    // 何も出ていない（ブラウザの枠がつぶれている）
+    HOST.webviewShown = { left: 100, top: 50, right: 100, bottom: 50 };
+    expect(textOf(await call('touch', { action: 'tap', x: 1, y: 1 }))).toContain('The browser pane shows no part of the page.');
+  });
+
   it('アプリの画面にタブが見つからなければ、送らずに断る', async () => {
     const { call, open } = setup();
     const page = plain(open('http://localhost:3000/'));
@@ -466,8 +504,11 @@ describe('スクリーンショットの撮り直しと保存', () => {
     expect(commands(page, 'Emulation.').map((c) => c.method)).toEqual([
       'Emulation.setDeviceMetricsOverride',
       'Emulation.setTouchEmulationEnabled',
+      'Emulation.setPageScaleFactor',
+      'Emulation.setPageScaleFactor',
       'Emulation.setDeviceMetricsOverride',
       'Emulation.setTouchEmulationEnabled',
+      'Emulation.setPageScaleFactor',
     ]);
   });
 

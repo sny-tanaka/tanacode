@@ -63,6 +63,10 @@ const MAX_MARKS = 20;
 // 撮った絵が空のとき、描かれるのを待って撮り直す時間と間隔（shoot）
 const EMPTY_SHOT_WAIT_MS = 3_000;
 const EMPTY_SHOT_POLL_MS = 100;
+// CDP で大きさを当てたときに、ページの拡大率を 1 にする（Emulation.setPageScaleFactor）。スマホとして扱うページの拡大率が、1 でないまま残ることがあるため
+// （Electron 44.7。機種の大きさにして、やめて、アプリの画面を拡大してから、また機種の大きさにすると、1.548 倍になった。
+// そのときは、タッチが (368, 100) + 1.1 × 送った位置に届き、さわった所とずれた。Emulation.resetPageScaleFactor では戻らなかった）
+const ONE_PAGE_SCALE = { pageScaleFactor: 1 };
 // 要素まで動かしたあとの絵が描かれるのを待つスクリプト（2 コマ）と、待つ上限（screenshot）
 const FRAMES_DRAWN = 'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))';
 const FRAME_WAIT_MS = 500;
@@ -1499,7 +1503,9 @@ export class BrowserControl {
     session.viewport = emulation;
     this.deps.send(this.deps.channels.viewport, { sessionId, width, custom: { height, deviceScaleFactor, device: device?.name ?? null } });
     await this.emulateAll(session, emulation);
+    // 画面が枠の大きさを変えて、ページが描き直すのを待つ。描き直すときに、ページの拡大率がまた決まり直すことがあるので、待ってからも 1 にする
     await sleep(400);
+    for (const tab of session.tabs.values()) if (!tab.contents.isDestroyed() && tab.emulated) await this.cdp(tab, 'Emulation.setPageScaleFactor', ONE_PAGE_SCALE).catch(() => undefined);
     const viewport = await this.viewport(guest);
     return textResult(
       `Set the viewport to ${label}${mobile ? ' as a mobile device with touch support' : ''}. ` +
@@ -1524,6 +1530,7 @@ export class BrowserControl {
       const { width, height, deviceScaleFactor, mobile } = emulation;
       await this.cdp(guest, 'Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor, mobile });
       await this.cdp(guest, 'Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+      await this.cdp(guest, 'Emulation.setPageScaleFactor', ONE_PAGE_SCALE);
     } else {
       await this.cdp(guest, 'Emulation.clearDeviceMetricsOverride');
       await this.cdp(guest, 'Emulation.setTouchEmulationEnabled', { enabled: false });
@@ -1584,7 +1591,7 @@ export class BrowserControl {
     // タブの中の位置のまま送ると、webview の左上の分だけずれて届く。マウスの Input.dispatchMouseEvent は、タブの中の位置のまま届く）。
     // それで、アプリの画面の中の webview の左上を足す（hostOffset）。別プロセスの iframe の中も、その iframe のセッションに、同じ位置で送る（実機では確かめていない）
     const child = target.child?.session;
-    const at = await this.hostOffset(guest);
+    let at: HostOffset;
     const send = (type: string, points: BrowserPoint[]) =>
       this.cdp(
         guest,
@@ -1596,6 +1603,23 @@ export class BrowserControl {
     // さわる前に、指を置く場所を見せる
     show(from);
     await sleep(HIGHLIGHT_MS);
+    // webview の位置は、見せたあとに読む。Claude の操作が始まると、ツールバーの下に「Claude が操作中」の帯が出て webview が下へ動くので、
+    // それより前に読むと、帯の高さの分だけずれて届く（CI の E2E で、前の操作から帯が消えていたときに y だけずれた）
+    at = await this.hostOffset(guest);
+    // 指の位置が、アプリの画面に出ていなければ断る。出ていない所（枠のスクロールの外・ウインドウの外）へのタッチは、ページに届かずに捨てられる
+    // （CI の小さなウインドウで、機種の大きさの枠からはみ出た所をタップすると、エラーにならずに届かなかった）。動かす道すじは直線なので、両端を見る
+    const hidden = [...from, ...to].find((p) => !shownAt(at, p));
+    if (hidden) {
+      const v = at.visible;
+      const shown = (from: number, to: number, origin: number) => `${Math.ceil((from - origin) / at.scale)}–${Math.floor((to - origin) / at.scale)}`;
+      throw new ToolError(
+        `x=${round(hidden.x)} y=${round(hidden.y)} is not shown in the tanacode window, so a touch there would not reach the page. ` +
+          (v.right > v.left && v.bottom > v.top
+            ? `The browser pane shows only x ${shown(v.left, v.right, at.x)} and y ${shown(v.top, v.bottom, at.y)} of the visible area of the page (the pane is smaller than the viewport). `
+            : 'The browser pane shows no part of the page. ') +
+          'Touch inside that part (scroll the page to bring the spot into it), or set a smaller viewport with set_viewport.',
+      );
+    }
     await send('touchStart', from);
     if (action === 'swipe' || action === 'pinch') {
       // 16 ミリ秒ごと（画面の 1 コマ）に動かす。5 回から 60 回まで
@@ -1621,15 +1645,12 @@ export class BrowserControl {
   // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）:
   // - 左上は、アプリの画面の CSS の px のまま（拡大の倍率を掛けない）
   // - タブの中の位置は、CDP で大きさを決めていないタブではそのまま、決めたタブ（set_viewport の機種・数字）では倍率で割る
-  private async hostOffset(guest: Guest): Promise<BrowserPoint & { scale: number }> {
+  // visible: webview のうち、アプリの画面に出ている所（アプリの画面の CSS の px。枠のスクロールなど、はみ出たものを切る入れ物と、ウインドウの端で切る）
+  private async hostOffset(guest: Guest): Promise<HostOffset> {
     const host = this.deps.host();
-    const found = host && !host.isDestroyed()
-      ? ((await host
-          .executeJavaScript(`(() => { const el = document.querySelector('webview[data-tab-id=${JSON.stringify(guest.tabId)}]'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; })()`)
-          .catch(() => null)) as BrowserPoint | null)
-      : null;
+    const found = host && !host.isDestroyed() ? ((await host.executeJavaScript(webviewPlace(guest.tabId)).catch(() => null)) as Omit<HostOffset, 'scale'> | null) : null;
     if (!found) throw new ToolError('Could not find this tab in the tanacode window, so the touch was not sent.');
-    return { x: found.x, y: found.y, scale: guest.emulated ? 1 / host!.getZoomFactor() : 1 };
+    return { ...found, scale: guest.emulated ? 1 / host!.getZoomFactor() : 1 };
   }
 
   // 今のタブの CPU・通信を遅くする（やめる）。指定しなかったほうは、今のまま
@@ -2304,6 +2325,38 @@ function looksSame(a: NativeImage, b: NativeImage): boolean {
     }
   }
   return near >= 95;
+}
+
+// タッチを送る位置の決め方（hostOffset）
+type HostOffset = { x: number; y: number; scale: number; visible: { left: number; top: number; right: number; bottom: number } };
+
+// アプリの画面で動かす、タブの webview の左上と、アプリの画面に出ている所を読むスクリプト
+function webviewPlace(tabId: string): string {
+  return `(async () => {
+    // 動いたあとの配置になるよう、描き終わるのを 2 コマ待つ（描かれないときも、0.3 秒で先へ進む）
+    await Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 300))]);
+    const el = document.querySelector('webview[data-tab-id=${JSON.stringify(tabId)}]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let left = Math.max(r.left, 0), top = Math.max(r.top, 0), right = Math.min(r.right, innerWidth), bottom = Math.min(r.bottom, innerHeight);
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+      const b = a.getBoundingClientRect();
+      left = Math.max(left, b.left + a.clientLeft);
+      top = Math.max(top, b.top + a.clientTop);
+      right = Math.min(right, b.left + a.clientLeft + a.clientWidth);
+      bottom = Math.min(bottom, b.top + a.clientTop + a.clientHeight);
+    }
+    return { x: r.left, y: r.top, visible: { left, top, right, bottom } };
+  })()`;
+}
+
+// タブの中の位置 p（見えている範囲の左上から）が、アプリの画面に出ている所にあるか
+function shownAt(at: HostOffset, p: BrowserPoint): boolean {
+  const x = at.x + p.x * at.scale;
+  const y = at.y + p.y * at.scale;
+  return x >= at.visible.left && x < at.visible.right && y >= at.visible.top && y < at.visible.bottom;
 }
 
 // 範囲の中の数字。そうでなければ断る

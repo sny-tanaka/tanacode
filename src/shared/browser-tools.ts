@@ -280,6 +280,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'Where to touch: selector (the center of the first visible element matching it; same-origin iframes are searched too), or x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
       'fingers 2 taps or swipes with two fingers side by side (40px apart). The user sees the fingers as circles on the page. ' +
       'pinch only sends the touch events to the page (for pages that handle pinches themselves); the browser does not zoom the page by it. ' +
+      'The spot must be shown in the browser pane: when the pane is smaller than the viewport set with set_viewport, a spot outside the shown part is refused (the result tells you which part is shown). ' +
       'Touch events reach the page even without set_viewport, but a page that checks for touch support (navigator.maxTouchPoints, pointer: coarse) needs set_viewport with device or mobile first.',
     inputSchema: {
       type: 'object',

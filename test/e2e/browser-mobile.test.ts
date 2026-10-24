@@ -24,6 +24,8 @@ const tool = (id: string, name: string, input: Record<string, unknown>): Block[]
 // ページの様子を読む（tag で、どの読み取りかを見分ける）
 const read = (id: string, tag: string, expression: string): Block[] => tool(id, 'evaluate', { expression: `(async () => ({ tag: ${JSON.stringify(tag)}, ...(await ${expression}) }))()` });
 const SIZE = '({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, touchPoints: navigator.maxTouchPoints, coarse: matchMedia("(pointer: coarse)").matches })';
+// ページの拡大とスクロールの様子（タッチの位置がずれたときの手がかり）
+const VIEW = '({ scale: visualViewport.scale, left: visualViewport.pageLeft, top: visualViewport.pageTop, scrollX, scrollY, width: innerWidth, height: innerHeight })';
 // 決まった量の計算にかかる時間（3 回のうち、いちばん短いもの）
 const WORK = 'Promise.resolve({ ms: Math.min(work(), work(), work()) })';
 const FETCH = '(async () => { const t = performance.now(); await fetch("/ping?" + Math.random()); return { ms: performance.now() - t }; })()';
@@ -39,14 +41,14 @@ const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, 
 <script>
   let events = [];
   window.takeEvents = () => { const out = events; events = []; return out; };
-  const pad = document.getElementById('pad');
   for (const type of ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'contextmenu']) {
-    pad.addEventListener(type, (e) => {
+    // ページ全体で記録する（どこに届いたかも分かるように、届いた要素も残す）
+    document.addEventListener(type, (e) => {
       const last = events[events.length - 1];
       if (last && last.type === type && type.endsWith('move')) { last.count++; return; }
       const point = e.changedTouches ? e.changedTouches[0] : e;
-      events.push({ type, trusted: e.isTrusted, touches: e.touches ? e.touches.length : null, pointerType: e.pointerType || null, x: Math.round(point.clientX), y: Math.round(point.clientY), count: 1 });
-    });
+      events.push({ type, trusted: e.isTrusted, touches: e.touches ? e.touches.length : null, pointerType: e.pointerType || null, x: Math.round(point.clientX), y: Math.round(point.clientY), target: e.target.id || e.target.tagName, count: 1 });
+    }, true);
   }
   window.work = () => { const t = performance.now(); let x = 0; for (let i = 0; i < 2e7; i++) x += Math.sqrt(i); window.sink = x; return performance.now() - t; };
 </script>`;
@@ -107,12 +109,17 @@ describe('Claude がスマホ向けのページを確かめる', () => {
             tool('toolu_full', 'set_viewport', { width: 'full' }),
             read('toolu_size3', 'full', SIZE),
             [{ type: 'text', text: DONE_AGAIN }],
-            // アプリの画面を拡大したあと（テストが拡大してから、次の発言を送る）
-            tool('toolu_zoom_tap_plain', 'touch', { action: 'tap', x: 200, y: 100 }),
+            // アプリの画面を拡大したあと（テストがウインドウの大きさを決めて拡大してから、次の発言を送る）。
+            // ブラウザの枠は狭い（CI の Mac で 1.1 倍だと、幅 141px ほど）ので、どちらも枠に出ている所をタップする
+            tool('toolu_zoom_tap_plain', 'touch', { action: 'tap', x: 60, y: 70 }),
             read('toolu_zoom_plain_events', 'zoom-plain', EVENTS),
             tool('toolu_zoom_device', 'set_viewport', { device: 'iPhone 15' }),
-            tool('toolu_zoom_tap_device', 'touch', { action: 'tap', x: 200, y: 100 }),
+            read('toolu_zoom_view', 'zoom-view', VIEW),
+            tool('toolu_zoom_tap_device', 'touch', { action: 'tap', x: 60, y: 70 }),
             read('toolu_zoom_device_events', 'zoom-device', EVENTS),
+            // 機種の大きさ（393×852）の中でも、狭い枠からはみ出て画面に出ていない所は、届かないので断る
+            tool('toolu_zoom_tap_hidden', 'touch', { action: 'tap', x: 380, y: 800 }),
+            read('toolu_zoom_hidden_events', 'zoom-hidden', EVENTS),
             tool('toolu_zoom_full', 'set_viewport', { width: 'full' }),
             [{ type: 'text', text: DONE_ZOOMED }],
           ],
@@ -239,7 +246,14 @@ describe('Claude がスマホ向けのページを確かめる', () => {
   });
 
   it('アプリの画面を拡大していても、タッチはさわった位置に届く（大きさを決めたタブでも、決めていないタブでも）', async () => {
-    await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1.1));
+    // ウインドウの大きさを、CI の Mac のもの（1180×677）に決めてから測る（手元の大きな画面でも、同じ狭い枠で確かめる）
+    const bounds = await app.app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!;
+      const before = win.getBounds();
+      win.setBounds({ x: 0, y: 31, width: 1180, height: 677 });
+      win.webContents.setZoomFactor(1.1);
+      return before;
+    });
     // 外れたときに位置の決まりを見直せるよう、拡大している間の様子（画面の中の webview の位置・ウインドウ・画面の画素密度）を控える
     let layout: unknown = null;
     try {
@@ -258,13 +272,20 @@ describe('Claude がスマホ向けのページを確かめる', () => {
         }),
       };
     } finally {
-      await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
+      await app.app.evaluate(({ BrowserWindow }, before) => {
+        const win = BrowserWindow.getAllWindows()[0]!;
+        win.webContents.setZoomFactor(1);
+        win.setBounds(before);
+      }, bounds);
     }
     const start = (tag: string) => {
       const event = (reads()[tag]!.events as { type: string; x: number; y: number }[]).find((e) => e.type === 'touchstart');
       return event && { x: event.x, y: event.y };
     };
-    expect({ plain: start('zoom-plain'), device: start('zoom-device') }, `拡大している間の様子: ${JSON.stringify(layout)}`).toEqual({ plain: { x: 200, y: 100 }, device: { x: 200, y: 100 } });
+    expect({ plain: start('zoom-plain'), device: start('zoom-device') }, `拡大している間の様子: ${JSON.stringify(layout)} ページ: ${JSON.stringify(reads()['zoom-view'])}`).toEqual({ plain: { x: 60, y: 70 }, device: { x: 60, y: 70 } });
+    // 画面に出ていない所は、黙って捨てずに断る
+    expect(app.api.toolResults.find((r) => r.startsWith('x=380 y=800 is not shown in the tanacode window'))).toBeDefined();
+    expect(reads()['zoom-hidden']!.events).toEqual([]);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
