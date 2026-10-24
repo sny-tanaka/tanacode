@@ -159,8 +159,9 @@ tanacode の画面の見方と、機能ごとの使い方のまとめ。イン�
   - 未コミットの変更と未追跡のファイルは、消す前にコミットにして、`refs/tanacode/backup/<名前>` に控えを残します（`git show refs/tanacode/backup/<名前>` で見られます）。ふだんのステージには触りません。gitignore されたファイル（worktree の中で書き換えた `.env` など）は、控えに入りません。
   - ブランチは、手元にしか無いコミットが無い（リモート・PR・デフォルトブランチに入っている）ときだけ消します。手元にしか無いコミットがあれば、ブランチごと残します。
   - 自分でロックした worktree（`git worktree lock`）は消しません。
-  - 初期化した git submodule がある worktree も消せます。ただし submodule の中は控えに入らない（submodule の中身は worktree と一緒に消える）ため、submodule の中（入れ子のものも）に未コミットの変更・未追跡のファイル・stash・プッシュしていないコミットがあれば、消さずに断ります。どの submodule かは、確認の画面と、断ったときのダイアログに出ます。submodule の中でコミットしてプッシュするか、変更を捨ててから、もう一度削除してください。
-    - プッシュしていないコミット: submodule のどのリモートにも、元のフォルダの submodule（`.git/modules/<名前>`）にも無いコミット。
+  - 初期化した git submodule がある worktree も消せます。ただし submodule の中は控えに入らない（submodule の中身と git のデータは worktree と一緒に消える）ため、submodule の中（入れ子のもの・deinit したものも）に未コミットの変更・未追跡のファイル・stash・プッシュしていないコミットがあれば、消さずに断ります。どの submodule かは、確認の画面と、断ったときのダイアログに出ます。submodule の中でコミットしてプッシュするか、変更を捨ててから、もう一度削除してください。
+    - プッシュしていないコミット: submodule の今のコミットと、ブランチ・タグなど（リモートのもの以外）から辿れるコミットのうち、submodule のどのリモートにも、元のフォルダの submodule（`.git/modules/<名前>`）にも無いもの。
+    - submodule の中を調べられなかったときは、確認の画面にそう出ます。
   - 削除したセッションをアーカイブから戻すと、残したブランチから同じ場所に worktree を作り直して、会話を再開します（ブランチも消えていれば、元のフォルダの今のコミットから作ります）。`node_modules` も、もう一度用意します。
 - tanacode が自分から worktree を消すことはありません。「Claude Code も止めて終了」でも消しません。
 - Claude が worktree やブランチを消してしまわないよう、`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけは、権限モードにかかわらず、必ず許可の確認を出します（[hooks](#hooks)）。worktree で始めていないセッションでも同じです。

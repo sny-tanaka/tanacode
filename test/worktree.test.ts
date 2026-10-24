@@ -803,6 +803,80 @@ describe('削除', () => {
       writeFileSync(join(plan.path, 'lib', 'nested', 'new.txt'), 'new\n');
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 1, submodules: ['lib/nested'] });
     });
+
+    // worktree の submodule の git のデータ（.git/worktrees/<id>/modules/lib）
+    const modulesOf = (plan: WorktreePlan) => join(repo, '.git', 'worktrees', plan.name, 'modules');
+
+    it('deinit した submodule の git のデータに手元にしか無いコミットがあれば、元のフォルダ側が変わっていても断る', async () => {
+      const plan = await withSubmodule();
+      commitIn(join(plan.path, 'lib'), 'local.txt');
+      git(plan.path, 'submodule', 'deinit', '-q', '-f', 'lib');
+      writeFileSync(join(plan.path, 'new.txt'), 'new\n');
+      await expectRefused(plan, 'lib');
+      expect(existsSync(join(modulesOf(plan), 'lib'))).toBe(true);
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ submodules: ['lib'] });
+    });
+
+    it('deinit した submodule に失われるものが無ければ、元のフォルダ側がきれいでも --force で消す', async () => {
+      const plan = await withSubmodule();
+      git(plan.path, 'submodule', 'deinit', '-q', '-f', 'lib');
+      expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
+      expect(existsSync(plan.path)).toBe(false);
+    });
+
+    it('gitlink を外して（git rm --cached）フォルダと git のデータだけが残った submodule も見る', async () => {
+      const plan = await withSubmodule();
+      commitIn(join(plan.path, 'lib'), 'local.txt');
+      git(plan.path, 'rm', '-q', '--cached', 'lib');
+      git(plan.path, 'commit', '-qm', 'drop lib');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('入れ子の submodule を deinit しても、その git のデータの手元にしか無いコミットを見落とさない', async () => {
+      const plan = await withSubmodule({ nested: true });
+      const nested = join(plan.path, 'lib', 'nested');
+      git(nested, 'config', 'user.email', 'me@example.com');
+      git(nested, 'config', 'user.name', 'me');
+      commitIn(nested, 'local.txt');
+      git(join(plan.path, 'lib'), 'submodule', 'deinit', '-q', '-f', 'nested');
+      await expectRefused(plan, 'lib/nested');
+    });
+
+    it('submodule の中だけにあるタグが指すコミットも、手元にしか無いコミットとして見る', async () => {
+      const plan = await withSubmodule();
+      const inner = join(plan.path, 'lib');
+      commitIn(inner, 'tagged.txt');
+      git(inner, 'tag', 'v1');
+      git(inner, 'checkout', '-q', 'HEAD~1');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('入れ子の submodule のフォルダを消したのは、外側の submodule の変更として見る', async () => {
+      const plan = await withSubmodule({ nested: true });
+      rmSync(join(plan.path, 'lib', 'nested'), { recursive: true, force: true });
+      await expectRefused(plan, 'lib');
+    });
+
+    it('シンボリックリンクを通るパスで渡しても、submodule のパスは worktree からの形で出す', async () => {
+      const plan = await withSubmodule();
+      const alias = join(root, 'alias');
+      symlinkSync(root, alias);
+      writeFileSync(join(plan.path, 'lib', 'init.txt'), 'changed\n');
+      const path = plan.path.replace(root, alias);
+      await expect(removeWorktree({ ...plan, root: repo.replace(root, alias) }, path)).rejects.toMatchObject({ detail: 'lib' });
+    });
+
+    it('submodule の HEAD がまだ無くても（orphan）確かめられる', async () => {
+      const plan = await withSubmodule();
+      git(join(plan.path, 'lib'), 'switch', '-q', '--orphan', 'empty');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ submodules: [] });
+    });
+
+    it('submodule の中を調べられなければ、残っているものの submodule は null（調べられなかった）にする', async () => {
+      const plan = await withSubmodule();
+      writeFileSync(join(modulesOf(plan), 'lib', 'HEAD'), 'broken\n');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ submodules: null });
+    });
   });
 });
 

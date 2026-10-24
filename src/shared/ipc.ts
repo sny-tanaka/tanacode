@@ -328,8 +328,8 @@ export type WorktreeLeftovers = {
   unpushed: number;
   contentIn: string | null;
   // 中に、worktree を消すと失われるもの（未コミットの変更・未追跡のファイル・stash・手元にしか無いコミット）がある submodule の、
-  // worktree からのパス（入れ子のものも）。あれば worktree は消せない
-  submodules: string[];
+  // worktree からのパス（入れ子のもの・deinit したものも）。あれば worktree は消せない。調べられなければ null
+  submodules: string[] | null;
   pr: WorktreePr;
 };
 

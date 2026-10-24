@@ -83,6 +83,11 @@ export const submoduleのstashだけ: Story = {
   args: { leftovers: { ...CLEAN, submodules: ['lib'] } },
 };
 
+// submodule の中を調べられなかった
+export const submoduleを調べられない: Story = {
+  args: { leftovers: { ...CLEAN, submodules: null } },
+};
+
 // PR はマージ済みだが、そのあとに手元でコミットを足した
 export const PRのあとのコミット: Story = {
   args: { leftovers: { ...CLEAN, unpushed: 1, pr: { ...MERGED_PR, after: 1 } } },
