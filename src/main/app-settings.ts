@@ -8,6 +8,8 @@ import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
 // 登録した Claude Code の設定ファイル。覚えるのは名前とパスだけ（中身は預からない）
 export type StoredSettingsFile = { id: string; name: string; path: string };
 
+// アプリ全体の設定は、既定のプロファイルのファイル（userData/settings.json）だけを使う。足したプロファイルのファイル（profiles/<id>/settings.json）で使うのは、
+// settingsFiles（登録した設定ファイル）だけ（index.ts の openProfile）
 // notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか /
 // updateOnQuit: Homebrew で入れたとき、終了するときに新しいバージョンを入れるか /
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
@@ -22,7 +24,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // awayWaitMinutes: 離席モードで、人に回った許可の確認・質問の答えを待つ時間（分。@shared/away-mode）/
 // usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
 // prompts: tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。shared/prompts.ts）/
-// language: 画面の言語（system は Mac の言語の設定に合わせる）
+// language: 画面の言語（system は Mac の言語の設定に合わせる）/
+// profilesMerged: 足したプロファイルの設定を、アプリ全体の設定に移し替えたか（mergeProfiles。一度だけ）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -40,6 +43,7 @@ type Values = {
   usageLimitResume: boolean;
   prompts: CustomPrompts;
   language: LanguageSetting;
+  profilesMerged: boolean;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -181,6 +185,16 @@ export class AppSettings {
     this.update({ language });
   }
 
+  // 前のバージョンでは、足したプロファイルが、Claude に許す機能・許す先・Claude の自動の動きを、それぞれの設定のファイルに持っていた。
+  // 今はアプリ全体の設定（既定のプロファイルのファイル）だけを使う。値は既定のプロファイルのものを引き継ぎ、許す先だけは、
+  // 足したプロファイルのものも足す（どのプロファイルで許した先も、許したままにする）。一度だけ動かす（あとで外した先を、また足さない）。
+  // 足したプロファイルのファイルは消さない（登録した設定ファイルは、今もプロファイルごとにそこに置く）
+  mergeProfiles(others: AppSettings[]): void {
+    if (this.values.profilesMerged || others.length === 0) return;
+    const browserHosts = [...new Set([...this.values.browserHosts, ...others.flatMap((o) => o.browserHosts())])];
+    this.update({ browserHosts, profilesMerged: true });
+  }
+
   // 保存できなかったら、値を元に戻して例外を投げる（画面の表示と食い違わせない）
   private update(change: Partial<Values>): void {
     const before = this.values;
@@ -222,6 +236,7 @@ function load(file: string): Values {
       usageLimitResume?: unknown;
       prompts?: unknown;
       language?: unknown;
+      profilesMerged?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -240,9 +255,10 @@ function load(file: string): Values {
       usageLimitResume: data.usageLimitResume !== false,
       prompts: customPromptsOf(data.prompts),
       language: isLanguageSetting(data.language) ? data.language : 'system',
+      profilesMerged: data.profilesMerged === true,
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
   }
 }
 

@@ -1727,7 +1727,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 
 ### メニュー
 
-- アプリのメニューは `index.ts` の `buildMenu`。起動したとき・見ているプロファイルを切り替えたとき（プロファイルごとの設定のチェックを合わせ直す）・ラジオボタンの項目を選んだとき（保存できなかったら、作り直して選んでいたものに戻す）に作り直します。
+- アプリのメニューは `index.ts` の `buildMenu`。起動したとき・ラジオボタンの項目を選んだとき（保存できなかったら、作り直して選んでいたものに戻す）に作り直します。
 - 「tanacode」の段は、区切りごとに、更新 ／ MCP ／ Claude の自動の動きと送る文 ／ 言語 の順。「MCP」の中は、tanacode が足す MCP サーバーごとに区切ります。MCP サーバーを足したら、ここにも足し、GUIDE.md の「メニュー」の表も直します。
 - 項目には `id` を振ります。テストは id で探します（単体テストは `test/helpers/main-app.ts` の `menuItem`、E2E は `Menu.getApplicationMenu().getMenuItemById`）。文言を変えてもテストが壊れないようにするためです。並びと文言は `test/main-app.test.ts` の「メニュー」で確かめます。
 - MCP をオフにしたときなどに Claude に返す文は、メニューの場所を「`"<項目の名前>" under tanacode > MCP`」（オンにするよう頼ませるときは「`Ask the user to turn on "<項目の名前>" under tanacode > MCP.`」）と、そのときの画面の言語の項目の名前で書きます（人に頼むときに、人が見ている名前で伝えられるように）。
@@ -1772,7 +1772,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・ワークスペースに追加したフォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）・最後に起動したチャットの claude の pid と initialize の返事の一部・アプリを閉じたときに送信中だった発言など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
-| `settings.json` | アプリ自身の設定（`app-settings.ts`）。アプリ全体で 1 つのもの（既定のプロファイルのこのファイルだけを使う）: macOS の通知を出すか（`notifications`。右上のベル）・新しいバージョンが出たら通知するか（`updateCheck`）・Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）・Claude がセッションを始める前に許可を求めるか（`sessionsStartConfirm`）・Claude に送る文のうち変えたもの（`prompts`）・画面の言語（`language`）。プロファイルごとのもの（足したプロファイルは `profiles/<id>/settings.json`）: 登録した設定ファイルの名前とパス（`settingsFiles`）・メニューの「MCP」の切り替え（`browserControl`・`sessionsControl`・`checklistControl`・`walkthroughControl`・`terminalControl`）・アプリ内ブラウザで Claude に許す先（`browserHosts`）・利用枠で止まったら自動で再開するか（`usageLimitResume`）・自動で最適化圧縮する大きさ（`autoCompactPercent`）・離席モードで答えを待つ時間（`awayWaitMinutes`） |
+| `settings.json` | アプリ自身の設定（`app-settings.ts`）。アプリ全体で 1 つのもの（既定のプロファイルのこのファイルだけを使う。`index.ts` の `settings`、`Profile.appSettings`）: macOS の通知を出すか（`notifications`。右上のベル）・新しいバージョンが出たら通知するか（`updateCheck`）・Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）・Claude がセッションを始める前に許可を求めるか（`sessionsStartConfirm`）・メニューの「MCP」の切り替え（`browserControl`・`sessionsControl`・`checklistControl`・`walkthroughControl`・`terminalControl`）・アプリ内ブラウザで Claude に許す先（`browserHosts`）・利用枠で止まったら自動で再開するか（`usageLimitResume`）・自動で最適化圧縮する大きさ（`autoCompactPercent`）・離席モードで答えを待つ時間（`awayWaitMinutes`）・Claude に送る文のうち変えたもの（`prompts`）・画面の言語（`language`）・足したプロファイルの設定を移し替えたか（`profilesMerged`）。プロファイルごとのもの（足したプロファイルは `profiles/<id>/settings.json`。`Profile.settings`）: 登録した設定ファイルの名前とパス（`settingsFiles`）。前のバージョンでは MCP の切り替えなども足したプロファイルのファイルに持っていたので、起動したときに一度だけ、許す先をアプリ全体の許す先に足します（`AppSettings.mergeProfiles`。ほかの値は既定のプロファイルのものを引き継ぎ、足したプロファイルのファイルは消さない） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す。ただし、読めなかったファイルは消さない。この起動でまだ読んでいなければ、消す前に読んで確かめる）。読めない（権限が無いなど）・形の分からない（新しいバージョンのアプリが書いたものなど）ときは空で始め、上書きしないよう保存しない（一覧の `checklistUnsaved` でチェックリストのパネルに出し、チェックリストの MCP の結果にも、呼んだセッションと対象のセッションの組ごとに最初の 1 回だけ添える。Claude が呼ぶたびに人へ伝え直さないように）。壊れた JSON は `<id>.json.broken-<時刻>` に移してから空で始め、保存は続ける（`saved-json.ts`） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `sessions.sock` | ほかのセッションを扱う MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
@@ -1792,7 +1792,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
 | `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
-| `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイル・Claude に許す機能だけを使う）・`checklists/`・ソケット・`statusline/`・`stream-logs/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
+| `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイルだけを使う）・`checklists/`・ソケット・`statusline/`・`stream-logs/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
 
 作業を書き出したときは、保存のダイアログで選んだ場所に HTML ファイルを 1 つ書きます（`0600`）。
 
