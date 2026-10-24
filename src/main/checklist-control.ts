@@ -70,9 +70,9 @@ export class ChecklistControl {
   // ターンの終わりのフックが読んだ会話ログが、最後の応答までそろっていなかったときに使う（reminder）
   private readonly usedAt = new Map<string, number>();
   private readonly promptedAt = new Map<string, number>();
-  // セッションごとの、チェックリストを直させそこねたターン（ターンの終わりのフックで数える。missedTurn）。次の発言の知らせで直させて、消す。
-  // アプリを終えると消える（そのときは、前のターンの分を頼まないだけ）
-  private readonly missed = new Map<string, MissedTurns>();
+  // セッションごとの、チェックリストを直させそこねたターン（ターンの終わりのフックで数える。missedTurn）と、数えた Claude Code の会話の ID。
+  // 次の発言（か圧縮のあと）の知らせで直させて、消す。アプリを終えると消える（そのときは、前のターンの分を頼まないだけ）
+  private readonly missed = new Map<string, MissedTurns & { conversation: string | null }>();
   // 保存しないことを結果に添えた、呼んだセッションと対象のセッションの組（\0 でつなぐ）。Claude が呼ぶたびに人へ伝え直さないよう、
   // 組ごとに最初の 1 回だけ添える（画面のチェックリストにも「保存できません」が出ている）
   private readonly unsavedNoted = new Set<string>();
@@ -204,16 +204,23 @@ export class ChecklistControl {
       const used = this.usedAt.get(caller.id);
       if (used !== undefined && used >= counts.since) checklist++;
     }
+    // Claude Code の会話の ID（フックの入力の session_id）。/clear で新しい会話になると変わる。古い Claude Code などで無ければ null
+    const conversation = typeof counts.conversation === 'string' && counts.conversation ? counts.conversation : null;
+    const kept = this.missed.get(caller.id);
+    // 数えたターンが、今の会話のものか（どちらかの ID が分からなければ、同じ会話とみなす）
+    const same = !kept || kept.conversation === null || conversation === null || kept.conversation === conversation;
     if (event === 'stop') {
       // ターンの終わりには何も渡さない（続きを始めさせると、Remote Control で最後の応答が目印になる）。数えておいて、次の発言の知らせで直させる
       if (missedTurn({ turn, checklist }, !!caller.parentId)) {
-        const missed = this.missed.get(caller.id) ?? { turns: 0, calls: 0 };
-        this.missed.set(caller.id, { turns: missed.turns + 1, calls: missed.calls + turn });
-      }
+        const before = kept && same ? kept : { turns: 0, calls: 0 };
+        this.missed.set(caller.id, { turns: before.turns + 1, calls: before.calls + turn, conversation: conversation ?? kept?.conversation ?? null });
+      } else if (!same) this.missed.delete(caller.id);
       return '';
     }
-    const missed = event === 'prompt' ? (this.missed.get(caller.id) ?? null) : null;
-    if (event === 'prompt') this.missed.delete(caller.id);
+    // 発言と圧縮のあとの知らせで渡して、消す。圧縮のあとは、その次の発言まで待つと、細部が要約で消えているため。
+    // 別の会話（/clear のあとの新しい会話など）で数えたものは、Claude には見えないので渡さない
+    this.missed.delete(caller.id);
+    const missed = kept && same ? { turns: kept.turns, calls: kept.calls } : null;
     return checklistReminder(event, this.deps.store.lists(caller.id), missed) ?? '';
   }
 

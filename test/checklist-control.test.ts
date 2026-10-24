@@ -580,7 +580,7 @@ describe('チェックリストを使い続けさせるフックへの返事', (
   });
 
   it('次の発言までに数えたターンが続けば、まとめて頼む。返事だけのターンは数えない', async () => {
-    // 発言を待たずに始まったターン（子の知らせ・完了通知など）が続いた
+    // 発言を待たずに始まったターン（裏で動かしたタスクの完了通知 <task-notification> など）が続いた
     await call('hook:stop', { turn: 2, checklist: 0 });
     await call('hook:stop', { turn: 0, checklist: 0 });
     await call('hook:stop', { turn: 3, checklist: 0 });
@@ -595,6 +595,43 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     await call('hook:stop', worked, PEER);
     await call('checklist_overview');
     expect(await late(PEER)).toBe(missed(4));
+  });
+
+  it('Claude Code の会話が変わったら（/clear のあとの新しい会話など）、前の会話で数えたターンは頼まずに消す', async () => {
+    await call('hook:stop', { ...worked, conversation: 'C1' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBeNull();
+    // 消してあるので、そのあとも頼まない
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBeNull();
+    // 同じ会話なら頼む
+    await call('hook:stop', { ...worked, conversation: 'C2' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBe(missed(4));
+    // 前の会話のものに、新しい会話のターンを足さない
+    await call('hook:stop', { turn: 2, checklist: 0, conversation: 'C2' });
+    await call('hook:stop', { turn: 3, checklist: 0, conversation: 'C3' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C3' })))).toBe(missed(3));
+    // 数えないターンでも、会話が変わっていれば消す
+    await call('hook:stop', { ...worked, conversation: 'C3' });
+    await call('hook:stop', { turn: 0, checklist: 0, conversation: 'C4' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C4' })))).toBeNull();
+    // 会話の ID が分からないとき（ID を渡さない Claude Code）は、同じ会話とみなす
+    await call('hook:stop', worked);
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C5' })))).toBe(missed(4));
+  });
+
+  it('Claude Code の圧縮のあとの知らせでも頼んで消す（次の発言まで待つと、細部が要約で消えている）', async () => {
+    await call('hook:stop', worked);
+    const compact = first(await call('hook:compact', {}));
+    expect(compact).toContain('Your previous turn ended without touching the checklists (4 tool calls). Before anything else, bring them up to date for that turn, using the summary and what you still have');
+    expect(await late()).toBeNull();
+    // リストがあれば、いつもの圧縮のあとの知らせに足す
+    await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
+    await call('hook:stop', worked);
+    const withLists = first(await call('hook:compact', {}));
+    expect(withLists).toContain('The conversation was just compacted.');
+    expect(lateIn(withLists)).toBe(missed(4));
+    // 別の会話で数えたものは、圧縮のあとでも頼まない
+    await call('hook:stop', { ...worked, conversation: 'C1' });
+    expect(lateIn(first(await call('hook:compact', { conversation: 'C2' })))).toBeNull();
   });
 
   it('数えないとき・数が数字でないとき', async () => {

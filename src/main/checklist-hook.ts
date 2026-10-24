@@ -43,8 +43,8 @@ export function checklistHooks(): Record<string, unknown[]> {
 }
 
 // Claude Code がフックの標準入力に渡す JSON のうち、使うもの。last_assistant_message: 最後の応答の文（Stop。無いこともある）
-// trigger: 圧縮の始まり方（PreCompact。auto・manual）
-type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string; trigger?: string };
+// trigger: 圧縮の始まり方（PreCompact。auto・manual）/ session_id: Claude Code の会話の ID（どのフックにも付く）
+type HookInput = { hook_event_name?: string; session_id?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string; trigger?: string };
 
 const EVENTS: Record<string, ReminderEvent> = { UserPromptSubmit: 'prompt', Stop: 'stop', SessionStart: 'compact' };
 
@@ -239,7 +239,9 @@ export async function runHook(stdin: string, socketPath: string, session: string
   const name = input.hook_event_name ?? '';
   const event = EVENTS[name];
   if (!event) return '';
-  let args: Record<string, unknown> = { turn: 0, checklist: 0 };
+  // conversation: Claude Code の会話の ID（/clear で新しい会話になると変わる）。アプリは、前のターンの分を頼むのを、同じ会話のときだけにする
+  const conversation = typeof input.session_id === 'string' && input.session_id ? { conversation: input.session_id } : {};
+  let args: Record<string, unknown> = { turn: 0, checklist: 0, ...conversation };
   if (event === 'stop') {
     // ほかの Stop のフック（人のもの）が止めたあとの続きは、数えない（止める前のターンで数えてある）
     if (input.stop_hook_active || !input.transcript_path) return '';
@@ -249,7 +251,7 @@ export async function runHook(stdin: string, socketPath: string, session: string
     // そろわなかったときは、見えているのが前のターンのものかもしれないので、数えたものによらずアプリに聞く
     // （アプリは、チャットなら stream-json で受けた応答から、このターンのツールを数えている。ChecklistControl の reminder）
     if (settled && (checklist > 0 || turn === 0)) return '';
-    args = { turn, checklist, since, settled };
+    args = { turn, checklist, since, settled, ...conversation };
   }
   const result = await callBridge(socketPath, { session, tool: checklistHookRequest(event), args }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);
   const first = result.content[0];

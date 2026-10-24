@@ -19,6 +19,7 @@ const DONE = 'スレッドに返信しました';
 const WORK = 'ファイルの一覧を見てください';
 const REPORT = 'ファイルの一覧を見ました';
 const NEXT = '続けてください';
+const CONTINUED = '続きを始めました';
 const LATE = 'Your previous turn ended without touching the checklists (1 tool call).';
 
 describe('人がチェックリストを画面で使い、Claude とやりとりする', () => {
@@ -39,7 +40,7 @@ describe('人がチェックリストを画面で使い、Claude とやりとり
             [{ type: 'tool_use', id: 'toolu_glob', name: 'Glob', input: { pattern: '*' } }],
             [{ type: 'text', text: REPORT }],
             // その次の発言
-            [{ type: 'text', text: 'はい' }],
+            [{ type: 'text', text: CONTINUED }],
           ],
         },
       ],
@@ -135,11 +136,11 @@ describe('人がチェックリストを画面で使い、Claude とやりとり
 
   it('次の発言の知らせで、前のターンの分もチェックリストを直させる', async () => {
     await app.send(NEXT);
-    await app.byText('.chat-list', 'はい').waitFor();
+    await app.byText('.chat-list', CONTINUED).waitFor();
     const context = [...app.api.contexts].reverse().find((c) => c.includes(NEXT)) ?? '';
     expect(context.slice(context.lastIndexOf(NEXT))).toContain(LATE);
     await idle();
-    expect(lastAnswer()).toBe('はい');
+    expect(lastAnswer()).toBe(CONTINUED);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

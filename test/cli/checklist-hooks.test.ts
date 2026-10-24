@@ -19,7 +19,8 @@ import { MockApi, type Block } from './mock-api';
 //   読んだだけのターンも数える。チェックリストに触れたターン・ツールを使っていないターンは数えない。
 //   モックの API はすぐに応答を返すので、フックが動いた時点では、会話ログに最後の応答（とその前のツール）がまだ書かれていない。
 //   フックが、最後の応答（last_assistant_message）まで書かれるのを待ってから数えることも、ここで確かめている
-// - /compact で会話を圧縮すると、今のチェックリストが渡る（SessionStart の compact）
+// - 数えたまま /clear すると、新しい会話では前の会話のターンの分を頼まない（会話の ID が変わる）
+// - /compact で会話を圧縮すると、今のチェックリストと、数えたターンの分の頼みが渡る（SessionStart の compact）
 // - どれも、チャットのフックの一覧には出ない
 
 const WORK = 'チェックリストに触れずに作業してください';
@@ -27,6 +28,9 @@ const DECIDE = '今後は日付を ISO 形式で書いてください';
 const QUESTION = '読んで質問に答えてください';
 const TOUCH = 'チェックリストを直しながら作業してください';
 const TALK = '返事だけしてください';
+const REREAD = 'もう一度ファイルを読んでください';
+const CLEARED = '新しい話をします';
+const AGAIN = '新しい会話でも読んでください';
 const LATE = 'ended without touching the checklists';
 const version = claudeVersion();
 const say = (text: string): Block[] => [{ type: 'text', text }];
@@ -99,6 +103,19 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
           say('直しながら終えました'),
           // 5 つめの発言。ツールを使っていないので数えない
           say('返事をしました'),
+          // 6 つめの発言。数えたまま /clear する
+          read(),
+          say('読み直しました'),
+        ],
+      },
+      {
+        // /clear のあとの新しい会話
+        match: CLEARED,
+        steps: [
+          say('新しい話を聞きました'),
+          // 2 つめの発言。数えたまま /compact する
+          read(),
+          say('もう一度読みました'),
         ],
       },
     ];
@@ -120,7 +137,7 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     expect(contexts[0]).toContain(`<${CHECKLIST_REMINDER_TAG}>\nThis session has no checklists yet.`);
     expect(contexts[0]).not.toContain(LATE);
     // ターンの終わり: 会話ログから数えたツールがアプリに届く。settled: フックが、会話ログが最後の応答まで書かれているのを確かめた
-    expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0, since: expect.any(Number), settled: true }]);
+    expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0, since: expect.any(Number), settled: true, conversation: expect.any(String) }]);
     // 続きは始まらない（ツール 2 回と最後の応答で、呼び出しは 3 回）。止めた理由はどこにも渡っていない
     expect(requests).toBe(3);
     expect(api.contexts.some((c) => c.includes('Stop hook additional context'))).toBe(false);
@@ -148,7 +165,7 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     expect(question.contexts[0]).not.toContain(LATE);
     expect(question.contexts[0]).toContain('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ');
     expect(question.requests).toBe(2);
-    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0, since: expect.any(Number), settled: true });
+    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0, since: expect.any(Number), settled: true, conversation: expect.any(String) });
     expect(lastAnswer()).toBe('質問に答えました');
 
     const touch = await turn(TOUCH, '直しながら終えました');
@@ -173,7 +190,18 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     expect(run.chat().filter((e) => e.type === 'hook')).toEqual([]);
   });
 
-  it('/compact で会話を圧縮すると、今のチェックリストが渡る。有効な決定（チェックで消えないリストのカード）も渡り、取り消したものは渡らない', async () => {
+  it('数えたまま /clear すると、新しい会話の最初の発言では、前の会話のターンの分を頼まない（Claude には見えない）', async () => {
+    await turn(REREAD, '読み直しました');
+    const switched = run.switches.length;
+    await run.send('/clear');
+    await run.waitUntil('/clear のあとの乗り換え', () => run.switches.length > switched && run.idle, 30_000);
+    const { contexts } = await turn(CLEARED, '新しい話を聞きました');
+    expect(contexts[0]).toContain(`<${CHECKLIST_REMINDER_TAG}>\nCurrent state of the checklists`);
+    expect(contexts[0]).not.toContain(LATE);
+  });
+
+  it('/compact で会話を圧縮すると、今のチェックリストが渡る。有効な決定（チェックで消えないリストのカード）も渡り、取り消したものは渡らない。数えたターンの分も、ここで頼む', async () => {
+    await turn(AGAIN, 'もう一度読みました');
     const decisions = store.findList(run.sessionId!, '決定事項')!;
     const [kept, dropped] = store.addCards(run.sessionId!, 'human', decisions.id, [{ title: '決済には触らない' }, { title: '端数は切り捨て' }]);
     store.revokeCards(run.sessionId!, 'human', decisions.id, [dropped.id], '四捨五入に変わった');
@@ -189,7 +217,8 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
           a.hookEvent === 'SessionStart' &&
           content.includes('The conversation was just compacted.') &&
           content.includes(`- #${kept.number} 決済には触らない`) &&
-          !content.includes('端数は切り捨て')
+          !content.includes('端数は切り捨て') &&
+          content.includes('Your previous turn ended without touching the checklists (1 tool call). Before anything else, bring them up to date for that turn, using the summary and what you still have,')
         );
       }),
     );

@@ -103,6 +103,18 @@ describe('会話が圧縮されたあと', () => {
     expect(text).toContain('## 空のリスト (0/0 checked)\n(no cards)');
     expect(checklistReminder('compact', [])).toBeNull();
   });
+
+  it('前のターンの分が残っていれば、要約から直させる文を足す。リストが無くても渡す', () => {
+    const text = checklistReminder('compact', [TODO], { turns: 1, calls: 3 })!;
+    expect(text).toContain(
+      'Your previous turn ended without touching the checklists (3 tool calls). Before anything else, bring them up to date for that turn, using the summary and what you still have, as the tanacode-checklist instructions say',
+    );
+    expect(text.indexOf('Your previous turn')).toBeLessThan(text.indexOf('Keep them up to date as you continue'));
+    const bare = checklistReminder('compact', [], { turns: 2, calls: 5 })!;
+    expect(bare).toBe(
+      `<${CHECKLIST_REMINDER_TAG}>\nYour previous 2 turns ended without touching the checklists (5 tool calls in all). Before anything else, bring them up to date for those turns, using the summary and what you still have, as the tanacode-checklist instructions say for the end of a turn (that includes recording what was decided there on the decisions list). If nothing needs to change, just go on and do not mention it.\n</${CHECKLIST_REMINDER_TAG}>`,
+    );
+  });
 });
 
 describe('知らせに入れるカード', () => {
