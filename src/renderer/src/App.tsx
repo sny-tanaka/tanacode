@@ -60,6 +60,7 @@ import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
 import { PromptsDialog } from './prompts/PromptsDialog';
+import { ToolPermissionsDialog } from './mcp/ToolPermissionsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
 import { useAppUpdate } from './layout/AppUpdate';
@@ -167,6 +168,7 @@ export function App() {
   const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
   // メニューの「Claude に送る文…」
   const [promptsOpen, setPromptsOpen] = useState(false);
+  const [toolPermissionsOpen, setToolPermissionsOpen] = useState(false);
   // ウォークスルーを GitHub の PR に載せる下見のダイアログ（どのセッションのものか）
   const [commenting, setCommenting] = useState<string | null>(null);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
@@ -454,10 +456,12 @@ export function App() {
     });
     const offHosts = window.tanacode.browser.onHostsOpen(() => setBrowserHostsOpen(true));
     const offPrompts = window.tanacode.prompts.onOpen(() => setPromptsOpen(true));
+    const offToolPermissions = window.tanacode.toolPermissions.onOpen(() => setToolPermissionsOpen(true));
     return () => {
       offActivity();
       offHosts();
       offPrompts();
+      offToolPermissions();
     };
   }, []);
 
@@ -1250,6 +1254,7 @@ export function App() {
         {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
         {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
         {promptsOpen && <PromptsDialog onClose={() => setPromptsOpen(false)} />}
+        {toolPermissionsOpen && <ToolPermissionsDialog onClose={() => setToolPermissionsOpen(false)} />}
         {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
           <WorktreeDialog

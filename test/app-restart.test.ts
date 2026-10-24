@@ -85,7 +85,7 @@ describe('入れ替えるものが無い理由', () => {
     expect(noUpdateReason(info({ install: 'other', latest: '2.5.0' }))).toContain('https://github.com/sny-tanaka/tanacode/releases/tag/v2.5.0');
     expect(noUpdateReason(info({ latest: '2.5.0', download: { status: 'downloading' } }))).toContain('still downloading');
     expect(noUpdateReason(info({ latest: '2.5.0', download: { status: 'failed' } }))).toContain('could not download');
-    expect(noUpdateReason(info({ latest: null, checkEnabled: false }))).toContain('turned off checking');
+    expect(noUpdateReason(info({ latest: null, checkEnabled: false }))).toBe('The user has turned off "新しいバージョンが出たら通知する" under tanacode, so tanacode does not know of a newer version.');
     expect(noUpdateReason(info({ latest: null }))).toContain('has not been able to check');
   });
 });

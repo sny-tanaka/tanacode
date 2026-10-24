@@ -1,11 +1,12 @@
 import type { AppUpdate, HomebrewUpdate } from '@shared/app-update';
 import { compareVersions } from '@shared/claude-code';
+import { t } from '@shared/i18n';
 
 // Claude が頼む、tanacode の更新と再起動（tanacode-sessions の get_app_update・restart_app）。
 // 人がスマホの Remote Control から使っていて Mac の前にいなくても、親の Claude に「tanacode を更新して」と頼めるようにする。
 // 再起動はいつも「動かしたまま」（Claude Code を止めない）。常駐の pty ホストが claude を保ち、起動し直したアプリが引き継ぐ。
 // Homebrew でダウンロード済みの新しいバージョンがあれば、終わったあとに入れ替えてから起動し直す（タイトルバーの「再起動して更新」と同じ）。
-// 呼ぶ前の人の許可の確認は、Claude Code の PreToolUse のフックで出させる（sessions-bridge.ts の restartGateCommand）。
+// 呼ぶ前の人の許可の確認は、Claude Code の PreToolUse のフックで出させる（tool-permissions.ts の toolPermissionCommand。メニューの「Claude のツールの許可…」で常に許可にもできる）。
 // 結果を Claude に返してから少しあとに終える（先に終えると、中継への返事が届かない）。
 // 呼んだセッションには、起動し直したアプリが「再起動しました（古いバージョン → 新しいバージョン、または更新に失敗）」と知らせる
 // （SessionNotices の channel 'restart'。sessions.json に残して、次のアプリが送る。profile.ts）
@@ -99,7 +100,7 @@ export function noUpdateReason(info: AppUpdateInfo): string {
     if (info.download?.status === 'failed') return `v${info.latest} is available, but tanacode could not download it with Homebrew (it tries again later).`;
     return `v${info.latest} is available and tanacode is still downloading it with Homebrew. Check again later with get_app_update.`;
   }
-  if (!info.checkEnabled) return `The user has turned off checking for new versions in the tanacode menu, so tanacode does not know of a newer version.`;
+  if (!info.checkEnabled) return `The user has turned off "${t('main.menu.notifyUpdates')}" under tanacode, so tanacode does not know of a newer version.`;
   if (!info.latest) return `tanacode has not been able to check for new versions yet (for example, it is offline).`;
   return `tanacode is up to date (v${info.current}).`;
 }

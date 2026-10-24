@@ -25,6 +25,7 @@ import { SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
 import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
+import { TOOL_PERMISSIONS_DIR_ENV } from '../../src/main/tool-permissions';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
 import { FIXTURE_ROOT, fixtureLines, unreadableStreamLines } from '../scenario';
 import { InventoryBuilder } from '../transcript-inventory';
@@ -209,6 +210,7 @@ export class ClaudeRun {
       INSTRUCTIONS_SCRIPT_ENV,
       INSTRUCTIONS_DIRS_ENV,
       INSTRUCTIONS_PROFILE_ENV,
+      TOOL_PERMISSIONS_DIR_ENV,
     ]);
   }
 

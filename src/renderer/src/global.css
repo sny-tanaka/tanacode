@@ -2755,6 +2755,79 @@ button.session-ref:hover {
 .browser-hosts-foot {
   gap: 8px;
 }
+/* Claude のツールの許可 */
+.tool-permissions-dialog {
+  width: min(760px, 92vw);
+  max-height: calc(100vh - 120px);
+}
+.tool-permissions-dialog .settings-files-head p + p {
+  margin-top: 6px;
+}
+.tool-permissions-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
+}
+.tool-permissions-server h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 10px 4px;
+  color: var(--text-heading);
+  font-size: 12px;
+  font-weight: 600;
+}
+.tool-permissions-dialog code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: normal;
+}
+.tool-permission-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.tool-permission-kind {
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.tool-permission-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.tool-permission-note {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tool-permission-select {
+  flex: none;
+  /* 既定の印の有無で幅が変わって、欄の端がそろわないように */
+  min-width: 180px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.tool-permission-select:focus {
+  border-color: var(--border-focus);
+}
+/* 既定から変えたツール */
+.tool-permission-row.changed .tool-permission-select {
+  border-color: var(--warn);
+}
 /* .quick-open input を上書きする */
 .settings-files-dialog .browser-hosts-input {
   flex: 1;

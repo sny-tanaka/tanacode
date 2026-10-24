@@ -172,6 +172,8 @@ export type McpLaunch = {
   script: string;
   socketPath: string;
   version: string;
+  // ツールごとの許可の印のファイルのフォルダ（プロファイルごと。tool-permissions.ts）。フックが見るので、起動する Claude Code の環境に足す
+  permissionsDir?: string;
 };
 
 // --mcp-config に入れる 1 つのサーバーと、--allowedTools で許可済みにするツール

@@ -19,8 +19,8 @@ function fakeSettingsFiles(model: string | null = 'opus') {
       calls.push(`check:${settingsId}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
     },
-    prepare(sessionId: string, settingsId: string, browser = false, sessions = false, checklist = false): PreparedSettings {
-      calls.push(`prepare:${settingsId}:${browser}:${sessions}:${checklist}`);
+    prepare(sessionId: string, settingsId: string, browser = false, checklist = false): PreparedSettings {
+      calls.push(`prepare:${settingsId}:${browser}:${checklist}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
       return { settingsFile: `/run/${sessionId}.json`, model };
     },
@@ -38,7 +38,7 @@ describe('登録した設定ファイル', () => {
     const { files, calls } = fakeSettingsFiles();
     start({ settingsFiles: files });
     const { id, pipe } = app.create({ settingsFile: 'work' });
-    expect(calls).toEqual(['check:work', 'prepare:work:false:false:false']);
+    expect(calls).toEqual(['check:work', 'prepare:work:false:false']);
     expect(pipe.arg('--settings')).toBe(`/run/${id}.json`);
     expect(pipe.arg('--model')).toBe('opus');
     expect(app.manager.summary(id)?.settingsFile).toBe('work');
@@ -179,7 +179,7 @@ describe('アプリが足す MCP サーバー', () => {
   const mcpOf = (args: string[]) =>
     JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
 
-  it('アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーを 1 つの --mcp-config で足し、設定ファイルにブラウザ・セッション・チェックリストのフックを入れる', () => {
+  it('アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーを 1 つの --mcp-config で足し、設定ファイルにブラウザ・チェックリストのフックを入れる（セッションの確認は、ツールごとの許可のフックで、いつも入る）', () => {
     const { files, calls } = fakeSettingsFiles();
     start({
       settingsFiles: files,
@@ -189,7 +189,7 @@ describe('アプリが足す MCP サーバー', () => {
       walkthroughMcp: () => launch('walkthrough-mcp'),
     });
     const { id, pipe } = app.create({ settingsFile: 'work' });
-    expect(calls).toContain('prepare:work:true:true:true');
+    expect(calls).toContain('prepare:work:true:true');
     // 最適化圧縮が、このセッションで使えるかを見る
     expect(app.manager.hasChecklistMcp(id)).toBe(true);
     expect(app.manager.hasChecklistMcp('nope')).toBeNull();

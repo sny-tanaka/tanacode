@@ -50,12 +50,13 @@
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
       "updateOnQuit": "Install Updates on Quit (Homebrew)",
-      "browserControl": "Let Claude Control the In-App Browser",
-      "sessionsControl": "Let Claude Manage Other Sessions",
-      "sessionsStartConfirm": "Ask Before Claude Starts a Session",
-      "checklistControl": "Let Claude Manage Checklists",
-      "walkthroughControl": "Let Claude Give Walkthroughs",
-      "terminalControl": "Let Claude Use the Terminal",
+      "mcp": "MCP",
+      "browserControl": "In-App Browser",
+      "sessionsControl": "Session Control",
+      "checklistControl": "Checklists",
+      "walkthroughControl": "Walkthroughs",
+      "terminalControl": "Terminal",
+      "toolPermissions": "Claude Tool Permissions…",
       "usageLimitResume": "Resume Automatically When the Usage Limit Resets",
       "autoCompactPercent": "Auto Optimized Compact At",
       "awayWait": "Away Mode Wait Time",
@@ -231,7 +232,9 @@
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
-      "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation"
+      "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation",
+      "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
+      "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode"
     },
     "translate": {
       "invalidTexts": "Invalid text to translate",
@@ -579,8 +582,8 @@
         "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
       },
       "compactUnavailable": {
-        "checklistOff": "Turn on “Let Claude Manage Checklists” in the menu to use this",
-        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “Let Claude Manage Checklists” in the menu and restart the session to use this"
+        "checklistOff": "Turn on “tanacode > {mcp} > {item}” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > {mcp} > {item}” in the menu and restart the session to use this"
       },
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
@@ -813,7 +816,7 @@
     },
     "away": {
       "name": "Away mode",
-      "about": "While you are away, Claude decides without asking you and records what it decided. Permission prompts and questions in this session wait for a set time (change it in the menu) and are declined if nobody answers. Nothing is allowed for you. Child sessions are not affected",
+      "about": "While you are away, Claude decides without asking you and records what it decided. Permission prompts and questions in this session wait for a set time (change it in the menu: tanacode > Away Mode Wait Time) and are declined if nobody answers. Nothing is allowed for you. Child sessions are not affected",
       "stateOn": "Away",
       "stateOff": "Off",
       "terminal": "In terminal mode, prompts and questions are not declined (Claude is only told the rules)"
@@ -1041,7 +1044,7 @@
       "claude": "Claude's wake-up",
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "usageLimit": "Usage limit resume",
-      "usageLimitTip": "Claude stopped at the usage limit, so tanacode sends a message asking it to continue after the limit resets. Cancel it to not resume automatically (menu: Resume Automatically When the Usage Limit Resets)",
+      "usageLimitTip": "Claude stopped at the usage limit, so tanacode sends a message asking it to continue after the limit resets. Cancel it to not resume automatically (menu: tanacode > {item})",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
       "cancelTip": "Unschedule and move the message back to the chat input",
       "unsaved": "Not saved",
@@ -1117,7 +1120,7 @@
       "resume": "Optimized Compact: Resume"
     },
     "about": {
-      "usageResume": "Sent to a session that stopped at the usage limit, one minute after the limit resets (when “Resume Automatically When the Usage Limit Resets” is on in the menu). tanacode wraps it in {tag}. A change applies from the next scheduled resume.",
+      "usageResume": "Sent to a session that stopped at the usage limit, one minute after the limit resets (when “tanacode > {item}” is on in the menu). tanacode wraps it in {tag}. A change applies from the next scheduled resume.",
       "handoff": "Sent before an optimized compact clears the conversation, to have Claude write what’s needed to continue on the checklists (both manual and automatic). tanacode wraps it in {tag}.",
       "resume": "Sent as the first message after the conversation is cleared. tanacode wraps it in {tag} and adds, after it, the cards of the decisions and state lists, the other lists, the user’s original messages from the previous conversation, Claude’s last reply (or, when the turn was stopped midway, where it stopped) and the background tasks."
     },
@@ -1150,6 +1153,108 @@
     "saveFailed": "Couldn’t save: {error}",
     "loadFailed": "Couldn’t load the saved messages: {error}",
     "confirmDiscard": "Discard your unsaved changes and close?"
+  },
+  "toolPermissions": {
+    "title": "Claude Tool Permissions",
+    "description": "For each tool of the MCP servers that tanacode adds to Claude Code, choose whether Claude asks you before using it (Ask Every Time) or uses it without asking (Always Allow). Ask Every Time, when changed from the default, asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow has no effect while the permission mode is plan. Before you change a default, check what the tool does.",
+    "scope": "This applies to the whole app and takes effect at once, also in running sessions. Sessions started in a version before this setting existed are not affected until you restart Claude Code in them.",
+    "ask": "Ask Every Time",
+    "allow": "Always Allow",
+    "withDefault": "{label} (Default)",
+    "choiceLabel": "Permission for {tool}",
+    "childHidden": "Not given to child sessions",
+    "kind": {
+      "read": "Read only",
+      "act": "Acts",
+      "eval": "Runs JavaScript",
+      "ask": "Asks you",
+      "instruct": "Instructs, schedules or reports",
+      "note": "Writes checklists",
+      "show": "Shows code",
+      "openWorld": "Writes outside"
+    },
+    "rule": {
+      "mode": "By default, this follows the permission mode of Claude Code (manual asks every time; auto and other modes may not ask).",
+      "always": "By default, this asks every time, regardless of the permission mode.",
+      "outside": "By default, this asks every time it opens a page outside the sites allowed for Claude, regardless of the permission mode. Inside the allowed sites, it follows the permission mode of Claude Code.",
+      "remote": "By default, this asks on pages other than localhost, regardless of the permission mode, and does not ask on localhost pages."
+    },
+    "closeTip": "Close (Esc)",
+    "desc": {
+      "browser": {
+        "screenshot": "Takes an image of how the page looks",
+        "get_text": "Reads the text of the page",
+        "get_accessibility_tree": "Reads the structure of the page",
+        "inspect": "Reads the HTML and the applied styles of an element",
+        "get_console_logs": "Reads the console output",
+        "get_failed_requests": "Reads the failed requests",
+        "navigate": "Opens a page, goes back or forward, or reloads",
+        "list_tabs": "Reads the list of tabs",
+        "select_tab": "Switches the current tab",
+        "close_tab": "Closes a tab",
+        "click": "Clicks an element",
+        "type": "Types text into a field",
+        "press_key": "Presses a key",
+        "scroll": "Scrolls the page",
+        "wait_for": "Waits for an element or text to appear",
+        "set_viewport": "Changes the screen size or the emulated device",
+        "touch": "Taps, swipes and pinches",
+        "throttle": "Slows down the CPU or the network",
+        "evaluate": "Runs JavaScript on the page",
+        "ask_user_to_act": "Asks you to act in the browser, such as logging in"
+      },
+      "sessions": {
+        "list_sessions": "Reads the list of sessions",
+        "read_session": "Reads the conversation of a session",
+        "get_session_diff": "Reads the changes in the folder of a session",
+        "get_session": "Reads the state and result of a child session",
+        "wait_sessions": "Waits briefly for child sessions to finish",
+        "start_session": "Starts a child session or an independent one (uses your usage limits)",
+        "send_message": "Sends an instruction to a child session",
+        "answer_question": "Answers a question from a child session",
+        "answer_permission": "Answers a permission prompt of a child session",
+        "configure_session": "Changes the permission mode, model or effort of a child session",
+        "stop_session": "Interrupts the turn of a child session",
+        "end_session": "Archives a child session that has done its job and removes its worktree",
+        "schedule_wakeup": "Schedules a wake-up for itself to continue later",
+        "list_wakeups": "Reads its scheduled wake-ups",
+        "cancel_wakeup": "Cancels a scheduled wake-up",
+        "report_result": "Writes the report shown in the end-of-turn notification",
+        "set_away_mode": "Turns away mode on or off",
+        "get_app_update": "Checks whether a new version of tanacode is available",
+        "restart_app": "Restarts tanacode (installs a new version first if there is one)"
+      },
+      "checklist": {
+        "checklist_overview": "Reads the list of checklists",
+        "card_get": "Reads a card and its replies",
+        "list_create": "Creates a list",
+        "list_update": "Changes the name or description of a list",
+        "list_delete": "Moves a list to the trash",
+        "card_add": "Adds cards",
+        "card_update": "Changes the title or body of a card",
+        "card_check": "Checks cards",
+        "card_uncheck": "Unchecks cards",
+        "card_revoke": "Revokes decisions",
+        "card_reply": "Replies to a card",
+        "card_move": "Moves cards",
+        "card_delete": "Moves cards to the trash",
+        "card_restore": "Restores cards from the trash",
+        "checklist_trash": "Reads the trash",
+        "list_restore": "Restores a list from the trash",
+        "cards_copy": "Copies cards to a list of another session"
+      },
+      "walkthrough": {
+        "start_walkthrough": "Starts explaining code while showing it in the editor",
+        "show_code": "Shows a place in the code in the editor",
+        "walkthrough_status": "Reads which step you are looking at",
+        "post_walkthrough": "Posts the walkthrough as a comment on a GitHub pull request"
+      },
+      "terminal": {
+        "list_terminals": "Reads the list of terminals",
+        "read_terminal": "Reads the output of a terminal",
+        "type_in_terminal": "Types into your terminal"
+      }
+    }
   },
   "translate": {
     "failure": {
@@ -1248,7 +1353,7 @@
       "readyLabel": "Restart and Update to v{version}",
       "downloaded": "Downloaded v{version}",
       "readyRestart": "Click to quit tanacode, install the update with Homebrew, and relaunch",
-      "readyOnQuit": "If “Install Updates on Quit” is on in the menu, the update is also installed when you quit normally",
+      "readyOnQuit": "If “tanacode > {item}” is on in the menu, the update is also installed when you quit normally",
       "restart": "Restart to Update"
     },
     "titleBar": {

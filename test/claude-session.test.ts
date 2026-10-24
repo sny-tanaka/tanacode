@@ -154,21 +154,21 @@ describe('起動', () => {
     expect(host.spawned[0].request.env).toMatchObject({ TANACODE_BROWSER_SOCKET: '/u/browser.sock', TANACODE_BROWSER_SESSION: 's1' });
   });
 
-  it('セッションの MCP を足すときは、起動の確認のフックが見る印のファイルのパスを渡す。パスが無ければ空で上書きする（受け継いだ値を読ませない）', () => {
+  it('ツールごとの許可のフックが見る印のフォルダを、MCP の材料から渡す。無ければ空で上書きする（受け継いだ値を読ませない）', () => {
     const sessions = { command: 'node', script: '/x/sessions-mcp.js', socketPath: '/u/sessions.sock', version: '1' };
-    const before = process.env.TANACODE_SESSIONS_NO_ASK_FILE;
-    process.env.TANACODE_SESSIONS_NO_ASK_FILE = '/from/parent';
+    const before = process.env.TANACODE_TOOL_PERMISSIONS_DIR;
+    process.env.TANACODE_TOOL_PERMISSIONS_DIR = '/from/parent';
     try {
-      session({ sessions: { ...sessions, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
-      expect(host.spawned[0].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+      session({ sessions: { ...sessions, permissionsDir: '/u/tool-permissions' } }).claude.start();
+      expect(host.spawned[0].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('/u/tool-permissions');
       session({ sessions }).claude.start();
-      expect(host.spawned[1].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('');
-      // 子セッションにも渡す（子の中継には起動のツールが無いので、フックは呼ばれない）
-      session({ sessions: { ...sessions, child: true, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
-      expect(host.spawned[2].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+      expect(host.spawned[1].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('');
+      // 子セッションにも、ほかの MCP の材料からでも渡す
+      session({ sessions: { ...sessions, child: true }, checklist: { ...sessions, permissionsDir: '/u/tool-permissions' } }).claude.start();
+      expect(host.spawned[2].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('/u/tool-permissions');
     } finally {
-      if (before === undefined) delete process.env.TANACODE_SESSIONS_NO_ASK_FILE;
-      else process.env.TANACODE_SESSIONS_NO_ASK_FILE = before;
+      if (before === undefined) delete process.env.TANACODE_TOOL_PERMISSIONS_DIR;
+      else process.env.TANACODE_TOOL_PERMISSIONS_DIR = before;
     }
   });
 

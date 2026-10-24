@@ -145,6 +145,8 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
     render(<AppUpdateMark update={{ ...update('1.3.0'), homebrew: { status: 'ready', version: '1.3.0' } }} />);
     const button = screen.getByRole('button', { name: '再起動して v1.3.0 に更新' });
     expect(button.textContent).toBe('再起動して更新');
+    // メニューの項目の名前は、メニューと同じ文言を差し込む
+    expect(button.getAttribute('data-tip')).toContain('メニューの「tanacode → 終了するときに新しいバージョンを入れる（Homebrew）」がオンなら');
     fireEvent.click(button);
     expect(api.argsOf('appUpdate.install')).toEqual([[]]);
     expect(opened).toEqual([]);

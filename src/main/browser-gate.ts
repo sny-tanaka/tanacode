@@ -3,6 +3,7 @@ import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
 import { t } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
 import { callBridge, type ToolResult } from './mcp-bridge';
+import { alwaysAllowed, alwaysAllowOutput } from './tool-permissions';
 
 // アプリ内ブラウザのツールの確認。アプリが起動する Claude Code に、--settings で PreToolUse のフックとして足す。
 // - JavaScript の実行（evaluate）: 今のページが localhost（isLocalUrl）なら、確認なしで実行させる（permissionDecision: allow）。
@@ -11,6 +12,7 @@ import { callBridge, type ToolResult } from './mcp-bridge';
 //   許す先・そのタブで許可したオリジンを同じタブで開くときは、何も決めない（Claude Code のふだんの許可の決まりに任せる）。
 //   allow は返さない（manual のセッションの確認まで飛ばしてしまうため）
 // 「次から聞かない」で許可を残されていても、ask の確認は出る（実測は test/cli/browser.test.ts）。
+// ツールの許可（メニューの「MCP → Claude のツールの許可…」）で「常に許可」にしたツールは、どのページ・どの先でも allow を返す（tool-permissions.ts）。
 // どちらかは、アプリに聞く（中継とアプリの間のソケット）。ツールの名前と入力は、Claude Code がフックの標準入力に渡す JSON から読む。
 // JavaScript の実行で、アプリに聞けなかったときや、答えを読めなかったときは、確認を出させる側に倒す。開くときは何も決めない
 // （開くのはアプリなので、アプリが動いていなければ開けない。アプリは、人に確認した印の無い外の先を開かない）。
@@ -89,5 +91,7 @@ export async function runGate(socketPath: string, session: string, timeoutMs: nu
   // ほかのツールで呼ばれたら（フックの設定と合わない）、確認を出させる。localhost のページでも allow は返さない
   if (!navigate && tool !== browserToolId('evaluate')) return gateOutput(null);
   const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input, ...(toolUseId ? { toolUseId } : {}) } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
+  // ツールの許可で「常に許可」にしていれば、確認を出させない（アプリは上の問い合わせで、確認した印を控えてある。plan のときは既定のまま）
+  if (alwaysAllowed(tool, hookInput)) return alwaysAllowOutput();
   return navigate ? navigateGateOutput(readNavigateAnswer(result)) : gateOutput(readAnswer(result));
 }

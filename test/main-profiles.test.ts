@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
@@ -20,7 +20,7 @@ const listenersOf = (index: number) => managers()[index]!.args[4] as Listeners;
 // SessionManager に渡す、プロファイルの Claude Code の設定のフォルダ（index.ts の new SessionManager(...) の 13 番目の引数）
 const claudeDirOf = (index: number) => managers()[index]!.args[12];
 // SessionManager に渡す、セッションの MCP サーバーの材料（10 番目の引数）
-const sessionsLaunchOf = (index: number) => (managers()[index]!.args[9] as () => { noAskFile?: string } | null)();
+const sessionsLaunchOf = (index: number) => (managers()[index]!.args[9] as () => { permissionsDir?: string } | null)();
 const view = () => state.views[0] as FakeView;
 const sentTo = (contents: { sent: [string, unknown][] }, channel: string) => contents.sent.filter(([c]) => c === channel).map(([, payload]) => payload);
 
@@ -59,13 +59,13 @@ describe('足したプロファイルを開く', () => {
     await expect(invoke(IpcChannel.ProfilesGet)).resolves.toEqual({ profiles, current: 'default', othersAttention: false });
   });
 
-  it('切り替えると、そのプロファイルの画面だけを出して入力を向け、メニューを作り直す', async () => {
+  it('切り替えると、そのプロファイルの画面だけを出して入力を向ける（メニューはアプリ全体の設定なので、そのまま）', async () => {
     await boot({ profiles: PROFILES });
     const menu = state.menu;
     await invoke(IpcChannel.ProfilesSwitch, 'p2');
     expect(view().visible).toBe(true);
     expect(view().webContents.focus).toHaveBeenCalledTimes(1);
-    expect(state.menu).not.toBe(menu);
+    expect(state.menu).toBe(menu);
     await invokeFrom(view().webContents, IpcChannel.ProfilesSwitch, 'default');
     expect(view().visible).toBe(false);
     // 開いていないプロファイルには変えない
@@ -73,22 +73,76 @@ describe('足したプロファイルを開く', () => {
     expect(view().visible).toBe(false);
   });
 
-  it('「Claude がセッションを始める前に許可を求める」はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のファイルを見て、見ているプロファイルによらず同じ設定を切り替える', async () => {
+  it('Claude のツールの許可はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のフォルダを見て、見ているプロファイルによらず同じ設定を変える', async () => {
     await boot({ profiles: PROFILES });
-    const noAskFile = join(state.userData, 'sessions-start-no-ask');
-    expect(sessionsLaunchOf(0)).toMatchObject({ noAskFile });
-    expect(sessionsLaunchOf(1)).toMatchObject({ noAskFile });
+    const permissionsDir = join(state.userData, 'tool-permissions');
+    expect(sessionsLaunchOf(0)).toMatchObject({ permissionsDir });
+    expect(sessionsLaunchOf(1)).toMatchObject({ permissionsDir });
     await invoke(IpcChannel.ProfilesSwitch, 'p2');
-    const item = menuItem('Claude がセッションを始める前に許可を求める');
-    expect(item.checked).toBe(true);
-    item.checked = false;
-    item.click?.(item);
-    expect(existsSync(noAskFile)).toBe(true);
+    await invokeFrom(view().webContents, IpcChannel.ToolPermissionsSet, 'mcp__tanacode-sessions__start_session', 'allow');
+    expect(existsSync(join(permissionsDir, 'mcp__tanacode-sessions__start_session.allow'))).toBe(true);
     // アプリ全体の設定（既定のプロファイルと同じファイル）に保存し、足したプロファイルの設定には書かない
-    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ sessionsStartConfirm: false });
+    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ toolPermissions: { 'mcp__tanacode-sessions__start_session': 'allow' } });
     expect(existsSync(join(state.userData, 'profiles', 'p2', 'settings.json'))).toBe(false);
+    await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({ 'mcp__tanacode-sessions__start_session': 'allow' });
+  });
+
+  // 足したプロファイルの、前のバージョンの設定のファイル
+  const writeP2Settings = (s: typeof state, values: Record<string, unknown>) => {
+    mkdirSync(join(s.userData, 'profiles', 'p2'), { recursive: true });
+    writeFileSync(join(s.userData, 'profiles', 'p2', 'settings.json'), JSON.stringify({ version: 1, ...values }));
+  };
+  const p2SettingsFile = () => join(state.userData, 'profiles', 'p2', 'settings.json');
+  const globalSettings = () => JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8')) as Record<string, unknown>;
+  // SessionManager に渡す、チェックリストの MCP サーバーの材料（11 番目の引数）
+  const checklistLaunchOf = (index: number) => (managers()[index]!.args[10] as () => unknown)();
+
+  it('MCP の切り替えと Claude の自動の動きはアプリ全体で 1 つ: どのプロファイルを見ていても、メニューは同じ値を出し、切り替えはどのプロファイルのセッションにも効く', async () => {
+    await boot({ profiles: PROFILES, settings: { checklistControl: false, browserHosts: ['a.test'] }, before: (s) => writeP2Settings(s, { checklistControl: true, autoCompactPercent: 40 }) });
+    // 足したプロファイルのファイルにある前の値は使わない
+    expect(checklistLaunchOf(0)).toBeNull();
+    expect(checklistLaunchOf(1)).toBeNull();
+    await invoke(IpcChannel.ProfilesSwitch, 'p2');
+    expect(menuItem('checklistControl').checked).toBe(false);
+    expect(menuItem('autoCompactPercent-80').checked).toBe(true);
+    const item = menuItem('checklistControl');
+    item.checked = true;
+    item.click?.(item);
+    expect(checklistLaunchOf(0)).not.toBeNull();
+    expect(checklistLaunchOf(1)).not.toBeNull();
+    menuItem('autoCompactPercent-60').click?.({});
+    expect(globalSettings()).toMatchObject({ checklistControl: true, autoCompactPercent: 60 });
+    // 足したプロファイルのファイルは書き換えない
+    expect(JSON.parse(readFileSync(p2SettingsFile(), 'utf8'))).toEqual({ version: 1, checklistControl: true, autoCompactPercent: 40 });
     await invoke(IpcChannel.ProfilesSwitch, 'default');
-    expect(menuItem('Claude がセッションを始める前に許可を求める').checked).toBe(false);
+    expect(menuItem('checklistControl').checked).toBe(true);
+    expect(menuItem('autoCompactPercent-60').checked).toBe(true);
+    // ブラウザの操作をオフにしたら、どのプロファイルでも頼んでいる操作を取り下げる
+    const browser = menuItem('browserControl');
+    browser.checked = false;
+    browser.click?.(browser);
+    expect(allOf('BrowserControl').map((c) => (c.instance as Fake).turnOff.mock.calls.length)).toEqual([1, 1]);
+    // 許す先も、どのプロファイルの画面から読んでも同じ
+    await expect(invokeFrom(view().webContents, IpcChannel.BrowserHostsGet)).resolves.toEqual(['a.test']);
+  });
+
+  it('前のバージョンで足したプロファイルが持っていた許す先は、アプリ全体の許す先に足す（一度だけ。ほかの値は既定のプロファイルのものを引き継ぐ）', async () => {
+    await boot({
+      profiles: PROFILES,
+      settings: { browserHosts: ['shared.test', 'a.test'], terminalControl: false },
+      before: (s) => writeP2Settings(s, { browserHosts: ['p2.test', 'shared.test'], terminalControl: true, checklistControl: false }),
+    });
+    expect(globalSettings()).toMatchObject({ browserHosts: ['shared.test', 'a.test', 'p2.test'], terminalControl: false, checklistControl: true, profilesMerged: true });
+    // 足したプロファイルのファイルは消さない
+    expect(existsSync(p2SettingsFile())).toBe(true);
+    // 移し替えたあとは、外した先を、また足さない
+    await boot({ profiles: PROFILES, settings: { browserHosts: ['a.test'], profilesMerged: true }, before: (s) => writeP2Settings(s, { browserHosts: ['p2.test'] }) });
+    expect(globalSettings().browserHosts).toEqual(['a.test']);
+  });
+
+  it('足したプロファイルが無ければ、移し替えずに、設定のファイルも書かない', async () => {
+    await boot();
+    expect(existsSync(join(state.userData, 'settings.json'))).toBe(false);
   });
 
   it('アプリ内ブラウザの webview は、プロファイルごとのセッション（Cookie）を使わせる', async () => {
