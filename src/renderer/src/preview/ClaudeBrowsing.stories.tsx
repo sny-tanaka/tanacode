@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { AskBar, ClaudeBar, ClickBox, TabStrip } from './PreviewPane';
+import { AskBar, ClaudeBar, ClickBox, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
 
 // アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
 // Claude がユーザーに操作を頼んだときの「あなたの番です」の帯。
@@ -33,6 +33,64 @@ export const クリックする要素: Story = {
             <span style={{ display: 'inline-block', padding: '6px 14px', border: '1px solid #999', borderRadius: 4, background: '#f4f4f4' }}>注文する</span>
           </div>
           <ClickBox rect={{ x: 21, y: 69, width: 100, height: 39 }} />
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// Claude がスマホの機種の大きさにして（set_viewport の device）、指でなぞっている（touch の swipe）。
+// 枠は機種の大きさのまま（入りきらなければ、まわりでスクロールする）。ツールバーの表示幅には機種の名前が出る。
+// Claude がタブを遅くしている（throttle）間は、ツールバーに印が出て、押すと元の速さに戻る
+export const スマホの大きさでタッチ: Story = {
+  args: { label: 'タッチ' },
+  render: (args) => (
+    <div className="preview-pane" style={{ flex: 'none', width: 520, height: 560, border: '1px solid var(--border-subtle)' }}>
+      <div className="preview-toolbar">
+        <select className="preview-width" value="custom" onChange={() => {}}>
+          <option value="custom">{viewportLabel(393, { height: 852, deviceScaleFactor: 3, device: 'iPhone 15' })}</option>
+        </select>
+        <ThrottleBadge throttle={{ cpu: 4, network: 'slow-3g' }} onClear={() => {}} />
+      </div>
+      <ClaudeBar {...args} />
+      <div className="preview-body framed sized" style={{ '--preview-width': '393px', '--preview-height': '852px' } as React.CSSProperties}>
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>
+            <h1 style={{ margin: '0 0 16px', fontSize: 24 }}>パズル</h1>
+            <div style={{ width: 240, height: 240, background: '#8cf', borderRadius: 8 }} />
+          </div>
+          <TouchPoints points={[{ x: 70, y: 180 }]} />
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// 2 本の指（touch の pinch・fingers 2）。数字で幅だけを決めた（高さは枠いっぱい）。枠が狭くても幅は縮めず、横にスクロールする。
+// 遅くしているのは CPU だけ
+export const 二本指: Story = {
+  args: { label: 'タッチ' },
+  render: (args) => (
+    <div className="preview-pane" style={{ flex: 'none', width: 340, height: 420, border: '1px solid var(--border-subtle)' }}>
+      <div className="preview-toolbar">
+        <select className="preview-width" value="custom" onChange={() => {}}>
+          <option value="custom">{viewportLabel(390, { height: 0, deviceScaleFactor: 3, device: null })}</option>
+        </select>
+        <ThrottleBadge throttle={{ cpu: 6, network: null }} onClear={() => {}} />
+      </div>
+      <ClaudeBar {...args} />
+      <div className="preview-body framed sized" style={{ '--preview-width': '390px', '--preview-height': '100%' } as React.CSSProperties}>
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>
+            <h1 style={{ margin: '0 0 16px', fontSize: 24 }}>地図</h1>
+            <div style={{ width: 300, height: 200, background: '#cfe8c8', borderRadius: 8 }} />
+          </div>
+          <TouchPoints
+            points={[
+              { x: 120, y: 160 },
+              { x: 220, y: 160 },
+            ]}
+          />
         </div>
       </div>
     </div>

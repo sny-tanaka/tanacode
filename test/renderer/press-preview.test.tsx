@@ -168,6 +168,70 @@ describe('PreviewPane: アドレス欄と表示幅', () => {
     rerender(<Pane sessionId="s1" />);
     expect(select.value).toBe('390');
   });
+
+  it('Claude が機種の名前や数字で大きさを決めたら、枠をその幅と高さにし、表示幅の欄にその大きさを出す。ほかの表示幅を選ぶと、決めたものをやめさせる', async () => {
+    const { container } = render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    const select = screen.getByTitle('表示幅') as HTMLSelectElement;
+    const body = () => container.querySelector('.preview-body') as HTMLElement;
+    act(() => api.emit('browser.onViewport', { sessionId: 's1', width: 393, custom: { height: 852, deviceScaleFactor: 3, device: 'iPhone 15' } }));
+    expect(select.value).toBe('custom');
+    expect(select.selectedOptions[0]!.textContent).toBe('iPhone 15（393×852 @3x）');
+    expect(body().className).toBe('preview-body framed sized');
+    expect(body().style.getPropertyValue('--preview-width')).toBe('393px');
+    expect(body().style.getPropertyValue('--preview-height')).toBe('852px');
+    // 幅だけ（高さは枠いっぱい）。枠が狭くても、ページの右が切れずにスクロールできるように、幅はそのままにする
+    act(() => api.emit('browser.onViewport', { sessionId: 's1', width: 390, custom: { height: 0, deviceScaleFactor: 2, device: null } }));
+    expect(select.selectedOptions[0]!.textContent).toBe('幅 390 @2x');
+    expect(body().className).toBe('preview-body framed sized');
+    expect(body().style.getPropertyValue('--preview-height')).toBe('100%');
+    expect(api.argsOf('browser.resetViewport')).toEqual([]);
+    fireEvent.change(select, { target: { value: '768' } });
+    expect(api.argsOf('browser.resetViewport')).toEqual([['s1']]);
+    expect(select.value).toBe('768');
+    expect([...select.options].map((o) => o.value)).toEqual(['0', '390', '768']);
+    // Claude が幅だけを変えた（前からの全幅・スマホ・タブレット）ときは、決めたものが無いので、やめさせない
+    act(() => api.emit('browser.onViewport', { sessionId: 's1', width: 390 }));
+    fireEvent.change(select, { target: { value: '0' } });
+    expect(api.argsOf('browser.resetViewport')).toEqual([['s1']]);
+  });
+});
+
+describe('PreviewPane: Claude の操作の様子（タッチ・遅くする）', () => {
+  it('Claude がタッチしている指の位置に丸を出す', async () => {
+    const { container } = render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    act(() => api.emit('browser.onActivity', { sessionId: 's1', active: true, label: null, box: null, touches: [{ x: 10, y: 20 }, { x: 50, y: 20 }] }));
+    const dots = [...container.querySelectorAll<HTMLElement>('.preview-touch')];
+    expect(dots.map((d) => [d.style.left, d.style.top])).toEqual([
+      ['10px', '20px'],
+      ['50px', '20px'],
+    ]);
+    act(() => api.emit('browser.onActivity', { sessionId: 's1', active: true, label: null, box: null }));
+    expect(container.querySelectorAll('.preview-touch')).toHaveLength(0);
+  });
+
+  it('Claude が今のタブを遅くしている間はツールバーに印を出し、押すとそのタブの遅くするのをやめさせる。ほかのタブ・閉じたタブには出さない', async () => {
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('localhost:3000');
+    const tab = activated()[0]![1] as string;
+    const badge = () => screen.queryByLabelText(/^Claude がこのタブを遅くしています/);
+    act(() => api.emit('browser.onThrottle', { sessionId: 's1', tabId: 'tab-other', cpu: 4, network: null }));
+    expect(badge()).toBeNull();
+    act(() => api.emit('browser.onThrottle', { sessionId: 's1', tabId: tab, cpu: 4, network: 'slow-3g' }));
+    expect(badge()!.textContent).toBe('CPU 4× 遅く・低速 3G');
+    act(() => api.emit('browser.onThrottle', { sessionId: 's1', tabId: tab, cpu: 1, network: 'offline' }));
+    expect(badge()!.textContent).toBe('オフライン');
+    fireEvent.click(badge()!);
+    expect(api.argsOf('browser.clearThrottle')).toEqual([['s1', tab]]);
+    act(() => api.emit('browser.onThrottle', { sessionId: 's1', tabId: tab, cpu: 1, network: null }));
+    expect(badge()).toBeNull();
+    // タブを閉じたら消す
+    act(() => api.emit('browser.onThrottle', { sessionId: 's1', tabId: tab, cpu: 2, network: null }));
+    fireEvent.click(screen.getAllByLabelText('タブを閉じる')[0]!);
+    expect(badge()).toBeNull();
+  });
 });
 
 describe('PreviewPane: ツールバーのボタン', () => {

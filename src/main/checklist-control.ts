@@ -229,7 +229,7 @@ export class ChecklistControl {
         return overview(store.lists(id), own);
       case 'card_get': {
         const list = this.listArg(id, args.list);
-        const cards = this.cardsArg(list, args.numbers);
+        const cards = this.cardsArg(list, args, 'numbers');
         // 未読の印を付けて返してから、読んだことにする
         const text = clip(cards.map((c) => cardText(list, c, own)).join('\n\n---\n\n'), MAX_RESULT_CHARS);
         if (own) for (const card of cards) store.markRead(id, 'claude', list.id, card.id);
@@ -270,8 +270,13 @@ export class ChecklistControl {
           .join(' ');
       }
       case 'card_add': {
-        const raw = Array.isArray(args.cards) ? (args.cards as { title?: unknown; body?: unknown }[]) : [];
-        if (raw.length === 0) throw new ChecklistError('Pass at least one card to add in cards.');
+        // cards を使わず title（と body）を直に渡されたら、1 枚として受け取る（よくある取り違え）
+        const raw = Array.isArray(args.cards)
+          ? (args.cards as { title?: unknown; body?: unknown }[])
+          : args.cards === undefined && typeof args.title === 'string'
+            ? [{ title: args.title, body: args.body }]
+            : [];
+        if (raw.length === 0) throw new ChecklistError('Pass at least one card to add in cards (an array of objects with title and, optionally, body).');
         const cards = raw.map((c) => ({ title: typeof c?.title === 'string' ? c.title : '', body: typeof c?.body === 'string' ? c.body : undefined }));
         let list = store.findList(id, stringArg(args.list, 'list'));
         let note = '';
@@ -288,7 +293,7 @@ export class ChecklistControl {
       }
       case 'card_update': {
         const list = this.listArg(id, args.list);
-        const [card] = this.cardsArg(list, args.number);
+        const [card] = this.cardsArg(list, args, 'number');
         const updated = store.updateCard(id, 'claude', list.id, card.id, { title: optionalString(args.title), body: optionalString(args.body) });
         return `Updated "${list.name}" #${updated.number}.`;
       }
@@ -296,7 +301,7 @@ export class ChecklistControl {
       case 'card_uncheck': {
         const check = name === 'card_check';
         const list = this.listArg(id, args.list);
-        const cards = this.cardsArg(list, args.numbers);
+        const cards = this.cardsArg(list, args, 'numbers');
         const comment = check ? optionalString(args.comment) : stringArg(args.reason, 'reason');
         const changed = store.setChecked(id, 'claude', list.id, cards.map((c) => c.id), check, comment, own);
         const same = cards.filter((c) => !changed.includes(c));
@@ -309,7 +314,7 @@ export class ChecklistControl {
       }
       case 'card_revoke': {
         const list = this.listArg(id, args.list);
-        const cards = this.cardsArg(list, args.numbers);
+        const cards = this.cardsArg(list, args, 'numbers');
         const revoked = store.revokeCards(id, 'claude', list.id, cards.map((c) => c.id), stringArg(args.reason, 'reason'));
         const same = cards.filter((c) => !revoked.includes(c));
         const them = revoked.length === 1 ? 'it' : 'them';
@@ -323,14 +328,14 @@ export class ChecklistControl {
       }
       case 'card_reply': {
         const list = this.listArg(id, args.list);
-        const [card] = this.cardsArg(list, args.number);
+        const [card] = this.cardsArg(list, args, 'number');
         store.reply(id, 'claude', list.id, card.id, stringArg(args.text, 'text'), false, own);
         return `Replied in the thread of "${list.name}" #${card.number}.`;
       }
       case 'card_move': {
         const list = this.listArg(id, args.list);
         // numbers に書いた順に並べる（parseNumbers は順番を保つ）
-        const cards = this.cardsArg(list, args.numbers);
+        const cards = this.cardsArg(list, args, 'numbers');
         // to_list を省くと、同じリストの中で並べ替える（番号はそのまま）
         const toName = optionalString(args.to_list)?.trim() || null;
         const found = toName === null ? list : store.findList(id, toName);
@@ -348,7 +353,7 @@ export class ChecklistControl {
       }
       case 'card_delete': {
         const list = this.listArg(id, args.list);
-        const cards = this.cardsArg(list, args.numbers);
+        const cards = this.cardsArg(list, args, 'numbers');
         store.deleteCards(id, 'claude', list.id, cards.map((c) => c.id));
         const them = cards.length === 1 ? 'it' : 'them';
         // 決定事項のカードを戻せるのは人だけ
@@ -357,7 +362,7 @@ export class ChecklistControl {
       }
       case 'card_restore': {
         const list = this.listArg(id, args.list);
-        const cards = this.cardsArg(list, args.numbers, true);
+        const cards = this.cardsArg(list, args, 'numbers', true);
         const restored = store.restoreCards(id, 'claude', list.id, cards.map((c) => c.id));
         return restored.length > 0 ? `Restored ${claudeNumbers(restored.map((c) => c.number))} in "${list.name}".` : 'None of the cards were in the trash.';
       }
@@ -374,7 +379,7 @@ export class ChecklistControl {
     if (from.id === to.id) throw new ChecklistError('The source and destination are the same session. To move cards within a session, use card_move.');
     if (to.archived) throw new ChecklistError(`Can't copy to "${nameOf(to)}" because it is an archived session.`);
     const list = this.listArg(from.id, args.from_list);
-    const cards = this.cardsArg(list, args.numbers);
+    const cards = this.cardsArg(list, args, 'numbers');
     const result = this.deps.store.copyCards(
       { sessionId: from.id, title: nameOf(from), listId: list.id, cardIds: cards.map((c) => c.id) },
       to.id,
@@ -456,9 +461,17 @@ export class ChecklistControl {
   }
 
   // 番号の指定から、カード（ゴミ箱のものは trashed のときだけ）。無い番号があれば、そう返す
-  private cardsArg(list: Checklist, raw: unknown, trashed = false): Card[] {
+  // key: 番号を受け取る引数の名前（numbers か number）。無ければ、取り違えた名前（cards・number など）を添えて、正しい名前を返す
+  // （エラーが引数の名前を言わないと、Claude が書き方を変えて何度も失敗していた）
+  private cardsArg(list: Checklist, args: Record<string, unknown>, key: 'numbers' | 'number', trashed = false): Card[] {
+    const raw = args[key];
+    if (raw === undefined) {
+      const wrong = ['numbers', 'number', 'cards', 'card', 'ids', 'id'].find((name) => name !== key && args[name] !== undefined);
+      const example = key === 'numbers' ? '"3", "5-8" or "5,7,9"' : '"3"';
+      throw new ChecklistError(`Pass the card ${key === 'numbers' ? 'numbers' : 'number'} in ${key}, written like ${example}${wrong ? ` (you passed ${wrong}, which this tool does not take)` : ''}.`);
+    }
     const numbers = parseNumbers(raw);
-    if (!numbers || numbers.length === 0) throw new ChecklistError('Write the numbers like "3", "5-8" or "5,7,9".');
+    if (!numbers || numbers.length === 0) throw new ChecklistError(`Write ${key} like ${key === 'numbers' ? '"3", "5-8" or "5,7,9"' : '"3"'}.`);
     const pool = trashed ? list.cards.filter((c) => c.deletedAt) : liveCards(list);
     const found = numbers.map((n) => pool.find((c) => c.number === n));
     const missing = numbers.filter((_, i) => !found[i]);

@@ -1,8 +1,22 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
-import { BROWSER_MCP, browserTool, browserToolId, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
+import {
+  BROWSER_DEVICES,
+  BROWSER_MCP,
+  browserTool,
+  browserToolId,
+  isClaudeAllowedUrl,
+  isLocalUrl,
+  NETWORK_PRESETS,
+  THROTTLE_LIMITS,
+  TOUCH_LIMITS,
+  VIEWPORT_LIMITS,
+  type NetworkPresetName,
+} from '@shared/browser-tools';
 import { t } from '@shared/i18n';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
@@ -49,6 +63,15 @@ const MAX_MARKS = 20;
 // 撮った絵が空のとき、描かれるのを待って撮り直す時間と間隔（shoot）
 const EMPTY_SHOT_WAIT_MS = 3_000;
 const EMPTY_SHOT_POLL_MS = 100;
+// CDP で大きさを当てたときに、ページの拡大率を 1 にする（Emulation.setPageScaleFactor）。スマホとして扱うページの拡大率が、1 でないまま残ることがあるため
+// （Electron 44.7。機種の大きさにして、やめて、アプリの画面を拡大してから、また機種の大きさにすると、1.548 倍になった。
+// そのときは、タッチが (368, 100) + 1.1 × 送った位置に届き、さわった所とずれた。Emulation.resetPageScaleFactor では戻らなかった）
+const ONE_PAGE_SCALE = { pageScaleFactor: 1 };
+// 要素まで動かしたあとの絵が描かれるのを待つスクリプト（2 コマ）と、待つ上限（screenshot）
+const FRAMES_DRAWN = 'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))';
+const FRAME_WAIT_MS = 500;
+// 画素密度を決めたタブを CDP で撮るのを待つ時間（過ぎたら capturePage で撮る。shoot）
+const DENSE_SHOT_WAIT_MS = 5_000;
 // タブが大きさを持つまで待つ時間と間隔（laidOut）
 const LAYOUT_WAIT_MS = 3_000;
 const LAYOUT_POLL_MS = 100;
@@ -66,6 +89,14 @@ const OPERATING_GRACE_MS = 2_000;
 // 1 つのセッションで開けるタブの数（ページが window.open を繰り返しても、タブで埋まらないように）
 const MAX_TABS = 20;
 const VIEWPORTS: Record<string, number> = { full: 0, mobile: 390, tablet: 768 };
+// 保存しておくスクリーンショットの数（screenshot の save。古いものから消す）
+const MAX_SAVED_SHOTS = 100;
+// タッチの既定の時間（長押し・なぞる）と、タップで指を置いておく時間
+const LONG_PRESS_MS = 800;
+const SWIPE_MS = 300;
+const TAP_MS = 50;
+// 2 本指のタップ・なぞるときの指の間（CSS の px）
+const FINGER_GAP = 40;
 const DEFAULT_STYLES = [
   'display', 'position', 'box-sizing', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
   'color', 'background-color', 'background-image', 'opacity', 'font-family', 'font-size', 'font-weight', 'line-height',
@@ -157,6 +188,12 @@ type Guest = {
   children: Set<string>;
   // 人が、このタブで開くことを許した、許す先の外のオリジン（タブを閉じるまで残す）
   granted: Set<string>;
+  // このタブに CDP で決めた画面の大きさ（Emulation。セッションの viewport を写したもの。決めていなければ null）。
+  // CDP が外れると、決めたものも消えるので null に戻す（次に Claude が操作するときに決め直す）
+  emulated: Emulation | null;
+  // このタブを遅くしている様子（throttle。cpu: 何倍遅くするか。1 は遅くしていない / network: 通信の速さ。null は遅くしていない）。
+  // タブを閉じるか、CDP が外れるまで、読み込み直しても・別のページへ移っても残る
+  throttle: { cpu: number; network: NetworkPresetName | null };
   // Claude の操作の間に、許していない先へ移ろう（開こう）として止めた先。navigate の action: "continue" で、人に許可を求めて開く。
   // newWindow: ページが新しいウインドウで開こうとしたもの（新しいタブで開く）
   stopped: { url: string; newWindow: boolean } | null;
@@ -175,7 +212,14 @@ type Tabs = {
   // これからできるタブに渡す許可（navigate で新しいタブに開く・許可したページが同じオリジンを新しいウインドウで開く）。
   // 画面がタブを作って知らせてくるまでの間だけ（until まで）
   handoff: { origin: string; until: number }[];
+  // Claude が set_viewport で決めた画面の大きさ（数字か機種の名前で決めたもの）。セッションのどのタブにも（あとで開いたタブにも）当てる。
+  // set_viewport で full・mobile・tablet を選ぶか、人がツールバーで表示幅を選ぶまで残る
+  viewport: Emulation | null;
 };
+
+// CDP で決める画面の大きさ。width・height: CSS の px（0 は枠の大きさのまま）/ deviceScaleFactor: 画素密度（0 は画面のまま）/
+// mobile: スマホとして扱う（タッチ・meta viewport）/ label: ツールバーと Claude への答えに出す名前
+type Emulation = { label: string; width: number; height: number; deviceScaleFactor: number; mobile: boolean };
 
 // JavaScript の実行の確認のフックが答えたときのページ。フックに渡った式と、そのときの今のタブのオリジン（無い・空のタブなら null）。
 // evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）。
@@ -200,6 +244,8 @@ type Deps = {
   // アプリの画面を、描かれる状態にする（戻す関数を返す）。見ていないプロファイルの画面は非表示で、その中のタブは大きさが決まらず、
   // 撮ることもできないため、ツールを動かす間だけ頼む
   drawHost: () => () => void;
+  // screenshot の save で、撮った画像を保存するフォルダ（アプリのデータの中）
+  screenshotDir: string;
   // あるセッションか（アーカイブしたものも含む）
   hasSession: (id: string) => boolean;
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
@@ -208,6 +254,7 @@ type Deps = {
     open: typeof IpcChannel.BrowserOpen;
     activity: typeof IpcChannel.BrowserActivity;
     viewport: typeof IpcChannel.BrowserViewport;
+    throttle: typeof IpcChannel.BrowserThrottle;
     newTab: typeof IpcChannel.BrowserNewTab;
     selectTab: typeof IpcChannel.BrowserSelectTab;
     closeTab: typeof IpcChannel.BrowserCloseTab;
@@ -307,13 +354,29 @@ export class BrowserControl {
       granted = new Set(session.handoff.filter((h) => h.until > now).map((h) => h.origin));
       session.handoff = [];
     }
-    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false, children: new Set(), granted, stopped: null };
+    const guest: Guest = {
+      tabId,
+      contents,
+      logs: this.track(contents),
+      cdp: false,
+      children: new Set(),
+      granted,
+      stopped: null,
+      emulated: null,
+      throttle: { cpu: 1, network: null },
+    };
     session.tabs.set(tabId, guest);
     // 並びは、画面がタブを作った順（タブの ID の番号）
     session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
+    // CDP が外れると、CDP で決めた画面の大きさと遅くする設定も消える
     contents.debugger.on('detach', () => {
       guest.cdp = false;
       guest.children.clear();
+      guest.emulated = null;
+      if (guest.throttle.cpu !== 1 || guest.throttle.network) {
+        guest.throttle = { cpu: 1, network: null };
+        this.sendThrottle(sessionId, guest);
+      }
     });
     contents.debugger.on('message', (_event, method, params: { sessionId?: string; targetInfo?: { type?: string } }) => {
       if (method === 'Target.attachedToTarget' && params.sessionId && params.targetInfo?.type === 'iframe') guest.children.add(params.sessionId);
@@ -325,6 +388,22 @@ export class BrowserControl {
     });
     for (const resolve of this.waiters.get(sessionId) ?? []) resolve(guest);
     this.waiters.delete(sessionId);
+    // Claude が決めた画面の大きさは、あとで開いたタブにも当てる（人が開いたタブも、枠はその大きさになるため）
+    if (session.viewport) void this.emulate(guest, session.viewport).catch(() => undefined);
+  }
+
+  // 人がツールバーで表示幅を選んだ。Claude が set_viewport で決めた大きさ・画素密度・タッチをやめる（画面は、選んだ幅にする）
+  resetViewport(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.viewport = null;
+    for (const guest of session.tabs.values()) if (!guest.contents.isDestroyed()) void this.emulate(guest, null).catch(() => undefined);
+  }
+
+  // 人がツールバーで、タブを遅くするのをやめた
+  clearThrottle(sessionId: string, tabId: string): void {
+    const guest = this.sessions.get(sessionId)?.tabs.get(tabId);
+    if (guest && !guest.contents.isDestroyed()) void this.applyThrottle(sessionId, guest, { cpu: 1, network: null }).catch(() => undefined);
   }
 
   // 画面で今のタブが変わった（タブが無くなったら null）
@@ -605,9 +684,12 @@ export class BrowserControl {
     if (name === 'select_tab') return this.selectTab(sessionId, args.index);
     if (name === 'close_tab') return this.closeTab(sessionId, args.index);
     const guest = await this.current(sessionId);
+    // Claude が決めた画面の大きさが、このタブに当たっていなければ当てる（CDP が外れて消えた・当てる前に操作した）
+    // 当てられなくても（CDP をつなげない など）、ツールは続ける（読むツールまで止めない）。当たっていないので、次の呼び出しでまた当てる
+    if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport).catch(() => undefined);
     switch (name) {
       case 'screenshot':
-        return this.screenshot(guest, optionalString(args.selector), args.fullPage === true);
+        return this.screenshot(guest, optionalString(args.selector), args.fullPage === true, args.save === true);
       case 'get_text':
         return this.text(guest, optionalString(args.selector));
       case 'get_accessibility_tree':
@@ -629,7 +711,11 @@ export class BrowserControl {
       case 'wait_for':
         return this.waitFor(guest, args);
       case 'set_viewport':
-        return this.setViewport(sessionId, guest, requiredString(args.width, 'width'));
+        return this.setViewport(sessionId, guest, args);
+      case 'touch':
+        return this.touch(sessionId, guest, args);
+      case 'throttle':
+        return this.throttle(sessionId, guest, args);
       case 'evaluate':
         return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
     }
@@ -872,24 +958,77 @@ export class BrowserControl {
     }
   }
 
-  // 見えている範囲（rect があれば、その中）を撮る。空の絵が返ったら、少しの間、撮り直す
-  // （描かせ始めた直後は、まだ 1 枚も描かれていないことがある）
+  // 見えている範囲（rect があれば、その中）を撮る。空の絵が返ったり、例外になったりしたら、少しの間、撮り直す
+  // （描かせ始めた直後は、まだ 1 枚も描かれていないことがある。capturePage は、描いた絵を合成する側の都合で、
+  // UnknownVizError などの例外になることもある）。撮り直しても例外のままなら、CDP の Page.captureScreenshot で撮る
+  // （別の道筋で撮るもの。それも撮れなければ、capturePage の例外を伝える）
+  // 画素密度を決めているタブ（set_viewport の deviceScaleFactor）は、先に CDP で撮る（denseShot）。capturePage は、アプリの画面の画素密度で撮るため
+  // （Retina なら 2 倍。iPhone の 3 倍にならない）。CDP で撮れなければ（返ってこない・空・画面と違う絵）、capturePage で撮る
   private shoot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage> {
     return this.capture(guest, async () => {
+      if (guest.emulated?.deviceScaleFactor) {
+        const dense = await Promise.race([this.denseShot(guest, rect), sleep(DENSE_SHOT_WAIT_MS).then(() => null)]);
+        if (dense) return dense;
+      }
       const until = Date.now() + EMPTY_SHOT_WAIT_MS;
       while (true) {
-        const image = await (rect ? guest.contents.capturePage(rect) : guest.contents.capturePage());
-        if (!image.isEmpty() || Date.now() >= until) return image;
+        let image: NativeImage | null = null;
+        let failure: unknown = null;
+        try {
+          image = await (rect ? guest.contents.capturePage(rect) : guest.contents.capturePage());
+        } catch (error) {
+          failure = error;
+        }
+        if (image && !image.isEmpty()) return image;
+        if (Date.now() >= until) {
+          if (image) return image;
+          const fallback = await this.cdpShot(guest, rect);
+          if (fallback) return fallback;
+          throw new ToolError(`Could not take a screenshot (${failure instanceof Error ? failure.message : String(failure)}).`);
+        }
         await sleep(EMPTY_SHOT_POLL_MS);
       }
     });
   }
 
-  private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean): Promise<ToolResult> {
+  // CDP の Page.captureScreenshot で、見えている範囲（rect があれば、その中。CSS の px）を撮る。撮れなければ null。
+  // rect は、見えている範囲をまるごと撮ってから切り出す。clip は使わない（Electron 44.7 の webview で、clip をページの先頭から測るか
+  // 見えている範囲から測るかが、ブラウザを閉じているか・その前に captureBeyondViewport で撮ったかで入れ替わり、別の場所が撮れたため）
+  private async cdpShot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
+    const shot = (await this.cdp(guest, 'Page.captureScreenshot', { format: 'png' }).catch(() => null)) as { data?: unknown } | null;
+    const image = typeof shot?.data === 'string' ? nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) : null;
+    if (!image || image.isEmpty()) return null;
+    return rect ? this.cropShot(guest, image, rect) : image;
+  }
+
+  // 画素密度を決めたタブを、その画素密度で撮る（CDP）。撮った絵が、capturePage で撮った絵（画面に出ている絵）と合うときだけ使い、
+  // 合わなければ null（capturePage で撮る）。アプリの画面の画素密度より大きい画素密度を決めると、CDP が崩れた絵を返すことがあるため
+  // （Electron 44.7 の webview。画面の画素密度 1 で、2 倍・3 倍を決めると、真っ黒・ページ全体が青い四角のくり返し、などになった。
+  // 画面が 2 倍（Retina）なら、3 倍でも正しく撮れた。どの組み合わせで崩れるかの決まりは見つけられなかったので、撮るたびに見比べる）
+  private async denseShot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
+    const whole = await this.cdpShot(guest);
+    if (!whole) return null;
+    const dense = rect ? await this.cropShot(guest, whole, rect) : whole;
+    // 見比べるのは、撮る範囲どうし（見えている範囲全体で比べると、小さな要素の所が違っても、まわりが合って同じとみなしてしまう）
+    const plain = await (rect ? guest.contents.capturePage(rect) : guest.contents.capturePage()).catch(() => null);
+    if (!dense || !plain || plain.isEmpty() || !looksSame(dense, plain)) return null;
+    return dense;
+  }
+
+  // 見えている範囲をまるごと撮った絵から、rect（CSS の px）を切り出す。撮った絵は、見えている範囲の画素密度倍
+  private async cropShot(guest: Guest, image: NativeImage, rect: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
+    const scale = image.getSize().width / Math.max((await this.viewport(guest)).width, 1);
+    const cropped = image.crop({ x: Math.round(rect.x * scale), y: Math.round(rect.y * scale), width: Math.round(rect.width * scale), height: Math.round(rect.height * scale) });
+    return cropped.isEmpty() ? null : cropped;
+  }
+
+  private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean, save: boolean): Promise<ToolResult> {
     const { contents } = guest;
     const since = guest.logs.navigated.count;
     let image: NativeImage;
-    // CDP で撮るものは、はじめからページの大きさ（CSS の px）
+    // 撮った範囲の幅（CSS の px）。撮った画像は、Retina などでは画素密度の倍の大きさなので、Claude にはこの幅に縮めて返す。
+    // CDP で撮るもの（fullPage）は、はじめからページの大きさ
+    let cssWidth: number;
     let note: string;
     if (selector) {
       const target = await this.locate(guest, selector);
@@ -899,7 +1038,11 @@ export class BrowserControl {
       const width = Math.min(target.viewport.width - x, Math.ceil(target.rect.width + pad * 2));
       const height = Math.min(target.viewport.height - y, Math.ceil(target.rect.height + pad * 2));
       if (width <= 0 || height <= 0) throw new ToolError(`"${selector}" has zero size and cannot be captured.`);
+      // 要素まで動かした（locate の scrollIntoView）あとの絵が描かれるのを待つ。待たずに CDP で撮ると、動かす前の絵が撮れた
+      // （Electron 44.7 の webview。ブラウザを閉じて見ていないタブ）。描かれない状態でも先へ進むよう、待つのは長くても 0.5 秒
+      await Promise.race([this.world(guest, FRAMES_DRAWN).catch(() => undefined), sleep(FRAME_WAIT_MS)]);
       image = await this.shoot(guest, { x, y, width, height });
+      cssWidth = width;
       note = `${selector} (${target.description})`;
     } else if (fullPage) {
       await this.laidOut(guest);
@@ -915,23 +1058,60 @@ export class BrowserControl {
         }),
       )) as { data: string };
       image = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
+      // captureBeyondViewport で撮ると、CDP で決めた大きさのうち、タッチ対応が外れる（Electron 44.7 で確かめた。大きさと画素密度は残る）ので、当て直す
+      if (guest.emulated) {
+        const emulation = guest.emulated;
+        guest.emulated = null;
+        await this.emulate(guest, emulation).catch(() => undefined);
+      }
+      cssWidth = width;
       note = height < total ? `Top ${height}px of the page (full height ${total}px; scroll and take another screenshot for the rest)` : `Full page (${width}×${height})`;
     } else {
       await this.laidOut(guest);
       image = await this.shoot(guest);
+      cssWidth = (await this.viewport(guest)).width;
       note = 'Visible area';
     }
     const url = contents.getURL();
     this.readFrom(guest, url, since);
     if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');
-    image = shrink(image, fullPage ? 1 : (await this.viewport(guest)).dpr);
+    // 保存するものは、撮ったままの大きさ（人に見せるもの。実機と同じ画素の細かさ）
+    const saved = save ? await this.saveShot(image) : null;
+    const original = image.getSize();
+    image = shrink(image, original.width / Math.max(cssWidth, 1));
     const size = image.getSize();
+    const lines = [`${note}, ${this.shownUrl(url, guest)}, image ${size.width}×${size.height}`];
+    // 画素密度を決めたのに、その細かさで撮れなかった（CDP の絵が画面と合わなかった）。ページ全体は、はじめから CSS の px で撮る
+    const density = guest.emulated?.deviceScaleFactor ?? 0;
+    const shotDensity = original.width / Math.max(cssWidth, 1);
+    if (save && !fullPage && density > 0 && shotDensity < density * 0.99) {
+      lines.push(
+        `The saved image has the pixel density of this screen (${round(shotDensity)}×), not the emulated ${density}×: on this screen, the capture at ${density}× did not match what is shown, so tanacode used the screen's capture.`,
+      );
+    }
+    if (saved) lines.push(`Saved to ${saved} (${original.width}×${original.height}). Send it to the user with SendUserFile if they need to see it.`);
     return {
       content: [
         { type: 'image', data: image.toPNG().toString('base64'), mimeType: 'image/png' },
-        { type: 'text', text: `${note}, ${this.shownUrl(url, guest)}, image ${size.width}×${size.height}` },
+        { type: 'text', text: lines.join('\n') },
       ],
     };
+  }
+
+  // 撮った画像を、アプリのデータの中のフォルダに PNG で保存して、そのパスを返す。古いものは、新しいもの MAX_SAVED_SHOTS 枚を残して消す。
+  // 名前は撮った時刻（並べると古い順）と、同じ時刻に撮ったものを分ける乱数
+  private async saveShot(image: NativeImage): Promise<string> {
+    const dir = this.deps.screenshotDir;
+    try {
+      await mkdir(dir, { recursive: true });
+      const file = join(dir, `screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 6)}.png`);
+      await writeFile(file, image.toPNG());
+      const shots = (await readdir(dir)).filter((name) => /^screenshot-.*\.png$/.test(name)).sort();
+      for (const old of shots.slice(0, Math.max(0, shots.length - MAX_SAVED_SHOTS))) await rm(join(dir, old), { force: true });
+      return file;
+    } catch (error) {
+      throw new ToolError(`Took the screenshot, but could not save it in ${dir} (${error instanceof Error ? error.message : String(error)}).`);
+    }
   }
 
   // 同じオリジンの iframe の中の文字も、iframe ごとに分けて読む
@@ -1279,14 +1459,242 @@ export class BrowserControl {
     }
   }
 
-  private async setViewport(sessionId: string, guest: Guest, width: string): Promise<ToolResult> {
+  // 画面の大きさを変える。full・mobile・tablet だけなら、前と同じく、画面（枠）の幅だけを変える（CDP では決めない）。
+  // 機種の名前か数字なら、CDP の Emulation で、ページから見える大きさ・画素密度・タッチをそのとおりにし、画面の枠もその大きさにする。
+  // セッションのどのタブにも当てる（あとで開いたタブにも。attach）
+  private async setViewport(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const session = this.tabsOf(sessionId);
+    const deviceName = optionalString(args.device);
+    const device = deviceName ? BROWSER_DEVICES.find((d) => d.name.toLowerCase() === deviceName.trim().toLowerCase()) : undefined;
+    if (deviceName && !device) {
+      throw new ToolError(`Unknown device: ${deviceName}. Choose one of ${BROWSER_DEVICES.map((d) => d.name).join(', ')}, or pass width, height and deviceScaleFactor.`);
+    }
     // in だと、Object の持ち物の名前（toString・constructor・__proto__）も通るので、自分の持つキーだけを受け付ける
-    if (!Object.hasOwn(VIEWPORTS, width)) throw new ToolError(`width must be full, mobile or tablet: ${width}`);
-    this.deps.send(this.deps.channels.viewport, { sessionId, width: VIEWPORTS[width] });
-    // 画面が webview の幅を変えて、ページが描き直すのを待つ
+    const named = typeof args.width === 'string' ? args.width : undefined;
+    if ((named !== undefined && !Object.hasOwn(VIEWPORTS, named)) || (args.width !== undefined && named === undefined && typeof args.width !== 'number')) {
+      throw new ToolError(`width must be full, mobile or tablet, or a number: ${String(args.width)}`);
+    }
+    if (args.mobile !== undefined && typeof args.mobile !== 'boolean') throw new ToolError(`mobile must be true or false: ${String(args.mobile)}`);
+    // mobile: false だけ（数字なし）は、CDP で決めるものが何も無いので、幅だけの切り替えとして扱う
+    const numbers = typeof args.width === 'number' || args.height !== undefined || args.deviceScaleFactor !== undefined || args.mobile === true;
+    if (!device && !numbers) {
+      if (named === undefined) throw new ToolError('Provide device or width.');
+      // 前と同じ、画面の幅だけを変えるもの。CDP で決めたものはやめる
+      session.viewport = null;
+      this.deps.send(this.deps.channels.viewport, { sessionId, width: VIEWPORTS[named]! });
+      await this.emulateAll(session, null);
+      // 画面が webview の幅を変えて、ページが描き直すのを待つ
+      await sleep(400);
+      const viewport = await this.viewport(guest);
+      return textResult(`Set the viewport to ${named} (page width ${viewport.width}px, height ${viewport.height}px)`);
+    }
+    const size = (value: unknown, name: string, fallback: number) => (value === undefined ? fallback : ranged(value, name, VIEWPORT_LIMITS.min, VIEWPORT_LIMITS.max));
+    // 数字は機種のものより先に使う（機種を横向きにするなど）。full は枠の幅いっぱい（0）
+    const width = named !== undefined ? VIEWPORTS[named]! : size(args.width, 'width', device?.width ?? 0);
+    const height = size(args.height, 'height', device?.height ?? 0);
+    const deviceScaleFactor =
+      args.deviceScaleFactor === undefined
+        ? (device?.deviceScaleFactor ?? 0)
+        : ranged(args.deviceScaleFactor, 'deviceScaleFactor', VIEWPORT_LIMITS.minScale, VIEWPORT_LIMITS.maxScale);
+    const mobile = typeof args.mobile === 'boolean' ? args.mobile : !!device;
+    const dims = `${width || 'pane width'}×${height || 'pane height'}${deviceScaleFactor ? ` @${deviceScaleFactor}x` : ''}`;
+    const label = device ? `${device.name} ${dims}` : dims;
+    const emulation: Emulation = { label, width, height, deviceScaleFactor, mobile };
+    session.viewport = emulation;
+    this.deps.send(this.deps.channels.viewport, { sessionId, width, custom: { height, deviceScaleFactor, device: device?.name ?? null } });
+    await this.emulateAll(session, emulation);
+    // 画面が枠の大きさを変えて、ページが描き直すのを待つ。描き直すときに、ページの拡大率がまた決まり直すことがあるので、待ってからも 1 にする
     await sleep(400);
+    for (const tab of session.tabs.values()) if (!tab.contents.isDestroyed() && tab.emulated) await this.cdp(tab, 'Emulation.setPageScaleFactor', ONE_PAGE_SCALE).catch(() => undefined);
     const viewport = await this.viewport(guest);
-    return textResult(`Set the viewport to ${width} (page width ${viewport.width}px, height ${viewport.height}px)`);
+    return textResult(
+      `Set the viewport to ${label}${mobile ? ' as a mobile device with touch support' : ''}. ` +
+        `The page now sees innerWidth ${viewport.width}, innerHeight ${viewport.height} and devicePixelRatio ${viewport.dpr}. ` +
+        'This applies to every tab of this session (also tabs opened later) and stays across reloads and navigations, until you call set_viewport with width full, mobile or tablet, or the user picks a width in the toolbar.',
+    );
+  }
+
+  // セッションのどのタブにも、画面の大きさを当てる（emulation が null なら、やめる）。失敗したタブ（閉じかけている など）は、
+  // 次にそのタブを操作するときに当て直す（dispatch）
+  private async emulateAll(session: Tabs, emulation: Emulation | null): Promise<void> {
+    for (const tab of session.tabs.values()) {
+      if (!tab.contents.isDestroyed()) await this.emulate(tab, emulation).catch(() => undefined);
+    }
+  }
+
+  // タブに、CDP で画面の大きさを当てる（null なら、やめる）。当たっているものと同じなら、何もしない
+  // （決めていないタブに、やめる命令を送るために CDP をつなぐこともしない）
+  private async emulate(guest: Guest, emulation: Emulation | null): Promise<void> {
+    if (JSON.stringify(guest.emulated) === JSON.stringify(emulation)) return;
+    if (emulation) {
+      const { width, height, deviceScaleFactor, mobile } = emulation;
+      await this.cdp(guest, 'Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor, mobile });
+      await this.cdp(guest, 'Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+      await this.cdp(guest, 'Emulation.setPageScaleFactor', ONE_PAGE_SCALE);
+    } else {
+      await this.cdp(guest, 'Emulation.clearDeviceMetricsOverride');
+      await this.cdp(guest, 'Emulation.setTouchEmulationEnabled', { enabled: false });
+    }
+    guest.emulated = emulation;
+  }
+
+  // 指でさわる（CDP の Input.dispatchTouchEvent。ページには本物のタッチ・pointerType が touch のポインターのイベントとして届く）。
+  // 指の位置は、ブラウザを見ている人に丸で見せる（動かすあいだも）
+  private async touch(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const action = requiredString(args.action, 'action');
+    if (!['tap', 'long_press', 'swipe', 'pinch'].includes(action)) throw new ToolError(`action must be tap, long_press, swipe or pinch: ${action}`);
+    if (args.fingers !== undefined && args.fingers !== 1 && args.fingers !== 2) throw new ToolError(`fingers must be 1 or 2: ${String(args.fingers)}`);
+    const fingers = args.fingers === 2 ? 2 : 1;
+    if (fingers === 2 && (action === 'long_press' || action === 'pinch')) {
+      throw new ToolError(`fingers 2 is only for tap and swipe${action === 'pinch' ? ' (pinch always uses two fingers)' : ''}.`);
+    }
+    const duration =
+      args.durationMs === undefined ? (action === 'long_press' ? LONG_PRESS_MS : SWIPE_MS) : ranged(args.durationMs, 'durationMs', 0, TOUCH_LIMITS.maxDurationMs);
+    const selector = optionalString(args.selector);
+    let target: { rect: BrowserRect; description: string; child?: { session: string; x: number; y: number } };
+    if (selector) target = await this.locate(guest, selector);
+    else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
+    else throw new ToolError('Provide selector, or x and y.');
+    const start = selector ? center(target.rect) : { x: args.x as number, y: args.y as number };
+    // 指の位置（いちばん外の見えている範囲から）。動かす前と、動かしたあと
+    let from: BrowserPoint[];
+    let to: BrowserPoint[];
+    let done: string;
+    if (action === 'swipe') {
+      const toX = optionalNumber(args.toX, 'toX') ?? (args.deltaX === undefined ? undefined : start.x + optionalNumber(args.deltaX, 'deltaX')!);
+      const toY = optionalNumber(args.toY, 'toY') ?? (args.deltaY === undefined ? undefined : start.y + optionalNumber(args.deltaY, 'deltaY')!);
+      if (toX === undefined && toY === undefined) throw new ToolError('swipe needs toX and toY, or deltaX or deltaY.');
+      const end = { x: toX ?? start.x, y: toY ?? start.y };
+      from = fingersAt(start, fingers);
+      to = fingersAt(end, fingers);
+      done = `Swiped${fingers === 2 ? ' with two fingers' : ''} from x=${round(start.x)} y=${round(start.y)} to x=${round(end.x)} y=${round(end.y)} in ${duration} ms`;
+    } else if (action === 'pinch') {
+      if (args.scale === undefined) throw new ToolError('pinch needs scale (above 1 moves the fingers apart, below 1 moves them together).');
+      const scale = ranged(args.scale, 'scale', TOUCH_LIMITS.minScale, TOUCH_LIMITS.maxScale);
+      // 寄せるときは広げて置いてから、広げるときは寄せて置いてから
+      const apart = scale < 1 ? 200 : 100;
+      from = [
+        { x: start.x - apart / 2, y: start.y },
+        { x: start.x + apart / 2, y: start.y },
+      ];
+      to = [
+        { x: start.x - (apart * scale) / 2, y: start.y },
+        { x: start.x + (apart * scale) / 2, y: start.y },
+      ];
+      done = `Pinched (scale ${scale}: the fingers moved from ${apart}px to ${round(apart * scale)}px apart in ${duration} ms)`;
+    } else {
+      from = to = fingersAt(start, fingers);
+      done = action === 'tap' ? (fingers === 2 ? 'Tapped with two fingers' : 'Tapped') : `Long-pressed for ${duration} ms`;
+    }
+    const before = guest.contents.getURL();
+    // Input.dispatchTouchEvent の位置は、タブの中ではなく、アプリのウインドウの中の位置として読まれる（Electron 44.7 の webview で確かめた。
+    // タブの中の位置のまま送ると、webview の左上の分だけずれて届く。マウスの Input.dispatchMouseEvent は、タブの中の位置のまま届く）。
+    // それで、アプリの画面の中の webview の左上を足す（hostOffset）。別プロセスの iframe の中も、その iframe のセッションに、同じ位置で送る（実機では確かめていない）
+    const child = target.child?.session;
+    let at: HostOffset;
+    const send = (type: string, points: BrowserPoint[]) =>
+      this.cdp(
+        guest,
+        'Input.dispatchTouchEvent',
+        { type, touchPoints: points.map((p, id) => ({ x: round(at.x + p.x * at.scale), y: round(at.y + p.y * at.scale), id })) },
+        child,
+      );
+    const show = (points: BrowserPoint[]) => this.emit({ sessionId, active: true, label: null, box: null, touches: points.map((p) => ({ x: round(p.x), y: round(p.y) })) });
+    // さわる前に、指を置く場所を見せる
+    show(from);
+    await sleep(HIGHLIGHT_MS);
+    // webview の位置は、見せたあとに読む。Claude の操作が始まると、ツールバーの下に「Claude が操作中」の帯が出て webview が下へ動くので、
+    // それより前に読むと、帯の高さの分だけずれて届く（CI の E2E で、前の操作から帯が消えていたときに y だけずれた）
+    at = await this.hostOffset(guest);
+    // 指の位置が、アプリの画面に出ていなければ断る。出ていない所（枠のスクロールの外・ウインドウの外）へのタッチは、ページに届かずに捨てられる
+    // （CI の小さなウインドウで、機種の大きさの枠からはみ出た所をタップすると、エラーにならずに届かなかった）。動かす道すじは直線なので、両端を見る
+    const hidden = [...from, ...to].find((p) => !shownAt(at, p));
+    if (hidden) {
+      const v = at.visible;
+      const shown = (from: number, to: number, origin: number) => `${Math.ceil((from - origin) / at.scale)}–${Math.floor((to - origin) / at.scale)}`;
+      throw new ToolError(
+        `x=${round(hidden.x)} y=${round(hidden.y)} is not shown in the tanacode window, so a touch there would not reach the page. ` +
+          (v.right > v.left && v.bottom > v.top
+            ? `The browser pane shows only x ${shown(v.left, v.right, at.x)} and y ${shown(v.top, v.bottom, at.y)} of the visible area of the page (the pane is smaller than the viewport). `
+            : 'The browser pane shows no part of the page. ') +
+          'Touch inside that part (scroll the page to bring the spot into it), or set a smaller viewport with set_viewport.',
+      );
+    }
+    await send('touchStart', from);
+    if (action === 'swipe' || action === 'pinch') {
+      // 16 ミリ秒ごと（画面の 1 コマ）に動かす。5 回から 60 回まで
+      const steps = Math.min(60, Math.max(5, Math.round(duration / 16)));
+      for (let step = 1; step <= steps; step++) {
+        await sleep(duration / steps);
+        const now = from.map((p, i) => ({ x: p.x + (to[i]!.x - p.x) * (step / steps), y: p.y + (to[i]!.y - p.y) * (step / steps) }));
+        await send('touchMove', now);
+        show(now);
+      }
+    } else {
+      await sleep(action === 'tap' ? TAP_MS : duration);
+    }
+    await send('touchEnd', []);
+    await settle(guest.contents);
+    const lines = [`${done}: ${target.description}`];
+    const after = guest.contents.getURL();
+    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after, guest)}${this.allowedIn(guest, after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
+    return textResult(lines.join('\n'));
+  }
+
+  // タッチを送る位置の決め方。送る位置 = 左上 + タブの中の位置 × scale。画面がタブの webview に付けた data-tab-id で探す。
+  // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）:
+  // - 左上は、アプリの画面の CSS の px のまま（拡大の倍率を掛けない）
+  // - タブの中の位置は、CDP で大きさを決めていないタブではそのまま、決めたタブ（set_viewport の機種・数字）では倍率で割る
+  // visible: webview のうち、アプリの画面に出ている所（アプリの画面の CSS の px。枠のスクロールなど、はみ出たものを切る入れ物と、ウインドウの端で切る）
+  private async hostOffset(guest: Guest): Promise<HostOffset> {
+    const host = this.deps.host();
+    const found = host && !host.isDestroyed() ? ((await host.executeJavaScript(webviewPlace(guest.tabId)).catch(() => null)) as Omit<HostOffset, 'scale'> | null) : null;
+    if (!found) throw new ToolError('Could not find this tab in the tanacode window, so the touch was not sent.');
+    return { ...found, scale: guest.emulated ? 1 / host!.getZoomFactor() : 1 };
+  }
+
+  // 今のタブの CPU・通信を遅くする（やめる）。指定しなかったほうは、今のまま
+  private async throttle(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    if (args.cpu === undefined && args.network === undefined) throw new ToolError('Provide cpu or network.');
+    const cpu = args.cpu === undefined ? guest.throttle.cpu : ranged(args.cpu, 'cpu', 1, THROTTLE_LIMITS.maxCpu);
+    let network = guest.throttle.network;
+    if (args.network !== undefined) {
+      const name = String(args.network);
+      if (name === 'off') network = null;
+      else if (Object.hasOwn(NETWORK_PRESETS, name)) network = name as NetworkPresetName;
+      else throw new ToolError(`network must be off, ${Object.keys(NETWORK_PRESETS).join(', ')}: ${name}`);
+    }
+    await this.applyThrottle(sessionId, guest, { cpu, network });
+    const state = `CPU ${cpu === 1 ? 'not slowed down' : `${cpu}× slower`}, network ${network ? networkShown(network) : 'not slowed down'}`;
+    if (cpu === 1 && !network) return textResult(`The current tab is no longer slowed down (${state}).`);
+    return textResult(
+      `Slowed down the current tab: ${state}. It stays across reloads and navigations in this tab (reload with navigate action "reload" to measure the start of the page), ` +
+        'until you turn it off with throttle (cpu 1, network off), the user turns it off in the toolbar, or the tab is closed. Turn it off when you are done.',
+    );
+  }
+
+  // タブを遅くする設定を、CDP で当てて、画面に知らせる。変わったものだけを送る
+  private async applyThrottle(sessionId: string, guest: Guest, next: Guest['throttle']): Promise<void> {
+    if (next.cpu !== guest.throttle.cpu) {
+      await this.cdp(guest, 'Emulation.setCPUThrottlingRate', { rate: next.cpu });
+      guest.throttle = { ...guest.throttle, cpu: next.cpu };
+    }
+    if (next.network !== guest.throttle.network) {
+      const preset = next.network ? NETWORK_PRESETS[next.network] : null;
+      await this.cdp(
+        guest,
+        'Network.emulateNetworkConditions',
+        preset
+          ? { offline: preset.offline, latency: preset.latency, downloadThroughput: preset.download, uploadThroughput: preset.upload }
+          : { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
+      );
+      guest.throttle = { ...guest.throttle, network: next.network };
+    }
+    this.sendThrottle(sessionId, guest);
+  }
+
+  private sendThrottle(sessionId: string, guest: Guest): void {
+    this.deps.send(this.deps.channels.throttle, { sessionId, tabId: guest.tabId, ...guest.throttle } satisfies BrowserThrottleChange);
   }
 
   // ページの世界で動かす。evaluate の始めに読み直した今のページ（許した先）から、動くまでの間に別のオリジンへの移動が確定していたら、
@@ -1456,7 +1864,7 @@ export class BrowserControl {
   private tabsOf(sessionId: string): Tabs {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, handoff: [] };
+      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, handoff: [], viewport: null };
       this.sessions.set(sessionId, session);
     }
     return session;
@@ -1897,6 +2305,93 @@ function requiredString(value: unknown, name: string): string {
 
 function stringList(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
+}
+
+// 2 枚の絵（同じ範囲を、違う画素密度で撮ったもの）が、同じに見えるか。10×10 の点で色（透明度も）を比べ、95 点が近ければ同じとみなす
+// （画素密度が違うと、縁の色が少し違う。ページが動いている途中なら合わないことがあるが、そのときは画面の画素密度の絵を使うだけ）
+function looksSame(a: NativeImage, b: NativeImage): boolean {
+  const sa = a.getSize();
+  const sb = b.getSize();
+  if (Math.abs(sa.width / sa.height - sb.width / sb.height) > 0.02) return false;
+  const pa = a.toBitmap();
+  const pb = b.toBitmap();
+  let near = 0;
+  for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < 10; j++) {
+      const at = (size: { width: number; height: number }) => (Math.floor(((j + 0.5) / 10) * size.height) * size.width + Math.floor(((i + 0.5) / 10) * size.width)) * 4;
+      const ia = at(sa);
+      const ib = at(sb);
+      if ([0, 1, 2, 3].every((c) => Math.abs((pa[ia + c] ?? 0) - (pb[ib + c] ?? 0)) <= 48)) near++;
+    }
+  }
+  return near >= 95;
+}
+
+// タッチを送る位置の決め方（hostOffset）
+type HostOffset = { x: number; y: number; scale: number; visible: { left: number; top: number; right: number; bottom: number } };
+
+// アプリの画面で動かす、タブの webview の左上と、アプリの画面に出ている所を読むスクリプト
+function webviewPlace(tabId: string): string {
+  return `(async () => {
+    // 動いたあとの配置になるよう、描き終わるのを 2 コマ待つ（描かれないときも、0.3 秒で先へ進む）
+    await Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 300))]);
+    const el = document.querySelector('webview[data-tab-id=${JSON.stringify(tabId)}]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let left = Math.max(r.left, 0), top = Math.max(r.top, 0), right = Math.min(r.right, innerWidth), bottom = Math.min(r.bottom, innerHeight);
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+      const b = a.getBoundingClientRect();
+      left = Math.max(left, b.left + a.clientLeft);
+      top = Math.max(top, b.top + a.clientTop);
+      right = Math.min(right, b.left + a.clientLeft + a.clientWidth);
+      bottom = Math.min(bottom, b.top + a.clientTop + a.clientHeight);
+    }
+    return { x: r.left, y: r.top, visible: { left, top, right, bottom } };
+  })()`;
+}
+
+// タブの中の位置 p（見えている範囲の左上から）が、アプリの画面に出ている所にあるか
+function shownAt(at: HostOffset, p: BrowserPoint): boolean {
+  const x = at.x + p.x * at.scale;
+  const y = at.y + p.y * at.scale;
+  return x >= at.visible.left && x < at.visible.right && y >= at.visible.top && y < at.visible.bottom;
+}
+
+// 範囲の中の数字。そうでなければ断る
+function ranged(value: unknown, name: string, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new ToolError(`${name} must be a number from ${min} to ${max}: ${String(value)}`);
+  return value;
+}
+
+// 渡されていれば数字（数字でなければ断る）
+function optionalNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new ToolError(`${name} must be a number: ${String(value)}`);
+  return value;
+}
+
+// 指を置く位置。2 本なら、point を真ん中に、横に FINGER_GAP 離して並べる
+function fingersAt(point: BrowserPoint, fingers: number): BrowserPoint[] {
+  return fingers === 2
+    ? [
+        { x: point.x - FINGER_GAP / 2, y: point.y },
+        { x: point.x + FINGER_GAP / 2, y: point.y },
+      ]
+    : [point];
+}
+
+// 小数第 1 位まで（Claude に返す位置・CDP に送る位置）
+function round(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+// Claude に返す、通信の速さ
+function networkShown(name: NetworkPresetName): string {
+  const preset = NETWORK_PRESETS[name];
+  if (preset.offline) return 'offline';
+  return `${name} (latency ${preset.latency} ms, download ${Math.round((preset.download * 8) / 1000)} kbps, upload ${Math.round((preset.upload * 8) / 1000)} kbps)`;
 }
 
 function numberOr(value: unknown, fallback: number): number {
