@@ -345,11 +345,14 @@ export class Profile {
     this.checklistControl = checklistControl;
     manager.awayWaitMs = () => this.awayWaitMs();
     // 画面のスイッチで解いたら、手が空いたときに、保留したこと・自分で決めたことの報告を頼む（Claude が解いたときは、ツールの結果で頼む）。
-    // 送る前にまた入れたら送らない
+    // 送る前にまた入れたら送らない。人がスイッチで頼んだものなので、Claude Code が止まっていれば次に起動して手が空くまで預け、
+    // ターミナルモードなら TUI の入力欄に貼る（Enter は人が押す）
     const awayNotices = new SessionNotices<true>({
       host: outward,
       enabled: () => true,
       compose: (target) => (manager.isAway(target) ? null : sessionEventText([], AWAY_ENDED)),
+      pasteInTerminal: () => true,
+      keepWhileStopped: true,
       channel: 'away',
     });
     this.awayNotices = awayNotices;

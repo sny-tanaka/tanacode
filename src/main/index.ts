@@ -1235,8 +1235,7 @@ function setChecklistControl(item: MenuItem): void {
   }
 }
 
-// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
-// 離席モードで答えを待つ時間。次に人に回った要求から効く（もう数え始めたものは、そのまま）
+// メニューの「離席モードで答えを待つ時間」。次に人に回った要求から効く（もう数え始めたものは、そのまま）
 function setAwayWaitMinutes(minutes: number): void {
   try {
     activeProfile()?.settings.setAwayWaitMinutes(minutes);
@@ -1246,6 +1245,7 @@ function setAwayWaitMinutes(minutes: number): void {
   buildMenu();
 }
 
+// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
 function setAutoCompactPercent(percent: number): void {
   const profile = activeProfile();
   if (!profile) return;

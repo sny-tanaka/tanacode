@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
+import { SessionNotices, type NoticeHost } from '../src/main/session-notices';
+import type { SessionSummary } from '../src/shared/ipc';
+import type { SessionState } from '../src/shared/session-tools';
 import { awayPermissionDenied, awayQuestionDeclined } from '../src/shared/away-mode';
 import { ScriptedApp, type ScriptedPipe } from './helpers/scripted-claude';
 
@@ -28,6 +31,9 @@ const answerTo = (pipe: ScriptedPipe, requestId: string) =>
     return m.type === 'control_response' && response?.request_id === requestId ? [response.response] : [];
   });
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Claude Code が返すツールの結果（stream の user の行）
+const toolResult = (pipe: ScriptedPipe, toolUseId: string, text: string) =>
+  pipe.emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: true }] }, parent_tool_use_id: null });
 const infos = (id: string) => app.events(id).flatMap((e) => (e.type === 'info' ? [e.text] : []));
 const QUESTIONS = [{ question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }, { label: 'B 案', description: '確実' }] }];
 
@@ -47,7 +53,10 @@ describe('離席モード', () => {
     expect(awayPermissionDenied(WAIT_MS)).toContain('「人のやること」');
     expect(app.manager.pendingPermission(id)).toBeNull();
     expect(app.manager.stateOf(id)).toBe('working');
-    expect(infos(id).some((text) => text.includes('許可の確認を断りました'))).toBe(true);
+    // チャットの「断りました」は、Claude Code が断った理由をツールの結果で返したのを見てから出す
+    expect(infos(id).some((text) => text.includes('許可の確認を断りました'))).toBe(false);
+    toolResult(pipe, 'toolu_req-1', awayPermissionDenied(WAIT_MS));
+    await app.waitFor('チャットの知らせ', () => infos(id).some((text) => text.includes('許可の確認を断りました')));
     // 断ったあとに人が答えても、2 回は返さない
     expect(app.manager.replyPermission(id, 'req-1', { kind: 'allow' })).toBe(false);
   });
@@ -64,6 +73,21 @@ describe('離席モード', () => {
     expect(awayQuestionDeclined(WAIT_MS)).toContain('「確認事項」');
     await app.waitFor('質問が閉じる', () => app.manager.pendingQuestion(id) === null);
     expect(app.manager.stateOf(id)).toBe('working');
+    toolResult(pipe, 'toolu_req-q', awayQuestionDeclined(WAIT_MS));
+    await app.waitFor('チャットの知らせ', () => infos(id).some((text) => text.includes('質問を Claude に返しました')));
+  });
+
+  it('時間切れの直前にほかで答えていた（取り下げが届く前に断りを送った）なら、断りは使われないので、チャットに「断りました」を出さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.manager.setAway(id, true, 'human');
+    await app.prompt(id, '作って');
+    request(pipe, 'req-1', { tool_name: 'Bash', input: { command: 'mkdir x' } });
+    await app.waitFor('時間切れで断る', () => answerTo(pipe, 'req-1').length === 1);
+    // スマホで先に許していたので、Claude Code はコマンドを動かした結果を返す
+    toolResult(pipe, 'toolu_req-1', 'done');
+    await pause(LONGER_MS);
+    expect(infos(id).some((text) => text.includes('断りました'))).toBe(false);
   });
 
   it('待つ時間のうちに人が答えたら、その答えだけを返す', async () => {
@@ -152,6 +176,40 @@ describe('離席モードで答えを待つ時間の設定', () => {
       expect(new AppSettings(file).awayWaitMinutes()).toBe(5);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('止まっている送り先に預ける知らせ（keepWhileStopped。離席モードを画面で解いたときの報告の頼み）', () => {
+  it('送り先が止まっていれば捨てずに預け、起動して手が空いたら送る。預けない列は、今までどおり捨てる', async () => {
+    const states = new Map<string, SessionState>([['s1', 'exited']]);
+    const listeners = new Set<(id: string) => void>();
+    const sent: { id: string; text: string }[] = [];
+    const host: NoticeHost = {
+      list: () => [{ id: 's1', archived: false } as SessionSummary],
+      stateOf: (id) => states.get(id) ?? null,
+      submitWhenReady: async (id, text) => {
+        sent.push({ id, text });
+      },
+      watchState: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const kept = new SessionNotices<true>({ host, enabled: () => true, compose: () => '報告して', keepWhileStopped: true, delayMs: 5 });
+    const dropped = new SessionNotices<true>({ host, enabled: () => true, compose: () => '捨てられる', delayMs: 5 });
+    try {
+      kept.add('s1', 'ended', true);
+      dropped.add('s1', 'ended', true);
+      await pause(50);
+      expect(sent).toEqual([]);
+      states.set('s1', 'idle');
+      for (const listener of listeners) listener('s1');
+      await pause(50);
+      expect(sent).toEqual([{ id: 's1', text: '報告して' }]);
+    } finally {
+      kept.dispose();
+      dropped.dispose();
     }
   });
 });

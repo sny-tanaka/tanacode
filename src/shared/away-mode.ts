@@ -38,14 +38,17 @@ export function awayRules(waitMs: number): string {
 export const AWAY_ENDED =
   'Away mode is off: the user is back. Report to the user, in one message and in the language the user is using, what you put on hold for them while they were away (the list of things only the user can do) and the decisions you made yourself (the list for review), so that they can check them. If there was nothing, say so in one line.';
 
+// 時間切れで断ったときの理由に、どちらも入る文。Claude Code が返したツールの結果にこれがあれば、断りが使われた
+export const AWAY_DENIED_MARK = 'away mode is on (the user is away from the computer)';
+
 // 離席中に、人に回った許可の確認を断るときの理由（Claude Code が Claude に返す）
 export function awayPermissionDenied(waitMs: number): string {
-  return `tanacode declined this permission prompt: away mode is on (the user is away from the computer), and nobody answered it within ${waitText(waitMs)}. Nothing was run. Do not retry it now and do not look for a way around it. Put it on the list of things only the user can do (e.g. 「人のやること」) with the exact command or edit and why it is needed, then continue with other work that does not need it.`;
+  return `tanacode declined this permission prompt: ${AWAY_DENIED_MARK}, and nobody answered it within ${waitText(waitMs)}. Nothing was run. Do not retry it now and do not look for a way around it. Put it on the list of things only the user can do (e.g. 「人のやること」) with the exact command or edit and why it is needed, then continue with other work that does not need it.`;
 }
 
 // 離席中に、人に回った質問（AskUserQuestion）を返すときの理由
 export function awayQuestionDeclined(waitMs: number): string {
-  return `The user did not answer: away mode is on (the user is away from the computer), and nobody answered this question within ${waitText(waitMs)}. Do not ask it again. Decide yourself: take the option you recommend, record the decision and the reason on the list of decisions for the user to review (e.g. 「確認事項」), and continue. If the choice would lead to something that cannot be undone or that reaches outside the machine, do not do it: put it on the list of things only the user can do (e.g. 「人のやること」) instead.`;
+  return `The user did not answer: ${AWAY_DENIED_MARK}, and nobody answered this question within ${waitText(waitMs)}. Do not ask it again. Decide yourself: take the option you recommend, record the decision and the reason on the list of decisions for the user to review (e.g. 「確認事項」), and continue. If the choice would lead to something that cannot be undone or that reaches outside the machine, do not do it: put it on the list of things only the user can do (e.g. 「人のやること」) instead.`;
 }
 
 // 離席中にフックで渡す文

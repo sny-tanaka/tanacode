@@ -33,6 +33,9 @@ type Deps<T> = {
   // 手が空いていても、まだ送らずに預かるか（送り先が利用枠で止まって、再開を待っている間など）。次に状態が変わったときと、
   // recheck を呼んだときに見直す
   holds?: (target: string) => boolean;
+  // 送り先が止まっている（Claude Code が動いていない）とき、捨てずに預けるか。次に起動して手が空いたら送る（人が画面で頼んだもので、
+  // 止まっている間に頼んでも届けたいもの）。省くと捨てる
+  keepWhileStopped?: boolean;
   // 列の名前。付けると、預かっている知らせを送り先の記録に残し（host.saveNotices）、アプリを終えても次のアプリが戻して送る。
   // 中身（T）は JSON にできるものにする
   channel?: string;
@@ -117,6 +120,8 @@ export class SessionNotices<T> {
     const queue = this.pending.get(target);
     if (!queue || queue.size === 0) return;
     const session = host.list().find((s) => s.id === target);
+    // 止まっている送り先に預けるなら、起動して手が空いたとき（watchState）に送る
+    if (this.deps.keepWhileStopped && this.deps.enabled() && session && !session.archived && host.stateOf(target) === 'exited') return;
     if (!this.deps.enabled() || !session || session.archived || host.stateOf(target) === 'exited') {
       this.pending.delete(target);
       this.keep(target);

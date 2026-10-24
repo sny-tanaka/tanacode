@@ -901,12 +901,13 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 入れる・解く: 画面のスイッチ（`chat/AwayToggle.tsx`、`sessions:set-away`）と、Claude の `set_away_mode`（`tanacode-sessions`。`instruct` で確認なし。子には見せない `PARENT_ONLY`）。人の発言が届いただけでは解きません（スマホから書いていることもあるため。決めたこと）。
 - 時間切れ（`SessionManager.armAway`・`awayTimedOut`）: 離席中のセッションに `can_use_tool` が来たら（入れたときにもう待っているものは、入れたときから）、待つ時間（既定 5 分。メニューの「離席モードで答えを待つ時間」、`AppSettings.awayWaitMinutes`。確かめるときは環境変数 `TANACODE_AWAY_WAIT_SECONDS` で秒にできる）を数えます。その間はふつうどおりカード・Remote Control で答えられます。答え・取り下げ・Claude Code の終了・解いたときは、タイマーを止めます。
   - 時間切れの答えは、どちらも deny（`interrupt` なし。作業は続く）。許可の確認は `awayPermissionDenied`（許すことはしない。「人のやること」に残して、ほかの作業を続けるよう伝える）、質問（AskUserQuestion）は `awayQuestionDeclined`（おすすめの案で自分で決め、理由と一緒に「確認事項」に残して進めるよう伝える）。答えを選んで allow で返す形にしないのは、どの選択肢を選ぶかを Claude に決めさせるためです。プランの承認・ワークフローの確認も、許可の確認と同じく断ります。MCP サーバーの質問（elicitation）は対象にしていません。
-  - 断った・返したことは、チャットに info の行で残します（`main.away.permissionDenied`・`main.away.questionDeclined`）。
+  - 断った・返したことは、チャットに info の行で残します（`main.away.permissionDenied`・`main.away.questionDeclined`）。出すのは、Claude Code が返したツールの結果（stream の user の行の `tool_result`）に、断った理由の目印（`AWAY_DENIED_MARK`）が入っているのを見てから（`awayResults`）。スマホで先に答えていて、取り下げ（`control_cancel_request`）が届く前にタイマーが動くと、決着済みの要求にも断りを送ってしまい（`respond` は書けたかしか分からない）、事実と違う「断りました」が残るためです。
+  - Claude Code を起動し直す・引き継ぐとき（`start` の `requests.clear()`）は、タイマーと断りの控えも片付けます（引き継いだ claude が同じ `request_id` を出し直しても、前の残り時間で断らない）。
   - ターミナルモードでは数えません（TUI のメニューに、アプリからは答えないため。決めたこと）。Claude への決まりの伝え方は変わりません。
 - Claude への伝え方
   - `set_away_mode` の結果: 入れたら決まり（`awayRules`）、解いたら報告の頼み（`AWAY_ENDED`）。
   - 離席中は、人の発言（UserPromptSubmit）と圧縮のあと（SessionStart の compact）のチェックリストのフックの答えに、決まりを `<tanacode-away-mode>` で足します（`ChecklistControl` の `Deps.extraReminder`。チェックリストを扱わせない設定でも足す）。ターンの終わり（Stop）には足しません（続きを始めさせてしまうため）。チェックリストの MCP を足していないセッション（メニューでオフ）では、フックが無いので伝えず、断るときの理由で伝わります。
-  - 画面のスイッチで解いたときは、`Profile` が `SessionNotices`（列の名前 `away`）で、手が空いたときに `<tanacode-session-event sessions="">` で報告を頼みます。送る前にまた入れたら送りません。Claude が解いたときは、ツールの結果で頼むので送りません。
+  - 画面のスイッチで解いたときは、`Profile` が `SessionNotices`（列の名前 `away`）で、手が空いたときに `<tanacode-session-event sessions="">` で報告を頼みます。送る前にまた入れたら送りません。Claude が解いたときは、ツールの結果で頼むので送りません。人がスイッチで頼んだものなので、Claude Code が止まっていれば捨てずに預け（`keepWhileStopped`。次に起動して手が空いたら送る。アプリを終えても記録に残る）、ターミナルモードなら TUI の入力欄に貼ります（`pasteInTerminal`。Enter は人が押す）。
   - 決まりでは、取り消せない・外に出る操作をせずに「人のやること」に残すこと、子の許可の確認で親が許せないもの・MCP サーバーの質問も「人のやること」に残すこと、`PushNotification` ツールを使えるなら、大事な保留のときに 1 回だけ知らせてよいことを伝えます。PushNotification がスマホに届くかは、このアプリからは確かめていません（Remote Control につながっていれば届く、という Claude Code の説明に頼っている）。
 - テストは `test/session-manager-away.test.ts`（時間切れ・答えたとき・離席でない親・入れる前から待っている要求・解いたとき・子）と、`test/sessions-mcp.test.ts`（`set_away_mode`）・`test/checklist-control.test.ts`（フックの文）、通しでは `test/e2e/away-mode.test.ts`（本物の Claude Code が、断られたあと先へ進むこと）。
 
@@ -1773,7 +1774,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `sessions-mcp.ts` / `sessions-bridge.ts`: セッションの中継の入り口と、中継に渡す環境変数・子セッションの起動の確認のフック・`--mcp-config` のエントリ
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ・自分への予約・報告）
   - `turn-reports.ts`: Claude がターンの終わりの通知に載せる報告（`report_result`）を、セッションごとに持つ。新しいターンが始まったら捨てる
-  - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信・離席モードを画面で解いたときの報告の頼み）を、手の空いたセッションに送る列（送り先がターミナルモードなら、人がボタンで頼んだものだけ TUI の入力欄に貼る）
+  - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信・離席モードを画面で解いたときの報告の頼み）を、手の空いたセッションに送る列（送り先がターミナルモードなら、人がボタンで頼んだものだけ TUI の入力欄に貼る。止まっている送り先には、列が頼めば預ける）
   - `send-error.ts`: 発言を送れなかったこと（`SendError`）。文は画面の言語で、理由（`reason`）から `send_message`・`list_wakeups` が Claude に返す英語の文を作る（同じ表 `SEND_FAILURE`）
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `saved-json.ts`: アプリが保存している JSON（チェックリスト・予約したメッセージ）の読み方（無ければ空・読めなければ上書きしない・壊れていれば横に移す）

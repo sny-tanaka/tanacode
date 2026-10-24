@@ -26,7 +26,7 @@ import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
 import type { TurnActivity } from '@shared/checklist-reminder';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
-import { awayPermissionDenied, awayQuestionDeclined, DEFAULT_AWAY_WAIT_MINUTES, type AwayChangedBy } from '@shared/away-mode';
+import { AWAY_DENIED_MARK, awayPermissionDenied, awayQuestionDeclined, DEFAULT_AWAY_WAIT_MINUTES, type AwayChangedBy } from '@shared/away-mode';
 import { modeWithin, parentMessageText, parseParentMessage, type SessionState } from '@shared/session-tools';
 import { INSTRUCTIONS_FILE, PARENT_INSTRUCTIONS_FILE, parentRoleText, parseParentRole } from '@shared/project-instructions';
 import type {
@@ -242,6 +242,9 @@ type Runtime = {
   questionWaits: Map<string, AbortController>;
   // 離席モードで、人に回った要求（許可の確認・質問）の答えを待つ時間（request_id → 時間切れで断るタイマー）
   awayTimers: Map<string, NodeJS.Timeout>;
+  // 離席モードの時間切れで断りを送った呼び出し（tool_use_id → 種類と待った時間）。Claude Code が返したツールの結果に、断った理由が
+  // 入っていたら、チャットに「断りました」を出す（ほかで先に答えていて、断りが使われなかったときは出さない）
+  awayDenied: Map<string, { question: boolean; waitMs: number }>;
   // プランの承認（ExitPlanMode）の要求の、プランの本文（request_id → 本文。Claude Code は要求の入力に本文を入れない）
   plans: Map<string, string | null>;
   // 今の会話のプランのファイル（会話ログの plan_mode の添付の planFilePath。プランモードで Claude が書く）
@@ -1626,15 +1629,32 @@ export class SessionManager {
     rt.awayTimers.set(requestId, timer);
   }
 
-  // 離席中に、待つ時間のうちに人が答えなかった。許可の確認は断り（許すことはしない）、質問は Claude に自分で決めさせる
+  // 離席中に、待つ時間のうちに人が答えなかった。許可の確認は断り（許すことはしない）、質問は Claude に自分で決めさせる。
+  // スマホなどでほかで先に答えていて、取り下げ（control_cancel_request）がまだ届いていないこともあるので、チャットの「断りました」は、
+  // Claude Code が返したツールの結果に断った理由が入っているのを見てから出す（awayResults）
   private awayTimedOut(id: string, rt: Runtime, requestId: string, waitMs: number): void {
     const request = rt.requests.get(requestId);
     if (this.runtimes.get(id) !== rt || !request || rt.terminal || !this.isAway(id)) return;
     const question = request.tool_name === 'AskUserQuestion';
     const message = question ? awayQuestionDeclined(waitMs) : awayPermissionDenied(waitMs);
     if (!rt.process?.client?.respond(requestId, { behavior: 'deny', message })) return;
+    rt.awayDenied.set(request.tool_use_id, { question, waitMs });
     this.requestRemoved(id, rt, requestId);
-    this.pushEvents(id, [{ type: 'info', id: `away-declined:${requestId}`, text: t(question ? 'main.away.questionDeclined' : 'main.away.permissionDenied', { wait: awayWaitLabel(waitMs) }) }]);
+  }
+
+  // 離席モードで断りを送った呼び出しの結果が届いた。断った理由が入っていれば（断りが使われた）、チャットに残す
+  private awayResults(id: string, rt: Runtime, user: UserMessage): void {
+    const content = user.message.content;
+    if (rt.awayDenied.size === 0 || !Array.isArray(content)) return;
+    for (const block of content) {
+      if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      const denied = rt.awayDenied.get(block.tool_use_id);
+      if (!denied) continue;
+      rt.awayDenied.delete(block.tool_use_id);
+      if (!toolResultText(block.content).includes(AWAY_DENIED_MARK)) continue;
+      const key = denied.question ? 'main.away.questionDeclined' : 'main.away.permissionDenied';
+      this.pushEvents(id, [{ type: 'info', id: `away-declined:${block.tool_use_id}`, text: t(key, { wait: awayWaitLabel(denied.waitMs) }) }]);
+    }
   }
 
   private clearAwayTimers(rt: Runtime): void {
@@ -2510,6 +2530,7 @@ export class SessionManager {
         openedUrls: new Map(),
         questionWaits: new Map(),
         awayTimers: new Map(),
+        awayDenied: new Map(),
         plans: new Map(),
         planFile: null,
         planInputs: new Map(),
@@ -2629,6 +2650,9 @@ export class SessionManager {
     runtime.redrawFromHost = adopted?.kind === 'pty' ? adopted.id : null;
     runtime.freshConversation = false;
     runtime.requests.clear();
+    // 前の claude の要求を待っていたタイマーは使わない（引き継いだ claude が同じ request_id を出し直しても、前の残り時間で断らない）
+    this.clearAwayTimers(runtime);
+    runtime.awayDenied.clear();
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
@@ -3146,6 +3170,7 @@ export class SessionManager {
         if (!user.isReplay && !user.parent_tool_use_id && rt.turnOpen && user.uuid && isToolResult(user)) rt.lastTurnLine = user.uuid;
         // 結果が来たツールの呼び出しは、フックを付ける先の候補から外す（quietHook）
         if (!past) this.toolsFinished(rt, user);
+        if (!past) this.awayResults(id, rt, user);
         return;
       }
       case 'result':
@@ -4397,4 +4422,11 @@ type ElicitationWait = { pending: PendingElicitation; request: ElicitationReques
 function awayWaitLabel(waitMs: number): string {
   const seconds = Math.max(1, Math.round(waitMs / 1000));
   return seconds % 60 === 0 ? t('main.away.minutes', { count: seconds / 60 }) : t('main.away.seconds', { count: seconds });
+}
+
+// ツールの結果（tool_result の content。文か、text のブロックの並び）の文
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('\n');
 }
