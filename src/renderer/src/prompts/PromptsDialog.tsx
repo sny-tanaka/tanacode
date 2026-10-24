@@ -121,7 +121,7 @@ export function PromptsDialog({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="prompts-pane" role="tabpanel" aria-label={t(`prompts.group.${group}`)}>
-            <p className="prompts-about">{tx(`prompts.about.${group}`, { tag: <code>{`<${TAGS[group]}>`}</code> })}</p>
+            <p className="prompts-about">{tx(`prompts.about.${group}`, { tag: <code>{`<${TAGS[group]}>`}</code>, item: t('main.menu.usageLimitResume') })}</p>
             {group === 'handoff' && <p className="prompts-warning">{t('prompts.handoffWarning')}</p>}
             {group === 'resume' && <p className="prompts-warning">{t('prompts.resumeWarning')}</p>}
             {/* 保存した文を読むまでは、欄を出さない（読む前に打った文が、読んだ文で消えないように） */}

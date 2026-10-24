@@ -144,7 +144,7 @@ export class ChecklistControl {
     }
     if (!checklistTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
-      return textResult(`The user has turned off "${t('main.menu.checklistControl')}". Ask the user to turn on "${t('main.menu.checklistControl')}" under tanacode > ${t('main.menu.mcp')}.`, true);
+      return textResult(`The user has turned off the tanacode MCP "${t('main.menu.checklistControl')}". Ask the user to turn on "${t('main.menu.checklistControl')}" under tanacode > ${t('main.menu.mcp')}.`, true);
     }
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return textResult('This session is not in tanacode.', true);

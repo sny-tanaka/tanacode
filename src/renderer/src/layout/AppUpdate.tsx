@@ -112,7 +112,7 @@ function UpdateReady({ version }: { version: string }) {
     <button
       className="app-update available ready"
       aria-label={t('app.update.readyLabel', { version })}
-      data-tip={[t('app.update.downloaded', { version }), t('app.update.readyRestart'), t('app.update.readyOnQuit')].join('\n')}
+      data-tip={[t('app.update.downloaded', { version }), t('app.update.readyRestart'), t('app.update.readyOnQuit', { item: t('main.menu.updateOnQuit') })].join('\n')}
       onClick={() => void window.tanacode.appUpdate.install()}
     >
       <DownloadIcon size={14} />
