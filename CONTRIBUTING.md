@@ -387,6 +387,7 @@ PR で、次のものを流します。develop への push では流しません
 | `start-then-switch.test.ts` | 新規セッションの画面で、セッションを始めている途中（worktree で始める前の git の確かめの間）にフォルダを変えると、変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から移らないか。変えた先で送ると、そのフォルダでセッションが始まるか |
 | `worktree-end-branch.test.ts` | 親が worktree の子を 2 人始め、子は worktree の中で `git switch -c` してコミットする（PR は偽の `gh` が返す）。親が `end_session` で終えると、update-branch で head が手元に無いマージ済みの PR のブランチと、起動したときのブランチは消え、PR のあとに手元だけのコミットのあるブランチは残るか。結果に、どのブランチを消した・残したかが出るか |
 | `worktree-install.test.ts` | worktree の準備の install（偽の `npm`。lock が元のフォルダと違うので install する）を、ターミナルパネルに出さずに裏で流すか。通ったら子のターミナルに install のタブが残らず（開くと、ふつうのシェルだけ）、失敗したら出力ごとタブに出てチャットに注意の行が出るか。問いを出して止まったら（入力を待っているように見えたら）タブに出てチャットに注意の行が出て、タブで答えると準備が終わって指示が届くか。準備中の「ターミナルで見る」を押すと、動いている install がそれまでの出力ごとタブに出るか |
+| `worktree-guard.test.ts` | Bash を許可の設定で許したセッションで、マージ済みの PR のブランチ（PR は偽の `gh` が返す）の `git branch -D` と、パスの一部に worktrees が入るだけのフォルダの `rm -rf` では、歯止めが許可の確認を出させず、手元にしか無いコミットのあるブランチの `git branch -D` では出させるか（確かめの入り口 `worktree-guard-hook.js` を、アプリと同じく tanacode 本体を Node として動かす） |
 | `worktree-start.test.ts` | worktree で始めると、Claude Code が worktree を作っている間（合図があるまで `git worktree add` を待たせる）でも、送ってすぐセッションの画面に移るか。できるまで、チャット・エクスプローラー・ソース管理・ターミナルが準備の段階を出して待ち（ターミナルはシェルを開かない）、できたら預かっていた指示を送って worktree を開くか。作れなかったときは、新規セッションの画面に戻って、指示が入力欄に戻り、理由が出るか。worktree なしで送り直せるか |
 | `first-prompt-order.test.ts` | 親の Claude が子を始めた直後（子の Claude Code が起動を終える前）に `send_message` で指示を送っても、子には `start_session` の最初の指示が先に届き、続きの指示はそのあとに届く（起動を待つ送信は、待ち始めた順に送る） |
 | `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
@@ -613,6 +614,13 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
   - `ask` は、権限モードが auto や bypassPermissions でも確認を出します（実測）。止めはしません。チャットでは `can_use_tool` として届きます（「今後は聞かない」の候補は付かない。実測）。
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
+  - awk が確認を出させると決めたときだけ、tanacode 本体を Node として、確かめの入り口（`worktree-guard-hook.js`）を動かします。入り口の場所はフックのコマンドの文字列に直に書き（環境変数で渡すと、Claude Code の設定の `env` で差し替えられるため）、`NODE_OPTIONS`・`NODE_PATH` を消して動かします。`pass` にするのは、コマンド全体が片付けのコマンドの形だけでできているときに限ります（`worktree-guard-check.ts`）。シェルの文法を広く読んで「読むだけのコマンド」などを許すと、引数でコマンドを動かせるオプション（`git grep -O`・`--upload-pack`・`rg --pre` など）や、実行されるとは限らない `cd`、bash の `[[ -eq ]]` の算術式などから穴ができたため、形を絞りました（誤検知が少し残るのは受け入れる）。
+    - 受け付けるのは、`git branch -D <名前>…`（`-d` と `--force`・`--delete --force` も。`--del`・`--forc` のような省略形も読む）と `git worktree remove [--force|-f] <パス>`、先頭に置いた 1 つの `cd <パス>`（引数は 1 つ。絶対パスか、`./`・`../` で始まるものだけ。ほかの相対パスは CDPATH（zsh の `cdpath`）で別のフォルダに移ることがあり、zsh の `+`・`=` で始まるものも別の意味になる）だけを、`&&`・`;`・改行でつないだもの。ほかのコマンドが 1 つでも入れば `ask`。git のグローバルオプション（`-C` など）も `ask`。
+    - 読むのは、書いたとおりの単語・単一引用符・二重引用符（中に `$`・`` ` ``・`\` の無いもの）・コメントだけ。ほかの記号（`|`・`&`・`(`・`<`・`$`・`` ` ``・`\`・`*`・`{`・`~` など）があれば `ask`。名前・パスに `$`・`` ` ``・`*`・`?`・`[`・`{`・`~`・`@{` などがあれば、クォートの中でも `ask`。`git branch -D` の名前は、`refs/heads/<名前>` としてそのまま読めるものだけ（`HEAD` と、`refs/`・`heads/`・`tags/`・`remotes/` で始まるものは断る）。確かめでは、ブランチを `refs/heads/<名前>` で数える・比べる（名前のままだと、git は同じ名前のタグなどを先に読む。worktree の片付けの `inspectBranches` も同じ）。
+    - 消す操作が 1 つも無いものは、awk の決めたとおり `ask`（文字列の中に書いただけの誤検知は直さない）。パスの一部に worktrees が入るだけの `rm -rf`（B3）は、awk の側で、区切りがちょうど `worktrees` のとき（グロブ・中括弧・変数を含み、worktrees の入る区切りも）だけ反応するようにして直しました。
+    - `git worktree remove` は、`--force` が 2 つ（ロックも越えて消す）でロックがあれば `ask`。
+    - `git branch -D` は `branchesSafeToDelete`（worktree の片付けの `inspectBranches` と同じ判定。同じコマンドで消すブランチはまとめて確かめ、同じコマンドで消す worktree のブランチは、取り出していないものとして数える）。`git worktree remove` は `worktreeSafeToRemove`（`.claude/worktrees/` の下で、登録のある worktree だけ。未コミットの変更・未追跡・submodule の中・どこからも辿れない detached HEAD）。git は `git()`（guard 付き）で、コミットを辿るものには `--missing=print` を付けます。
+    - すべて確かめられたら `pass` と答え、フックは何も決めません（`allow` は返さない。コマンドのほかの部分の、Claude Code の許可の確認まで飛ばしてしまうため）。確かめられない・20 秒で終わらない（動かしている git・gh も止める）・入り口が無いときは、awk の決めたとおり `ask` にします。worktree の `rm -rf` は確かめずに `ask` です。
   - チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_WORKTREE_GUARD`）。
 - アプリが足すフックは、どれも標準出力に `{"suppressOutput":true}` を書きます（答えの JSON には `suppressOutput: true` を足す。`hook-output.ts`）。下の「何も出力しなかったフック」で、ユーザーのフックと見分けるためです。`suppressOutput` は、Claude に渡す中身にも、フックの答え（判断・`additionalContext`・`continue: false`）の効き目にも関わりません（2.1.302 で実測。`test/cli` のチェックリスト・ゲート・歯止め・許可の確認で確かめている）。ただし、何かを書いたフックは、会話ログに `hook_success` の記録が残ります（コマンドの目印で、チャットには出さない）。
 - アプリが足すフックは、入力を使わないときも、標準入力を最後まで読みます（`cat >/dev/null` など）。Claude Code（2.1.302）は、入力を書き終える前にフックが標準入力を閉じると（EPIPE）、そのフックを失敗（終了コード 1）として扱い、標準出力も捨てるためです。ツールのあとのフックの入力にはツールの結果が入るので、パイプに入りきらないことがあります（`test/hook-output.test.ts` で、1 MiB の入力で確かめている）。
@@ -1765,7 +1773,8 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `requests.ts`: Claude Code が答えを待つ要求（`can_use_tool`・`elicitation`）を、カードと親の道具で扱う形にし、答えを Claude Code への返事にする（質問・許可の確認・プランの承認・MCP サーバーの質問。人だけが答えられる確認の判定）
   - `leftover-claude.ts`: 常駐のホストが落ちて残った、チャットの claude を止める（記録した pid と会話の ID で確かめてから）
   - `worktree.ts`: worktree のセッション（名前と場所・`.git/info/exclude`・`node_modules` の用意・残っているもの・控えを残して消す・作り直す）
-  - `worktree-guard.ts`: worktree やブランチを消す操作で、許可の確認を出させる hooks（awk）
+  - `worktree-guard.ts`: worktree やブランチを消す操作で、許可の確認を出させる hooks（awk）と、確かめの入り口を動かすコマンド
+  - `worktree-guard-check.ts` / `worktree-guard-hook.ts`: awk が確認を出させると決めたコマンドを読み直し、消して失うものが無いかを確かめる（入り口は Node として動かす）
   - `mcp-relay.ts`: tanacode が足す MCP サーバー（Claude Code が起動する stdio の中継）の JSON-RPC。サーバーの定義（ツールの一覧と説明）を受け取り、アプリ内ブラウザとセッションで使い回す
   - `mcp-bridge.ts`: 中継とアプリのソケット（待ち受けの `McpBridge`・呼び出しの `callBridge`）と、起動の引数（`--mcp-config`・`--allowedTools`）の共通部分
   - `browser-mcp.ts` / `browser-bridge.ts`: アプリ内ブラウザの中継の入り口と、中継・JavaScript の実行の確認のフックに渡す環境変数と `--mcp-config` のエントリ
@@ -1872,7 +1881,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `homebrew-update.test.ts`: Homebrew での更新（brew の返事の読み取り・Homebrew で入れたかの判定・ダウンロードとやり直し・入れ替えのシェル。シェルは本物の sh で、作り物の brew を動かす）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
-  - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
+  - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの。確かめの入り口をビルドして、フックのシェルから動かすものも）
+  - `worktree-guard-check.test.ts`: 歯止めの確かめ（コマンドの読み方・許す形でないもの・消すブランチと worktree に失うものが無いか。本物の git で）
+  - `worktree-guard-hook-entry.test.ts`: 歯止めの確かめの入り口（標準入力の読み方・読めないときと時間切れのときの ask・時間切れで子のプロセスを止める）
   - `browser-windows.test.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先・ポップアップの別ウインドウの作り方と数・位置と大きさ・ポップアップから開くもの・閉じ方・題のオリジン）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）

@@ -222,7 +222,7 @@
       "noAnswer": "(no answer)"
     },
     "hooks": {
-      "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
+      "worktreeGuard": "This command deletes a worktree or branch and tanacode could not confirm that nothing would be lost, so it is asking for confirmation",
       "terminalGate": "tanacode asks every time before Claude types into a terminal, regardless of the permission mode. Typing into “{tab}”: {typed}",
       "terminalGateUnknown": "tanacode could not check the terminal, so it is asking for confirmation. Typing: {typed}",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",

@@ -46,6 +46,7 @@
   "test/e2e/walkthrough-shown.test.ts": 12,
   "test/e2e/workspace.test.ts": 12,
   "test/e2e/worktree-end-branch.test.ts": 19,
+  "test/e2e/worktree-guard.test.ts": 10,
   "test/e2e/worktree-install.test.ts": 25,
   "test/e2e/worktree-start.test.ts": 16
 }
