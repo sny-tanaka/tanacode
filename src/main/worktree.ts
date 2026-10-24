@@ -28,7 +28,8 @@ export class WorktreeError extends Error {
 // アプリがプロセスを止めるので出ず、Claude Code の自動の掃除も --worktree のセッションは対象外のため）
 
 export const WORKTREES_DIR = '.claude/worktrees';
-// Claude Code が worktree に付けるロックの理由（「claude session <名前> (pid … start …)」）。プロセスを止めても残る
+// Claude Code が worktree に付けるロックの理由（「claude session <名前> (pid … start …)」）。プロセスを止めても残る。
+// ただし、同じリポジトリのほかの Claude Code が、裏の掃除で pid のもう無いロックを外すことがある（unlockClaudeLock）
 const CLAUDE_LOCK = /^claude session /;
 // node_modules の中の、絶対パスが入るキャッシュ。複製しても使えないので消す
 const ABSOLUTE_CACHES = ['.vite', '.cache'];
@@ -806,7 +807,7 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     const submodules = await submoduleData(path);
     const left = await submodulesWithLeftovers(path, submodules.items);
     if (left.length > 0) throw new WorktreeError('submoduleChanges', t('main.worktree.submoduleChanges', { paths: left.join(', '), count: left.length }), left.join(', '));
-    if (listed.locked !== null) await git(ref.root, ['worktree', 'unlock', path]);
+    if (listed.locked !== null) await unlockClaudeLock(ref.root, path);
     current = await currentBranchOf(path);
     const dirty = (await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none'])) !== '';
     // detached HEAD のコミットが、どこからも辿れない（worktree を消すと、HEAD の記録ごと失われる）。数えられなければ、ある側に倒す
@@ -828,6 +829,19 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     await git(ref.root, ['worktree', 'prune']).catch(() => '');
   }
   return { backupRef, branches: await deleteBranches(ref, current) };
+}
+
+// Claude Code が付けたロックを外す。確かめてから外すまでの間に、同じリポジトリのほかの Claude Code が、裏の掃除
+// （起動の 5 秒あとに動く。pid がもう無い claude session のロックを外す）で先に外していると、git worktree unlock は
+// 「is not locked」で失敗する（unlock はどのロックも外せるので、失敗するのはロックが無いときだけ）。そのときは
+// 読み直して、ロックがもう無ければそのまま続ける。エラーの文言では見分けない
+async function unlockClaudeLock(root: string, path: string): Promise<void> {
+  try {
+    await git(root, ['worktree', 'unlock', path]);
+  } catch (error) {
+    if ((await findWorktree(root, path))?.locked !== null) throw error;
+    console.info(`worktree のロックは、ほかの Claude Code が先に外していました: ${path}`);
+  }
 }
 
 // worktree を消したあとに、そのブランチを消す（removeWorktree の 4.）
