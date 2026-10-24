@@ -6,6 +6,7 @@ import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
 import { instructionsHookEnv, type InstructionsLaunch } from './instructions-launch';
 import { instructionDirs } from './project-instructions';
 import { walkthroughMcpServer } from './walkthrough-bridge';
+import { worktreeGuardEnv, type WorktreeGuardLaunch } from './worktree-guard';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsGateEnv, sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import { terminalGateEnv, terminalMcpServer, type TerminalMcpLaunch } from './terminal-bridge';
@@ -62,6 +63,8 @@ type BaseOptions = {
   terminal?: TerminalMcpLaunch | null;
   // TANACODE.md を渡すフックを足すときの材料。null なら足さない
   instructions?: InstructionsLaunch | null;
+  // worktree やブランチを消す操作の確認のフックが、失うものが無いかを確かめる入り口（worktree-guard.ts）。null なら確かめずに確認を出させる
+  worktreeGuard?: WorktreeGuardLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
   // ワークスペースに追加したフォルダ（--add-dir）。Claude Code は、cwd と同じように読み書きを許す
@@ -213,6 +216,7 @@ export class ClaudeSession {
   // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
   // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も。
   // TANACODE.md を渡すフックを足すときは、そのフックが使う環境変数（探すフォルダ）も
+  // worktree やブランチを消す操作の確認のフックには、確かめの入り口の環境変数も
   private env(): Record<string, string> {
     const { sessionId, statusFile, askFile, kind, cwd, worktreeRoot } = this.options;
     return {
@@ -224,6 +228,7 @@ export class ClaudeSession {
       ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
       ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
       ...(this.options.instructions ? instructionsHookEnv(this.options.instructions, instructionDirs(cwd, worktreeRoot), claudeConfigDir(this.options.claudeDir ?? null)) : {}),
+      ...(this.options.worktreeGuard ? worktreeGuardEnv(this.options.worktreeGuard) : {}),
     };
   }
 

@@ -68,6 +68,7 @@ import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from 
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import type { InstructionsLaunch } from './instructions-launch';
+import type { WorktreeGuardLaunch } from './worktree-guard';
 import { instructionDirs, instructionFiles, instructionsProblemText, type InstructionsFile } from './project-instructions';
 import { PendingQuestions } from './pending-questions';
 import type { SessionsMcpLaunch } from './sessions-bridge';
@@ -462,6 +463,8 @@ export class SessionManager {
     private readonly terminalMcp: () => McpLaunch | null = () => null,
     // 起動する Claude Code に、TANACODE.md を渡すフックを足すときの材料。null なら足さない
     private readonly instructionsHook: () => InstructionsLaunch | null = () => null,
+    // 起動する Claude Code の、worktree やブランチを消す操作の確認のフックが、失うものが無いかを確かめる入り口。null なら確かめずに確認を出させる
+    private readonly worktreeGuardHook: () => WorktreeGuardLaunch | null = () => null,
   ) {}
 
   // 答えを待っている AskUserQuestion（セッションごと。stream-json の can_use_tool の要求）
@@ -2384,6 +2387,7 @@ export class SessionManager {
     const walkthrough = adopted ? null : this.walkthroughMcp();
     const terminalLaunch = adopted ? null : this.terminalMcp();
     const instructions = adopted ? null : this.instructionsHook();
+    const worktreeGuard = adopted ? null : this.worktreeGuardHook();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
@@ -2644,6 +2648,7 @@ export class SessionManager {
         walkthrough,
         terminal,
         instructions,
+        worktreeGuard,
         claudeDir: this.claudeDir,
         // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
         addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),

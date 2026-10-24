@@ -148,7 +148,7 @@ export async function restoreWorktree(ref: WorktreeRef, path: string, saved: Wor
   await git(ref.root, ['worktree', 'prune']).catch(() => '');
   const kept = saved.branch && (await branchExists(ref.root, saved.branch)) ? saved.branch : null;
   const wanted = kept ?? ref.branch;
-  const busy = (await branchesInUse(ref.root, null)).has(wanted) ? wanted : null;
+  const busy = (await branchesInUse(ref.root, [])).has(wanted) ? wanted : null;
   if (busy) await userGit(ref.root, ['worktree', 'add', '--detach', path, `refs/heads/${busy}`]);
   else if (kept || (await branchExists(ref.root, wanted))) await userGit(ref.root, ['worktree', 'add', path, wanted]);
   else await userGit(ref.root, ['worktree', 'add', '-b', wanted, path]);
@@ -421,16 +421,19 @@ function branchRoles(ref: WorktreeRef, current: string | null): BranchRole[] {
 type BranchContext = { base: string | null; trunks: Set<string>; inUse: Set<string> };
 
 // except: 取り出しているブランチを数えない worktree（消す前の確認では、これから消す worktree）
-async function branchContext(root: string, except: string | null): Promise<BranchContext> {
+async function branchContext(root: string, except: string[]): Promise<BranchContext> {
   const [base, inUse] = await Promise.all([defaultBranch(root), branchesInUse(root, except)]);
   return { base, trunks: new Set([...TRUNK_NAMES, ...(base ? [base] : [])]), inUse };
 }
 
 // ほかの worktree（except の場所のものは除く）で取り出しているブランチ。git は、取り出しているブランチを消さない
-async function branchesInUse(root: string, except: string | null): Promise<Set<string>> {
+async function branchesInUse(root: string, except: string[]): Promise<Set<string>> {
   const used = new Set<string>();
   for (const w of await listWorktrees(root)) {
-    if (w.branch && !(except && (await samePath(w.path, except)))) used.add(w.branch);
+    if (!w.branch) continue;
+    let excepted = false;
+    for (const path of except) if (await samePath(w.path, path)) excepted = true;
+    if (!excepted) used.add(w.branch);
   }
   return used;
 }
@@ -490,7 +493,7 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
   const current = exists ? await currentBranchOf(path) : null;
   const roles = branchRoles(ref, current);
   // PR を GitHub に問い合わせるので、調べている間に数える
-  const inspecting = branchContext(ref.root, exists ? path : null).then((context) => inspectBranches(ref.root, roles, context));
+  const inspecting = branchContext(ref.root, exists ? [path] : []).then((context) => inspectBranches(ref.root, roles, context));
   let uncommitted = 0;
   let untracked = 0;
   if (exists) {
@@ -739,6 +742,35 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
   return false;
 }
 
+// worktree-guard（worktree-guard-check.ts）: Claude が打った git branch -D で、消して失うものが無いか。worktree の片付けと同じく、
+// 手元にしか無いコミット（PR のコミット・update-branch のあとの PR のコミット・リモート・ほかのブランチにあるもの、中身が
+// デフォルトブランチに入っているものは数えない）が無く、幹のブランチでも、ほかの worktree で取り出しているブランチでもないときだけ
+// true。手元に無いブランチは、git branch -D が失敗するだけなので true。removing: 同じコマンドで消す worktree（そこで取り出している
+// ブランチは、取り出していないものとして数える）
+export async function branchesSafeToDelete(cwd: string, names: string[], removing: string[]): Promise<boolean> {
+  const roles: BranchRole[] = [...new Set(names)].map((name) => ({ name, launched: false, current: false }));
+  const inspected = await inspectBranches(cwd, roles, await branchContext(cwd, removing));
+  return inspected.every((b) => !b.exists || b.keep === null);
+}
+
+// worktree-guard: Claude が打った git worktree remove --force で、消して失うものが無いか。消すときの確かめ（removeWorktree）と同じく、
+// 未コミットの変更・未追跡のファイル・submodule の中に失われるもの（未コミットの変更・stash・手元にしか無いコミット）・どこからも
+// 辿れない detached HEAD のコミットが無いときだけ true。人が付けたロックがあれば false。登録の無い・もう無いフォルダは、
+// git worktree remove が何も消さずに失敗するか、登録を片付けるだけなので true
+export async function worktreeSafeToRemove(root: string, path: string): Promise<boolean> {
+  const listed = await findWorktree(root, path);
+  if (!listed || !existsSync(path)) return true;
+  if (listed.locked !== null && !CLAUDE_LOCK.test(listed.locked)) return false;
+  try {
+    if ((await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none'])) !== '') return false;
+    if ((await submodulesWithLeftovers(path)).length > 0) return false;
+    if ((await currentBranchOf(path)) !== null) return true;
+    return (await countCommits(path, ['HEAD', '--not', '--branches', '--tags', '--remotes'])) === 0;
+  } catch {
+    return false;
+  }
+}
+
 // worktree を消す。Claude Code は先に止めておくこと。
 // 1. 未コミットの変更や未追跡のファイルがあれば、一時的なインデックスでコミットにし、refs/tanacode/backup/<名前> に控えを残す
 // 2. gitignore されたフォルダ（node_modules など）を、.git の中のごみ箱へ動かす。git worktree remove に消させると、
@@ -798,7 +830,7 @@ async function deleteBranches(ref: WorktreeRef, current: string | null): Promise
   if (roles.length === 0) return [];
   // 先にすべてを確かめてから消す。git branch -d（上流にマージ済みなら消える）は使わない。上流が一緒に消すブランチのとき
   // （git switch -c --track worktree-<名前> など）に、上流にしか無いコミットを、両方を消して失うため
-  const inspected = await inspectBranches(ref.root, roles, await branchContext(ref.root, null));
+  const inspected = await inspectBranches(ref.root, roles, await branchContext(ref.root, []));
   const result: WorktreeRemovedBranch[] = [];
   for (const branch of inspected) {
     // 確かめたときの先頭のままのときだけ消す（確かめている間に、コミットが足されていたら消さない）

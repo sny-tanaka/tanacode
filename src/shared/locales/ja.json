@@ -219,7 +219,7 @@
       "noAnswer": "（回答なし）"
     },
     "hooks": {
-      "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
+      "worktreeGuard": "worktree やブランチを消す操作で、失うものが無いと確かめられなかったので、tanacode が確認を求めています",
       "terminalGate": "tanacode は、Claude がターミナルに打つ前に、権限モードによらず毎回確認を求めます。「{tab}」に打つもの: {typed}",
       "terminalGateUnknown": "tanacode にターミナルを確かめられなかったので、確認を求めています。打つもの: {typed}",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
