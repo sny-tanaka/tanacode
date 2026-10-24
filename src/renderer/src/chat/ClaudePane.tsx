@@ -757,7 +757,7 @@ export const ClaudePane = memo(function ClaudePane({
             icon={ParentIcon}
             label={t('chat.pane.becomeParent')}
             tip={t(parentFile === null ? 'chat.pane.becomeParentMissing' : 'chat.pane.becomeParentTip', { file: PARENT_INSTRUCTIONS_FILE })}
-            // 押すたびに 1 回読ませる（親の状態は覚えないので、押した印は付けない）。作業中なら順番待ちに入り、ターミナルモードなら入力欄に貼る
+            // 押すたびに 1 回読ませる（ボタンに押した印は付けない。渡したことは main が覚え、そのあとに子を始めても重ねて渡さない）。作業中なら順番待ちに入り、ターミナルモードなら入力欄に貼る
             disabled={!parentFile}
             onClick={() =>
               void window.tanacode.sessions

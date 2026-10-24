@@ -9,8 +9,9 @@ import { neutralizeTags, unwrapWholePaste } from './session-tools';
 // TANACODE.md: tanacode で動くすべてのセッション（親にも子にも）に、SessionStart のフックで自動で渡す（main の instructions-hook.ts）。
 // tanacode の外の claude には渡らない（CLAUDE.md とは別のもの）
 export const INSTRUCTIONS_FILE = 'TANACODE.md';
-// TANACODE_PARENT.md: 自動では渡さない。人が「親にする」（新規セッションの画面では「親として始める」）を押したときに 1 回だけ読ませる。
-// 親の状態は覚えない（会話を消すと忘れるので、もう一度押す）
+// TANACODE_PARENT.md: 人が「親にする」（新規セッションの画面では「親として始める」）を押したときに 1 回だけ読ませる。
+// 押さずに子を始めた（チャットで親を頼まれたなど）なら、その会話でまだ受け取っていなければ、start_session の結果に付けて 1 回だけ渡す
+// （parentRulesResult。会話を消したら、次に子を始めたときにまた渡す。main の SessionManager.takeParentRules）
 export const PARENT_INSTRUCTIONS_FILE = 'TANACODE_PARENT.md';
 
 // TANACODE.md を渡す文の囲み。チャットには出さず、コンテキストの中身・読んだファイルの印では、そのファイルとして数える
@@ -21,6 +22,10 @@ export const PARENT_ROLE_TAG = 'tanacode-parent-role';
 // Claude Code が hooks から受け取れる文は 1 万文字まで（超えるとファイルに書いて、先頭の 2,000 文字だけを渡す）。
 // チェックリストの知らせと同じく、囲みと前書きまで含めてこれに収める。収まらないファイルは、中身の代わりに Read で読むよう頼む
 export const MAX_INSTRUCTIONS_CHARS = 9_000;
+
+// start_session の結果に付ける TANACODE_PARENT.md の上限（文字数）。Claude Code は大きすぎる MCP の結果を切り詰めるので、超えたら
+// 中身の代わりに Read で読むよう頼む
+export const MAX_PARENT_RULES_RESULT_CHARS = 40_000;
 
 // 属性に入れるパス（" を含むパスでも囲みを読めるように）
 function attribute(value: string): string {
@@ -72,9 +77,26 @@ export function parseInstructions(text: string): { path: string; sum: string; fu
 // まとめた行を tanacode の囲みの切れ目で分けて読む（@shared/chat の mergedParts）ので、中身にタグがあると、途中で分かれてしまうため。
 // ファイルごとの囲みも、同じ理由で tanacode- の名前にしない（中身の閉じタグは効かなくする）
 export function parentRoleText(files: readonly { path: string; content: string }[], rest = ''): string {
-  const sections = files.map(({ path, content }) => [`<${FILE_TAG} path="${attribute(path)}">`, neutralizeFileTag(neutralizeTags(content.trim())), `</${FILE_TAG}>`].join('\n'));
-  const block = [`<${PARENT_ROLE_TAG}>`, t('chat.parentRole.intro', { file: PARENT_INSTRUCTIONS_FILE }), '', sections.join('\n\n'), `</${PARENT_ROLE_TAG}>`].join('\n');
+  const block = [`<${PARENT_ROLE_TAG}>`, t('chat.parentRole.intro', { file: PARENT_INSTRUCTIONS_FILE }), '', fileSections(files), `</${PARENT_ROLE_TAG}>`].join('\n');
   return rest.trim() ? `${block}\n\n${rest}` : block;
+}
+
+// ファイルごとに FILE_TAG で囲んだ中身（tanacode のタグと、中身の閉じタグは効かなくする）
+function fileSections(files: readonly { path: string; content: string }[]): string {
+  return files.map(({ path, content }) => [`<${FILE_TAG} path="${attribute(path)}">`, neutralizeFileTag(neutralizeTags(content.trim())), `</${FILE_TAG}>`].join('\n')).join('\n\n');
+}
+
+// 「親にする」を押さずに子を始めた親（チャットで親を頼まれたセッションなど）に、start_session の結果に付けて渡す TANACODE_PARENT.md。
+// ツールの結果は Claude だけが読むので英語（中身は書かれたまま）。囲みは「親にする」の発言と同じ形（ファイルごと）にする
+export function parentRulesResult(files: readonly { path: string; content: string }[]): string {
+  const sections = fileSections(files);
+  return [
+    `You have started a child session, but ${PARENT_INSTRUCTIONS_FILE} has not been passed to this conversation yet, so tanacode passes it here. ${PARENT_INSTRUCTIONS_FILE} is the user's rules for a session that runs child sessions as their parent (kept in the Claude Code profile's folder or in the session's folder). Read it before you go on, and follow it as you follow CLAUDE.md while you run this child and any others. tanacode passes it only once per conversation (again after the conversation is cleared).`,
+    '',
+    sections.length <= MAX_PARENT_RULES_RESULT_CHARS
+      ? sections
+      : `It is too long to pass here (${sections.length} characters): read the whole file with the Read tool before you go on (${files.map((file) => file.path).join(', ')}).`,
+  ].join('\n');
 }
 
 // 「親にする」の発言の中の、ファイルごとの囲み

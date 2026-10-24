@@ -1,11 +1,12 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parentRoleText, parseParentRole, PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
-import { line, ScriptedApp, type ScriptedPty } from './helpers/scripted-claude';
+import { transcriptPath } from '../src/main/claude-session';
+import { line, ScriptedApp, stream, type ScriptedPty } from './helpers/scripted-claude';
 
 // 「親にする」（SessionManager の parentInstructions・becomeParent・withParentRole）と、TANACODE.md を渡すフックの材料の渡し方。
-// TANACODE_PARENT.md は、押したときに 1 回だけ、tanacode からの発言として読ませる（親の状態は覚えない）
+// TANACODE_PARENT.md は、押したときに 1 回だけ、tanacode からの発言として読ませる。押さずに子を始めた親には、start_session の結果で 1 回だけ渡す
 
 let app: ScriptedApp;
 beforeEach(() => {
@@ -167,6 +168,75 @@ describe('withParentRole（新規セッションの画面の「親として始�
     // 「親にする」だけの発言を戻したときは、入力欄に何も戻さない
     pipe.answers.set('rewind_conversation', { rewound: true, prefillText: parentRoleText([{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), content: RULES }]) });
     expect(await app.manager.rewind(id, first, { conversation: true, code: false })).toEqual({ ok: true, prefillText: null, error: null });
+  });
+});
+
+describe('takeParentRules（「親にする」を押さずに子を始めた親に、start_session の結果で渡す）', () => {
+  it('今の会話でまだ受け取っていなければ 1 回だけ渡す。2 本目の子では渡さない', async () => {
+    const { id } = await idleSession();
+    putRules();
+    expect(app.manager.takeParentRules(id)).toEqual([{ path: join(app.cwd, PARENT_INSTRUCTIONS_FILE), content: RULES }]);
+    expect(app.manager.takeParentRules(id)).toBeNull();
+  });
+
+  it('渡したことは記録に残し、アプリを起動し直しても繰り返さない', () => {
+    const record = (id: string, extra: object) => ({ id, claudeSessionId: id, cwd: '', title: null, titlePriority: 0, archived: false, createdAt: 1, updatedAt: 1, ...extra });
+    const given = '11111111-0000-4000-8000-000000000001';
+    const fresh = '22222222-0000-4000-8000-000000000002';
+    const restarted = new ScriptedApp({ records: [record(given, { parentRules: true }), record(fresh, {})] });
+    try {
+      putRules(restarted.cwd);
+      expect(restarted.manager.takeParentRules(given)).toBeNull();
+      expect(restarted.manager.takeParentRules(fresh)).not.toBeNull();
+    } finally {
+      restarted.dispose();
+    }
+  });
+
+  it('「親にする」「親として始める」で受け取った親には、重ねて渡さない', async () => {
+    putRules();
+    const { id } = await idleSession();
+    await app.manager.becomeParent(id);
+    expect(app.manager.takeParentRules(id)).toBeNull();
+    const { id: started } = await idleSession();
+    app.manager.withParentRole(started, 'ログイン画面を作って');
+    expect(app.manager.takeParentRules(started)).toBeNull();
+  });
+
+  it('ターミナルモードで入力欄に貼っただけ（送るのは人）なら、受け取ったことにしない', async () => {
+    const { id } = await idleSession();
+    await app.prompt(id, 'はじめ');
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle');
+    putRules();
+    await app.manager.setTerminalMode(id, true);
+    await app.manager.becomeParent(id);
+    expect(app.manager.takeParentRules(id)).not.toBeNull();
+  });
+
+  it('ファイルが無い・使えないときは何もしない（あとで置けば、次に子を始めたときに渡す）。子のセッションには渡さない', async () => {
+    const { id } = await idleSession();
+    expect(app.manager.takeParentRules(id)).toBeNull();
+    writeFileSync(join(app.cwd, PARENT_INSTRUCTIONS_FILE), ' \n');
+    expect(app.manager.takeParentRules(id)).toBeNull();
+    putRules();
+    const { id: child } = await idleSession(id);
+    expect(app.manager.takeParentRules(child)).toBeNull();
+    expect(app.manager.takeParentRules(id)).not.toBeNull();
+  });
+
+  it('会話を消したら（/clear・最適化圧縮で会話ログが替わる）、次に子を始めたときにもう一度渡す', async () => {
+    const { id, pipe } = await idleSession();
+    putRules();
+    expect(app.manager.takeParentRules(id)).not.toBeNull();
+    const next = '66666666-0000-4000-8000-000000000006';
+    mkdirSync(dirname(transcriptPath(app.cwd, next)), { recursive: true });
+    writeFileSync(transcriptPath(app.cwd, next), `${JSON.stringify({ ...line.user('新しい会話'), sessionId: next, cwd: app.cwd })}\n`);
+    pipe.emit(stream.init(next));
+    await app.waitFor('乗り換え', () => app.events(id).some((e) => e.type === 'reset'));
+    expect(app.manager.takeParentRules(id)).not.toBeNull();
+    expect(app.manager.takeParentRules(id)).toBeNull();
   });
 });
 

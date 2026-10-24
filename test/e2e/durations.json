@@ -24,6 +24,7 @@
   "test/e2e/mcp.test.ts": 13,
   "test/e2e/merged-parent.test.ts": 20,
   "test/e2e/outside-reads.test.ts": 9,
+  "test/e2e/parent-rules.test.ts": 14,
   "test/e2e/press-card.test.ts": 12,
   "test/e2e/press-chat.test.ts": 8,
   "test/e2e/press-preview.test.ts": 7,

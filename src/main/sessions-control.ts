@@ -32,6 +32,7 @@ import {
   type SessionState,
 } from '@shared/session-tools';
 import { AWAY_ENDED, awayRules, type AwayChangedBy } from '@shared/away-mode';
+import { parentRulesResult } from '@shared/project-instructions';
 import { resumeContinued } from './compact-notice';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -124,6 +125,8 @@ export type SessionsHost = {
   // 離席モードを切り替える（画面のスイッチと同じ。子は切り替えない: false）と、人の答えを待つ時間（ミリ秒）
   setAway?(id: string, on: boolean, by: AwayChangedBy): boolean;
   awayWaitMs?(): number;
+  // 今の会話にまだ渡していない TANACODE_PARENT.md（渡したことにする）。渡したあと・ファイルが無いときは null
+  takeParentRules?(id: string): { path: string; content: string }[] | null;
 };
 
 // 予約したメッセージ（ScheduledMessages）のうち、自分への予約のツールが使うもの
@@ -548,7 +551,7 @@ export class SessionsControl {
     const setup = options.worktree
       ? ` The worktree is set up before the first instruction is sent (the state is starting until then), so the ${independent ? 'session' : 'child'} needs no setup for the worktree itself. If installing its dependencies fails, the first instruction says so${independent ? '' : ' and get_session shows it in worktree.setup_problems'}.`
       : '';
-    return json({
+    const result = json({
       session_id: id,
       name: name || null,
       folder: child?.cwd ?? folder,
@@ -563,6 +566,10 @@ export class SessionsControl {
         ? `The first instruction will be sent as soon as the session has started.${setup} It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.`
         : `The first instruction will be sent as soon as the child has started.${setup} A notice arrives when the child finishes its work or stops on a question or a permission prompt: end your turn and wait for it (do not wait synchronously, and do not schedule wake-ups to check on the child).`,
     });
+    // 「親にする」を押さずに子を始めた（チャットで親を頼まれたなど）なら、親の決まり（TANACODE_PARENT.md）をこの結果に付けて渡す。
+    // 知らせ（ターンが終わってから届く）ではなく結果に付けるのは、子を始めた同じターンのうちに読ませるため（見回りの予約などは、このあとすぐにする）
+    const rules = independent ? null : (host.takeParentRules?.(caller.id) ?? null);
+    return rules ? { content: [...result.content, { type: 'text', text: parentRulesResult(rules) }] } : result;
   }
 
   private async sendMessage(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {

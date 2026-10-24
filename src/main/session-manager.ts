@@ -1167,7 +1167,8 @@ export class SessionManager {
     return empty && 'problem' in empty ? instructionsProblemText(empty) : t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE });
   }
 
-  // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（親の状態は覚えない。会話を消すと忘れるので、もう一度押す）。
+  // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（会話を消すと忘れるので、もう一度押す。
+  // 渡したことは覚え、そのあとに子を始めても重ねて渡さない。takeParentRules）。
   // 作業中に押したら、親の指示・予約と同じく、今の作業が終わってから届くように送る（priority: later。今のターンの途中には入れない）。
   // ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。読ませられなければ、理由を投げる
   async becomeParent(id: string): Promise<void> {
@@ -1177,18 +1178,35 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (!rt || (!rt.process && !rt.restarting)) throw new SendError('notRunning');
     const text = parentRoleText(files);
+    // ターミナルモードでは、貼るだけで送るのは人なので、渡したことにしない（送られなければ、子を始めたときに渡す）
     if (rt.terminal && !rt.switching) {
       if (!this.pasteIntoTerminal(id, text)) throw new Error(t('main.parentRole.cannotPaste'));
       return;
     }
     await this.submit(id, text, [], [], 'later');
+    this.store.update(id, { parentRules: true });
+  }
+
+  // 親が子を始めた（start_session）。今の会話にまだ TANACODE_PARENT.md を渡していなければ、渡す中身を返し、渡したことにする
+  // （「親にする」を押さずに、チャットで親を頼まれたセッションにも、親の決まりを読ませるため）。渡したあと・子のセッション・
+  // ファイルが無い・使えない（空・大きすぎる・読めない）ときは null（何もしない。使えない理由は「親にする」を押したときに出る）
+  takeParentRules(id: string): { path: string; content: string }[] | null {
+    const record = this.store.get(id);
+    if (!record || record.parentId || record.parentRules) return null;
+    const files = this.parentFiles(id);
+    if (typeof files === 'string') return null;
+    this.store.update(id, { parentRules: true });
+    return files;
   }
 
   // 新規セッションの画面の「親として始める」: 最初の指示の前に、TANACODE_PARENT.md を付けた発言にする。
   // 始めるまでにファイルが無くなっていた・使えなくなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
   withParentRole(id: string, text: string): string {
     const files = this.parentFiles(id);
-    if (typeof files !== 'string') return parentRoleText(files, text);
+    if (typeof files !== 'string') {
+      this.store.update(id, { parentRules: true });
+      return parentRoleText(files, text);
+    }
     const notice = this.parentInstructions(id).length > 0 ? t('main.parentRole.unusableOnStart', { reason: files }) : t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE });
     this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: notice, warning: true }]);
     return text;
@@ -2852,7 +2870,8 @@ export class SessionManager {
           this.resendCarried(id, runtime);
         },
         onSwitch: (nextClaudeSessionId) => {
-          this.store.update(id, { claudeSessionId: nextClaudeSessionId });
+          // 会話を消した（/clear・最適化圧縮）。TANACODE_PARENT.md も、次に子を始めたときに渡し直す
+          this.store.update(id, { claudeSessionId: nextClaudeSessionId, parentRules: false });
           this.changed(id);
           rt.chain = [];
           rt.heldHooks.clear();
