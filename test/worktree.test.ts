@@ -450,6 +450,15 @@ const withOrigin = () => {
   git(repo, 'fetch', '-q', 'origin');
 };
 
+// dir（の git のデータ）を partial clone にする。手元に無いオブジェクトを取りに行くと、core.sshCommand が marker を作る
+const partialCloneOf = (dir: string, marker: string) => {
+  git(dir, 'config', 'core.repositoryformatversion', '1');
+  git(dir, 'config', 'extensions.partialClone', 'origin');
+  git(dir, 'config', 'remote.origin.promisor', 'true');
+  git(dir, 'config', 'remote.origin.url', 'ssh://tanacode.invalid/repo.git');
+  git(dir, 'config', 'core.sshCommand', `touch '${marker}'; false`);
+};
+
 // gh pr list の 1 件
 const pull = (pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
   baseRefName: 'main',
@@ -605,6 +614,24 @@ describe('削除', () => {
     squashMerge(plan.branch);
     expect(await removeWorktree(plan, plan.path)).toMatchObject({ branchKept: false });
     expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
+  });
+
+  it('partial clone のリポジトリでも、PR の head（手元に無いコミット）や中身の比べのために、無いものを取りに行かない', async () => {
+    const plan = await create();
+    commitIn(plan.path, 'b.txt');
+    squashMerge(plan.branch);
+    const marker = join(root, 'lazy-fetched');
+    partialCloneOf(repo, marker);
+    const missing = '1'.repeat(40);
+    // 前提: cat-file -e は、無いコミットを取りに行って core.sshCommand を動かす
+    expect(() => execFileSync('git', ['cat-file', '-e', missing], { cwd: repo, stdio: 'ignore' })).toThrow();
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+    prs.mockResolvedValue([pull({ number: 1, state: 'MERGED', headRefOid: missing })]);
+    // 中身で比べないので、手元でスカッシュマージしたものも、入っていない側に倒れる
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, contentIn: null });
+    expect(await removeWorktree(plan, plan.path)).toMatchObject({ branchKept: true });
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('ロックの理由の途中に「claude session 」があっても、Claude Code のロックとはみなさない', async () => {
@@ -870,6 +897,41 @@ describe('削除', () => {
       const plan = await withSubmodule();
       git(join(plan.path, 'lib'), 'switch', '-q', '--orphan', 'empty');
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ submodules: [] });
+    });
+
+    it('submodule の中のタグを指すタグからしか辿れないコミットも、手元にしか無いコミットとして見る', async () => {
+      const plan = await withSubmodule();
+      const inner = join(plan.path, 'lib');
+      commitIn(inner, 'tagged.txt');
+      git(inner, 'tag', '-a', '-m', 'inner', 'inner');
+      git(inner, '-c', 'advice.nestedTag=false', 'tag', '-a', '-m', 'outer', 'outer', 'inner');
+      git(inner, 'tag', '-d', 'inner');
+      git(inner, 'checkout', '-q', 'HEAD~1');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('submodule の中の worktree の HEAD からしか辿れないコミットも見る', async () => {
+      const plan = await withSubmodule();
+      const inner = join(plan.path, 'lib');
+      const other = join(root, 'lib-wt');
+      git(inner, 'worktree', 'add', '-q', '--detach', other);
+      commitIn(other, 'wt.txt');
+      await expectRefused(plan, 'lib');
+    });
+
+    it('元のフォルダの submodule が partial clone でも、無いコミットを取りに行かず（リポジトリの設定のコマンドを動かさず）、断る', async () => {
+      const plan = await withSubmodule();
+      commitIn(join(plan.path, 'lib'), 'local.txt');
+      const original = join(repo, '.git', 'modules', 'lib');
+      const marker = join(root, 'lazy-fetched');
+      partialCloneOf(original, marker);
+      // 前提: --missing を付けずに無いコミットを渡すと、取りに行って core.sshCommand が動く
+      const local = git(join(plan.path, 'lib'), 'rev-parse', 'HEAD');
+      expect(() => execFileSync('git', ['rev-list', '--count', local], { cwd: original, stdio: 'ignore' })).toThrow();
+      expect(existsSync(marker)).toBe(true);
+      rmSync(marker);
+      await expectRefused(plan, 'lib');
+      expect(existsSync(marker)).toBe(false);
     });
 
     it('submodule の中を調べられなければ、残っているものの submodule は null（調べられなかった）にする', async () => {

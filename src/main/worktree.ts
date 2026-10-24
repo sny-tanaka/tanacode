@@ -44,6 +44,10 @@ const LOCKFILES: { file: string; command: string }[] = [
 // 手元でスカッシュマージしたものを見分けるときに、デフォルトブランチの履歴で確かめる時点の数と、絞り込みに使うファイルの数の上限
 const MAX_MERGE_CHECKS = 100;
 const MAX_MERGE_CHECK_PATHS = 1000;
+// rev-list に付けて、partial clone（--filter=blob:none など）で手元に無いオブジェクトを、取りに行かずに扱わせる（rev-list は --missing を
+// 渡されると取りに行かない。渡したコミットが無ければ bad object で失敗する）。取りに行くと、リポジトリの設定の core.sshCommand・
+// ext:: の URL・資格情報のヘルパーが動き、guard では止まらない（GIT_NO_LAZY_FETCH は git 2.45 からで、Apple の git 2.39 では効かない）
+const MISSING_NO_FETCH = '--missing=print';
 // yarn の Plug'n'Play（node_modules を使わない）。ふつうは gitignore されていて worktree に無く、yarn install するまで依存を読めない
 const PNP_FILE = '.pnp.cjs';
 
@@ -458,27 +462,15 @@ async function submoduleHasLeftovers(item: SubmoduleData): Promise<boolean> {
     const status = await git(item.checkout, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=dirty']);
     if (status !== '') return true;
   }
-  const refs = await dataGit(item.gitDir, ['for-each-ref', '--format=%(refname) %(objectname) %(objecttype) %(*objecttype)']);
-  const tips = new Set<string>();
-  for (const line of refs.split('\n')) {
-    const [name, oid, type, peeled] = line.split(' ');
-    if (!name || name.startsWith('refs/remotes/')) continue;
-    if (name === 'refs/stash') return true;
-    // タグが指すのがコミットでないもの（木・ファイル）は、rev-list に渡せないので除く
-    if (type === 'commit' || peeled === 'commit') tips.add(oid);
-  }
-  // HEAD がまだ無い（コミットの無い submodule）こともある
-  const head = await dataGit(item.gitDir, ['rev-parse', '-q', '--verify', 'HEAD^{commit}']).then(
-    (out) => out.trim(),
-    () => '',
-  );
-  if (head) tips.add(head);
-  if (tips.size === 0) return false;
-  const local = (await dataGit(item.gitDir, ['rev-list', ...tips, '--not', '--remotes'])).trim();
+  if ((await dataGit(item.gitDir, ['for-each-ref', '--format=%(refname)', 'refs/stash'])).trim() !== '') return true;
+  // --all: refs/ のすべての ref（タグはタグを指すタグも最後まで剥がす。木を指すタグでも失敗しない）と、submodule の中の worktree も
+  // 含めた HEAD（まだ無ければ除く）。そこからリモートのものを除く
+  const local = (await dataGit(item.gitDir, ['rev-list', MISSING_NO_FETCH, '--exclude=refs/remotes/*', '--all', '--not', '--remotes'])).trim();
   if (local === '') return false;
-  // 元のフォルダの submodule の ref から、そのコミットがすべて辿れれば、消しても失われない（無いコミットがあれば失敗し、失われる側に倒す）
+  // 元のフォルダの submodule の ref から、そのコミットがすべて辿れれば、消しても失われない。元のフォルダに無いコミットを渡すので、
+  // partial clone でも取りに行かせず（MISSING_NO_FETCH）、無いコミットがあれば失敗させて、失われる側に倒す
   if (!item.original) return true;
-  const left = await dataGit(item.original, ['rev-list', '--count', '--stdin', '--not', '--all'], `${local}\n`).then(
+  const left = await dataGit(item.original, ['rev-list', MISSING_NO_FETCH, '--count', '--stdin', '--not', '--all'], `${local}\n`).then(
     (out) => out.trim(),
     () => null,
   );
@@ -488,7 +480,8 @@ async function submoduleHasLeftovers(item: SubmoduleData): Promise<boolean> {
 // submodule の git のデータの中で、作業フォルダを使わない git を動かす。入れ子の submodule の git のデータには、作業フォルダの場所
 // （core.worktree）が書いてあり、そのフォルダが無いと（deinit したあとに消したなど）git が動かないので、git のデータ自身を指させる
 // （git はリポジトリを探すときに core.worktree を設定のファイルから直に読むので、-c では変えられない。環境変数なら勝つ）。
-// 動かすのは ref とコミットを読むものだけ（設定でコマンドを動かすものは無い）
+// 動かすのは ref とコミットを読むものだけ。partial clone で無いものを取りに行くと、リポジトリの設定の core.sshCommand・資格情報の
+// ヘルパーなどが動くので、コミットを辿るものには MISSING_NO_FETCH を付ける
 function dataGit(gitDir: string, args: string[], input?: string): Promise<string> {
   return git(gitDir, args, input, { GIT_DIR: gitDir, GIT_WORK_TREE: gitDir });
 }
@@ -526,7 +519,7 @@ async function localOnlyCommits(root: string, branch: string, prs: PullRequest[]
 
 // rev-list --count。数えられなければ null
 function countCommits(root: string, args: string[]): Promise<number | null> {
-  return git(root, ['rev-list', '--count', ...args]).then(
+  return git(root, ['rev-list', MISSING_NO_FETCH, '--count', ...args]).then(
     (out) => (/^\d+$/.test(out.trim()) ? Number(out.trim()) : null),
     () => null,
   );
@@ -550,12 +543,13 @@ function pickPullRequest(prs: PullRequest[]): PullRequest | null {
   return null;
 }
 
-// oids のうち、手元にあるコミット（無いコミットを rev-list の --not に渡すと失敗するので、先に除く）
+// oids のうち、手元にあるコミット（無いコミットを rev-list の --not に渡すと失敗するので、先に除く）。GitHub から受け取った、手元に
+// 無いかもしれないコミットなので、partial clone でも取りに行かせない（cat-file -e は取りに行く）
 async function localCommits(root: string, oids: string[]): Promise<string[]> {
   const candidates = [...new Set(oids.filter((oid) => /^[0-9a-f]{40,64}$/.test(oid)))];
   const found = await Promise.all(
     candidates.map((oid) =>
-      git(root, ['cat-file', '-e', `${oid}^{commit}`]).then(
+      git(root, ['rev-list', MISSING_NO_FETCH, '--no-walk', `${oid}^{commit}`]).then(
         () => true,
         () => false,
       ),
@@ -578,6 +572,21 @@ async function defaultBranchRefs(root: string, base: string): Promise<string[]> 
   return refs.filter((_, i) => found[i]);
 }
 
+// partial clone（手元に無いオブジェクトを、必要になったときにリモートから取りに行く）か。extensions.partialClone か、
+// remote.<名前>.promisor が設定されている。読めなければ、partial clone とみなす
+async function partialClone(root: string): Promise<boolean> {
+  // 「<名前>\n<値>\0」。名前の節と変数は小文字で出る
+  const out = await git(root, ['config', '--null', '--list']).catch(() => null);
+  if (out === null) return true;
+  return out.split('\0').some((entry) => {
+    const end = entry.indexOf('\n');
+    const key = end < 0 ? entry : entry.slice(0, end);
+    const value = end < 0 ? 'true' : entry.slice(end + 1).trim().toLowerCase();
+    if (key === 'extensions.partialclone') return value !== '';
+    return /^remote\..*\.promisor$/s.test(key) && !['false', 'no', 'off', '0', ''].includes(value);
+  });
+}
+
 // branch の中身が、もう targets（デフォルトブランチ）に入っているか。スカッシュマージ・cherry-pick ではコミットが作り直されて
 // ハッシュが変わるので、中身で比べる。targets の、branch と分かれたあとの時点（今の先頭と、branch が変えたファイルに触れたコミットを
 // 古い順に）のどこかで、branch をマージしても何も変わらなければ、入っている（マージのあとにデフォルトブランチで同じところを
@@ -586,6 +595,9 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
   const ahead = await countCommits(root, [branch, '--not', ...targets]);
   if (ahead === 0) return true;
   if (ahead === null) return false;
+  // 中身で比べる diff・ファイルを絞った log・merge-tree は木やファイルの中身を読み、partial clone では無いものを取りに行く
+  // （リポジトリの設定のコマンドが動く）ので、比べずに入っていない側に倒す
+  if (await partialClone(root)) return false;
   const changed = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', `${targets[0]}...${branch}`]).then(
     (out) => out.split('\0').filter(Boolean),
     () => null,
