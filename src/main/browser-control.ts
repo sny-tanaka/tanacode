@@ -958,12 +958,12 @@ export class BrowserControl {
   // （描かせ始めた直後は、まだ 1 枚も描かれていないことがある。capturePage は、描いた絵を合成する側の都合で、
   // UnknownVizError などの例外になることもある）。撮り直しても例外のままなら、CDP の Page.captureScreenshot で撮る
   // （別の道筋で撮るもの。それも撮れなければ、capturePage の例外を伝える）
-  // 画素密度を決めているタブ（set_viewport の deviceScaleFactor）は、先に CDP で撮る。capturePage は、アプリの画面の画素密度で撮るため
-  // （Retina なら 2 倍。iPhone の 3 倍にならない）。CDP で撮れなければ（返ってこない・空）、capturePage で撮る
+  // 画素密度を決めているタブ（set_viewport の deviceScaleFactor）は、先に CDP で撮る（denseShot）。capturePage は、アプリの画面の画素密度で撮るため
+  // （Retina なら 2 倍。iPhone の 3 倍にならない）。CDP で撮れなければ（返ってこない・空・画面と違う絵）、capturePage で撮る
   private shoot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage> {
     return this.capture(guest, async () => {
       if (guest.emulated?.deviceScaleFactor) {
-        const dense = await Promise.race([this.cdpShot(guest, rect), sleep(DENSE_SHOT_WAIT_MS).then(() => null)]);
+        const dense = await Promise.race([this.denseShot(guest, rect), sleep(DENSE_SHOT_WAIT_MS).then(() => null)]);
         if (dense) return dense;
       }
       const until = Date.now() + EMPTY_SHOT_WAIT_MS;
@@ -994,8 +994,25 @@ export class BrowserControl {
     const shot = (await this.cdp(guest, 'Page.captureScreenshot', { format: 'png' }).catch(() => null)) as { data?: unknown } | null;
     const image = typeof shot?.data === 'string' ? nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) : null;
     if (!image || image.isEmpty()) return null;
-    if (!rect) return image;
-    // 撮った画像は、見えている範囲（CSS の px）の画素密度倍
+    return rect ? this.cropShot(guest, image, rect) : image;
+  }
+
+  // 画素密度を決めたタブを、その画素密度で撮る（CDP）。撮った絵が、capturePage で撮った絵（画面に出ている絵）と合うときだけ使い、
+  // 合わなければ null（capturePage で撮る）。アプリの画面の画素密度より大きい画素密度を決めると、CDP が崩れた絵を返すことがあるため
+  // （Electron 44.7 の webview。画面の画素密度 1 で、2 倍・3 倍を決めると、真っ黒・ページ全体が青い四角のくり返し、などになった。
+  // 画面が 2 倍（Retina）なら、3 倍でも正しく撮れた。どの組み合わせで崩れるかの決まりは見つけられなかったので、撮るたびに見比べる）
+  private async denseShot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
+    const whole = await this.cdpShot(guest);
+    if (!whole) return null;
+    const dense = rect ? await this.cropShot(guest, whole, rect) : whole;
+    // 見比べるのは、撮る範囲どうし（見えている範囲全体で比べると、小さな要素の所が違っても、まわりが合って同じとみなしてしまう）
+    const plain = await (rect ? guest.contents.capturePage(rect) : guest.contents.capturePage()).catch(() => null);
+    if (!dense || !plain || plain.isEmpty() || !looksSame(dense, plain)) return null;
+    return dense;
+  }
+
+  // 見えている範囲をまるごと撮った絵から、rect（CSS の px）を切り出す。撮った絵は、見えている範囲の画素密度倍
+  private async cropShot(guest: Guest, image: NativeImage, rect: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
     const scale = image.getSize().width / Math.max((await this.viewport(guest)).width, 1);
     const cropped = image.crop({ x: Math.round(rect.x * scale), y: Math.round(rect.y * scale), width: Math.round(rect.width * scale), height: Math.round(rect.height * scale) });
     return cropped.isEmpty() ? null : cropped;
@@ -1060,6 +1077,14 @@ export class BrowserControl {
     image = shrink(image, original.width / Math.max(cssWidth, 1));
     const size = image.getSize();
     const lines = [`${note}, ${this.shownUrl(url, guest)}, image ${size.width}×${size.height}`];
+    // 画素密度を決めたのに、その細かさで撮れなかった（CDP の絵が画面と合わなかった）。ページ全体は、はじめから CSS の px で撮る
+    const density = guest.emulated?.deviceScaleFactor ?? 0;
+    const shotDensity = original.width / Math.max(cssWidth, 1);
+    if (save && !fullPage && density > 0 && shotDensity < density * 0.99) {
+      lines.push(
+        `The saved image has the pixel density of this screen (${round(shotDensity)}×), not the emulated ${density}×: on this screen, the capture at ${density}× did not match what is shown, so tanacode used the screen's capture.`,
+      );
+    }
     if (saved) lines.push(`Saved to ${saved} (${original.width}×${original.height}). Send it to the user with SendUserFile if they need to see it.`);
     return {
       content: [
@@ -2259,6 +2284,26 @@ function requiredString(value: unknown, name: string): string {
 
 function stringList(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
+}
+
+// 2 枚の絵（同じ範囲を、違う画素密度で撮ったもの）が、同じに見えるか。10×10 の点で色（透明度も）を比べ、95 点が近ければ同じとみなす
+// （画素密度が違うと、縁の色が少し違う。ページが動いている途中なら合わないことがあるが、そのときは画面の画素密度の絵を使うだけ）
+function looksSame(a: NativeImage, b: NativeImage): boolean {
+  const sa = a.getSize();
+  const sb = b.getSize();
+  if (Math.abs(sa.width / sa.height - sb.width / sb.height) > 0.02) return false;
+  const pa = a.toBitmap();
+  const pb = b.toBitmap();
+  let near = 0;
+  for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < 10; j++) {
+      const at = (size: { width: number; height: number }) => (Math.floor(((j + 0.5) / 10) * size.height) * size.width + Math.floor(((i + 0.5) / 10) * size.width)) * 4;
+      const ia = at(sa);
+      const ib = at(sb);
+      if ([0, 1, 2, 3].every((c) => Math.abs((pa[ia + c] ?? 0) - (pb[ib + c] ?? 0)) <= 48)) near++;
+    }
+  }
+  return near >= 95;
 }
 
 // 範囲の中の数字。そうでなければ断る

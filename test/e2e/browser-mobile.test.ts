@@ -203,10 +203,13 @@ describe('Claude がスマホ向けのページを確かめる', () => {
     expect(path).not.toBeNull();
     expect(dirname(path![1]!)).toBe(`${app.userData}/browser-screenshots`);
     expect(existsSync(path![1]!)).toBe(true);
-    // PNG の頭（IHDR）の幅と高さ
+    // PNG の頭（IHDR）の幅と高さ。iPhone 15 の画素密度（3 倍）で撮れる。ただし、その画素密度の絵が画面と合わない画面（画素密度 1 の画面。CI の Mac）では、
+    // 画面の画素密度で撮って、そう伝える（中身が正しいことは、次のテストの要素の色で確かめる）
+    const density = / has the pixel density of this screen \((\d+(?:\.\d+)?)×\)/.exec(result ?? '')?.[1];
+    const expected = density ? [393 * Number(density), 852 * Number(density)] : [393 * 3, 852 * 3];
     const png = readFileSync(path![1]!);
-    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([393 * 3, 852 * 3]);
-    expect([Number(path![2]), Number(path![3])]).toEqual([393 * 3, 852 * 3]);
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual(expected);
+    expect([Number(path![2]), Number(path![3])]).toEqual(expected);
   });
 
   it('スクロールしたページの要素も、その要素の場所を撮る（画素密度を決めたタブは CDP で撮るので、ページの先頭からの位置で切り出す）', async () => {
@@ -237,15 +240,31 @@ describe('Claude がスマホ向けのページを確かめる', () => {
 
   it('アプリの画面を拡大していても、タッチはさわった位置に届く（大きさを決めたタブでも、決めていないタブでも）', async () => {
     await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1.1));
+    // 外れたときに位置の決まりを見直せるよう、拡大している間の様子（画面の中の webview の位置・ウインドウ・画面の画素密度）を控える
+    let layout: unknown = null;
     try {
       await app.send(ZOOMED);
       await app.byText('.chat-list', DONE_ZOOMED).waitFor();
+      layout = {
+        webviews: await app.page.evaluate(() =>
+          [...document.querySelectorAll<HTMLElement>('webview[data-tab-id]')].map((el) => {
+            const r = el.getBoundingClientRect();
+            return { tab: el.dataset.tabId, x: r.x, y: r.y, width: r.width, height: r.height, display: el.style.display };
+          }),
+        ),
+        window: await app.app.evaluate(({ BrowserWindow, screen }) => {
+          const win = BrowserWindow.getAllWindows()[0]!;
+          return { bounds: win.getBounds(), content: win.getContentBounds(), zoom: win.webContents.getZoomFactor(), scale: screen.getPrimaryDisplay().scaleFactor, visible: win.isVisible() };
+        }),
+      };
     } finally {
       await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
     }
-    const start = (tag: string) => (reads()[tag]!.events as { type: string; x: number; y: number }[]).find((e) => e.type === 'touchstart');
-    expect(start('zoom-plain')).toMatchObject({ x: 200, y: 100 });
-    expect(start('zoom-device')).toMatchObject({ x: 200, y: 100 });
+    const start = (tag: string) => {
+      const event = (reads()[tag]!.events as { type: string; x: number; y: number }[]).find((e) => e.type === 'touchstart');
+      return event && { x: event.x, y: event.y };
+    };
+    expect({ plain: start('zoom-plain'), device: start('zoom-device') }, `拡大している間の様子: ${JSON.stringify(layout)}`).toEqual({ plain: { x: 200, y: 100 }, device: { x: 200, y: 100 } });
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

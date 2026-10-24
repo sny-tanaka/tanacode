@@ -435,14 +435,20 @@ describe('スクリーンショットの撮り直しと保存', () => {
     await call('set_viewport', { device: 'iPhone 15' });
     answerCdp(page, { 'Page.captureScreenshot': () => ({ data: Buffer.from('dense').toString('base64') }) });
     images.fromBuffer = new FakeImage(1179, 2556, 'dense');
+    // 見比べる相手（画面の画素密度 2 で、同じ範囲を撮った絵。同じ色）
+    page.capture = async () => {
+      const rect = page.captures.at(-1);
+      return rect ? new FakeImage(rect.width * 2, rect.height * 2) : new FakeImage(786, 1704);
+    };
     expect(textOf(await call('screenshot'))).toBe('Visible area, http://localhost:3000/, image 393×852');
-    expect(page.captures).toEqual([]);
-    // 要素: 見えている範囲をまるごと撮って、要素のまわりを画素密度倍の位置で切り出す（CDP の clip は使わない）
+    expect(page.captures).toEqual([undefined]);
+    // 要素: 見えている範囲をまるごと撮って、要素のまわりを画素密度倍の位置で切り出す（CDP の clip は使わない）。見比べるのは、その範囲どうし
     page.page.locate = () => found({ x: 100, y: 100, width: 50, height: 50 });
     const result = await call('screenshot', { selector: '#pad', save: true });
     expect(commands(page, 'Page.captureScreenshot').at(-1)).toEqual({ method: 'Page.captureScreenshot', format: 'png' });
     expect(textOf(result)).toContain('#pad (div#pad), http://localhost:3000/, image 66×66\nSaved to ');
     expect(textOf(result)).toContain('(198×198)');
+    expect(page.captures.at(-1)).toEqual({ x: 92, y: 92, width: 66, height: 66 });
     // 切り出した位置も、画素密度倍（要素のまわり 8px から: 92 × 3）
     expect(Buffer.from((result.content[0] as { data: string }).data, 'base64').toString()).toBe('dense（276,276 を切り出した）（縮めた）:66x66');
     rmSync(state.screenshotDir, { recursive: true, force: true });
@@ -463,6 +469,30 @@ describe('スクリーンショットの撮り直しと保存', () => {
       'Emulation.setDeviceMetricsOverride',
       'Emulation.setTouchEmulationEnabled',
     ]);
+  });
+
+  it('画素密度を決めたタブを CDP で撮った絵が、画面の絵と合わなければ（崩れた絵）、画面の画素密度で撮り、保存するときはそう伝える', async () => {
+    const { call, open, state } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.viewport = () => ({ width: 393, height: 852, dpr: 3 });
+    await call('set_viewport', { device: 'iPhone 15' });
+    answerCdp(page, { 'Page.captureScreenshot': () => ({ data: Buffer.from('broken').toString('base64') }) });
+    images.fromBuffer = new FakeImage(1179, 2556, 'broken', [0, 0, 0, 0]);
+    page.shot = new FakeImage(393, 852, 'plain', [255, 0, 0, 255]);
+    try {
+      const result = await call('screenshot', { save: true });
+      expect(result.content[0]).toEqual({ type: 'image', data: Buffer.from('plain:393x852').toString('base64'), mimeType: 'image/png' });
+      expect(textOf(result)).toContain(
+        "The saved image has the pixel density of this screen (1×), not the emulated 3×: on this screen, the capture at 3× did not match what is shown, so tanacode used the screen's capture.",
+      );
+      // 縦横の比が違う絵も、合わないとみなす
+      images.fromBuffer = new FakeImage(1179, 1179, 'square', [255, 0, 0, 255]);
+      page.shot = new FakeImage(786, 1704, 'plain', [255, 0, 0, 255]);
+      const square = await call('screenshot');
+      expect(Buffer.from((square.content[0] as { data: string }).data, 'base64').toString()).toBe('plain（縮めた）:393x852');
+    } finally {
+      rmSync(state.screenshotDir, { recursive: true, force: true });
+    }
   });
 
   it('画素密度を決めたタブを CDP で撮れなければ、capturePage で撮る', async () => {

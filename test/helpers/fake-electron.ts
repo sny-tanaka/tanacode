@@ -10,7 +10,13 @@ export class FakeImage {
     readonly width: number,
     readonly height: number,
     readonly name = 'shot',
+    // どの点も同じ色（BGRA）。見比べるテスト（looksSame）で、違う絵を作るときに変える
+    readonly color: readonly number[] = [255, 255, 255, 255],
   ) {}
+
+  toBitmap(): Buffer {
+    return Buffer.from(Array.from({ length: this.width * this.height }, () => this.color).flat());
+  }
 
   isEmpty(): boolean {
     return this.width === 0 || this.height === 0;
@@ -21,12 +27,12 @@ export class FakeImage {
   }
 
   resize(size: { width: number; height: number; quality?: string }): FakeImage {
-    return new FakeImage(size.width, size.height, `${this.name}（縮めた）`);
+    return new FakeImage(size.width, size.height, `${this.name}（縮めた）`, this.color);
   }
 
   // 切り出した範囲を控える（名前に入れる）
   crop(rect: { x: number; y: number; width: number; height: number }): FakeImage {
-    return new FakeImage(rect.width, rect.height, `${this.name}（${rect.x},${rect.y} を切り出した）`);
+    return new FakeImage(rect.width, rect.height, `${this.name}（${rect.x},${rect.y} を切り出した）`, this.color);
   }
 
   toPNG(): Buffer {
