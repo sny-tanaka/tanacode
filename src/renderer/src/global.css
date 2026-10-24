@@ -1496,10 +1496,31 @@ body.resizing-rows {
   z-index: 1;
 }
 /* チャットの欄が狭いと、ヘッダーの右端のボタン（書き出す・ターミナルモード）が欄の外に出て押せなくなる。
-   狭いときは、コンテキストのメーターの帯を畳んで、数字だけにする */
+   狭いときは、コンテキストのメーターの帯を畳んで数字だけにし、部品の間も詰める（10 か所で 40px ほど空く） */
 @container (max-width: 470px) {
   .claude-header .context-meter-bar {
     display: none;
+  }
+  /* 間（gap の 8px）を 4px にする。@container の中では、問い合わせ先のヘッダー自身の gap は変えられないので、中の部品で詰める */
+  .claude-header > * + * {
+    margin-left: -4px;
+  }
+}
+/* Remote Control と離席モードのスイッチ。欄が狭いときは、つまみの帯を畳んでアイコンだけにする（どちらもスイッチで、ヘッダーの幅を
+   いちばん使うため。2 つで 60px ほど空き、タイトルが見えなくなる・右端のボタンが欄の外に出るのを防ぐ）。オンは、色と背景で見せる */
+@container (max-width: 600px) {
+  .claude-header > .toggle {
+    padding: 4px 6px;
+    border-radius: 6px;
+  }
+  .claude-header > .toggle .toggle-track {
+    display: none;
+  }
+  .claude-header > .toggle.on {
+    background: var(--send-bg);
+  }
+  .claude-header > .toggle:hover:not(:disabled) {
+    background: var(--bg-hover);
   }
 }
 /* ヘッダーの「最適化圧縮」。左に、再開の文を待っている・取りやめたことを短く出す（理由はツールチップ） */
@@ -8102,6 +8123,15 @@ body.resizing-rows webview {
   gap: 4px;
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+/* 離席モードの印（チャットのヘッダーのスイッチと同じアイコン） */
+.session-away {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--text-secondary);
 }
 
 /* セッション一覧の、チェックリストの未読の返信の数 */

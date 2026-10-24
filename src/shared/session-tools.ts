@@ -308,9 +308,22 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'set_away_mode',
+    // 人が頼んだときに入れ・解くだけで、何かを許すものではない（離席中も許可は断るだけ）
+    kind: 'instruct',
+    description:
+      "Turns away mode of this session on or off. Away mode tells tanacode and you that the user is away from the computer: you decide without asking the user and record what you decided, and tanacode declines the permission prompts and questions of this session that nobody answers within a few minutes. Turn it on when the user asks for it (for example \"I'm going to bed\", \"I'm heading out\", \"away mode\", also from Remote Control), and off when the user says they are back (for example \"good morning\", \"I'm back\"). Do not turn it on or off on your own. It affects only this session (not the child sessions or the other sessions). The result tells you the rules to follow while it is on, or what to report when it is turned off.",
+    inputSchema: {
+      type: 'object',
+      properties: { away: { type: 'boolean', description: 'true to turn away mode on (the user is away), false to turn it off (the user is back)' } },
+      required: ['away'],
+      additionalProperties: false,
+    },
+  },
 ];
 
-// 子セッションを動かす・セッションを始めるツールと、人への報告。子セッション（孫も、独立したセッションも作れない。人に通知しない）には見せない。
+// 子セッションを動かす・セッションを始めるツールと、人への報告・離席モード。子セッション（孫も、独立したセッションも作れない。人に通知しない・人に聞かない）には見せない。
 // 自分への予約（schedule_wakeup など）は、子にも見せる
 const PARENT_ONLY = new Set([
   'wait_sessions',
@@ -322,6 +335,7 @@ const PARENT_ONLY = new Set([
   'stop_session',
   'end_session',
   'report_result',
+  'set_away_mode',
 ]);
 
 // 親から子へ送る指示の囲み。子のチャットでは「親セッションからの指示」として、人の発言と見分けて出す。
@@ -352,6 +366,7 @@ const PARENT_INSTRUCTIONS = [
 ];
 // 子でないセッション（人が動かすセッション。独立したセッションも）にだけ渡すもの。子は人に通知しないので、報告もしない
 const TOP_LEVEL_INSTRUCTIONS = [
+  '- Away mode: when the user tells you they are leaving or going to sleep and asks for away mode, turn it on with set_away_mode; when they say they are back, turn it off. While it is on, tanacode reminds you of the rules with each message, and the permission prompts and questions of this session that nobody answers are declined after a few minutes.',
   '- At the end of a turn in which you worked on a task for the user (not for a quick answer), call report_result as your last tool call with one or two sentences on how it ended: what was done, or what is blocking and what you need from the user. Write it in the language the user is using. tanacode shows it in the end-of-turn notification instead of the plain "finished" one. Skip it when the work is not finished and you end the turn only to wait (for children, a wake-up or background tasks).',
 ];
 const COMMON_INSTRUCTIONS = [

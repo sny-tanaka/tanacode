@@ -47,6 +47,8 @@ type Deps = {
   notifyDelayMs?: number;
   // チャット（stream-json）で受けた本体の応答から数えた、今か直前のターンのツール（ターミナルモード・まだ受けていなければ null）
   turnTools?: (sessionId: string) => TurnActivity | null;
+  // 人の発言と圧縮のあとのフックで、チェックリストのほかに Claude に渡す文（離席中の決まり。無ければ null）
+  extraReminder?: (sessionId: string) => string | null;
 };
 
 // 知らせの中身。ref: 開くカード
@@ -132,7 +134,11 @@ export class ChecklistControl {
 
   async handle(callerId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const hook = checklistHookEvent(name);
-    if (hook) return textResult(this.reminder(callerId, hook, args));
+    if (hook) {
+      // 離席中の決まりは、チェックリストを扱わせない設定でも渡す。ターンの終わり（stop）に渡すと続きを始めさせてしまうので渡さない
+      const extra = hook === 'stop' ? null : (this.deps.extraReminder?.(callerId) ?? null);
+      return textResult([this.reminder(callerId, hook, args), extra ?? ''].filter(Boolean).join('\n\n'));
+    }
     if (!checklistTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
       return textResult(`The user has turned off "${t('main.menu.checklistControl')}" in the tanacode menu. Ask the user to turn it on.`, true);

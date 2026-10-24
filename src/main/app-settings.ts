@@ -1,4 +1,5 @@
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT } from '@shared/optimized-compact';
+import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
@@ -18,6 +19,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
 // terminalControl: Claude に人のターミナルを使わせるか（起動する Claude Code に、ターミナルの MCP サーバーを足すか）/
 // autoCompactPercent: 最適化圧縮を自動で始める大きさ（コンテキストの割合。40・60・80）/
+// awayWaitMinutes: 離席モードで、人に回った許可の確認・質問の答えを待つ時間（分。@shared/away-mode）/
 // usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
 // prompts: tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。shared/prompts.ts）/
 // language: 画面の言語（system は Mac の言語の設定に合わせる）
@@ -34,6 +36,7 @@ type Values = {
   walkthroughControl: boolean;
   terminalControl: boolean;
   autoCompactPercent: number;
+  awayWaitMinutes: number;
   usageLimitResume: boolean;
   prompts: CustomPrompts;
   language: LanguageSetting;
@@ -118,6 +121,15 @@ export class AppSettings {
 
   setAutoCompactPercent(percent: number): void {
     this.update({ autoCompactPercent: percent });
+  }
+
+  // 離席モードで答えを待つ時間（分）
+  awayWaitMinutes(): number {
+    return this.values.awayWaitMinutes;
+  }
+
+  setAwayWaitMinutes(minutes: number): void {
+    this.update({ awayWaitMinutes: minutes });
   }
 
   setChecklistControlEnabled(on: boolean): void {
@@ -206,6 +218,7 @@ function load(file: string): Values {
       walkthroughControl?: unknown;
       terminalControl?: unknown;
       autoCompactPercent?: unknown;
+      awayWaitMinutes?: unknown;
       usageLimitResume?: unknown;
       prompts?: unknown;
       language?: unknown;
@@ -223,12 +236,13 @@ function load(file: string): Values {
       walkthroughControl: data.walkthroughControl !== false,
       terminalControl: data.terminalControl !== false,
       autoCompactPercent: (AUTO_COMPACT_PERCENTS as readonly unknown[]).includes(data.autoCompactPercent) ? (data.autoCompactPercent as number) : DEFAULT_AUTO_COMPACT_PERCENT,
+      awayWaitMinutes: (AWAY_WAIT_MINUTES as readonly unknown[]).includes(data.awayWaitMinutes) ? (data.awayWaitMinutes as number) : DEFAULT_AWAY_WAIT_MINUTES,
       usageLimitResume: data.usageLimitResume !== false,
       prompts: customPromptsOf(data.prompts),
       language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, prompts: {}, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system' };
   }
 }
 

@@ -8,7 +8,7 @@ import { inLockedOrder, sessionTree, type SessionTreeRow } from '@shared/session
 import type { SessionStatus } from '../chat/chatState';
 import { needsAttention, scheduledOf } from '../chat/scheduled';
 import { useSettingsFiles } from '../chat/settingsFiles';
-import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, ScheduleIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
+import { AddIcon, ArchiveIcon, AwayIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, ScheduleIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { preparingLabel } from './worktree';
@@ -220,6 +220,11 @@ export const Sidebar = memo(function Sidebar({
             )}
           </span>
         </div>
+        {s.away && !s.archived && (
+          <span className="session-away" data-tip={t('sessions.sidebar.away')} aria-label={t('sessions.sidebar.away')}>
+            <AwayIcon size={12} />
+          </span>
+        )}
         {(checklistUnread[s.id] ?? 0) > 0 && (
           <span className="session-checklist-unread" data-tip={t('sessions.sidebar.checklistUnread', { count: checklistUnread[s.id] ?? 0 })}>
             <ChecklistIcon size={12} />

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { app, shell, type Session, type WebContents } from 'electron';
 import { IpcChannel, type ArchiveOptions, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
+import { AWAY_ENDED, awayReminder } from '@shared/away-mode';
+import { sessionEventText } from '@shared/session-tools';
 import { t } from '@shared/i18n';
 import type { CustomPrompts } from '@shared/prompts';
 import type { AppSettings } from './app-settings';
@@ -26,6 +28,7 @@ import { menuNotice, scheduledNotice, snippet, usageLimitNotice } from './notice
 import { hostExecutable, PtyHost } from './pty-host-client';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
+import { SessionNotices } from './session-notices';
 import { resolveAddedFolder } from './added-folders';
 import { SettingsFiles } from './settings-files';
 import { SessionStore } from './session-store';
@@ -100,6 +103,8 @@ export class Profile {
   usageLimit: UsageLimitResume | null = null;
   walkthroughControl: WalkthroughControl | null = null;
   terminalControl: TerminalControl | null = null;
+  // 画面のスイッチで離席モードを解いたときに、Claude へ報告を頼む知らせ
+  private awayNotices: SessionNotices<true> | null = null;
   // Claude がターンの終わりの通知に載せる報告（tanacode-sessions の report_result）
   private readonly reports = new TurnReports();
   // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー・人のターミナルの読み書き。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
@@ -336,8 +341,26 @@ export class Profile {
       host: outward,
       enabled: () => this.settings.checklistControlEnabled(),
       turnTools: (id) => manager.turnTools(id),
+      // 離席中は、人の発言・圧縮のあとのフックで、離席中の決まりを渡す
+      extraReminder: (id) => (manager.isAway(id) ? awayReminder(manager.awayWaitMs()) : null),
     });
     this.checklistControl = checklistControl;
+    manager.awayWaitMs = () => this.awayWaitMs();
+    // 画面のスイッチで解いたら、手が空いたときに、保留したこと・自分で決めたことの報告を頼む（Claude が解いたときは、ツールの結果で頼む）。
+    // 送る前にまた入れたら送らない。人がスイッチで頼んだものなので、Claude Code が止まっていれば次に起動して手が空くまで預け、
+    // ターミナルモードなら TUI の入力欄に貼る（Enter は人が押す）
+    const awayNotices = new SessionNotices<true>({
+      host: outward,
+      enabled: () => true,
+      compose: (target) => (manager.isAway(target) ? null : sessionEventText([], AWAY_ENDED)),
+      pasteInTerminal: () => true,
+      keepWhileStopped: true,
+      channel: 'away',
+    });
+    this.awayNotices = awayNotices;
+    manager.onAwayChanged = (id, away, by) => {
+      if (!away && by === 'human') awayNotices.add(id, 'ended', true);
+    };
     const compact = new OptimizedCompact({
       host: manager,
       lists: (id) => this.checklists.lists(id),
@@ -396,6 +419,12 @@ export class Profile {
   autoCompactPercent(): number {
     const forced = Number(process.env.TANACODE_AUTO_COMPACT_PERCENT);
     return forced > 0 && forced <= 100 ? forced : this.settings.autoCompactPercent();
+  }
+
+  // 離席モードで、人に回った許可の確認・質問の答えを待つ時間（ミリ秒）。確かめやすいよう、環境変数（TANACODE_AWAY_WAIT_SECONDS）で秒にできる
+  awayWaitMs(): number {
+    const forced = Number(process.env.TANACODE_AWAY_WAIT_SECONDS);
+    return forced > 0 ? forced * 1000 : this.settings.awayWaitMinutes() * 60_000;
   }
 
   // workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
@@ -547,6 +576,7 @@ export class Profile {
     this.scheduled?.dispose();
     this.sessionsBridge?.close();
     this.checklistControl?.dispose();
+    this.awayNotices?.dispose();
     this.compact?.dispose();
     this.checklistBridge?.close();
     this.checklists.flush();

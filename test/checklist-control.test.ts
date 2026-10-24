@@ -617,6 +617,24 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     }
   });
 
+  it('離席中の決まり（extraReminder）は、人の発言と圧縮のあとに、チェックリストのあとへ足す。ターンの終わりには足さない。チェックリストがオフでも足す', async () => {
+    const away = (id: string) => (id === ME ? '<tanacode-away-mode>away</tanacode-away-mode>' : null);
+    const c = new ChecklistControl({ store, host, enabled: () => true, extraReminder: away });
+    const off = new ChecklistControl({ store, host, enabled: () => false, extraReminder: away });
+    try {
+      const prompt = first(await c.handle(ME, 'hook:prompt', {}));
+      expect(prompt).toContain('This session has no checklists yet.');
+      expect(prompt.endsWith('\n\n<tanacode-away-mode>away</tanacode-away-mode>')).toBe(true);
+      expect(first(await c.handle(ME, 'hook:compact', {}))).toContain('<tanacode-away-mode>');
+      expect(first(await c.handle(ME, 'hook:stop', { turn: 0, checklist: 0, settled: true }))).toBe('');
+      expect(first(await c.handle(PEER, 'hook:prompt', {}))).not.toContain('<tanacode-away-mode>');
+      expect(first(await off.handle(ME, 'hook:prompt', {}))).toBe('<tanacode-away-mode>away</tanacode-away-mode>');
+    } finally {
+      c.dispose();
+      off.dispose();
+    }
+  });
+
   it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
     host.add(CHILD, { parentId: ME });
     expect(first(await call('hook:stop', { turn: 9, checklist: 0 }, CHILD))).toBe('');

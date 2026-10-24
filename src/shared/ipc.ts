@@ -70,6 +70,7 @@ export const IpcChannel = {
   SessionsSetRemoteControl: 'sessions:set-remote-control',
   SessionsSetTerminalMode: 'sessions:set-terminal-mode',
   SessionsSetAutoCompact: 'sessions:set-auto-compact',
+  SessionsSetAway: 'sessions:set-away',
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
   SessionsRemove: 'sessions:remove',
@@ -311,6 +312,8 @@ export type SessionSummary = {
   remoteControl: boolean;
   // 最適化圧縮を自動で始めるか（このセッションの指定。チャットのヘッダーの「自動」のトグル）。無いものはオン
   autoCompact?: boolean;
+  // 離席モード（チャットのヘッダーのスイッチ。子でないセッションだけ。@shared/away-mode）。無いものはオフ
+  away?: boolean;
   // worktree で始めたセッション（cwd は worktree のフォルダ）。null はふつうのセッション
   worktree: SessionWorktree | null;
   // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無ければ親のないセッション
@@ -567,6 +570,8 @@ export type TanacodeApi = {
     setRemoteControl(id: string, on: boolean): Promise<string | null>;
     // このセッションで、最適化圧縮を自動で始めるかを切り替える
     setAutoCompact(id: string, on: boolean): Promise<void>;
+    // このセッション（子でないもの）の離席モードを切り替える
+    setAway(id: string, on: boolean): Promise<void>;
     // Remote Control を使えるか（開発版では、TANACODE_REMOTE_CONTROL=1 で起動したときだけ使える）
     remoteControlAvailable(): Promise<boolean>;
     rename(id: string, title: string): Promise<void>;
@@ -972,6 +977,7 @@ export type IpcInvoke = {
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
   [IpcChannel.SessionsSetTerminalMode]: Api['sessions']['setTerminalMode'];
   [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
+  [IpcChannel.SessionsSetAway]: Api['sessions']['setAway'];
   [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];
   [IpcChannel.SessionsRemove]: Api['sessions']['remove'];

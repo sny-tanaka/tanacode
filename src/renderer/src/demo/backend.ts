@@ -402,6 +402,11 @@ export class DemoBackend {
           this.update(id, { autoCompact: on });
           return ok(undefined);
         },
+        // デモでは、許可の確認・質問は台本が進める。スイッチは、押した状態が動くようにする
+        setAway: (id, on) => {
+          this.update(id, { away: on });
+          return ok(undefined);
+        },
         remoteControlAvailable: () => ok(true),
         rename: () => ok(undefined),
         remove: () => ok(null),

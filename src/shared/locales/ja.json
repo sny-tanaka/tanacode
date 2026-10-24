@@ -58,6 +58,7 @@
       "terminalControl": "Claude にターミナルを使わせる",
       "usageLimitResume": "利用枠で止まったら、戻ったときに自動で再開する",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
+      "awayWait": "離席モードで答えを待つ時間",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
       "browserHosts": "アプリ内ブラウザで Claude に許す先…",
@@ -309,6 +310,16 @@
       "child": "子のセッションは親にできません（子は、さらに子のセッションを作れないため）",
       "unusableOnStart": "{reason}。親としては始めず、最初の指示だけを送りました"
     },
+    "away": {
+      "on": "離席モードにしました。人に回った許可の確認・質問は、答えが無ければ待つ時間のあとに断ります",
+      "onByClaude": "Claude が離席モードにしました。人に回った許可の確認・質問は、答えが無ければ待つ時間のあとに断ります",
+      "off": "離席モードを解きました",
+      "offByClaude": "Claude が離席モードを解きました",
+      "permissionDenied": "離席モードのため、{wait}待っても答えの無かった許可の確認を断りました（Claude は「人のやること」に残して先へ進みます）",
+      "questionDeclined": "離席モードのため、{wait}待っても答えの無かった質問を Claude に返しました（Claude が自分で決めて「確認事項」に残します）",
+      "minutes": "{count} 分",
+      "seconds": "{count} 秒"
+    },
     "instructions": {
       "empty": "{path} が空なので、Claude に渡していません",
       "tooLarge": "{path} が大きすぎる（1MB を超える）ので、Claude に渡していません",
@@ -463,7 +474,8 @@
       "schedule_wakeup": "自分に予約",
       "list_wakeups": "予約を読む",
       "cancel_wakeup": "予約を取り消す",
-      "report_result": "結果を報告"
+      "report_result": "結果を報告",
+      "set_away_mode": "離席モード"
     },
     "checklist": {
       "checklist_overview": "一覧",
@@ -767,6 +779,13 @@
       "enabled": "リモートコントロールは有効です（起動やつながりが済むと、つながります）",
       "disconnected": "つないでいません",
       "lockedInTerminal": "ターミナルモードの間は切り替えられません（Claude Code の画面の /remote-control で切り替えます）"
+    },
+    "away": {
+      "name": "離席モード",
+      "about": "席を外している間、Claude に聞かずに決めて記録させます。このセッションに出た許可の確認・質問は、決まった時間（メニューで変えられます）待って、答えが無ければ断ります。許すことはしません。子のセッションには効きません",
+      "stateOn": "離席モード中",
+      "stateOff": "オフ",
+      "terminal": "ターミナルモードの間は、確認・質問を断りません（Claude に決まりを伝えるだけです）"
     },
     "todo": {
       "title": "Todo"
@@ -1216,6 +1235,7 @@
       "parent": "親: {name}",
       "worktreeTip": "worktree {name}（ブランチ {branch}）で動いています\n元のフォルダ: {root}",
       "checklistUnread": "チェックリストに Claude からの未読の返信 {count} 件",
+      "away": "離席モード中",
       "unarchive": "アクティブに戻す",
       "archive": "アーカイブ",
       "archiveChildren": "子セッション {count} 件も一緒にアーカイブします",

@@ -46,6 +46,7 @@ const api: TanacodeApi = {
     setRemoteControl: (id, on) => invoke(IpcChannel.SessionsSetRemoteControl, id, on),
     setTerminalMode: (id, on, options) => invoke(IpcChannel.SessionsSetTerminalMode, id, on, options),
     setAutoCompact: (id, on) => invoke(IpcChannel.SessionsSetAutoCompact, id, on),
+    setAway: (id, on) => invoke(IpcChannel.SessionsSetAway, id, on),
     remoteControlAvailable: () => invoke(IpcChannel.RemoteControlAvailable),
     rename: (id, title) => invoke(IpcChannel.SessionsRename, id, title),
     remove: (id, options) => invoke(IpcChannel.SessionsRemove, id, options),

@@ -44,6 +44,7 @@ import { textResult } from '../src/main/mcp-bridge';
 import { sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_ASK_ENV, writeSessionsNoAskFile } from '../src/main/sessions-bridge';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
+import { AWAY_ENDED } from '../src/shared/away-mode';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { WorktreeError, withSetupNote, type WorktreeSetupTrouble } from '../src/main/worktree';
@@ -343,6 +344,9 @@ class FakeHost implements SessionsHost {
   // configure_session: 権限モードの切り替えと、モデル・エフォートの変更の呼び出し。modeSwitchFails なら切り替えに失敗する
   modeSwitches: { id: string; mode: PermissionMode }[] = [];
   modeSwitchFails = false;
+  // 離席モード（set_away_mode）。テストが入れる
+  setAway?: SessionsHost['setAway'];
+  awayWaitMs?: SessionsHost['awayWaitMs'];
   configured: { id: string; options: SessionOptions }[] = [];
   configureError: Error | null = null;
   // アプリ内ブラウザで人に操作を頼んでいるセッション
@@ -3998,6 +4002,36 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(textOf(await control.handle(PARENT, 'report_result', { message: ' \n ' }))).toBe('message (the report) is empty.');
     expect(textOf(await control.handle(CHILD, 'report_result', { message: '終わりました' }))).toContain('A child session does not notify the user');
     expect(reports.map((r) => r.id)).toEqual([PARENT, PEER, PARENT]);
+  });
+
+  it('set_away_mode: 子でないセッションの離席モードを入れる・解く。入れたら離席中の決まりを、解いたら報告の頼みを返す。子は断る', async () => {
+    const changes: { id: string; on: boolean; by: string }[] = [];
+    host.setAway = (id, on, by) => {
+      changes.push({ id, on, by });
+      host.sessions = host.sessions.map((s) => (s.id === id ? { ...s, away: on } : s));
+      return true;
+    };
+    host.awayWaitMs = () => 5 * 60_000;
+    const on = textOf(await control.handle(PARENT, 'set_away_mode', { away: true }));
+    expect(on).toContain('Away mode is now on.');
+    expect(on).toContain('Do not ask the user (AskUserQuestion)');
+    expect(on).toContain('within 5 minutes');
+    // もう入っていれば、そう伝えて決まりを渡し直す
+    expect(textOf(await control.handle(PARENT, 'set_away_mode', { away: true }))).toContain('Away mode was already on.');
+    expect(textOf(await control.handle(PARENT, 'set_away_mode', { away: false }))).toBe(AWAY_ENDED);
+    expect(textOf(await control.handle(PARENT, 'set_away_mode', { away: false }))).toBe('Away mode was already off. Nothing changed.');
+    expect(changes.map((c) => c.by)).toEqual(['claude', 'claude', 'claude', 'claude']);
+    // 子は人に聞かないので、離席モードは無い
+    expect(textOf(await control.handle(CHILD, 'set_away_mode', { away: true }))).toContain('A child session does not ask the user');
+    expect(textOf(await control.handle(PARENT, 'set_away_mode', { away: 'yes' }))).toContain('away must be true');
+    expect(changes.filter((c) => c.id === CHILD)).toEqual([]);
+  });
+
+  it('説明: 離席モードのツールは子に見せず、決まりは子でないセッションにだけ渡す', () => {
+    expect(SESSIONS_MCP.tools.map((t) => t.name)).toContain('set_away_mode');
+    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('set_away_mode');
+    expect(SESSIONS_MCP.instructions).toContain('set_away_mode');
+    expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('set_away_mode');
   });
 
   it('メニューでオフなら、予約も報告も断る', async () => {
