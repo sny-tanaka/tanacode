@@ -223,7 +223,7 @@
       "noAnswer": "(no answer)"
     },
     "hooks": {
-      "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
+      "worktreeGuard": "This command deletes a worktree or branch and tanacode could not confirm that nothing would be lost, so it is asking for confirmation",
       "terminalGate": "tanacode asks every time before Claude types into a terminal, regardless of the permission mode. Typing into “{tab}”: {typed}",
       "terminalGateUnknown": "tanacode could not check the terminal, so it is asking for confirmation. Typing: {typed}",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
@@ -457,7 +457,9 @@
       "press_key": "Press Key",
       "scroll": "Scroll",
       "wait_for": "Wait",
-      "set_viewport": "Viewport Width",
+      "set_viewport": "Viewport Size",
+      "touch": "Touch",
+      "throttle": "Throttle",
       "evaluate": "Run JavaScript",
       "ask_user_to_act": "Request to Act"
     },
@@ -1759,7 +1761,11 @@
     "width": {
       "full": "Full width",
       "phone": "Phone",
-      "tablet": "Tablet"
+      "tablet": "Tablet",
+      "custom": "{size}",
+      "customDevice": "{device} ({size})",
+      "widthOnly": "width {width}",
+      "heightOnly": "height {height}"
     },
     "page": {
       "loadFailed": "Couldn't load {url} ({error})"
@@ -1820,6 +1826,18 @@
       "heading": "Element selected in the in-app browser ({url}):",
       "selector": "- Selector: {selector}",
       "text": "- Text: “{text}”"
+    },
+    "throttle": {
+      "cpu": "CPU {rate}× slower",
+      "network": {
+        "slow-3g": "Slow 3G",
+        "3g": "3G",
+        "4g": "4G",
+        "offline": "Offline"
+      },
+      "label": "Claude is slowing down this tab: {state}. Click to restore the normal speed",
+      "tip": "Claude is slowing down this tab (it continues after reloads and navigations). Click to restore the normal speed",
+      "separator": ", "
     }
   },
   "checklist": {

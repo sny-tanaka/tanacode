@@ -220,7 +220,7 @@
       "noAnswer": "（回答なし）"
     },
     "hooks": {
-      "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
+      "worktreeGuard": "worktree やブランチを消す操作で、失うものが無いと確かめられなかったので、tanacode が確認を求めています",
       "terminalGate": "tanacode は、Claude がターミナルに打つ前に、権限モードによらず毎回確認を求めます。「{tab}」に打つもの: {typed}",
       "terminalGateUnknown": "tanacode にターミナルを確かめられなかったので、確認を求めています。打つもの: {typed}",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
@@ -452,7 +452,9 @@
       "press_key": "キー",
       "scroll": "スクロール",
       "wait_for": "待つ",
-      "set_viewport": "表示幅",
+      "set_viewport": "画面の大きさ",
+      "touch": "タッチ",
+      "throttle": "遅くする",
       "evaluate": "JavaScript の実行",
       "ask_user_to_act": "操作の依頼"
     },
@@ -1701,7 +1703,11 @@
     "width": {
       "full": "全幅",
       "phone": "スマホ",
-      "tablet": "タブレット"
+      "tablet": "タブレット",
+      "custom": "{size}",
+      "customDevice": "{device}（{size}）",
+      "widthOnly": "幅 {width}",
+      "heightOnly": "高さ {height}"
     },
     "page": {
       "loadFailed": "{url} を読み込めませんでした（{error}）"
@@ -1761,6 +1767,18 @@
       "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",
       "selector": "- セレクタ: {selector}",
       "text": "- テキスト: 「{text}」"
+    },
+    "throttle": {
+      "cpu": "CPU {rate}× 遅く",
+      "network": {
+        "slow-3g": "低速 3G",
+        "3g": "3G",
+        "4g": "4G",
+        "offline": "オフライン"
+      },
+      "label": "Claude がこのタブを遅くしています: {state}。クリックで元の速さに戻す",
+      "tip": "Claude がこのタブを遅くしています（読み込み直しても・別のページへ移っても続きます）。クリックで元の速さに戻す",
+      "separator": "・"
     }
   },
   "checklist": {

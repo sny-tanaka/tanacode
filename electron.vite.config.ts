@@ -21,6 +21,7 @@ export default defineConfig({
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
     // instructions-hook: TANACODE.md を Claude に渡す SessionStart のフック（Claude Code が起動する）
+    // worktree-guard-hook: worktree やブランチを消す操作で、失うものが無いかを確かめる（Bash の PreToolUse のフックが起動する）
     build: {
       sourcemap,
       rolldownOptions: {
@@ -34,6 +35,7 @@ export default defineConfig({
           'walkthrough-mcp': resolve('src/main/walkthrough-mcp.ts'),
           'terminal-mcp': resolve('src/main/terminal-mcp.ts'),
           'instructions-hook': resolve('src/main/instructions-hook.ts'),
+          'worktree-guard-hook': resolve('src/main/worktree-guard-hook.ts'),
         },
       },
     },

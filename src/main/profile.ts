@@ -156,6 +156,7 @@ export class Profile {
       extraHosts: () => this.settings.browserHosts(),
       host: options.host,
       drawHost: options.drawHost,
+      screenshotDir: join(dataDir, 'browser-screenshots'),
       hasSession: (id) => !!this.manager?.summary(id),
       // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
       onAsk: (id, ask) => {
@@ -166,6 +167,7 @@ export class Profile {
         open: IpcChannel.BrowserOpen,
         activity: IpcChannel.BrowserActivity,
         viewport: IpcChannel.BrowserViewport,
+        throttle: IpcChannel.BrowserThrottle,
         newTab: IpcChannel.BrowserNewTab,
         selectTab: IpcChannel.BrowserSelectTab,
         closeTab: IpcChannel.BrowserCloseTab,

@@ -901,6 +901,8 @@ function registerIpc(): void {
   );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
+  listen(IpcChannel.BrowserViewportReset, (e, id: string) => P(e).browser.resetViewport(id));
+  listen(IpcChannel.BrowserThrottleClear, (e, id: string, tabId: string) => P(e).browser.clearThrottle(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
   });

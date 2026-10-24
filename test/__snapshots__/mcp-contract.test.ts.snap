@@ -19,6 +19,9 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
           "fullPage": {
             "type": "boolean",
           },
+          "save": {
+            "type": "boolean",
+          },
           "selector": {
             "type": "string",
           },
@@ -302,23 +305,121 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     {
       "inputSchema": {
         "properties": {
-          "width": {
+          "device": {
             "enum": [
-              "full",
-              "mobile",
-              "tablet",
+              "iPhone SE",
+              "iPhone 14",
+              "iPhone 15",
+              "iPhone 15 Pro Max",
+              "iPhone 16 Pro",
+              "iPhone 16 Pro Max",
+              "Pixel 7",
+              "Galaxy S24",
+              "iPad mini",
+              "iPad Pro 11",
             ],
             "type": "string",
           },
+          "deviceScaleFactor": {
+            "type": "number",
+          },
+          "height": {
+            "type": "number",
+          },
+          "mobile": {
+            "type": "boolean",
+          },
+          "width": {
+            "type": [
+              "string",
+              "number",
+            ],
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "画面の大きさ",
+      "name": "set_viewport",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "tap",
+              "long_press",
+              "swipe",
+              "pinch",
+            ],
+            "type": "string",
+          },
+          "deltaX": {
+            "type": "number",
+          },
+          "deltaY": {
+            "type": "number",
+          },
+          "durationMs": {
+            "type": "number",
+          },
+          "fingers": {
+            "enum": [
+              1,
+              2,
+            ],
+            "type": "number",
+          },
+          "scale": {
+            "type": "number",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "toX": {
+            "type": "number",
+          },
+          "toY": {
+            "type": "number",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
         },
         "required": [
-          "width",
+          "action",
         ],
         "type": "object",
       },
       "kind": "act",
-      "label": "表示幅",
-      "name": "set_viewport",
+      "label": "タッチ",
+      "name": "touch",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "cpu": {
+            "type": "number",
+          },
+          "network": {
+            "enum": [
+              "off",
+              "slow-3g",
+              "3g",
+              "4g",
+              "offline",
+            ],
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "遅くする",
+      "name": "throttle",
     },
     {
       "inputSchema": {

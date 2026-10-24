@@ -184,7 +184,9 @@ export class E2EApp {
   // アプリを起動して、最初のウインドウを待つ
   private async start(): Promise<void> {
     const packaged = process.env.TANACODE_E2E_APP;
-    const args = this.launchArgs();
+    // TANACODE_E2E_SCALE: 画面の画素密度を決めて起動する（Chromium の --force-device-scale-factor）。手元の Retina（2）で、CI の Mac（1）と同じ画素密度で確かめるとき
+    const scale = process.env.TANACODE_E2E_SCALE;
+    const args = [...this.launchArgs(), ...(scale ? [`--force-device-scale-factor=${scale}`] : [])];
     this.electronApp = await electron.launch({
       // ビルドしたアプリは、リポジトリのフォルダを渡して起動する（package.json の main から out/main/index.js を読む。npm run dev と同じ）。
       // out/main/index.js を直に渡すと、アプリのフォルダ（app.getAppPath()）が out/main になり、macOS では開発中のアイコン
