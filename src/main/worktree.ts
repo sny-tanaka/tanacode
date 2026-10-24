@@ -5,8 +5,8 @@ import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { t } from '@shared/i18n';
-import type { WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc';
-import { defaultBranch, git, submodulesOf, userGit } from './git';
+import type { WorktreeBranch, WorktreeBranchKeep, WorktreeLeftovers, WorktreePr, WorktreeRemovedBranch, WorktreeRemoval } from '@shared/ipc';
+import { defaultBranch, git, TRUNK_NAMES, submodulesOf, userGit } from './git';
 import { type PullRequest, pullRequestsOf } from './github';
 
 // worktree を作れない・消せない理由。message は画面の言語の文（画面に出す）。Claude に返すときは、reason と detail から英語の文を作る
@@ -135,11 +135,43 @@ export async function waitForWorktree(path: string, alive: () => boolean, timeou
 // 消した worktree を、残したブランチから作り直す（アーカイブから戻すとき）。ブランチも無ければ（マージ済みで消えた）、
 // 元のフォルダの今の HEAD から同じ名前のブランチで作る。Claude Code は、同じ場所に worktree があれば --resume でそこに戻る（実測）。
 // ファイルを取り出すのは、人が頼んだ操作として、ターミナルの git と同じ設定で（フォルダの設定のフィルター（git-crypt など）で元に戻した中身を出す）
-export async function restoreWorktree(ref: WorktreeRef, path: string): Promise<void> {
+// saved: 消したときに残したもの。branch: worktree で使っていて、残したブランチ（子が git switch -c で作ったものなど。あればそれで作り直す）/
+// backupRef: 未コミットの変更の控え。作り直したブランチの先頭が、控えを作ったときのまま（控えの親）なら、控えの中身を作業フォルダに戻し
+// （ステージしていたものも、ステージしていない変更・未追跡のファイルとして戻る）、控えを外す。戻せなければ、控えは残す
+export type WorktreeSaved = { branch?: string | null; backupRef?: string | null };
+export type WorktreeRestored = { branch: string; backup: 'applied' | 'kept' | null };
+export async function restoreWorktree(ref: WorktreeRef, path: string, saved: WorktreeSaved = {}): Promise<WorktreeRestored> {
   // フォルダを手で消したときは、git に残った登録を先に片付ける
   await git(ref.root, ['worktree', 'prune']).catch(() => '');
-  if (await branchExists(ref.root, ref.branch)) await userGit(ref.root, ['worktree', 'add', path, ref.branch]);
-  else await userGit(ref.root, ['worktree', 'add', '-b', ref.branch, path]);
+  const kept = saved.branch && (await branchExists(ref.root, saved.branch)) ? saved.branch : null;
+  const branch = kept ?? ref.branch;
+  if (kept || (await branchExists(ref.root, branch))) await userGit(ref.root, ['worktree', 'add', path, branch]);
+  else await userGit(ref.root, ['worktree', 'add', '-b', branch, path]);
+  if (!saved.backupRef) return { branch, backup: null };
+  return { branch, backup: (await applyBackup(ref.root, path, saved.backupRef)) ? 'applied' : 'kept' };
+}
+
+// 控えの中身を、作り直した worktree の作業フォルダに戻し、控えを外す。戻したら true
+async function applyBackup(root: string, path: string, backupRef: string): Promise<boolean> {
+  const [backup, parent, head] = await Promise.all(
+    [`${backupRef}^{commit}`, `${backupRef}^1`, 'HEAD'].map((rev) =>
+      git(rev === 'HEAD' ? path : root, ['rev-parse', '--verify', '-q', rev]).then(
+        (out) => out.trim() || null,
+        () => null,
+      ),
+    ),
+  );
+  if (!backup || !parent || parent !== head) return false;
+  try {
+    // ファイルを書き出すのは、人が頼んだ操作として、ターミナルの git と同じ設定で（フォルダの設定のフィルター（git-crypt など）を通す）。
+    // 控えの木に無い追跡中のファイル（消していたもの）は消え、控えにしか無いファイル（未追跡だったもの）は未追跡として書き出される
+    await userGit(path, ['restore', `--source=${backup}`, '--worktree', '--', '.']);
+  } catch {
+    return false;
+  }
+  // 戻したあとに、控えを外す（戻している間に別の控えに書き換わっていれば外さない）
+  await git(root, ['update-ref', '-d', backupRef, backup]).catch(() => '');
+  return true;
 }
 
 // node_modules の用意の結果。場所は worktree からの相対（'' はいちばん上）
@@ -303,9 +335,9 @@ async function isDirectory(path: string): Promise<boolean> {
   );
 }
 
-type ListedWorktree = { path: string; locked: string | null };
+type ListedWorktree = { path: string; locked: string | null; branch: string | null };
 
-// git worktree list --porcelain。locked: ロックの理由（理由なしのロックは ''）
+// git worktree list --porcelain。locked: ロックの理由（理由なしのロックは ''）/ branch: 取り出しているブランチ（detached HEAD は null）
 async function listWorktrees(root: string): Promise<ListedWorktree[]> {
   const out = await git(root, ['worktree', 'list', '--porcelain']).catch(() => '');
   const list: ListedWorktree[] = [];
@@ -314,7 +346,8 @@ async function listWorktrees(root: string): Promise<ListedWorktree[]> {
     const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
     if (!path) continue;
     const lock = lines.find((l) => l === 'locked' || l.startsWith('locked '));
-    list.push({ path, locked: lock === undefined ? null : unquote(lock.slice('locked'.length).trim()) });
+    const branch = lines.find((l) => l.startsWith('branch refs/heads/'))?.slice('branch refs/heads/'.length) ?? null;
+    list.push({ path, locked: lock === undefined ? null : unquote(lock.slice('locked'.length).trim()), branch });
   }
   return list;
 }
@@ -356,11 +389,85 @@ async function findWorktree(root: string, path: string): Promise<ListedWorktree 
   return null;
 }
 
+// worktree で今使っているブランチ（子が git switch -c で作ったものなど）。detached HEAD なら null。
+// 登録されている worktree だけを読むこと（登録の無いフォルダで読むと、元のフォルダの HEAD を読んでしまう）
+async function currentBranchOf(path: string): Promise<string | null> {
+  const out = await git(path, ['symbolic-ref', '-q', 'HEAD']).then(
+    (o) => o.trim(),
+    () => '',
+  );
+  return out.startsWith('refs/heads/') ? out.slice('refs/heads/'.length) : null;
+}
+
+type BranchRole = { name: string; launched: boolean; current: boolean };
+
+// worktree のブランチの候補。今のブランチが先、起動したときのブランチがあと（同じなら 1 つ）
+function branchRoles(ref: WorktreeRef, current: string | null): BranchRole[] {
+  const roles: BranchRole[] = [];
+  if (current) roles.push({ name: current, launched: current === ref.branch, current: true });
+  if (current !== ref.branch) roles.push({ name: ref.branch, launched: true, current: false });
+  return roles;
+}
+
+// 消さないブランチ。デフォルトブランチと、main・develop などの幹の名前（子がそこへ切り替えただけのとき）
+async function trunkBranches(root: string): Promise<Set<string>> {
+  const base = await defaultBranch(root);
+  return new Set([...TRUNK_NAMES, ...(base ? [base] : [])]);
+}
+
+// ほかの worktree（except の場所のものは除く）で取り出しているブランチ。git は、取り出しているブランチを消さない
+async function branchesInUse(root: string, except: string | null): Promise<Set<string>> {
+  const used = new Set<string>();
+  for (const w of await listWorktrees(root)) {
+    if (w.branch && !(except && (await samePath(w.path, except)))) used.add(w.branch);
+  }
+  return used;
+}
+
+// ブランチの状態と、消すときに残す理由。names: 一緒に消すかもしれないブランチ（手元にしか無いコミットを数えるときに、
+// ほかのブランチとして数えない。2 つともが互いのコミットを持つときに、両方を消してしまわないように）
+async function inspectBranch(
+  root: string,
+  role: BranchRole,
+  names: string[],
+  context: { trunks: Set<string>; inUse: Set<string> },
+): Promise<WorktreeBranch> {
+  // PR は GitHub に問い合わせるので、数えている間に調べておく
+  const lookup = pullRequestsOf(root, await pushedBranchName(root, role.name), true);
+  const exists = await branchExists(root, role.name);
+  const prs = await lookup;
+  const local: LocalOnly = exists ? await localOnlyCommits(root, role.name, prs, names) : { count: 0, contentIn: null, heads: [] };
+  let pr: WorktreePr = { state: prs ? 'none' : 'unknown' };
+  const found = prs && pickPullRequest(prs);
+  if (found) {
+    // PR のあとに、手元で足したコミット。PR のコミットが手元に 1 つも無ければ数えられない
+    const mine = new Set([found.headRefOid, ...(found.commits ?? []).map((c) => c.oid)]);
+    const known = local.heads.filter((oid) => mine.has(oid));
+    const after = !exists ? 0 : known.length > 0 ? await countCommits(root, [role.name, '--not', ...known]) : null;
+    const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
+    pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
+  }
+  const keep = !exists
+    ? null
+    : context.trunks.has(role.name)
+      ? 'trunk'
+      : context.inUse.has(role.name)
+        ? 'checkedOut'
+        : local.count === 0
+          ? null
+          : 'localOnly';
+  return { ...role, exists, unpushed: local.count ?? 0, contentIn: local.contentIn, pr, keep };
+}
+
 // worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、ブランチから作った PR
 export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise<WorktreeLeftovers> {
-  // PR は GitHub に問い合わせるので、数えている間に調べておく
-  const lookup = pullRequestsOf(ref.root, await pushedBranchName(ref.root, ref.branch));
   const exists = existsSync(path) && (await findWorktree(ref.root, path)) !== null;
+  const current = exists ? await currentBranchOf(path) : null;
+  const roles = branchRoles(ref, current);
+  const context = { trunks: await trunkBranches(ref.root), inUse: await branchesInUse(ref.root, exists ? path : null) };
+  const names = roles.map((r) => r.name);
+  // PR を GitHub に問い合わせるので、ブランチごとに並べて調べ、その間に数える
+  const inspecting = Promise.all(roles.map((role) => inspectBranch(ref.root, role, names, context)));
   let uncommitted = 0;
   let untracked = 0;
   if (exists) {
@@ -375,20 +482,11 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
       if (item[0] === 'R' || item[0] === 'C') i++;
     }
   }
-  const hasBranch = await branchExists(ref.root, ref.branch);
-  const prs = await lookup;
-  const local: LocalOnly = hasBranch ? await localOnlyCommits(ref.root, ref.branch, prs) : { count: 0, contentIn: null, heads: [] };
-  let pr: WorktreePr = { state: prs ? 'none' : 'unknown' };
-  const found = prs && pickPullRequest(prs);
-  if (found) {
-    // PR の head のあとに、手元で足したコミット
-    const after = !hasBranch ? 0 : local.heads.includes(found.headRefOid) ? await countCommits(ref.root, [ref.branch, '--not', found.headRefOid]) : null;
-    const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
-    pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
-  }
   // 調べられなければ null（画面に、調べられなかったと出す）
   const submodules = exists ? await submodulesWithLeftovers(path).catch(() => null) : [];
-  return { exists, branch: ref.branch, uncommitted, untracked, unpushed: local.count ?? 0, contentIn: local.contentIn, submodules, pr };
+  // 起動したときのブランチが手元に無ければ（子が名前を変えた・もう消した）、今のブランチがあるときは並べない
+  const branches = (await inspecting).filter((b) => b.exists || b.current || !current);
+  return { exists, uncommitted, untracked, submodules, branches };
 }
 
 // worktree の submodule の git のデータ。label: 画面と Claude に出す、worktree からのパス / checkout: 取り出してあるフォルダ
@@ -492,23 +590,28 @@ type LocalOnly = {
   count: number | null;
   // 手元にしか無いコミットはあるが、中身が入っているデフォルトブランチ（このときの count は 0）
   contentIn: string | null;
-  // PR の head のうち、手元にあるコミット
+  // PR の head と PR のコミットのうち、手元にあるコミット
   heads: string[];
 };
 
 // branch の、手元にしか無いコミット。上流があれば上流に無いもの、無ければどのリモートにも、ほかのブランチにも無いもの
-// （元にしたブランチのコミットは数えない）。PR の head に入っているコミットは、マージのあとにリモートのブランチを消していても
-// GitHub にあるので数えない。それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、
+// （元にしたブランチのコミットは数えない。together: 一緒に消すかもしれないブランチは、ほかのブランチとして数えない）。
+// PR の head と PR のコミットに入っているコミットは、マージのあとにリモートのブランチを消していても GitHub にあるので数えない
+// （PR のコミットも見るのは、update-branch で PR の head が手元より先に進み、head が手元に無いときのため）。
+// それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、
 // 中身がデフォルトブランチに入っているかを比べ、入っていれば 0 とみなす
-async function localOnlyCommits(root: string, branch: string, prs: PullRequest[] | null): Promise<LocalOnly> {
-  const heads = prs ? await localCommits(root, prs.map((p) => p.headRefOid)) : [];
-  const upstream = await git(root, ['rev-parse', '--abbrev-ref', `${branch}@{u}`]).then(
+async function localOnlyCommits(root: string, branch: string, prs: PullRequest[] | null, together: string[] = []): Promise<LocalOnly> {
+  const heads = prs ? await localCommits(root, prs.flatMap((p) => [p.headRefOid, ...(p.commits ?? []).map((c) => c.oid)])) : [];
+  const tracked = await git(root, ['rev-parse', '--abbrev-ref', `${branch}@{u}`]).then(
     (out) => out.trim() || null,
     () => null,
   );
+  // 上流が、一緒に消すかもしれない手元のブランチなら（git switch -c --track worktree-<名前> など）、上流として使わない
+  const upstream = tracked && !together.includes(tracked) ? tracked : null;
+  const excludes = [...new Set([branch, ...together])].map((name) => `--exclude=${name}`);
   const count = await countCommits(
     root,
-    upstream ? [branch, '--not', upstream, ...heads] : [branch, '--not', ...heads, '--remotes', `--exclude=${branch}`, '--branches'],
+    upstream ? [branch, '--not', upstream, ...heads] : [branch, '--not', ...heads, '--remotes', ...excludes, '--branches'],
   );
   if (!count) return { count, contentIn: null, heads };
   const base = await defaultBranch(root);
@@ -544,18 +647,14 @@ function pickPullRequest(prs: PullRequest[]): PullRequest | null {
 }
 
 // oids のうち、手元にあるコミット（無いコミットを rev-list の --not に渡すと失敗するので、先に除く）。GitHub から受け取った、手元に
-// 無いかもしれないコミットなので、partial clone でも取りに行かせない（cat-file -e は取りに行く）
+// 無いかもしれないコミットなので、partial clone でも取りに行かせない（cat-file -e は取りに行く）。PR のコミットは数百になることがあるので、
+// 1 回の rev-list で確かめる（--ignore-missing: 無いものは渡さなかったことにする）
 async function localCommits(root: string, oids: string[]): Promise<string[]> {
   const candidates = [...new Set(oids.filter((oid) => /^[0-9a-f]{40,64}$/.test(oid)))];
-  const found = await Promise.all(
-    candidates.map((oid) =>
-      git(root, ['rev-list', MISSING_NO_FETCH, '--no-walk', `${oid}^{commit}`]).then(
-        () => true,
-        () => false,
-      ),
-    ),
-  );
-  return candidates.filter((_, i) => found[i]);
+  if (candidates.length === 0) return [];
+  const out = await git(root, ['rev-list', MISSING_NO_FETCH, '--ignore-missing', '--no-walk', '--stdin'], `${candidates.join('\n')}\n`).catch(() => '');
+  const found = new Set(out.split('\n').map((line) => line.trim()));
+  return candidates.filter((oid) => found.has(oid));
 }
 
 // デフォルトブランチとして比べる先。手元のブランチと origin のもの（あるものだけ）
@@ -620,12 +719,6 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
   return false;
 }
 
-// branch を消しても、どのコミットも失われないか（手元にしか無いコミットが無い）
-async function safeToDelete(root: string, branch: string): Promise<boolean> {
-  const prs = await pullRequestsOf(root, await pushedBranchName(root, branch));
-  return (await localOnlyCommits(root, branch, prs)).count === 0;
-}
-
 // worktree を消す。Claude Code は先に止めておくこと。
 // 1. 未コミットの変更や未追跡のファイルがあれば、一時的なインデックスでコミットにし、refs/tanacode/backup/<名前> に控えを残す
 // 2. gitignore されたフォルダ（node_modules など）を、.git の中のごみ箱へ動かす。git worktree remove に消させると、
@@ -633,13 +726,17 @@ async function safeToDelete(root: string, branch: string): Promise<boolean> {
 // 3. git worktree remove。中身が残っているときと、submodule の git のデータがあるとき（--force でしか消せない）だけ、--force。
 //    失敗したら、2. で動かしたものを戻す
 // （1. の前に、submodule の中に失われるもの（控えに入らない）があれば、何も変えずに断る）
-// 4. git branch -d。上流か今のブランチにマージ済みのときだけ消える。消えなくても、手元にしか無いコミットが無ければ（PR をスカッシュマージした・
-//    リモートの別のブランチに直接プッシュした・手元でデフォルトブランチにスカッシュマージしたなど）-D で消す。手元にしか無いコミットがあれば、
-//    ブランチごと残す
+// 4. ブランチを消す。起動したときのブランチ（worktree-<名前>）と、worktree で今使っていたブランチ（子が git switch -c で作って PR を
+//    出したものなど。1. の前に読んでおく）の両方。git branch -d は、上流か今のブランチにマージ済みのときだけ消える。消えなくても、
+//    手元にしか無いコミットが無ければ（PR をスカッシュマージした・リモートの別のブランチに直接プッシュした・手元でデフォルトブランチに
+//    スカッシュマージしたなど）-D で消す。手元にしか無いコミットがあれば、ブランチごと残す。デフォルトブランチ・main・develop などと、
+//    ほかの worktree で取り出しているブランチは消さない
 // 5. ごみ箱の中身を、裏で削除する（待たない）
-// Claude Code が付けたロックは外す。ほかのロック（ユーザーが付けたもの）があれば、消さずに理由を添えて失敗する
+// Claude Code が付けたロックは外す。ほかのロック（ユーザーが付けたもの）があれば、消さずに理由を添えて失敗する。
+// detached HEAD で、どのブランチ・タグ・リモートにも無いコミットにいるときも、1. の控えに残す（控えのコミットの親が、そのコミット）
 export async function removeWorktree(ref: WorktreeRef, path: string): Promise<WorktreeRemoval> {
   let backupRef: string | null = null;
+  let current: string | null = null;
   const listed = await findWorktree(ref.root, path);
   if (listed && existsSync(path)) {
     if (listed.locked !== null && !CLAUDE_LOCK.test(listed.locked)) {
@@ -651,8 +748,11 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     const left = await submodulesWithLeftovers(path, submodules.items);
     if (left.length > 0) throw new WorktreeError('submoduleChanges', t('main.worktree.submoduleChanges', { paths: left.join(', '), count: left.length }), left.join(', '));
     if (listed.locked !== null) await git(ref.root, ['worktree', 'unlock', path]);
+    current = await currentBranchOf(path);
     const dirty = (await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none'])) !== '';
-    if (dirty) backupRef = await backupChanges(ref, path);
+    // detached HEAD のコミットが、どこからも辿れない（worktree を消すと、HEAD の記録ごと失われる）。数えられなければ、ある側に倒す
+    const stray = current === null && (await countCommits(path, ['HEAD', '--not', '--branches', '--tags', '--remotes'])) !== 0;
+    if (dirty || stray) backupRef = await backupChanges(ref, path);
     const aside = await setAsideIgnoredDirs(ref, path);
     try {
       await git(ref.root, ['worktree', 'remove', ...(dirty || submodules.hasModules || submodules.items.length > 0 ? ['--force'] : []), path]);
@@ -668,16 +768,30 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     }
     await git(ref.root, ['worktree', 'prune']).catch(() => '');
   }
-  let branchKept = false;
-  if (await branchExists(ref.root, ref.branch)) {
-    const deleteBranch = (force: boolean) =>
-      git(ref.root, ['branch', force ? '-D' : '-d', ref.branch]).then(
+  return { backupRef, branches: await deleteBranches(ref, current) };
+}
+
+// worktree を消したあとに、そのブランチを消す（removeWorktree の 4.）
+async function deleteBranches(ref: WorktreeRef, current: string | null): Promise<WorktreeRemovedBranch[]> {
+  const roles: BranchRole[] = [];
+  for (const role of branchRoles(ref, current)) if (await branchExists(ref.root, role.name)) roles.push(role);
+  if (roles.length === 0) return [];
+  const context = { trunks: await trunkBranches(ref.root), inUse: await branchesInUse(ref.root, null) };
+  const names = roles.map((r) => r.name);
+  // 先にすべてを確かめてから消す。git branch -d（上流にマージ済みなら消える）は使わない。上流が一緒に消すブランチのとき
+  // （git switch -c --track worktree-<名前> など）に、上流にしか無いコミットを、両方を消して失うため
+  const inspected = await Promise.all(roles.map((role) => inspectBranch(ref.root, role, names, context)));
+  const result: WorktreeRemovedBranch[] = [];
+  for (const branch of inspected) {
+    const deleted =
+      !branch.keep &&
+      (await git(ref.root, ['branch', '-D', branch.name]).then(
         () => true,
         () => false,
-      );
-    branchKept = !(await deleteBranch(false)) && !((await safeToDelete(ref.root, ref.branch)) && (await deleteBranch(true)));
+      ));
+    result.push({ name: branch.name, launched: branch.launched, current: branch.current, deleted, keep: branch.keep });
   }
-  return { backupRef, branch: ref.branch, branchKept };
+  return result;
 }
 
 // worktree の中の、gitignore されたフォルダ（node_modules・dist など）の動かし先。.git の中なので、worktree と同じボリューム
@@ -761,7 +875,7 @@ async function backupChanges(ref: WorktreeRef, path: string): Promise<string> {
     // 中身を書き込むのは、人が頼んだ操作として、ターミナルの git と同じ設定で（フォルダの設定のフィルター（git-crypt など）を通した中身を残す）
     await userGit(path, ['add', '-A', '--', '.'], undefined, env);
     const tree = (await git(path, ['write-tree'], undefined, env)).trim();
-    const message = `tanacode: worktree ${ref.name} を消す前の、未コミットの変更と未追跡のファイル`;
+    const message = `tanacode: worktree ${ref.name} を消す前の控え（未コミットの変更と未追跡のファイル。親は、そのときの HEAD）`;
     const commit = (await git(path, ['commit-tree', tree, '-p', 'HEAD', '-m', message], undefined, env)).trim();
     const name = await freeBackupRef(ref.root, ref.name);
     await git(ref.root, ['update-ref', name, commit]);
@@ -781,4 +895,25 @@ async function freeBackupRef(root: string, name: string): Promise<string> {
     );
     if (!taken) return candidate;
   }
+}
+
+const BACKUP_REFS = 'refs/tanacode/backup/';
+
+// root のリポジトリの、worktree を消す前の控え（新しい順）。date: 作った時刻（ミリ秒）/ subject: コミットのメッセージの 1 行目
+export async function listBackups(root: string): Promise<{ ref: string; date: number; subject: string }[]> {
+  const format = '%(refname)%00%(committerdate:unix)%00%(subject)';
+  const out = await git(root, ['for-each-ref', '--sort=-committerdate', `--format=${format}`, BACKUP_REFS]).catch(() => '');
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [ref, date, subject] = line.split('\0');
+      return { ref, date: Number(date) * 1000, subject: subject ?? '' };
+    });
+}
+
+// 控えを消す。refs/tanacode/backup/ の下のものだけ
+export async function deleteBackup(root: string, ref: string): Promise<void> {
+  if (!ref.startsWith(BACKUP_REFS) || ref.includes('..')) throw new Error(`not a backup: ${ref}`);
+  await git(root, ['update-ref', '-d', ref]);
 }

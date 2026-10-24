@@ -7,6 +7,8 @@ export type PullRequest = {
   headRefOid: string;
   baseRefName: string;
   url: string;
+  // PR のコミット（withCommits を指定したときだけ）
+  commits?: { oid: string }[];
 };
 
 // gh の返事を待つ上限（ミリ秒）
@@ -16,8 +18,10 @@ const GH_POST_TIMEOUT = 60_000;
 
 // cwd のリポジトリで、branch を head にした PR（新しい順）。gh が無い・ログインしていない・GitHub のリポジトリでないなど、
 // 調べられなければ null。gh は、起動時に取り込んだログインシェルの PATH から探す（Finder から起動しても Homebrew の gh が見つかる）
-export function pullRequestsOf(cwd: string, branch: string): Promise<PullRequest[] | null> {
-  const args = ['pr', 'list', '--head', branch, '--state', 'all', '--limit', '20', '--json', 'number,state,headRefOid,baseRefName,url'];
+// withCommits: PR のコミットも受け取る（worktree の片付けで、update-branch のあとの head が手元に無くても、手元のコミットが PR に入っているかを見る）
+export function pullRequestsOf(cwd: string, branch: string, withCommits = false): Promise<PullRequest[] | null> {
+  const fields = `number,state,headRefOid,baseRefName,url${withCommits ? ',commits' : ''}`;
+  const args = ['pr', 'list', '--head', branch, '--state', 'all', '--limit', '20', '--json', fields];
   return new Promise((resolve) => {
     execFile('gh', args, { cwd, timeout: GH_TIMEOUT, env: { ...process.env, GH_PROMPT_DISABLED: '1' } }, (err, stdout) => {
       if (err) return resolve(null);

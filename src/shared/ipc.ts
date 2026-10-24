@@ -73,6 +73,9 @@ export const IpcChannel = {
   SessionsRename: 'sessions:rename',
   SessionsRemove: 'sessions:remove',
   SessionsWorktreeLeftovers: 'sessions:worktree-leftovers',
+  SessionsWorktreeCleanup: 'sessions:worktree-cleanup',
+  SessionsDeleteBackup: 'sessions:delete-backup',
+  SessionsRemoveLeftWorktree: 'sessions:remove-left-worktree',
   SessionsHistory: 'sessions:history',
   // 作業の書き出し。材料（会話ログ）を読む・保存のダイアログで保存する・保存したファイルを Finder で見せる
   SessionsExportSource: 'sessions:export-source',
@@ -308,8 +311,9 @@ export type SessionSummary = {
 };
 
 // worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /
-// root: 元のフォルダ（リポジトリのいちばん上）/ preparing: 準備の途中（終わるまで最初の指示を送らない）
-export type SessionWorktree = { name: string; branch: string; root: string; preparing: WorktreePreparing | null };
+// root: 元のフォルダ（リポジトリのいちばん上）/ preparing: 準備の途中（終わるまで最初の指示を送らない）/
+// left: アーカイブ済みなのに、worktree のフォルダが残っている（worktree の片付けで消せる）
+export type SessionWorktree = { name: string; branch: string; root: string; preparing: WorktreePreparing | null; left?: boolean };
 // creating: Claude Code が worktree を作るのを待っている / restoring: 消した worktree を、残したブランチから作り直している /
 // copying: node_modules を複製している / installing: パッケージマネージャーの install（npm install など）を実行している
 export type WorktreePreparing = 'creating' | 'restoring' | 'copying' | 'installing';
@@ -318,24 +322,39 @@ export type WorktreePreparing = 'creating' | 'restoring' | 'copying' | 'installi
 export type WorktreeLeftovers = {
   // worktree のフォルダがある
   exists: boolean;
-  branch: string;
   // 未コミットの変更（追跡しているファイル）と、未追跡のファイル
   uncommitted: number;
   untracked: number;
-  // プッシュしていないコミット（上流が無ければ、どのリモートにも、ほかのブランチにも無いコミット）。PR の head に入っているコミットは、
-  // マージのあとにリモートのブランチを消していても GitHub にあるので数えない。中身がデフォルトブランチに入っていれば（手元での
-  // スカッシュマージ・cherry-pick など）0 で、contentIn にそのブランチの名前（そうでなければ null）
-  unpushed: number;
-  contentIn: string | null;
   // 中に、worktree を消すと失われるもの（未コミットの変更・未追跡のファイル・stash・手元にしか無いコミット）がある submodule の、
   // worktree からのパス（入れ子のもの・deinit したものも）。あれば worktree は消せない。調べられなければ null
   submodules: string[] | null;
-  pr: WorktreePr;
+  // worktree のブランチ。今使っているブランチ（子が git switch -c で作ったものなど）が先、起動したときのブランチ（worktree-<名前>）があと。
+  // 同じなら 1 つ。起動したときのブランチは、手元に無ければ、今のブランチが分からないとき（detached HEAD・フォルダが無い）だけ並べる
+  branches: WorktreeBranch[];
 };
 
-// worktree のブランチから作った PR（gh で調べる。PR がいくつかあれば、開いているもの → マージ済み → 閉じたものの順に、新しいもの）。
+// 消すときに、ブランチを残す理由。localOnly: 手元にしか無いコミットがある（数えられないときも）/ trunk: デフォルトブランチや
+// main・develop など（子が切り替えただけで、作ったブランチではない）/ checkedOut: ほかの worktree で使っている
+export type WorktreeBranchKeep = 'localOnly' | 'trunk' | 'checkedOut';
+
+// worktree のブランチの状態。launched: 起動したときのブランチ / current: worktree で今使っているブランチ / exists: 手元にある /
+// unpushed: プッシュしていないコミット（上流が無ければ、どのリモートにも、ほかのブランチにも無いコミット）。PR のコミットは、マージのあとに
+// リモートのブランチを消していても GitHub にあるので数えない。中身がデフォルトブランチに入っていれば（手元でのスカッシュマージ・
+// cherry-pick など）0 で、contentIn にそのブランチの名前（そうでなければ null）/ pr: このブランチから作った PR / keep: 消すときに残す理由（null は消す）
+export type WorktreeBranch = {
+  name: string;
+  launched: boolean;
+  current: boolean;
+  exists: boolean;
+  unpushed: number;
+  contentIn: string | null;
+  pr: WorktreePr;
+  keep: WorktreeBranchKeep | null;
+};
+
+// ブランチから作った PR（gh で調べる。PR がいくつかあれば、開いているもの → マージ済み → 閉じたものの順に、新しいもの）。
 // none: PR が無い / unknown: 調べられない（gh が無い・ログインしていない・GitHub のリポジトリでないなど）/
-// after: PR の head のあとに、手元で足したコミットの数（head のコミットが手元に無ければ null）
+// after: PR のあとに、手元で足したコミットの数（PR のコミットが手元に 1 つも無ければ null）
 export type WorktreePr =
   | { state: 'open' | 'merged' | 'closed'; number: number; base: string; url: string; after: number | null }
   | { state: 'none' }
@@ -344,8 +363,18 @@ export type WorktreePr =
 // アーカイブ・一覧からの削除のときの指定。removeWorktree: worktree のセッションなら、worktree も消す
 // stopSetup: worktree を残すときも、そのセッションのために動かしているシェル（worktree の依存の install など）を止める（起動中の子を end_session で終えるとき）
 export type ArchiveOptions = { removeWorktree: boolean; stopSetup?: boolean };
-// worktree を消した結果。backupRef: 未コミットの変更の控え（無ければ null）/ branchKept: 手元にしか無いコミットがあり、ブランチを残した
-export type WorktreeRemoval = { backupRef: string | null; branch: string; branchKept: boolean };
+// worktree を消した結果。backupRef: 未コミットの変更・未追跡のファイル・どのブランチにも無いコミット（detached HEAD）の控え（無ければ null）/
+// branches: 手元にあった worktree のブランチと、消したか。消さなければ、その理由（keep。null は消そうとして失敗した）
+export type WorktreeRemoval = { backupRef: string | null; branches: WorktreeRemovedBranch[] };
+export type WorktreeRemovedBranch = { name: string; launched: boolean; current: boolean; deleted: boolean; keep: WorktreeBranchKeep | null };
+
+// worktree の片付けの一覧。worktrees: アーカイブ済みのセッションの、残っている worktree のフォルダ /
+// backups: worktree を消す前の控え（refs/tanacode/backup/*）。session: アーカイブから戻すと中身を戻すセッション（無ければ null）
+export type WorktreeCleanup = {
+  worktrees: { id: string; title: string; path: string; branch: string }[];
+  backups: WorktreeBackup[];
+};
+export type WorktreeBackup = { root: string; ref: string; date: number; subject: string; session: { id: string; title: string } | null };
 
 export type SearchOptions = { caseSensitive: boolean; regex: boolean };
 // matchStart / matchLength は text（行の一部を抜き出したもの）の中での位置
@@ -528,6 +557,12 @@ export type TanacodeApi = {
     remove(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null>;
     // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
     worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
+    // worktree の片付けの一覧（アーカイブ済みのセッションの、残っている worktree と、控え）
+    worktreeCleanup(): Promise<WorktreeCleanup>;
+    // worktree を消す前の控え（refs/tanacode/backup/*）を消す
+    deleteBackup(root: string, ref: string): Promise<void>;
+    // アーカイブ済みのセッションの、残っている worktree を消す（子セッションには触らない）
+    removeLeftWorktree(id: string): Promise<WorktreeRemoval>;
     // 再開せずに会話ログから作ったチャット（アーカイブ済みセッションの表示用）
     history(id: string): Promise<ChatEvent[]>;
     // 会話ログに埋め込まれた画像（イベントの images の鍵）。data URL。もう持っていなければ null
@@ -919,6 +954,9 @@ export type IpcInvoke = {
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];
   [IpcChannel.SessionsRemove]: Api['sessions']['remove'];
   [IpcChannel.SessionsWorktreeLeftovers]: Api['sessions']['worktreeLeftovers'];
+  [IpcChannel.SessionsWorktreeCleanup]: Api['sessions']['worktreeCleanup'];
+  [IpcChannel.SessionsDeleteBackup]: Api['sessions']['deleteBackup'];
+  [IpcChannel.SessionsRemoveLeftWorktree]: Api['sessions']['removeLeftWorktree'];
   [IpcChannel.SessionsHistory]: Api['sessions']['history'];
   [IpcChannel.ChatImage]: Api['sessions']['image'];
   [IpcChannel.SessionsExportSource]: Api['sessions']['exportSource'];

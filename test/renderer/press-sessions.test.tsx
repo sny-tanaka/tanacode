@@ -2,10 +2,11 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DiscoveredSession, SessionSummary, WorktreeLeftovers } from '@shared/ipc';
+import type { DiscoveredSession, SessionSummary, WorktreeBackup, WorktreeBranch, WorktreeCleanup, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { ImportDialog } from '../../src/renderer/src/sessions/ImportDialog';
 import { NewSessionPane } from '../../src/renderer/src/sessions/NewSessionPane';
 import { SESSION_COLLAPSED_KEY, SESSION_LOCK_KEY, Sidebar } from '../../src/renderer/src/sessions/Sidebar';
+import { WorktreeCleanupDialog } from '../../src/renderer/src/sessions/WorktreeCleanupDialog';
 import { WorktreeDialog } from '../../src/renderer/src/sessions/WorktreeDialog';
 import './dom';
 import { mockApi } from './mock-api';
@@ -115,15 +116,23 @@ describe('ImportDialog（既存の Claude Code の会話を取り込む）', () 
 
 describe('WorktreeDialog（worktree のセッションのアーカイブ・一覧からの削除の確認）', () => {
   const worktree = (name: string) => ({ name, branch: `worktree-${name}`, root: '/work/repo', preparing: null });
-  const leftovers = (over: Partial<WorktreeLeftovers> = {}): WorktreeLeftovers => ({
+  const branch = (over: Partial<WorktreeBranch> = {}): WorktreeBranch => ({
+    name: 'worktree-x',
+    launched: true,
+    current: true,
     exists: true,
-    branch: 'worktree-x',
-    uncommitted: 2,
-    untracked: 0,
     unpushed: 1,
     contentIn: null,
-    submodules: [],
     pr: { state: 'none' },
+    keep: 'localOnly',
+    ...over,
+  });
+  const leftovers = (over: Partial<WorktreeLeftovers> = {}, branches: WorktreeBranch[] = [branch()]): WorktreeLeftovers => ({
+    exists: true,
+    uncommitted: 2,
+    untracked: 0,
+    submodules: [],
+    branches,
     ...over,
   });
   type Props = ComponentProps<typeof WorktreeDialog>;
@@ -143,8 +152,28 @@ describe('WorktreeDialog（worktree のセッションのアーカイブ・一�
     await screen.findByText('未コミットの変更');
     expect(api.argsOf('sessions.worktreeLeftovers')).toEqual([['A']]);
     expect(screen.queryByText('2 件')).not.toBeNull();
-    expect(screen.queryByText('プッシュしていないコミット')).not.toBeNull();
+    expect(screen.queryByText('プッシュしていないコミット 1 件')).not.toBeNull();
+    expect(screen.queryByText('残します（手元にしか無いコミットがあります）')).not.toBeNull();
     expect(screen.queryByText('未追跡のファイル')).toBeNull();
+  });
+
+  it('今のブランチ（git switch -c で作ったもの）と起動したときのブランチを分けて、それぞれ消すか残すかと PR を出す', async () => {
+    mockApi({
+      'sessions.worktreeLeftovers': () =>
+        Promise.resolve(
+          leftovers({ uncommitted: 0 }, [
+            branch({ name: 'fix/login', launched: false, unpushed: 0, keep: null, pr: { state: 'merged', number: 7, base: 'main', url: 'https://x/7', after: 0 } }),
+            branch({ current: false, unpushed: 0, keep: 'checkedOut' }),
+          ]),
+        ),
+    }).install();
+    render(<WorktreeDialog {...props()} />);
+    await screen.findByText('fix/login');
+    const rows = [...document.querySelectorAll('.worktree-branch')].map((row) => row.textContent);
+    expect(rows).toEqual([
+      expect.stringMatching(/^fix\/login今のブランチ削除しますPR #7（main へ）はマージ済みです$/),
+      expect.stringMatching(/^worktree-x起動したときのブランチ残します（ほかの worktree で使っています）このブランチの PR はありません$/),
+    ]);
   });
 
   it('「worktree を残して」は残す指定で確かめ、終わったら閉じる。終わるまでボタンは押せない', async () => {
@@ -209,7 +238,7 @@ describe('WorktreeDialog（worktree のセッションのアーカイブ・一�
 
   it('別のセッションの確認に変えて描き直した直後に押すと、変えた先のセッションを調べ、変えた先の確認に効く', async () => {
     const api = mockApi({
-      'sessions.worktreeLeftovers': (id: never) => Promise.resolve(leftovers({ uncommitted: id === 'A' ? 2 : 0, unpushed: 0 })),
+      'sessions.worktreeLeftovers': (id: never) => Promise.resolve(leftovers({ uncommitted: id === 'A' ? 2 : 0 }, [branch({ unpushed: 0, keep: null })])),
     });
     api.install();
     const first = props();
@@ -227,6 +256,81 @@ describe('WorktreeDialog（worktree のセッションのアーカイブ・一�
     expect(screen.queryByText('残っている変更やコミットはありません')).not.toBeNull();
     expect(second.onClose).toHaveBeenCalledTimes(1);
     expect(first.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorktreeCleanupDialog（worktree の片付け）', () => {
+  const backup = (ref: string, over: Partial<WorktreeBackup> = {}): WorktreeBackup => ({
+    root: '/work/repo',
+    ref,
+    date: Date.UTC(2026, 9, 1),
+    subject: 'tanacode: worktree を消す前の控え',
+    session: null,
+    ...over,
+  });
+  const list = (): WorktreeCleanup => ({
+    worktrees: [
+      { id: 'A', title: 'A の作業', path: '/work/repo/.claude/worktrees/tc-a', branch: 'worktree-tc-a' },
+      { id: 'B', title: 'B の作業', path: '/work/repo/.claude/worktrees/tc-b', branch: 'worktree-tc-b' },
+    ],
+    backups: [backup('refs/tanacode/backup/tc-old', { session: { id: 'C', title: 'C の作業' } })],
+  });
+
+  it('残っている worktree と控えを並べ、1 つずつ消すと結果（残したブランチ）をその行に出す', async () => {
+    const api = mockApi({
+      'sessions.worktreeCleanup': () => Promise.resolve(list()),
+      'sessions.removeLeftWorktree': () =>
+        Promise.resolve({ backupRef: null, branches: [{ name: 'fix/a', launched: false, current: true, deleted: false, keep: 'localOnly' as const }] }),
+    });
+    api.install();
+    render(<WorktreeCleanupDialog onClose={vi.fn()} />);
+    await screen.findByText('A の作業');
+    expect(screen.queryByText('refs/tanacode/backup/tc-old')).not.toBeNull();
+    expect(screen.queryByText('「C の作業」をアーカイブから戻すと、中身を戻します')).not.toBeNull();
+    const rowA = screen.getByText('A の作業').closest<HTMLElement>('.worktree-cleanup-item')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: '削除' }));
+    await screen.findByText('削除しました');
+    expect(api.argsOf('sessions.removeLeftWorktree')).toEqual([['A']]);
+    expect(within(rowA).queryByText('ブランチ fix/a は残しました（手元にしか無いコミットがあります）。')).not.toBeNull();
+    // 消したあとも、閉じるまで行は残す（控えは読み直す）
+    expect(api.argsOf('sessions.worktreeCleanup')).toHaveLength(2);
+    expect(screen.queryByText('A の作業')).not.toBeNull();
+  });
+
+  it('すべて削除は 1 つずつ消し、消せなかったものは理由を出して、ほかは続ける。消している間は閉じない', async () => {
+    const done = deferred<WorktreeRemoval>();
+    const onClose = vi.fn();
+    const api = mockApi({
+      'sessions.worktreeCleanup': () => Promise.resolve(list()),
+      'sessions.removeLeftWorktree': (id: never) => (id === 'A' ? done.promise : Promise.reject(new Error("Error invoking remote method 'x': Error: ロックされています"))),
+    });
+    api.install();
+    render(<WorktreeCleanupDialog onClose={onClose} />);
+    await screen.findByText('A の作業');
+    fireEvent.click(button('すべて削除'));
+    expect(button('削除しています…').disabled).toBe(true);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => done.resolve({ backupRef: null, branches: [] }));
+    await screen.findByText('削除できませんでした: ロックされています');
+    expect(api.argsOf('sessions.removeLeftWorktree')).toEqual([['A'], ['B']]);
+    fireEvent.click(button('閉じる'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('控えは確かめてから消す。取りやめれば消さない', async () => {
+    const api = mockApi({ 'sessions.worktreeCleanup': () => Promise.resolve({ worktrees: [], backups: [backup('refs/tanacode/backup/tc-x')] }), 'sessions.deleteBackup': () => Promise.resolve() });
+    api.install();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<WorktreeCleanupDialog onClose={vi.fn()} />);
+    await screen.findByText('残っている worktree はありません');
+    fireEvent.click(button('削除'));
+    expect(confirm).toHaveBeenCalledWith('控え refs/tanacode/backup/tc-x を削除しますか？\n中の未コミットの変更と未追跡のファイルは、元に戻せなくなります。');
+    expect(api.argsOf('sessions.deleteBackup')).toEqual([]);
+    fireEvent.click(button('削除'));
+    await settle();
+    expect(api.argsOf('sessions.deleteBackup')).toEqual([['/work/repo', 'refs/tanacode/backup/tc-x']]);
+    expect(screen.queryByText('すべて削除')).toBeNull();
   });
 });
 
@@ -597,6 +701,26 @@ describe('Sidebar（セッションの一覧）', () => {
 
   beforeEach(() => {
     mockApi().install();
+  });
+
+  it('アーカイブ済みの worktree のセッションがあれば、見出しに worktree の片付けのボタンを出す。押しても見出しは開閉しない', () => {
+    const worktree = { name: 'tc-a', branch: 'worktree-tc-a', root: '/work/repo', preparing: null };
+    const onCleanupWorktrees = vi.fn();
+    const p = props([session('A', { archived: true, worktree: { ...worktree, left: true } }), session('B', { archived: true })], { onCleanupWorktrees });
+    const view = render(<Sidebar {...p} />);
+    const cleanup = button('worktree の片付け');
+    expect(cleanup.getAttribute('data-tip')).toBe('worktree の片付け\nアーカイブ済みのセッションの worktree が 1 個残っています');
+    expect(cleanup.classList.contains('has-left')).toBe(true);
+    fireEvent.click(cleanup);
+    expect(onCleanupWorktrees).toHaveBeenCalledTimes(1);
+    expect(titles()).toEqual([]);
+    // フォルダが残っていなければ、ふつうの色で、残っている数は出さない
+    view.rerender(<Sidebar {...props([session('A', { archived: true, worktree })], { onCleanupWorktrees })} />);
+    expect(button('worktree の片付け').classList.contains('has-left')).toBe(false);
+    expect(button('worktree の片付け').getAttribute('data-tip')).toBe('worktree の片付け');
+    // アーカイブ済みの worktree のセッションが無ければ出さない
+    view.rerender(<Sidebar {...props([session('B', { archived: true })], { onCleanupWorktrees })} />);
+    expect(screen.queryByRole('button', { name: 'worktree の片付け' })).toBeNull();
   });
 
   it('名前の変更中に入力欄を押しても、その行を選ばない（変更は続けられる）', () => {

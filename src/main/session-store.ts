@@ -30,6 +30,9 @@ export type SessionRecord = {
   // worktree で始めたセッション（claude --worktree）。cwd は worktree のフォルダ（root/.claude/worktrees/<name>）、
   // root は元のフォルダ（リポジトリのいちばん上）、branch は Claude Code が作ったブランチ。無いものはふつうのセッション
   worktree?: { name: string; branch: string; root: string } | null;
+  // worktree を消したときに残したもの（作り直すときに使い、作り直したら外す）。branch: worktree で使っていて残したブランチ
+  // （子が git switch -c で作ったものなど）/ backupRef: 未コミットの変更の控え
+  worktreeSaved?: { branch: string | null; backupRef: string | null } | null;
   // 起動時の表示で分かった、1M コンテキストのモデルか（再開時は表示が読めないことがあるので覚えておく）
   oneMillion?: boolean;
   // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無いものは親のないセッション

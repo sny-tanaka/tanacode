@@ -51,6 +51,8 @@ type Props = {
   onUnarchive: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onRemove: (id: string) => void;
+  // worktree の片付け（アーカイブ済みのセッションの、残っている worktree と控え）を開く
+  onCleanupWorktrees?: () => void;
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   scheduled: ScheduledMessage[];
   // セッションごとの、チェックリストの Claude からの未読の返信の数
@@ -69,6 +71,7 @@ export const Sidebar = memo(function Sidebar({
   onUnarchive,
   onRename,
   onRemove,
+  onCleanupWorktrees,
   scheduled,
   checklistUnread = NO_UNREAD,
 }: Props) {
@@ -81,6 +84,8 @@ export const Sidebar = memo(function Sidebar({
   const ordered = useMemo(() => (lock ? inLockedOrder(sessions, lock) : sessions), [sessions, lock]);
   const active = ordered.filter((s) => !s.archived);
   const archived = ordered.filter((s) => s.archived);
+  // アーカイブ済みなのに、worktree のフォルダが残っているセッションの数
+  const leftWorktrees = archived.filter((s) => s.worktree?.left).length;
   // 子セッションを畳んだ親
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(loadCollapsed);
   const toggleChildren = (id: string) =>
@@ -290,6 +295,20 @@ export const Sidebar = memo(function Sidebar({
             <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)}>
               <DisclosureIcon open={showArchived} />
               {t('sessions.sidebar.archived', { count: archived.length })}
+              {/* アーカイブ済みの worktree のセッションがあれば、worktree の片付けを開ける。フォルダが残っていれば、その数を出す */}
+              {onCleanupWorktrees && archived.some((s) => s.worktree) && (
+                <IconButton
+                  icon={WorktreeIcon}
+                  size="sm"
+                  className={`session-cleanup${leftWorktrees > 0 ? ' has-left' : ''}`}
+                  label={t('sessions.sidebar.worktreeCleanup')}
+                  tip={leftWorktrees > 0 ? t('sessions.sidebar.worktreeCleanupLeft', { count: leftWorktrees }) : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCleanupWorktrees();
+                  }}
+                />
+              )}
             </div>
             {showArchived && archivedRows.map(row)}
           </>

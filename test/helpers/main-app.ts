@@ -393,6 +393,8 @@ const SessionManager = fakeClass('SessionManager', {
   childrenOf: () => [],
   archive: echo('manager.archive'),
   worktreeLeftovers: echo('manager.worktreeLeftovers'),
+  worktreeCleanup: echo('manager.worktreeCleanup'),
+  deleteBackup: echo('manager.deleteBackup'),
   unarchive: echo('manager.unarchive'),
   snapshot: echo('manager.snapshot'),
   submit: echo('manager.submit'),
