@@ -198,7 +198,7 @@ tanacode の画面の見方と、機能ごとの使い方のまとめ。イン�
   - 1 つずつか、「すべて削除」でまとめて消せます。消し方は、アーカイブのときに worktree を削除するのと同じです（控え・ブランチの扱い・submodule の確かめ・ロックしたものを消さないこと）。消せなかったものは、その行に理由が出ます。
   - 同じ画面に、worktree を消す前の控え（`refs/tanacode/backup/*`）も並びます。控えは、アーカイブから戻して中身を戻したときのほかは、自分で消すまで残ります。中身を確かめて（`git show <控えの名前>`）、要らなければ「削除」で消してください（消した控えは元に戻せません。detached HEAD で作った控えなど、どのブランチにも無いコミットも一緒に失われるときは、確認にそう出ます）。アーカイブから戻すと中身を戻す控えには、そのセッションの名前が出ます。
 - tanacode が自分から worktree を消すことはありません。「Claude Code も止めて終了」でも消しません。
-- Claude が worktree やブランチを消してしまわないよう、`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけは、権限モードにかかわらず許可の確認を出します（[hooks](#hooks)）。worktree で始めていないセッションでも同じです。ただし、`git branch -D` と `git worktree remove --force` は、消して失うものが無いと確かめられたら確認を出しません（PR やリモートに入っているブランチ、変更の残っていない worktree など）。確かめるのは、消すコマンドだけを 1 つのコマンドとして打ったときです。
+- Claude が worktree やブランチを消してしまわないよう、`git worktree remove --force`・`git branch -D`・worktree の `rm -r`（`-f` が無くても。`.claude` ごと消すものも）と、消す先を確かめられない書き方で worktree を消しうるものは、権限モードにかかわらず許可の確認を出します（[hooks](#hooks)）。worktree で始めていないセッションでも同じです。ただし、`git branch -D` と `git worktree remove --force` は、消して失うものが無いと確かめられたら確認を出しません（PR やリモートに入っているブランチ、変更の残っていない worktree など）。確かめるのは、消すコマンドだけを 1 つのコマンドとして打ったときです。
 
 ### フォルダを追加する
 
@@ -981,7 +981,8 @@ tanacode が人の代わりに Claude に送る文のうち、次の 3 つは、
 - ツールを止めた hooks（exit 2 など）は赤で、理由と一緒に出します。
 - 標準出力に `{"suppressOutput": true}` を含む JSON を出した hooks は、Claude Code の画面と同じく、チャットにも出しません（Stop の hooks は、動いたことだけが出力なしで残ります）。
 - 何も出力しなかった hooks も出します。Claude Code がコマンドを知らせないので、出来事の名前（「PreToolUse:Bash」など）で出します。Claude が同じツールを並べて呼んだとき（Read を 2 つ同時に など）は、どの呼び出しの hooks か分からないことがあり、そのときはツールのカードに付けず、最後の呼び出しのカードのあとに、ツールに付かない行として出します（畳んだ操作のまとまりの中に入ります）。
-- tanacode は、起動する Claude Code に Bash の PreToolUse の hooks を 1 つ足します。`git worktree remove --force`・`git branch -D`（`--delete --force` も）・worktree の `rm -rf`（パスの区切りがちょうど `worktrees` のもの。worktree の中では `.`・`..`・`*` も）のときだけ、権限モードにかかわらず許可の確認を出させます。止めはしないので、許可すればそのまま動きます。この hooks はチャットには出しません。
+- tanacode は、起動する Claude Code に Bash の PreToolUse の hooks を 1 つ足します。`git worktree remove --force`・`git branch -D`（`--delete --force` も。`--del --forc` のような長いオプションの省略形も）・worktree の `rm -r`（`-f` が無くても。`--rec` のような省略形も。パスの区切りがちょうど `worktrees` のもの・`.claude` ごと消すもの。worktree の中では `.`・`..`・`*` も）のときだけ、権限モードにかかわらず許可の確認を出させます。止めはしないので、許可すればそのまま動きます。この hooks はチャットには出しません。
+  - 消す先や消し方を確かめられない書き方（`rm` の引数の `$(…)`・`` ` ``・変数・`\`・グロブ、`xargs rm`、`find -delete`、`cd` してからの `rm -r`、引数を確かめられない `git branch -D`・`git worktree remove` など）は、コマンドのどこかに `worktree` か `.claude` の文字があれば、確認を出させます。worktree の中への `cd` だけは数えないので、`cd <worktree> && npm run build && rm -r out` のような片付けには確認が出ません。文字の無いもの（前のコマンドで変数に入れたパスを消すものなど）は見分けられません。
   - 片付けは、消すコマンドだけを 1 つのコマンドとして打つと、消して失うものが無いと確かめられたときに確認が出ません。確かめるのは、`git branch -D <名前>`（`--delete --force` も）と `git worktree remove [--force] <パス>` を、`&&`・`;`・改行だけでつないだものです。先頭に 1 つだけ `cd <フォルダ>` を置けます（フォルダは絶対パスか、`./`・`../` で始まるもの）。名前やパスは書いたとおりの文字だけにします（`$`・`*`・`{`・`~`・`@{` などがあれば確かめません）。
   - `git branch -D`: 消すブランチのコミットが、すべてほかにも残っているとき（PR に入っている。スカッシュマージしたもの・マージのあとにリモートのブランチを消したものも。origin のブランチやほかのブランチにある。中身がデフォルトブランチに入っている）は、確認を出させません。worktree を削除するときに、ブランチを消すかどうかを決めるのと同じ決め方です。main・develop などの幹のブランチと、ほかの worktree で使っているブランチは、今までどおり確認を出させます。
   - `git worktree remove --force`: tanacode が作った worktree（`.claude/worktrees/` の下）で、未コミットの変更・未追跡のファイル・submodule の中の変更・どのブランチにも無いコミットが無ければ、確認を出させません。

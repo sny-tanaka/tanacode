@@ -12,9 +12,13 @@ import { hostExecutable } from './pty-host-client';
 // - worktree の rm -r（パスの区切りの 1 つがちょうど worktrees のもの。グロブ・中括弧・変数を含み、worktrees の入る区切りも。.claude ごと
 //   消すものも。worktree の中では . や .. や * も）
 // - 消す先や消し方を awk で確かめられない形で、コマンドのどこかに worktree か .claude の文字があるもの（loose）。引数に $ ` \ や
-//   グロブ・中括弧のある rm（rm の名前に付いたものも）・xargs の後の rm・find -delete・前に cd のある rm -r・引数に $ ` \ などの
-//   ある git branch / git worktree remove。worktree か .claude の文字の無いもの（前のコマンドで変数に入れたパスを消すものなど）は
-//   見分けられない（ふだんの rm -rf "$tmp" のたびに確認が出ないよう、今のフォルダが worktree の中かは見ない）
+//   グロブ・中括弧のある rm（rm の名前に付いたものも）・xargs の後の rm・find -delete・前に cd のある rm -r・git のサブコマンド
+//   （-C などのグローバルオプションを飛ばした先）が確かめられないもの・削除の指定のある git branch で引数が確かめられないもの
+//   （オプションになりうる引数が確かめられないものも）・git worktree remove で引数が確かめられないもの。
+//   worktree の中（.claude/worktrees/<名前> かその下）への cd は、片付けでよく使うので、前の cd にも、worktree か .claude の文字にも
+//   数えない。代わりに、そのあとの rm -r の . .. ../ * は、worktree か .claude の文字が無くても確認を出させる。
+//   worktree か .claude の文字の無いもの（前のコマンドで変数に入れたパスを消すものなど）は見分けられない（ふだんの rm -rf "$tmp"
+//   のたびに確認が出ないよう、今のフォルダが worktree の中かは見ない）
 // ただし、git の 2 つは、消して失うものが無いと確かめられたら確認を出させない（何も決めず、Claude Code のふだんの許可の決まりに任せる）。
 // 止めはしない。ユーザーが確認して許せば、そのまま動く。
 // 2 段で見る。
@@ -63,24 +67,49 @@ function risky(p, d,   t, m, k, j, a, git, rm, r, del, force, ns, seg, q) {
   }
   return 0
 }
-function loose(p,   t, m, k, j, a, git, xargs, rm, r, hidden) {
+function inside(a) { return !opaque(a) && a ~ /(^|\/)\.claude\/worktrees\/[^\/]/ && a !~ /(^|\/)\.\.(\/|$)/ }
+function hides(a) { return opaque(a) && a ~ /^[-$` + '`' + String.raw`]/ }
+function gitloose(t, m, k,   j, s, del) {
+  for (j = k + 1; j <= m; j++) {
+    if (t[j] == "") continue
+    if (t[j] == "-C" || t[j] == "-c" || t[j] == "--git-dir" || t[j] == "--work-tree" || t[j] == "--namespace") { j++; continue }
+    if (t[j] !~ /^-/) break
+  }
+  s = t[j]
+  if (opaque(s)) return 1
+  if (s == "branch") {
+    for (k = j + 1; k <= m; k++) if (long(t[k], "--delete") || flag(t[k], "[dD]")) del = 1
+    for (k = j + 1; k <= m; k++) if (hides(t[k]) || (del && opaque(t[k]))) return 1
+  }
+  if (s == "worktree") {
+    for (j++; j <= m && (t[j] == "" || t[j] ~ /^-/); j++) if (opaque(t[j])) return 1
+    if (opaque(t[j])) return 1
+    if (t[j] == "remove") for (k = j + 1; k <= m; k++) if (opaque(t[k])) return 1
+  }
+  return 0
+}
+function loose(p,   t, m, k, j, a, xargs, rm, r, hidden, up, v) {
   m = split(p, t, /[[:space:]]+/)
   for (k = 1; k <= m; k++) {
     a = t[k]
     sub(/^[(!{]+/, "", a)
+    if ((a == "cd" || a == "pushd") && inside(t[k + 1])) { inwt = 1; k++; continue }
+    if (t[k] ~ /worktree|\.claude/) hint = 1
     if (a == "cd" || a == "pushd") moved = 1
     if (a == "xargs") xargs = 1
-    if (a == "find") for (j = k + 1; j <= m; j++) if (t[j] == "-delete") return 1
-    if (a == "git" || a ~ /\/git$/) git = 1
-    if (git && opaque(a) && p ~ /branch|remove/) return 1
-    if (!rm && rmword(t[k])) { rm = k; if (xargs || opaque(t[k])) return 1 }
+    if (a == "find") for (j = k + 1; j <= m; j++) if (t[j] == "-delete") v = 1
+    if ((a == "git" || a ~ /\/git$/) && gitloose(t, m, k)) v = 1
+    if (!rm && rmword(t[k])) { rm = k; if (xargs || opaque(t[k])) v = 1 }
   }
-  if (!rm) return 0
+  if (!rm) return v
   for (j = rm + 1; j <= m; j++) {
-    if (opaque(t[j])) hidden = 1
-    if (long(t[j], "--recursive") || flag(t[j], "[rR]")) r = 1
+    a = t[j]
+    if (opaque(a)) hidden = 1
+    if (long(a, "--recursive") || flag(a, "[rR]")) r = 1
+    if (inwt && a !~ /^-/ && (a ~ /^\.\.?\/?$/ || a ~ /^\.\.\// || a ~ /^(\.\/)?\*$/)) up = 1
   }
-  return hidden || (r && moved)
+  if (r && up) return 2
+  return v || hidden || (r && moved)
 }
 function ask() {
   print "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${reason}\"},\"suppressOutput\":true}"
@@ -102,7 +131,8 @@ END {
   for (i = 1; i <= n; i++) if (risky(parts[i], d)) ask()
   if (c !~ /worktree|\.claude/) { print "{\"suppressOutput\":true}"; exit 0 }
   n = split(c, parts, /&&|\|\||[;|&]/)
-  for (i = 1; i <= n; i++) if (loose(parts[i])) ask()
+  for (i = 1; i <= n; i++) { v = loose(parts[i]); if (v == 2) ask(); if (v) found = 1 }
+  if (found && hint) ask()
   print "{\"suppressOutput\":true}"
 }
 `;

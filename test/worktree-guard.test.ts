@@ -72,8 +72,13 @@ describe('確認を出させるもの', () => {
     // 長いオプションの省略形
     'rm --rec .claude/worktrees/a',
     'git branch --del --forc foo',
-    // git の引数を確かめられないもの
+    // git のサブコマンドや、消す git branch・git worktree remove の引数を確かめられないもの
     'git branch -$(echo D) worktree-a',
+    'git branch -D "worktree-$n"',
+    'git -C .claude/worktrees/x $(echo branch) -D y',
+    'git -C /r/proj worktree remove $(echo .claude/worktrees/a)',
+    // worktree の中へ cd したあと、その上や全体を消す
+    'cd .claude/worktrees/x && rm -rf ..',
   ])('確かめられない形: %s', (command) => {
     expect(run(command)).toContain('"ask"');
   });
@@ -109,7 +114,20 @@ describe('何もしないもの', () => {
     },
   );
 
-  it.each(['git worktree add "$p" -b x', 'rm -rf .claude/tmp', 'ls .claude && rm -rf dist'])('%s', (command) => {
+  it.each([
+    'git worktree add "$p" -b x',
+    'rm -rf .claude/tmp',
+    'ls .claude && rm -rf dist',
+    // worktree の中へ cd してからの片付け
+    'cd /r/proj/.claude/worktrees/x && npm ci && rm -rf node_modules/.vite',
+    'cd .claude/worktrees/x && npm run build && rm -r out',
+    'cd /r/proj/.claude/worktrees/x && tmp=$(mktemp -d) && cp a "$tmp" && rm -rf "$tmp"',
+    // 消さない git のサブコマンド
+    'git worktree add -b "$branch" .claude/worktrees/foo',
+    "git -C .claude/worktrees/x branch --list 'tc-*'",
+    'git -C "$wt" branch --show-current && ls .claude',
+    'git -C .claude/worktrees/x commit -m "remove dead code?"',
+  ])('%s', (command) => {
     expect(run(command)).toBe(NOTHING);
   });
 });
