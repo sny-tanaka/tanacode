@@ -360,7 +360,7 @@ describe('MCP のツール（ChecklistControl）', () => {
     enabled = false;
     const result = await call('checklist_overview');
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('turned off "MCP > チェックリスト" in the tanacode menu');
+    expect(textOf(result)).toContain('Ask the user to turn on "チェックリスト" under tanacode > MCP.');
   });
 
   describe('Claude への知らせ', () => {

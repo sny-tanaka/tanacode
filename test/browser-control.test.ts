@@ -32,11 +32,11 @@ describe('呼び出しの受け付け', () => {
     state.enabled = false;
     const off = await call('get_text');
     expect(off.isError).toBe(true);
-    expect(textOf(off)).toBe('The user has turned off "MCP > アプリ内ブラウザ" in the tanacode menu.');
+    expect(textOf(off)).toBe('The user has turned off "アプリ内ブラウザ" under tanacode > MCP.');
     // メニューの項目の名前は、画面の言語で伝える（Claude が利用者に正しい名前を言えるように）
     setLanguage('en');
     try {
-      expect(textOf(await call('get_text'))).toBe('The user has turned off "MCP > In-App Browser" in the tanacode menu.');
+      expect(textOf(await call('get_text'))).toBe('The user has turned off "In-App Browser" under tanacode > MCP.');
     } finally {
       setLanguage('ja');
     }
@@ -252,7 +252,7 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(activities()).toHaveLength(count);
     control.turnOff();
-    expect(await pending).toEqual(textResult('The request was withdrawn because the user turned off "MCP > アプリ内ブラウザ" in the tanacode menu.', true));
+    expect(await pending).toEqual(textResult('The request was withdrawn because the user turned off "アプリ内ブラウザ" under tanacode > MCP.', true));
   });
 
   it('ほかの呼び出しが動いている途中に頼んだら、帯はその呼び出しが終わるのに任せる。頼んでいる間は外へ移るのを止めない', async () => {
@@ -654,7 +654,7 @@ describe('開く（navigate）', () => {
     const refused = await call('navigate', { url: 'https://example.com/path?token=secret' });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toBe(
-      'The URL to open (https://example.com) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "MCP > アプリ内ブラウザで許す先…" in the tanacode menu), ' +
+      'The URL to open (https://example.com) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "アプリ内ブラウザで Claude に許す先…" under tanacode > MCP), ' +
         'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
         'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
     );

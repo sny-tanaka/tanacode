@@ -217,7 +217,7 @@ export const IpcChannel = {
   BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
   BrowserHostsSet: 'browser:hosts-set',
-  // メニューの「MCP → アプリ内ブラウザで許す先…」から。許す先のダイアログを開かせる
+  // メニューの「MCP → アプリ内ブラウザで Claude に許す先…」から。許す先のダイアログを開かせる
   BrowserHostsOpen: 'browser:hosts-open',
   // Claude がユーザーに操作を頼む（ask_user_to_act）。main → 画面: 頼んだ・終わった / 画面 → main: 今頼んでいるもの・返事 /
   // main → 画面: そのセッションのブラウザを開かせる（頼まれたときの通知をクリックした）

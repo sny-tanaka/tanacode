@@ -90,7 +90,7 @@ export class TerminalControl {
   }
 
   private check(caller: string): void {
-    if (!this.deps.enabled()) throw new ToolError(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.terminalControl')}" in the tanacode menu.`);
+    if (!this.deps.enabled()) throw new ToolError(`The user has turned off "${t('main.menu.terminalControl')}" under tanacode > ${t('main.menu.mcp')}.`);
     if (!this.deps.sessions.exists(caller)) throw new ToolError('This session is not in tanacode.');
   }
 

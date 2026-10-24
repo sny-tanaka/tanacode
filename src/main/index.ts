@@ -22,11 +22,6 @@ import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
 import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
-import { BROWSER_MCP_SERVER } from '@shared/browser-tools';
-import { SESSIONS_MCP_SERVER } from '@shared/session-tools';
-import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
-import { WALKTHROUGH_MCP_SERVER } from '@shared/walkthrough-tools';
-import { TERMINAL_MCP_SERVER } from '@shared/terminal-tools';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -989,11 +984,11 @@ function buildMenu(): void {
           { id: 'updateOnQuit', label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
           { type: 'separator' },
           {
-            // tanacode が Claude Code に足す MCP サーバーごとに、区切りで分ける。副題はサーバーの名前（Claude Code の /mcp に出る名前）
+            // tanacode が Claude Code に足す MCP サーバーごとに、区切りで分ける
             id: 'mcp',
             label: t('main.menu.mcp'),
             submenu: [
-              { id: 'browserControl', label: t('main.menu.browserControl'), sublabel: BROWSER_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+              { id: 'browserControl', label: t('main.menu.browserControl'), type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
               {
                 id: 'browserHosts',
                 label: t('main.menu.browserHosts'),
@@ -1003,12 +998,12 @@ function buildMenu(): void {
                 },
               },
               { type: 'separator' },
-              { id: 'sessionsControl', label: t('main.menu.sessionsControl'), sublabel: SESSIONS_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+              { id: 'sessionsControl', label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
               { id: 'sessionsStartConfirm', label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
               { type: 'separator' },
-              { id: 'checklistControl', label: t('main.menu.checklistControl'), sublabel: CHECKLIST_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-              { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), sublabel: WALKTHROUGH_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
-              { id: 'terminalControl', label: t('main.menu.terminalControl'), sublabel: TERMINAL_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
+              { id: 'checklistControl', label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+              { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+              { id: 'terminalControl', label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
             ],
           },
           { type: 'separator' },
@@ -1256,7 +1251,7 @@ function setBrowserControl(item: MenuItem): void {
   if (!item.checked) activeProfile()?.browser.turnOff();
 }
 
-// メニューの「MCP → セッション」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → セッションの操作」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（sessions-control の handle）。子への知らせも止める。
 // 保存できなかったら、チェックを元に戻す
 function setSessionsControl(item: MenuItem): void {

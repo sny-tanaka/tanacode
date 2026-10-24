@@ -1232,16 +1232,9 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    // MCP の中は、MCP サーバーごとに区切る。切り替えの副題は、Claude Code の /mcp に出るサーバーの名前
+    // MCP の中は、MCP サーバーごとに区切る
     const mcp = menuItem('mcp').submenu!;
     expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'sessionsStartConfirm', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl']);
-    expect(mcp.filter((i) => i.sublabel).map((i) => [i.id, i.sublabel])).toEqual([
-      ['browserControl', 'tanacode-browser'],
-      ['sessionsControl', 'tanacode-sessions'],
-      ['checklistControl', 'tanacode-checklist'],
-      ['walkthroughControl', 'tanacode-walkthrough'],
-      ['terminalControl', 'tanacode-terminal'],
-    ]);
     const checks = [...appMenu.submenu!, ...mcp].filter((i) => i.type === 'checkbox');
     expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({
       notifyUpdates: false,
@@ -1288,8 +1281,8 @@ describe('メニュー', () => {
       'Claude に送る文…',
       '言語（Language）',
       'アプリ内ブラウザ',
-      'アプリ内ブラウザで許す先…',
-      'セッション',
+      'アプリ内ブラウザで Claude に許す先…',
+      'セッションの操作',
       'セッションを始める前に許可を求める',
       'チェックリスト',
       'ウォークスルー',
@@ -1306,8 +1299,8 @@ describe('メニュー', () => {
       'Messages Sent to Claude…',
       'Language',
       'In-App Browser',
-      'Allowed Sites in the In-App Browser…',
-      'Sessions',
+      'Allowed Sites for Claude in the In-App Browser…',
+      'Session Control',
       'Ask Before Starting a Session',
       'Checklists',
       'Walkthroughs',
@@ -1527,7 +1520,7 @@ describe('メニュー', () => {
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「MCP → アプリ内ブラウザで許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「MCP → アプリ内ブラウザで Claude に許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
     menuItem('browserHosts').click?.({});

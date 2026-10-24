@@ -183,7 +183,6 @@ export class FakeNotification extends Emitter {
 export type MenuItem = {
   id?: string;
   label?: string;
-  sublabel?: string;
   role?: string;
   type?: string;
   checked?: boolean;
