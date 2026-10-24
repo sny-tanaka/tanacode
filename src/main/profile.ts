@@ -58,8 +58,10 @@ export type ProfileOptions = {
   dataDir: string;
   // Claude Code の設定のフォルダ（起動する Claude Code とシェルに CLAUDE_CONFIG_DIR として渡す）。null は既定のプロファイルで、アプリの環境変数のまま
   claudeDir: string | null;
-  // このプロファイルの設定（登録した設定ファイル・Claude に許す機能・アプリ内ブラウザの許す先）
+  // このプロファイルの設定（登録した設定ファイル）
   settings: AppSettings;
+  // アプリ全体の設定（Claude に許す機能・アプリ内ブラウザの許す先・Claude の自動の動き。どのプロファイルのセッションにも同じに効く）
+  appSettings: AppSettings;
   // 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts の SESSIONS_NO_ASK_FILE）
   sessionsNoAskFile: string;
   // 利用者が変えた、Claude に送る文（アプリ全体で 1 つ。メニューの「Claude に送る文…」。無い欄は既定の文）
@@ -87,6 +89,7 @@ export class Profile {
   readonly id: string;
   readonly claudeDir: string | null;
   readonly settings: AppSettings;
+  readonly appSettings: AppSettings;
   readonly watchers: WorkspaceWatchers;
   // エディタで開いているタブのうち、フォルダの監視の知らせでは読み直せないもの（フォルダの外など）を、ファイルごとに見張る
   readonly openFiles: OpenFileWatchers;
@@ -132,6 +135,7 @@ export class Profile {
     this.id = options.id;
     this.claudeDir = claudeDir;
     this.settings = options.settings;
+    this.appSettings = options.appSettings;
     this.shells = new ShellTerminals(
       {
         onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
@@ -158,8 +162,8 @@ export class Profile {
     this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);
     this.browser = new BrowserControl({
       send,
-      enabled: () => this.settings.browserControlEnabled(),
-      extraHosts: () => this.settings.browserHosts(),
+      enabled: () => this.appSettings.browserControlEnabled(),
+      extraHosts: () => this.appSettings.browserHosts(),
       host: options.host,
       drawHost: options.drawHost,
       screenshotDir: join(dataDir, 'browser-screenshots'),
@@ -289,7 +293,7 @@ export class Profile {
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
-      enabled: () => this.settings.sessionsControlEnabled(),
+      enabled: () => this.appSettings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
       humanOnly: (id, request) => this.browser.humanOnly(id, request),
       home: homedir(),
@@ -320,7 +324,7 @@ export class Profile {
     );
     this.usageLimit = new UsageLimitResume({
       scheduled: () => this.scheduled ?? null,
-      enabled: () => this.settings.usageLimitResumeEnabled(),
+      enabled: () => this.appSettings.usageLimitResumeEnabled(),
       parentOf: (id) => manager.parentOf(id),
       terminal: (id) => !!manager.summary(id)?.terminal,
       prompts: this.options.prompts,
@@ -337,7 +341,7 @@ export class Profile {
     });
     this.walkthroughControl = new WalkthroughControl({
       cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
-      enabled: () => this.settings.walkthroughControlEnabled(),
+      enabled: () => this.appSettings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
       comment: { pullRequests: pullRequestsOf, comment: commentOnPullRequest },
     });
@@ -349,12 +353,12 @@ export class Profile {
         parentOf: (id) => manager.parentOf(id),
         childrenOf: (id) => manager.childrenOf(id),
       },
-      enabled: () => this.settings.terminalControlEnabled(),
+      enabled: () => this.appSettings.terminalControlEnabled(),
     });
     const checklistControl = new ChecklistControl({
       store: this.checklists,
       host: outward,
-      enabled: () => this.settings.checklistControlEnabled(),
+      enabled: () => this.appSettings.checklistControlEnabled(),
       turnTools: (id) => manager.turnTools(id),
       // 離席中は、人の発言・圧縮のあとのフックで、離席中の決まりを渡す
       extraReminder: (id) => (manager.isAway(id) ? awayReminder(manager.awayWaitMs()) : null),
@@ -395,7 +399,7 @@ export class Profile {
       host: manager,
       lists: (id) => this.checklists.lists(id),
       usedSince: (id, at) => checklistControl.usedSince(id, at),
-      enabled: () => this.settings.checklistControlEnabled(),
+      enabled: () => this.appSettings.checklistControlEnabled(),
       prompts: this.options.prompts,
       onChange: (sessionId, status) => {
         send(IpcChannel.CompactChanged, { sessionId, status });
@@ -448,13 +452,13 @@ export class Profile {
   // 最適化圧縮を自動で始める大きさ（コンテキストの割合）。確かめやすいよう、環境変数（TANACODE_AUTO_COMPACT_PERCENT）で任意の数にできる
   autoCompactPercent(): number {
     const forced = Number(process.env.TANACODE_AUTO_COMPACT_PERCENT);
-    return forced > 0 && forced <= 100 ? forced : this.settings.autoCompactPercent();
+    return forced > 0 && forced <= 100 ? forced : this.appSettings.autoCompactPercent();
   }
 
   // 離席モードで、人に回った許可の確認・質問の答えを待つ時間（ミリ秒）。確かめやすいよう、環境変数（TANACODE_AWAY_WAIT_SECONDS）で秒にできる
   awayWaitMs(): number {
     const forced = Number(process.env.TANACODE_AWAY_WAIT_SECONDS);
-    return forced > 0 ? forced * 1000 : this.settings.awayWaitMinutes() * 60_000;
+    return forced > 0 ? forced * 1000 : this.appSettings.awayWaitMinutes() * 60_000;
   }
 
   // workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
@@ -522,20 +526,20 @@ export class Profile {
     const bad = list.filter((h) => !normalizeHostPattern(h));
     if (bad.length > 0) throw new Error(t('main.browserHosts.invalid', { hosts: bad.join(t('main.format.listSeparator')) }));
     const normalized = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
-    this.settings.setBrowserHosts(normalized);
+    this.appSettings.setBrowserHosts(normalized);
     return normalized;
   }
 
   // 起動する Claude Code に足す、アプリ内ブラウザの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private browserLaunch(): BrowserMcpLaunch | null {
-    if (!this.browserBridge || !this.settings.browserControlEnabled()) return null;
+    if (!this.browserBridge || !this.appSettings.browserControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: this.browserBridge.socketPath, version: app.getVersion() };
   }
 
   // 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない。
   // 子セッションの起動の確認のフックが見る、印のファイルのパスも渡す
   private sessionsLaunch(): SessionsMcpLaunch | null {
-    if (!this.sessionsBridge || !this.settings.sessionsControlEnabled()) return null;
+    if (!this.sessionsBridge || !this.appSettings.sessionsControlEnabled()) return null;
     return {
       command: hostExecutable(),
       script: join(__dirname, 'sessions-mcp.js'),
@@ -547,19 +551,19 @@ export class Profile {
 
   // 起動する Claude Code に足す、チェックリストの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private checklistLaunch(): McpLaunch | null {
-    if (!this.checklistBridge || !this.settings.checklistControlEnabled()) return null;
+    if (!this.checklistBridge || !this.appSettings.checklistControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: this.checklistBridge.socketPath, version: app.getVersion() };
   }
 
   // 起動する Claude Code に足す、ウォークスルーの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private walkthroughLaunch(): McpLaunch | null {
-    if (!this.walkthroughBridge || !this.settings.walkthroughControlEnabled()) return null;
+    if (!this.walkthroughBridge || !this.appSettings.walkthroughControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion() };
   }
 
   // 起動する Claude Code に足す、人のターミナルの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private terminalLaunch(): McpLaunch | null {
-    if (!this.terminalBridge || !this.settings.terminalControlEnabled()) return null;
+    if (!this.terminalBridge || !this.appSettings.terminalControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
   }
 

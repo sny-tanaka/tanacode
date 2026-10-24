@@ -173,18 +173,7 @@ describe('最適化圧縮', () => {
     const dialog = app.page.locator('.prompts-dialog');
     const field = (key: string) => dialog.locator('.prompt-field').filter({ has: app.page.locator(`#prompt-${key}`) });
     const open = async () => {
-      await app.app.evaluate(({ Menu }) => {
-        type Item = { label: string; click(): void; submenu?: { items: Item[] } | null };
-        const find = (items: Item[]): Item | null => {
-          for (const item of items) {
-            if (item.label === 'Claude に送る文…') return item;
-            const found = item.submenu ? find(item.submenu.items) : null;
-            if (found) return found;
-          }
-          return null;
-        };
-        find((Menu.getApplicationMenu()?.items ?? []) as unknown as Item[])!.click();
-      });
+      await app.app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('prompts')!.click());
       await dialog.waitFor();
     };
     const compact = async (what: string) => {

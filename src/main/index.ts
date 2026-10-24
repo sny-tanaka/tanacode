@@ -20,8 +20,8 @@ import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesSta
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared/prompts';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
-import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
-import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
+import { AUTO_COMPACT_PERCENTS, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
+import { AWAY_WAIT_MINUTES } from '@shared/away-mode';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -145,11 +145,6 @@ function contentsOf(id: string): WebContents | null {
 // 開いているプロファイル
 function profiles(): Profile[] {
   return [...opened.values()];
-}
-
-// 見ているプロファイル
-function activeProfile(): Profile | null {
-  return opened.get(activeId) ?? opened.get(DEFAULT_PROFILE_ID) ?? null;
 }
 
 // Claude Code が動いているセッション（全プロファイル）。終了・更新のときに止めるかを聞く
@@ -411,14 +406,13 @@ function drawView(id: string): () => void {
   };
 }
 
-// 見るプロファイルを変える。足したプロファイルの画面を出し入れし、メニュー（プロファイルごとの設定）も作り直す
+// 見るプロファイルを変える。足したプロファイルの画面を出し入れする（メニューの設定はアプリ全体で 1 つなので、作り直さない）
 function showProfile(id: string): void {
   if (!opened.has(id)) return;
   activeId = id;
   layoutViews();
   // 既定のプロファイルの画面はウインドウ自身なので、ウインドウが前に出れば入力を受ける
   if (id !== DEFAULT_PROFILE_ID) views.get(id)?.webContents.focus();
-  buildMenu();
 }
 
 function showWindow(): BrowserWindow {
@@ -535,8 +529,9 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     id: info.id,
     dataDir,
     claudeDir: info.claudeDir,
-    // 既定のプロファイルの設定は、アプリ全体の設定と同じファイル
+    // プロファイルごとの設定（登録した設定ファイル）。既定のプロファイルの設定は、アプリ全体の設定と同じファイル
     settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
+    appSettings: settings,
     sessionsNoAskFile: sessionsNoAskPath(),
     prompts: () => settings.prompts(),
     send: sendTo(info.id),
@@ -919,7 +914,7 @@ function registerIpc(): void {
   });
   handle(IpcChannel.BrowserAsksGet, (e) => P(e).browser.pendingAsks());
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
-  handle(IpcChannel.BrowserHostsGet, (e) => P(e).settings.browserHosts());
+  handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
 }
 
@@ -974,46 +969,64 @@ function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        // 既定の appMenu の並びに、「新しいバージョンが出たら通知する」の切り替えを足す
+        // 既定の appMenu の並びに、tanacode の設定を足す。更新 ／ MCP（Claude に使わせるツール）／ Claude の自動の動きと送る文 ／ 言語。
+        // テストは id で探す（文言を変えても壊れないように）
         label: app.name,
         submenu: [
           { role: 'about' },
           { type: 'separator' },
-          { label: t('main.menu.notifyUpdates'), type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
-          { label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
-          { label: t('main.menu.browserControl'), type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-          { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-          { label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
-          { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-          { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
-          { label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
-          { label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: !!activeProfile()?.settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
+          { id: 'notifyUpdates', label: t('main.menu.notifyUpdates'), type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { id: 'updateOnQuit', label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
+          { type: 'separator' },
           {
+            // tanacode が Claude Code に足す MCP サーバーごとに、区切りで分ける
+            id: 'mcp',
+            label: t('main.menu.mcp'),
+            submenu: [
+              { id: 'browserControl', label: t('main.menu.browserControl'), type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+              {
+                id: 'browserHosts',
+                label: t('main.menu.browserHosts'),
+                click: () => {
+                  showWindow();
+                  sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
+                },
+              },
+              { type: 'separator' },
+              { id: 'sessionsControl', label: t('main.menu.sessionsControl'), type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+              { id: 'sessionsStartConfirm', label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
+              { type: 'separator' },
+              { id: 'checklistControl', label: t('main.menu.checklistControl'), type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+              { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+              { id: 'terminalControl', label: t('main.menu.terminalControl'), type: 'checkbox', checked: settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
+            ],
+          },
+          { type: 'separator' },
+          { id: 'usageLimitResume', label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
+          {
+            id: 'autoCompactPercent',
             label: t('main.menu.autoCompactPercent'),
             submenu: AUTO_COMPACT_PERCENTS.map((percent) => ({
+              id: `autoCompactPercent-${percent}`,
               label: `${percent}%`,
               type: 'radio' as const,
-              checked: (activeProfile()?.settings.autoCompactPercent() ?? DEFAULT_AUTO_COMPACT_PERCENT) === percent,
+              checked: settings.autoCompactPercent() === percent,
               click: () => setAutoCompactPercent(percent),
             })),
           },
           {
+            id: 'awayWait',
             label: t('main.menu.awayWait'),
             submenu: AWAY_WAIT_MINUTES.map((minutes) => ({
+              id: `awayWait-${minutes}`,
               label: t('main.away.minutes', { count: minutes }),
               type: 'radio' as const,
-              checked: (activeProfile()?.settings.awayWaitMinutes() ?? DEFAULT_AWAY_WAIT_MINUTES) === minutes,
+              checked: settings.awayWaitMinutes() === minutes,
               click: () => setAwayWaitMinutes(minutes),
             })),
           },
           {
-            label: t('main.menu.browserHosts'),
-            click: () => {
-              showWindow();
-              sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
-            },
-          },
-          {
+            id: 'prompts',
             label: t('main.menu.prompts'),
             click: () => {
               showWindow();
@@ -1022,8 +1035,10 @@ function buildMenu(): void {
           },
           { type: 'separator' },
           {
+            id: 'language',
             label: t('main.menu.language'),
             submenu: LANGUAGE_SETTINGS.map((setting) => ({
+              id: `language-${setting}`,
               label: languageSettingLabel(setting),
               type: 'radio' as const,
               checked: settings.languageSetting() === setting,
@@ -1041,9 +1056,11 @@ function buildMenu(): void {
         ],
       },
       {
+        id: 'file',
         label: t('main.menu.file'),
         submenu: [
           {
+            id: 'newSession',
             label: t('main.menu.newSession'),
             accelerator: 'CmdOrCtrl+N',
             click: () => {
@@ -1056,6 +1073,7 @@ function buildMenu(): void {
           { type: 'separator' },
           {
             // 確認を出さずに止める（ふだんの終了は、動いている Claude Code があれば止めるか確認する）
+            id: 'stopAndQuit',
             label: t('main.menu.stopAndQuit'),
             click: () => void quit(true),
           },
@@ -1215,25 +1233,26 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
   return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
 }
 
-// メニューの「Claude にアプリ内ブラウザを操作させる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → アプリ内ブラウザ」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。
-// 人が許した、許す先の外のオリジンも捨てる（browser-control の turnOff）。保存できなかったら、チェックを元に戻す
+// 人が許した、許す先の外のオリジンも捨てる（browser-control の turnOff）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// 保存できなかったら、チェックを元に戻す
 function setBrowserControl(item: MenuItem): void {
   try {
-    activeProfile()?.settings.setBrowserControlEnabled(item.checked);
+    settings.setBrowserControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) activeProfile()?.browser.turnOff();
+  if (!item.checked) forEachProfile((profile) => profile.browser.turnOff(), 'アプリ内ブラウザの操作を取り下げられませんでした');
 }
 
-// メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → セッションの操作」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（sessions-control の handle）。子への知らせも止める。
-// 保存できなかったら、チェックを元に戻す
+// アプリ全体で 1 つ。保存できなかったら、チェックを元に戻す
 function setSessionsControl(item: MenuItem): void {
   try {
-    activeProfile()?.settings.setSessionsControlEnabled(item.checked);
+    settings.setSessionsControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -1251,7 +1270,7 @@ function syncSessionsNoAskFile(): void {
   }
 }
 
-// メニューの「Claude がセッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// メニューの「MCP → セッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
 // 起動の確認のフックは、呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く（sessions-bridge.ts の sessionsGateCommand）。
 // 印のファイルを先に置く・消してから保存する。どちらかができなかったら、チェックと印のファイルを、保存した設定に戻す
 function setSessionsStartConfirm(item: MenuItem): void {
@@ -1264,26 +1283,44 @@ function setSessionsStartConfirm(item: MenuItem): void {
   }
 }
 
-// メニューの「Claude にチェックリストを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → チェックリスト」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（checklist-control の handle）。画面のチェックリストは使える。
-// 保存できなかったら、チェックを元に戻す
+// アプリ全体で 1 つ。保存できなかったら、チェックを元に戻す
 function setChecklistControl(item: MenuItem): void {
   try {
-    const profile = activeProfile();
-    profile?.settings.setChecklistControlEnabled(item.checked);
-    // 最適化圧縮は、オフのあいだ使えない。ボタンとトグルの状態を知らせ直す（自動で止めるファイルも片付ける）
-    const ids = profile?.manager.list().map((s) => s.id) ?? [];
-    profile?.compact?.refresh(ids);
-    for (const id of ids) profile?.autoCompact?.check(id);
+    settings.setChecklistControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
+    return;
+  }
+  // 最適化圧縮は、オフのあいだ使えない。ボタンとトグルの状態を知らせ直す（自動で止めるファイルも片付ける）
+  refreshCompact();
+}
+
+// 最適化圧縮の状態（使えるか・自動で始める大きさ）を、すべてのプロファイルのセッションに知らせ直す
+function refreshCompact(): void {
+  forEachProfile((profile) => {
+    const ids = profile.manager?.list().map((s) => s.id) ?? [];
+    profile.compact?.refresh(ids);
+    for (const id of ids) profile.autoCompact?.check(id);
+  }, '最適化圧縮の状態を知らせ直せませんでした');
+}
+
+// アプリ全体の設定を変えたあと、すべてのプロファイルに効かせる。1 つのプロファイルで投げても、残りのプロファイルには効かせる（ログに残す）
+function forEachProfile(run: (profile: Profile) => void, failure: string): void {
+  for (const profile of profiles()) {
+    try {
+      run(profile);
+    } catch (error) {
+      console.error(failure, profile.id, error);
+    }
   }
 }
 
-// メニューの「離席モードで答えを待つ時間」。次に人に回った要求から効く（もう数え始めたものは、そのまま）
+// メニューの「離席モードで答えを待つ時間」。アプリ全体で 1 つ。次に人に回った要求から効く（もう数え始めたものは、そのまま）
 function setAwayWaitMinutes(minutes: number): void {
   try {
-    activeProfile()?.settings.setAwayWaitMinutes(minutes);
+    settings.setAwayWaitMinutes(minutes);
   } catch {
     // 保存できなければ、メニューを作り直して元に戻す
   }
@@ -1292,51 +1329,48 @@ function setAwayWaitMinutes(minutes: number): void {
 
 // メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
 function setAutoCompactPercent(percent: number): void {
-  const profile = activeProfile();
-  if (!profile) return;
   try {
-    profile.settings.setAutoCompactPercent(percent);
+    settings.setAutoCompactPercent(percent);
   } catch {
     // 保存できなければ、メニューを作り直して元に戻す
   }
-  const ids = profile.manager.list().map((s) => s.id);
-  profile.compact?.refresh(ids);
-  for (const id of ids) profile.autoCompact?.check(id);
+  refreshCompact();
   buildMenu();
 }
 
-// メニューの「Claude にウォークスルーさせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → ウォークスルー」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（walkthrough-control の handle）。
 // 保存できなかったら、チェックを元に戻す
 function setWalkthroughControl(item: MenuItem): void {
   try {
-    activeProfile()?.settings.setWalkthroughControlEnabled(item.checked);
+    settings.setWalkthroughControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
 }
 
-// メニューの「Claude にターミナルを使わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → ターミナル」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（terminal-control の handle。打つ前の確認のフックも断られ、確認を出させる）。
 // 保存できなかったら、チェックを元に戻す
 function setTerminalControl(item: MenuItem): void {
   try {
-    activeProfile()?.settings.setTerminalControlEnabled(item.checked);
+    settings.setTerminalControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
 }
 
 // メニューの「利用枠で止まったら、戻ったときに自動で再開する」。オフにしたら、待っている再開の予約を取り消す（入れたままだと、
-// オフにしたのに再開する）。オンにしても、もう止まっているセッションには予約しない（次に止まったときから）。保存できなかったら、チェックを元に戻す
+// オフにしたのに再開する）。オンにしても、もう止まっているセッションには予約しない（次に止まったときから）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// 保存できなかったら、チェックを元に戻す
 function setUsageLimitResume(item: MenuItem): void {
   try {
-    const profile = activeProfile();
-    profile?.settings.setUsageLimitResumeEnabled(item.checked);
-    if (!item.checked) profile?.usageLimit?.cancelAll();
+    settings.setUsageLimitResumeEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
+    return;
   }
+  if (!item.checked) forEachProfile((profile) => profile.usageLimit?.cancelAll(), '利用枠からの再開の予約を取り消せませんでした');
 }
 
 // メニューの「言語」の項目の名前。日本語と English は、どの言語の画面でもその言語の書き方で出す（読めない言語の画面からでも選べるように）
@@ -1472,6 +1506,12 @@ app.whenReady().then(async () => {
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
+  // 前のバージョンで、足したプロファイルごとに持っていた設定を、アプリ全体の設定に移す（一度だけ）。移せなくても起動は続ける（次の起動でまた試す）
+  try {
+    settings.mergeProfiles(registry.list().slice(1).map((info) => new AppSettings(join(profileDataDir(app.getPath('userData'), info.id), 'settings.json'))));
+  } catch (error) {
+    console.error('プロファイルごとの設定を、アプリ全体の設定に移せませんでした', error);
+  }
   remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
   // 前のアプリが終わったあとに、Homebrew での入れ替えを試したか（結果のファイルは reportUpdateResult が読んで消すので、先に見ておく）
   upgradeRan = existsSync(updateResultPath());

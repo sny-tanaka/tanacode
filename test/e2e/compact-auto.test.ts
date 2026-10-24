@@ -50,30 +50,16 @@ describe('最適化圧縮を自動で始める', () => {
   const steps = () => app.api.toolResults.filter((r) => /step-\d/.test(r)).length;
   const button = () => app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
   const toggle = () => app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"]');
-  // メニューの「tanacode → 自動で最適化圧縮する大きさ」の項目を選ぶ。選ばれている項目の名前を返す
+  // メニューの「tanacode → 自動で最適化圧縮する大きさ」の項目を選ぶ（id で探す）。選ばれている項目の名前を返す
   const pickPercent = (percent: number) =>
-    app.app.evaluate(
-      ({ Menu }, [parent, label]) => {
-        type Item = { label: string; checked: boolean; click(): void; submenu?: { items: Item[] } | null };
-        const find = (items: Item[]): Item | null => {
-          for (const item of items) {
-            if (item.label === parent) return item;
-            const found = item.submenu ? find(item.submenu.items) : null;
-            if (found) return found;
-          }
-          return null;
-        };
-        const sizes = () => find((Menu.getApplicationMenu()?.items ?? []) as unknown as Item[])?.submenu?.items ?? [];
-        sizes()
-          .find((item) => item.label === label)
-          ?.click();
-        // 選ぶと、メニューを作り直す
-        return sizes()
-          .filter((item) => item.checked)
-          .map((item) => item.label);
-      },
-      ['自動で最適化圧縮する大きさ', `${percent}%`] as const,
-    );
+    app.app.evaluate(({ Menu }, percent) => {
+      const sizes = () => Menu.getApplicationMenu()?.getMenuItemById('autoCompactPercent')?.submenu?.items ?? [];
+      Menu.getApplicationMenu()?.getMenuItemById(`autoCompactPercent-${percent}`)?.click();
+      // 選ぶと、メニューを作り直す
+      return sizes()
+        .filter((item) => item.checked)
+        .map((item) => item.label);
+    }, percent);
 
   // チャットに、その文が何回出ているか。最適化圧縮の切り替えではチャットを消さないので、前の同じ応答が残っている。数で待つ
   const shown = async (text: string) => (await app.page.locator('.chat-list').innerText()).split(text).length - 1;

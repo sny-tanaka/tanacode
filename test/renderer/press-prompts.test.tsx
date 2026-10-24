@@ -33,6 +33,8 @@ describe('PromptsDialog', () => {
   it('欄には既定の文が入っている。変えて保存すると、変えた欄だけを送って閉じる（変えるまでは保存できない。触っていない欄は送らないので、ほかの窓で変えた欄を消さない）', async () => {
     const onClose = await open();
     expect(field('本文').value).toBe(defaultPrompt('usageResume'));
+    // メニューの項目の名前は、メニューと同じ文言を差し込む
+    expect(document.querySelector('.prompts-about')?.textContent).toContain('メニューの「tanacode → 利用枠で止まったら、戻ったときに自動で再開する」がオンのとき');
     expect(button('保存').disabled).toBe(true);
     expect(button('既定に戻す').disabled).toBe(true);
     expect(screen.queryByText('変更済み')).toBeNull();

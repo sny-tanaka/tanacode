@@ -13,7 +13,7 @@ export const SESSIONS_SESSION_ENV = 'TANACODE_SESSIONS_SESSION';
 // 子セッションの中継なら 1。子を動かすツールを、ツールの一覧に出さない
 export const SESSIONS_CHILD_ENV = 'TANACODE_SESSIONS_CHILD';
 
-// 子セッションの起動の確認を省く印のファイル（userData に置く。アプリ全体で 1 つ）。メニューの「Claude がセッションを始める前に許可を求める」を
+// 子セッションの起動の確認を省く印のファイル（userData に置く。アプリ全体で 1 つ）。メニューの「MCP → セッションを始める前に許可を求める」を
 // オフにしている間だけ置く。起動の確認のフックは、呼ばれるたびにこのファイルがあるかを見るので、切り替えは動いているセッションにもすぐ効く
 export const SESSIONS_NO_ASK_FILE = 'sessions-start-no-ask';
 // 印のファイルのパスを、起動の確認のフックに渡す環境変数（起動する Claude Code の環境に足す。フックは Claude Code の環境で動く）

@@ -1,6 +1,6 @@
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT } from '@shared/optimized-compact';
 import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
 import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
@@ -8,6 +8,8 @@ import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
 // 登録した Claude Code の設定ファイル。覚えるのは名前とパスだけ（中身は預からない）
 export type StoredSettingsFile = { id: string; name: string; path: string };
 
+// アプリ全体の設定は、既定のプロファイルのファイル（userData/settings.json）だけを使う。足したプロファイルのファイル（profiles/<id>/settings.json）で使うのは、
+// settingsFiles（登録した設定ファイル）だけ（index.ts の openProfile）
 // notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか /
 // updateOnQuit: Homebrew で入れたとき、終了するときに新しいバージョンを入れるか /
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
@@ -22,7 +24,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // awayWaitMinutes: 離席モードで、人に回った許可の確認・質問の答えを待つ時間（分。@shared/away-mode）/
 // usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
 // prompts: tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。shared/prompts.ts）/
-// language: 画面の言語（system は Mac の言語の設定に合わせる）
+// language: 画面の言語（system は Mac の言語の設定に合わせる）/
+// profilesMerged: 足したプロファイルの設定を、アプリ全体の設定に移し替えたか（mergeProfiles。一度だけ）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -40,6 +43,7 @@ type Values = {
   usageLimitResume: boolean;
   prompts: CustomPrompts;
   language: LanguageSetting;
+  profilesMerged: boolean;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -181,6 +185,23 @@ export class AppSettings {
     this.update({ language });
   }
 
+  // 前のバージョンでは、足したプロファイルが、Claude に許す機能・許す先・Claude の自動の動きを、それぞれの設定のファイルに持っていた。
+  // 今はアプリ全体の設定（既定のプロファイルのファイル）だけを使う。安全なほうに倒して引き継ぐ:
+  // - Claude に許す機能と利用枠からの再開は、どれかのプロファイル（既定を含む）でオフならオフ（オフにしていた機能を、黙ってオンに戻さない）
+  // - 許す先は、すべてのプロファイルのものを足す（どのプロファイルで許した先も、許したままにする）
+  // - 自動で最適化圧縮する大きさと、離席モードで答えを待つ時間は、既定のプロファイルの値
+  // 一度だけ動かす（あとで外した先を、また足さない）。足したプロファイルのファイルは消さない（登録した設定ファイルは、今もそこに置く）。
+  // このファイルが壊れていたら、書き換える前に、元の中身を横（settings.json.broken-<時刻>）に控える（Claude に送る文や言語を取り戻せるように）。
+  // 控えられなければ、移し替えずに投げる
+  mergeProfiles(others: AppSettings[]): void {
+    if (this.values.profilesMerged || others.length === 0) return;
+    if (isBroken(this.file)) copyFileSync(this.file, `${this.file}.broken-${Date.now()}`);
+    const merged: Partial<Values> = { profilesMerged: true };
+    for (const key of OFF_WINS) merged[key] = this.values[key] && others.every((o) => o.values[key]);
+    merged.browserHosts = [...new Set([...this.values.browserHosts, ...others.flatMap((o) => o.browserHosts())])];
+    this.update(merged);
+  }
+
   // 保存できなかったら、値を元に戻して例外を投げる（画面の表示と食い違わせない）
   private update(change: Partial<Values>): void {
     const before = this.values;
@@ -198,6 +219,19 @@ export class AppSettings {
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify({ version: 1, ...this.values }, null, 2));
     renameSync(tmp, this.file);
+  }
+}
+
+// 移し替えで、どれかのプロファイルでオフならオフにする設定
+const OFF_WINS = ['browserControl', 'sessionsControl', 'checklistControl', 'walkthroughControl', 'terminalControl', 'usageLimitResume'] as const;
+
+// 設定のファイルがあるのに、設定として読めない（JSON でない・オブジェクトでない・読めない）か。無いだけなら壊れていない
+function isBroken(file: string): boolean {
+  try {
+    const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return typeof data !== 'object' || data === null || Array.isArray(data);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
   }
 }
 
@@ -222,6 +256,7 @@ function load(file: string): Values {
       usageLimitResume?: unknown;
       prompts?: unknown;
       language?: unknown;
+      profilesMerged?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -240,9 +275,10 @@ function load(file: string): Values {
       usageLimitResume: data.usageLimitResume !== false,
       prompts: customPromptsOf(data.prompts),
       language: isLanguageSetting(data.language) ? data.language : 'system',
+      profilesMerged: data.profilesMerged === true,
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
   }
 }
 

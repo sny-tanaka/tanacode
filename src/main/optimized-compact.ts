@@ -67,7 +67,7 @@ type Deps = {
   autoStatus?: (id: string) => { percent: number; paused: boolean };
   // 流れが終わった（failure: 取りやめた・失敗した理由。auto: 自動で始めたもの）。AutoCompact が、続けて失敗したら休むために受ける
   onFinish?: (id: string, failure: CompactFailure | null, auto: AutoCompactTrigger | null) => void;
-  // メニューの「Claude にチェックリストを扱わせる」
+  // メニューの「MCP → チェックリスト」
   enabled: () => boolean;
   // 利用者が変えた、Claude に送る文（メニューの「Claude に送る文…」。無ければ既定の文）。送るたびに読む
   prompts?: () => CustomPrompts;

@@ -685,7 +685,7 @@ describe('仕上げのターンの見分け', () => {
 });
 
 describe('使えないとき', () => {
-  it('「Claude にチェックリストを扱わせる」がオフなら、始めない。理由を返す', () => {
+  it('「MCP → チェックリスト」がオフなら、始めない。理由を返す', () => {
     enabled = false;
     expect(compact.start(ID)).toEqual({ ...IDLE, unavailable: 'checklist-off' });
     expect(host.submitted).toEqual([]);
