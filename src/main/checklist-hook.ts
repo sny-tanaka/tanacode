@@ -7,9 +7,10 @@ import { callBridge } from './mcp-bridge';
 
 // Claude にチェックリストを使い続けさせる hooks。アプリが起動する Claude Code に、--settings で足す（statusline.ts の ownSettings）。
 // - UserPromptSubmit: 人が発言したら、今のチェックリストを Claude に渡す（発言で計画が変わったら、先にリストを直させる）
-// - Stop: ツールを使ったのにチェックリストに触れずにターンを終えようとしたら、1 回だけ止めて、リストを今の状態に直させる
+// - Stop: ツールを使ったのにチェックリストに触れずにターンを終えようとしたら、アプリに伝える。止めずに（Claude に何も渡さずに）終えさせ、
+//   次の発言の知らせ（UserPromptSubmit）で、前のターンの分もリストを直させる（@shared/checklist-reminder の missedTurn）
 // - SessionStart（compact）: 会話が圧縮されたら、今のチェックリストを渡す
-// 渡す文と、止めるかどうかは、アプリが決める（@shared/checklist-reminder）。フックは、Claude が使ったツールを会話ログから数えて、アプリに聞く。
+// 渡す文と、ターンを数えるかどうかは、アプリが決める（@shared/checklist-reminder）。フックは、Claude が使ったツールを会話ログから数えて、アプリに聞く。
 // フックは中継の入口（checklist-mcp.js）を --hook 付きで動かす。環境変数は checklistHookEnv（checklist-bridge.ts）が、起動する Claude Code に足す。
 // アプリに聞けなかったとき・答えを読めなかったときは、何も出さない（Claude の作業を止めない側に倒す）
 //
@@ -18,7 +19,7 @@ import { callBridge } from './mcp-bridge';
 // - Remote Control 中は、1 行ごとにリモートへの保存を待ってから次の行を書くので、数秒遅れることもある
 // - 最初の応答の行を、発言の行（とそれに続く attachment の行）より先に書くことがある（transcript-tail.ts の parentFirst と同じ事情）
 // そのため、ターンの終わりのフックが動いた時点で、最後に使ったツールの行がまだ無いことがある。ファイルの終わりから順に数えると、
-// チェックリストを直した直後でも「触れていない」と止めたり、ツールを使ったターンを止め損なったりする。そこで、
+// チェックリストを直した直後でも「触れていない」と数えたり、ツールを使ったターンを数え損なったりする。そこで、
 // - 行の順番ではなく、親（parentUuid）をたどって数える（turnActivity）。最後の応答から、ターンのはじまりまで
 // - フックの入力の last_assistant_message（最後の応答の文）と同じ応答が書かれ、そこからターンのはじまりまで親がつながるのを待ってから数える（settledScan）
 // - 前のターンの最後の応答と同じ文でも、そのあとにターンが始まっていれば、そろったとしない（このターンの応答がまだ書かれていない）
@@ -42,8 +43,8 @@ export function checklistHooks(): Record<string, unknown[]> {
 }
 
 // Claude Code がフックの標準入力に渡す JSON のうち、使うもの。last_assistant_message: 最後の応答の文（Stop。無いこともある）
-// trigger: 圧縮の始まり方（PreCompact。auto・manual）
-type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string; trigger?: string };
+// trigger: 圧縮の始まり方（PreCompact。auto・manual）/ session_id: Claude Code の会話の ID（どのフックにも付く）
+type HookInput = { hook_event_name?: string; session_id?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string; trigger?: string };
 
 const EVENTS: Record<string, ReminderEvent> = { UserPromptSubmit: 'prompt', Stop: 'stop', SessionStart: 'compact' };
 
@@ -219,9 +220,9 @@ export async function settledScan(path: string, last: string | undefined, timeou
 }
 
 // フックが標準出力に書く JSON。どれも、文を Claude のコンテキストに足す（additionalContext）。
-// Stop も、ターンの終わりを止める（decision: block）のではなく、文を渡して続けさせる。block は Claude Code 2.1.302 でエラー（hookErrors）になり、
-// ターミナルモードの画面に赤い「Stop hook error」と通知が出るため。additionalContext は「Stop hook feedback」として続きを始めさせ、
-// 続きのフックの入力には stop_hook_active が付く（2.1.293 からある。本体で確かめた）
+// Stop には、今のアプリは文を返さない（ChecklistControl の reminder）。前のバージョンのアプリは、Stop でも文を渡して続けさせていた
+// （decision: block は Claude Code 2.1.302 でエラー（hookErrors）になり、ターミナルモードの画面に赤い「Stop hook error」と通知が出るため。
+// additionalContext は「Stop hook feedback」として続きを始めさせ、続きのフックの入力には stop_hook_active が付く。2.1.293 からある）
 export function hookOutput(hookEventName: string, text: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } });
 }
@@ -238,17 +239,19 @@ export async function runHook(stdin: string, socketPath: string, session: string
   const name = input.hook_event_name ?? '';
   const event = EVENTS[name];
   if (!event) return '';
-  let args: Record<string, unknown> = { turn: 0, checklist: 0 };
+  // conversation: Claude Code の会話の ID（/clear で新しい会話になると変わる）。アプリは、前のターンの分を頼むのを、同じ会話のときだけにする
+  const conversation = typeof input.session_id === 'string' && input.session_id ? { conversation: input.session_id } : {};
+  let args: Record<string, unknown> = { turn: 0, checklist: 0, ...conversation };
   if (event === 'stop') {
-    // 止めたあとの続きは、もう止めない（終われなくなる）
+    // ほかの Stop のフック（人のもの）が止めたあとの続きは、数えない（止める前のターンで数えてある）
     if (input.stop_hook_active || !input.transcript_path) return '';
     const last = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim() ? input.last_assistant_message : undefined;
     const { turn, checklist, since, settled } = await settledScan(input.transcript_path, last, settleMs);
-    // 止めないと分かっているターン（そろった会話ログで、チェックリストに触れた・ツールを使っていない）は、アプリに聞かない。
+    // 数えないと分かっているターン（そろった会話ログで、チェックリストに触れた・ツールを使っていない）は、アプリに聞かない。
     // そろわなかったときは、見えているのが前のターンのものかもしれないので、数えたものによらずアプリに聞く
     // （アプリは、チャットなら stream-json で受けた応答から、このターンのツールを数えている。ChecklistControl の reminder）
     if (settled && (checklist > 0 || turn === 0)) return '';
-    args = { turn, checklist, since, settled };
+    args = { turn, checklist, since, settled, ...conversation };
   }
   const result = await callBridge(socketPath, { session, tool: checklistHookRequest(event), args }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);
   const first = result.content[0];

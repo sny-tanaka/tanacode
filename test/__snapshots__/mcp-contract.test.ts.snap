@@ -1085,6 +1085,13 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     {
       "inputSchema": {
         "properties": {
+          "deliver": {
+            "enum": [
+              "after_turn",
+              "next_step",
+            ],
+            "type": "string",
+          },
           "message": {
             "type": "string",
           },

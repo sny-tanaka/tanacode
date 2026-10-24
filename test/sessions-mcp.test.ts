@@ -46,6 +46,7 @@ import type { AppUpdateInfo, RestartOutcome } from '../src/main/app-restart';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
 import { AWAY_ENDED } from '../src/shared/away-mode';
+import { MAX_PARENT_RULES_RESULT_CHARS, parentRulesResult } from '../src/shared/project-instructions';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { WorktreeError, withSetupNote, type WorktreeSetupTrouble } from '../src/main/worktree';
@@ -366,6 +367,8 @@ class FakeHost implements SessionsHost {
   // 離席モード（set_away_mode）。テストが入れる
   setAway?: SessionsHost['setAway'];
   awayWaitMs?: SessionsHost['awayWaitMs'];
+  // 今の会話にまだ渡していない TANACODE_PARENT.md（start_session の結果に付ける）。テストが入れる
+  takeParentRules?: SessionsHost['takeParentRules'];
   configured: { id: string; options: SessionOptions }[] = [];
   configureError: Error | null = null;
   // アプリ内ブラウザで人に操作を頼んでいるセッション
@@ -448,8 +451,11 @@ class FakeHost implements SessionsHost {
   };
   // 送った文（子への最初の指示は、SessionManager と同じく、worktree の準備の結果を添えて囲みに入れる）と、アプリを終えても残す送信（keep）
   kept: string[] = [];
-  submitWhenReady = async (id: string, text: WaitingText, _timeoutMs?: number, options: { keep?: boolean } = {}) => {
+  // 次のツールの切れ目に差し込む送信（nextStep。send_message の deliver: next_step）
+  nextSteps: string[] = [];
+  submitWhenReady = async (id: string, text: WaitingText, _timeoutMs?: number, options: { keep?: boolean; nextStep?: boolean } = {}) => {
     if (options.keep) this.kept.push(id);
+    if (options.nextStep) this.nextSteps.push(id);
     this.submitted.push({ id, text: typeof text === 'string' ? text : parentMessageText(text.parent, withSetupNote(text.body, this.worktreeSetup(id))) });
   };
   // worktree の準備でうまくいかなかったこと
@@ -653,6 +659,57 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
   });
 
+  it('start_session: 親の決まり（TANACODE_PARENT.md）をまだ受け取っていない親には、結果に付けて渡す。2 本目・独立したセッション・受け取ったあとは付けない', async () => {
+    const rules = [{ path: '/p/TANACODE_PARENT.md', content: '# 親の決まり\n見回りを予約しない' }];
+    const taken: string[] = [];
+    let given = false;
+    host.takeParentRules = (id) => {
+      taken.push(id);
+      if (given) return null;
+      given = true;
+      return rules;
+    };
+    // 独立したセッションは子ではないので、渡さない（受け取ったことにもしない）
+    const independent = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent: true });
+    expect(independent.content).toHaveLength(1);
+    expect(taken).toEqual([]);
+    const first = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
+    // 結果の JSON はそのまま読める（1 つ目）。決まりは 2 つ目に、英語の前書きと、ファイルごとの囲みで
+    expect(jsonOf<{ session_id: string }>(first).session_id).toBeTruthy();
+    expect(first.content).toHaveLength(2);
+    expect((first.content[1] as { text: string }).text).toBe(parentRulesResult(rules));
+    expect(parentRulesResult(rules)).toContain('TANACODE_PARENT.md has not been passed to this conversation yet');
+    expect(parentRulesResult(rules)).toContain('<instructions-file path="/p/TANACODE_PARENT.md">\n# 親の決まり\n見回りを予約しない\n</instructions-file>');
+    const second = await control.handle(PARENT, 'start_session', { prompt: 'y', worktree: false });
+    expect(second.content).toHaveLength(1);
+    expect(taken).toEqual([PARENT, PARENT]);
+    // 長すぎるものは、中身の代わりに Read で読むよう頼む
+    const long = parentRulesResult([{ path: '/p/TANACODE_PARENT.md', content: 'x'.repeat(MAX_PARENT_RULES_RESULT_CHARS) }]);
+    expect(long).toContain('read the whole file with the Read tool before you go on (/p/TANACODE_PARENT.md)');
+    expect(long.length).toBeLessThan(2_000);
+    // 上限は、結果のほかの部分（JSON）も含めて測る（Claude Code の上限は結果の全体のトークン数）
+    const half = [{ path: '/p/TANACODE_PARENT.md', content: '決'.repeat(MAX_PARENT_RULES_RESULT_CHARS / 2) }];
+    expect(parentRulesResult(half)).toContain('決'.repeat(100));
+    expect(parentRulesResult(half, MAX_PARENT_RULES_RESULT_CHARS / 2)).not.toContain('決'.repeat(100));
+  });
+
+  it('start_session: 呼び出しが取り消された（Esc で中断した）ときは、親の決まりを渡したことにしない', async () => {
+    const taken: string[] = [];
+    host.takeParentRules = (id) => (taken.push(id), [{ path: '/p/TANACODE_PARENT.md', content: '決まり' }]);
+    const aborted = new AbortController();
+    aborted.abort();
+    const result = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }, aborted.signal);
+    expect(result.content).toHaveLength(1);
+    expect(taken).toEqual([]);
+  });
+
+  it('start_session: 子を始められなかったときは、親の決まりを受け取ったことにしない', async () => {
+    const taken: string[] = [];
+    host.takeParentRules = (id) => (taken.push(id), null);
+    expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'bypassPermissions' })).isError).toBe(true);
+    expect(taken).toEqual([]);
+  });
+
   it('start_session: worktree の準備でうまくいかなかったこと（install の失敗など）は、子への最初の指示の本文に添え、get_session の worktree に出す', async () => {
     host.setupTrouble.set('88888888-0000-4000-8000-000000000008', {
       installsFailed: [{ dir: 'pkg', command: 'yarn install', exitCode: 1 }],
@@ -783,6 +840,40 @@ describe('ツールの実行（SessionsControl）', () => {
     const sent = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
     expect(sent.note).toContain('queued');
     expect(host.submitted).toEqual([{ id: CHILD, text: parentMessageText(PARENT, '続けて') }]);
+  });
+
+  it('send_message: deliver が next_step なら、作業中の子の次のツールの切れ目に届くよう渡す（既定はターンの終わり）', async () => {
+    host.set(CHILD, 'working');
+    const later = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
+    expect(later.note).toContain('as soon as it finishes its current work');
+    expect(host.nextSteps).toEqual([]);
+    const next = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '待って', deliver: 'next_step' }));
+    expect(next.note).toContain('next break between tool calls');
+    expect(next.note).toContain('long tool call');
+    expect(next.note).toContain('queued_messages');
+    expect(host.nextSteps).toEqual([CHILD]);
+    expect(host.submitted.at(-1)).toEqual({ id: CHILD, text: parentMessageText(PARENT, '待って') });
+    // after_turn も受ける。ほかの値は断る
+    await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'あとで', deliver: 'after_turn' });
+    expect(host.nextSteps).toEqual([CHILD]);
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'now' }))).toBe('Pass deliver as "after_turn" or "next_step".');
+    // 許可の確認・質問を待っている子には、next_step でも送らない
+    host.set(CHILD, 'permission');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' }))).toContain('answer_permission');
+    host.set(CHILD, 'question');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' }))).toContain('answer_question');
+    expect(host.submitted).toHaveLength(3);
+    // 起動中・止まっている子には、next_step を効かせない（最初の指示を追い越さないよう、ターンの終わりに届く送り方で渡す）
+    for (const state of ['starting', 'exited'] as const) {
+      host.set(CHILD, state);
+      await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' });
+    }
+    expect(host.submitted).toHaveLength(5);
+    expect(host.nextSteps).toEqual([CHILD]);
+    // 手の空いた子には効かせる（差は出ないが、渡すまでに作業を始めていれば、そのターンに差し込まれる）
+    host.set(CHILD, 'idle');
+    await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' });
+    expect(host.nextSteps).toEqual([CHILD, CHILD]);
   });
 
   it('send_message: 自分の子にだけ。質問・許可の確認を待っている子には送らない。止まっている子は起動してから送る', async () => {
@@ -3505,7 +3596,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toEqual({
         session_id: CHILD,
         state: 'working',
-        note: expect.stringMatching(/^The child is working, so the instruction will be sent as soon as it finishes its current work \(queued\)\. Until the child receives it, get_session shows it in queued_messages/),
+        note: expect.stringMatching(/^The child is working, so the instruction will arrive as soon as it finishes its current work \(queued\)\. Until it reaches the conversation of the child, get_session shows it in queued_messages/),
       });
       expect(host.opened).toEqual([]);
       host.set(CHILD, 'exited');

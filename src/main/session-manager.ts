@@ -1167,7 +1167,8 @@ export class SessionManager {
     return empty && 'problem' in empty ? instructionsProblemText(empty) : t('main.parentRole.missing', { file: PARENT_INSTRUCTIONS_FILE });
   }
 
-  // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（親の状態は覚えない。会話を消すと忘れるので、もう一度押す）。
+  // 「親にする」: TANACODE_PARENT.md を、tanacode からの発言として 1 回だけ読ませる（会話を消すと忘れるので、もう一度押す。
+  // 渡したことは覚え、そのあとに子を始めても重ねて渡さない。takeParentRules）。
   // 作業中に押したら、親の指示・予約と同じく、今の作業が終わってから届くように送る（priority: later。今のターンの途中には入れない）。
   // ターミナルモードでは、TUI の入力欄に貼る（Enter は人が押す。ほかの人が頼んだ知らせと同じ）。読ませられなければ、理由を投げる
   async becomeParent(id: string): Promise<void> {
@@ -1177,18 +1178,35 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (!rt || (!rt.process && !rt.restarting)) throw new SendError('notRunning');
     const text = parentRoleText(files);
+    // ターミナルモードでは、貼るだけで送るのは人なので、渡したことにしない（送られなければ、子を始めたときに渡す）
     if (rt.terminal && !rt.switching) {
       if (!this.pasteIntoTerminal(id, text)) throw new Error(t('main.parentRole.cannotPaste'));
       return;
     }
     await this.submit(id, text, [], [], 'later');
+    this.store.update(id, { parentRules: true });
+  }
+
+  // 親が子を始めた（start_session）。今の会話にまだ TANACODE_PARENT.md を渡していなければ、渡す中身を返し、渡したことにする
+  // （「親にする」を押さずに、チャットで親を頼まれたセッションにも、親の決まりを読ませるため）。渡したあと・子のセッション・
+  // ファイルが無い・使えない（空・大きすぎる・読めない）ときは null（何もしない。使えない理由は「親にする」を押したときに出る）
+  takeParentRules(id: string): { path: string; content: string }[] | null {
+    const record = this.store.get(id);
+    if (!record || record.parentId || record.parentRules) return null;
+    const files = this.parentFiles(id);
+    if (typeof files === 'string') return null;
+    this.store.update(id, { parentRules: true });
+    return files;
   }
 
   // 新規セッションの画面の「親として始める」: 最初の指示の前に、TANACODE_PARENT.md を付けた発言にする。
   // 始めるまでにファイルが無くなっていた・使えなくなっていたら、指示だけを送り、読ませられなかったことをチャットに出す（指示は止めない）
   withParentRole(id: string, text: string): string {
     const files = this.parentFiles(id);
-    if (typeof files !== 'string') return parentRoleText(files, text);
+    if (typeof files !== 'string') {
+      this.store.update(id, { parentRules: true });
+      return parentRoleText(files, text);
+    }
     const notice = this.parentInstructions(id).length > 0 ? t('main.parentRole.unusableOnStart', { reason: files }) : t('main.parentRole.missingOnStart', { file: PARENT_INSTRUCTIONS_FILE });
     this.pushEvents(id, [{ type: 'info', id: `parent-role-missing:${randomUUID()}`, text: notice, warning: true }]);
     return text;
@@ -1847,6 +1865,9 @@ export class SessionManager {
     );
     if (!result.rewound) return failed(rewindReasonText(result.reason, result.error), choice.code);
     if (rt.process === process) this.cutBefore(id, rt, messageId);
+    // 戻した先の会話に、渡した TANACODE_PARENT.md が残っているかは見ずに、渡していないことにする（次に子を始めたときに渡す。
+    // 残っていれば重なるだけで、消えたのに渡さないよりよい）
+    this.store.update(id, { parentRules: false });
     // 「親として始める」の最初の指示を戻したときは、人が打った指示だけを入力欄に戻す（囲み・前書き・TANACODE_PARENT.md の中身は戻さない）
     const role = result.prefillText === null ? null : parseParentRole(result.prefillText);
     return { ok: true, prefillText: role ? role.rest || null : result.prefillText, error: null };
@@ -2223,16 +2244,26 @@ export class SessionManager {
 
   // 起動が終わる（入力を受け付けられる）のを待ってから、ターンが終わってから届く発言（priority: later）として送る
   // （子セッションへの指示・親への知らせ・予約）。作業中に送っても、作業中のターンには入らない（Claude Code が順番待ちにする。実測）。
+  // nextStep: priority を付けずに送る（親の send_message の next_step）。作業中なら、人がチャットに打った発言と同じく、
+  // 今のターンの次のツールの切れ目に差し込まれる（attachment の queued_command。実測 2.1.301）。送る時にターンが開いていなければ、
+  // priority: later で送る（得が無いうえ、順番待ちの later の発言（子への最初の指示など）を追い越して先にターンを始めてしまう）。
   // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する。
   // 待っている送信がいくつもあるときは、待ち始めた順に送る（先のものが送り終えるまで、あとのものは送らない。見直しの間合いで、
   // あとから待ち始めたもの（起動の途中の子に親が送った指示）が、先のもの（その子への最初の指示）を追い越さないように）。
   // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し）/
-  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す（親の指示。closeAll・start）
+  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す（親の指示。closeAll・start）。
+  // 送り直すときは手が空いているので、nextStep は残さない（priority: later で送る）
   async submitWhenReady(
     id: string,
     text: WaitingText,
     timeoutMs: number,
-    { attachments = [], pastes = [], signal, keep = false }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal; keep?: boolean } = {},
+    {
+      attachments = [],
+      pastes = [],
+      signal,
+      keep = false,
+      nextStep = false,
+    }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal; keep?: boolean; nextStep?: boolean } = {},
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     let process = rt?.process ?? null;
@@ -2262,7 +2293,7 @@ export class SessionManager {
         if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
-      await this.submit(id, this.waitingText(id, text), attachments, pastes, 'later');
+      await this.submit(id, this.waitingText(id, text), attachments, pastes, nextStep && rt.turnOpen ? undefined : 'later');
     } finally {
       const at = rt.waiting.indexOf(waiting);
       if (at !== -1) rt.waiting.splice(at, 1);
@@ -2852,7 +2883,8 @@ export class SessionManager {
           this.resendCarried(id, runtime);
         },
         onSwitch: (nextClaudeSessionId) => {
-          this.store.update(id, { claudeSessionId: nextClaudeSessionId });
+          // 会話を消した（/clear・最適化圧縮）。TANACODE_PARENT.md も、次に子を始めたときに渡し直す
+          this.store.update(id, { claudeSessionId: nextClaudeSessionId, parentRules: false });
           this.changed(id);
           rt.chain = [];
           rt.heldHooks.clear();

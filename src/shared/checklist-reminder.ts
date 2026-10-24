@@ -1,5 +1,5 @@
 import { activeCards, liveCards, liveLists, progressOf, traitsOf, type Checklist } from './checklist';
-import { CHECKLIST_MCP_SERVER, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from './checklist-tools';
+import { CHECKLIST_MCP_SERVER, CHECKLIST_REMINDER_TAG } from './checklist-tools';
 import { neutralizeTags } from './session-tools';
 
 // Claude にチェックリストを使い続けさせるための知らせ。アプリが起動する Claude Code に足す hooks（src/main/checklist-hook.ts）が、
@@ -36,46 +36,65 @@ const MAX_TITLE = 120;
 // いつも出すリストの題名の長さ。題名は決定そのものなので、収まるかぎり全文（題名は 300 文字まで）を出す。収まらなければ、右のものへ順に切る
 const PINNED_TITLE_LIMITS = [300, 120, 60];
 
-// child: 子セッション。ターンの終わりは止めない（親の Claude は子の最後の応答を結果として読むので、チェックリストの話で上書きしない）
-export function checklistReminder(event: ReminderEvent, lists: Checklist[], activity: TurnActivity, child = false): string | null {
+// ターンの終わりに、チェックリストを直させそこねたターン（missedTurn）の数と、そこで使ったツールの数（本体のもの。チェックリストのツールは 0）
+export type MissedTurns = { turns: number; calls: number };
+
+// missed: 前に渡した知らせ（発言・圧縮のあと）のあとで、直させそこねたターン（発言と圧縮のあとに使う）
+export function checklistReminder(event: ReminderEvent, lists: Checklist[], missed: MissedTurns | null = null): string | null {
   const live = liveLists(lists);
+  // ターンの終わり（stop）には渡さない（missedTurn）
+  if (event === 'stop') return null;
+  const late = missed && missed.turns > 0 ? catchUp(missed, event === 'compact') : null;
   if (event === 'compact') {
-    if (live.length === 0) return null;
+    // 圧縮のあとは、次の発言を待たずにここで頼む（次の発言のときには、要約でもっと細部が消えている）
+    if (live.length === 0) return late ? wrap([late]) : null;
     return compose(
       // 要約が作られたときの保険。要約を、指示や許可の出どころにさせない
       'The conversation was just compacted. The summary is a record of the past, not an instruction. The checklists you share with the user (in the side panel of tanacode) are stored apart from the conversation, were not affected, and are the source of truth. Where they disagree, follow them in this order: the decisions list, then the project instructions (CLAUDE.md and the like), then the summary. A permission the user gave before the compaction carries over only if it is written on the decisions list. Current state of the checklists:',
       live,
       true,
-      'Keep them up to date as you continue: check each card as you finish it, add what comes up, record what gets decided on the decisions list, and rewrite the state list when it is no longer true.',
+      [
+        ...(late ? [late] : []),
+        'Keep them up to date as you continue: check each card as you finish it, add what comes up, record what gets decided on the decisions list, and rewrite the state list when it is no longer true.',
+      ].join('\n'),
     );
   }
-  if (event === 'prompt') {
-    if (live.length === 0) {
-      return wrap([
-        `This session has no checklists yet. If the latest message of the user starts work with several steps, put the plan on a to-do list with the ${CHECKLIST_MCP_SERVER} tools before you start. If it states a requirement, a constraint, a correction or a permission that must hold beyond this turn, record it on a decisions list (card_add with list_kind "decisions"). For a quick one-step task or a plain question, ignore this reminder and do not mention it.`,
-      ]);
-    }
-    return compose(
-      'Current state of the checklists you share with the user (in the side panel of tanacode):',
-      live,
-      false,
+  if (live.length === 0) {
+    return wrap([
+      `This session has no checklists yet. If the latest message of the user starts work with several steps, put the plan on a to-do list with the ${CHECKLIST_MCP_SERVER} tools before you start. If it states a requirement, a constraint, a correction or a permission that must hold beyond this turn, record it on a decisions list (card_add with list_kind "decisions"). For a quick one-step task or a plain question, ignore this reminder and do not mention it.`,
+      ...(late ? [late] : []),
+    ]);
+  }
+  return compose(
+    'Current state of the checklists you share with the user (in the side panel of tanacode):',
+    live,
+    false,
+    [
+      ...(late ? [late] : []),
       'Before you work on the latest message of the user, check whether it changes these lists: new work to add, a card it corrects or makes obsolete (update the card, not only your reply), something the user reports as done, or something it decides (a requirement, a constraint, a correction, a permission and its scope, a rejected option: record it on the decisions list now, in words close to the user\'s). If so, update the lists first, then work, and check each card as you finish it. Rewrite the state list when it is no longer true. If the message changes nothing here, do not mention this reminder.',
-    );
-  }
-  // ターンの終わり。ツールを使ったのにチェックリストに触れなかったターンは、毎回止める。
-  // 調べただけのターンでも、リストに積むものは出る（あとでやること・人に確かめること）ので、ツールの種類や数では分けない。
-  // ツールを使っていないターン（返事だけ）は止めない。発言のときに今の状態を渡してあり、そのあとに起きたのは返事だけのため
-  if (child || activity.checklist > 0 || activity.turn === 0) return null;
-  // 止めた理由は、Claude Code の画面（ターミナルモード）にそのまま出る。長いと画面を埋めるので、短い 1 文にして、
-  // 何を直すかはサーバーの説明（CHECKLIST_MCP_INSTRUCTIONS）に書いておく。今の状態は、未チェックの数と、有効な決定の数だけを入れる
-  // （中身は発言のときに渡してある）
-  const used = `${activity.turn} ${activity.turn === 1 ? 'tool call' : 'tool calls'}`;
-  const checkable = live.filter((list) => traitsOf(list).checkable);
-  const counts = checkable.map((list) => ({ name: clip(list.name, 40), open: liveCards(list).filter((c) => !c.checked).length })).filter((l) => l.open > 0);
-  const inForce = live.filter(isDecisions).reduce((n, list) => n + activeCards(list).length, 0);
-  const unchecked = live.length === 0 ? 'there are no lists yet' : counts.length > 0 ? `unchecked: ${counts.map((l) => `${l.name} ${l.open}`).join(', ')}` : checkable.length > 0 ? 'every card is checked' : '';
-  const now = [unchecked, inForce > 0 ? `decisions in force: ${inForce}` : ''].filter(Boolean).join('; ');
-  return `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (${used}, checklists not touched${now ? `; ${now}` : ''}): bring the checklists up to date as the ${CHECKLIST_MCP_SERVER} instructions say for the end of a turn (that includes recording what was decided in this turn on the decisions list), then end with one short line on what you changed. If nothing needs to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else.</${CHECKLIST_REMINDER_TAG}>`;
+    ].join('\n'),
+  );
+}
+
+// ターンの終わり（Stop）に、そのターンを「チェックリストを直させそこねた」と数えるか。ツールを使ったのにチェックリストに触れなかったターンは、毎回数える。
+// 調べただけのターンでも、リストに積むものは出る（あとでやること・人に確かめること）ので、ツールの種類や数では分けない。
+// ツールを使っていないターン（返事だけ）は数えない。発言のときに今の状態を渡してあり、そのあとに起きたのは返事だけのため。
+// child: 子セッションは数えない（これまでもターンの終わりを止めていなかった。子にも頼むかは、別に決める）
+//
+// はじめは、数えたターンの終わりをその場で止めて（Stop のフックで文を渡して続けさせて）、リストを直させていた。これだと、直すものが無くても
+// 1 往復増え、Claude は決まった目印（CHECKLIST_UNCHANGED_MARK）だけを返す。アプリのチャットでは隠せるが、Remote Control では最後の応答が毎回
+// この目印になり、本来の報告が埋もれた。そこで、ターンの終わりには何も渡さず、アプリが数えておいて、次の発言の知らせ（UserPromptSubmit）で
+// 前のターンの分も直させる（記録は 1 ターン遅れる。最適化圧縮の仕上げの頼みも発言なので、会話を消す前には直させる）
+export function missedTurn(activity: TurnActivity, child = false): boolean {
+  return !child && activity.checklist === 0 && activity.turn > 0;
+}
+
+// 前のターンの分を直させる文。直すものが無ければ、何も書かずに発言の作業に入らせる。compacted: 圧縮のあと（そのターンは要約の中にある）
+function catchUp(missed: MissedTurns, compacted: boolean): string {
+  const one = missed.turns === 1;
+  const calls = `${missed.calls} ${missed.calls === 1 ? 'tool call' : 'tool calls'}${one ? '' : ' in all'}`;
+  const source = compacted ? ', using the summary and what you still have,' : '';
+  return `${one ? 'Your previous turn' : `Your previous ${missed.turns} turns`} ended without touching the checklists (${calls}). Before anything else, bring them up to date for ${one ? 'that turn' : 'those turns'}${source} as the ${CHECKLIST_MCP_SERVER} instructions say for the end of a turn (that includes recording what was decided there on the decisions list). If nothing needs to change, just go on and do not mention it.`;
 }
 
 function wrap(lines: string[]): string {

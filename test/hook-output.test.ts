@@ -69,6 +69,35 @@ describe('シェルで動くアプリのフック', () => {
   // Claude Code（2.1.302）は、フックの入力を書き終える前にフックが標準入力を閉じると（EPIPE）、そのフックを失敗として扱い、
   // 標準出力も捨てる。ツールの結果は大きいことがある（PostToolUse の入力に入る）ので、パイプに入りきらない大きさの入力で確かめる
   // （読まずに終わるフックは、必ず EPIPE になる）
+  // 入力は、Claude Code と同じく非同期の spawn で書いて閉じる（stdin.end）。spawnSync の input で渡すと、macOS（Node 24・libuv 1.52）では
+  // 数百回に 1 回、Node が入力を書き終えたのに子の標準入力を閉じず、cat が入力の終わりを待ち続ける（素の `cat >/dev/null` でも起こる。
+  // 入力がソケットに入りきる大きさなら起こらない）。止まったときの lsof では、cat は 1MB を読み終えていて、Node が子の標準入力を開いたままだった
+  const run = (command: string, input: string, noAskFile: string) =>
+    new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: string; timedOut: boolean }>((resolve) => {
+      const child = spawn('sh', ['-c', command], {
+        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+      });
+      let stdout = '';
+      let stderr = '';
+      let error: string | undefined;
+      let timedOut = false;
+      child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+      child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+      // 読まずに閉じたフックへの書き込みの EPIPE は、ここに来る（失敗として返す）
+      child.stdin.on('error', (e) => (error ??= `stdin: ${e.message}`));
+      child.on('error', (e) => (error ??= e.message));
+      // 止まったときに、どのコマンドで止まったかが分かる失敗にする（テストの時間切れで、何も残らずに落ちないように）
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, 10_000);
+      child.on('close', (status, signal) => {
+        clearTimeout(timer);
+        resolve({ status, signal, stdout, stderr, error, timedOut });
+      });
+      child.stdin.end(input);
+    });
+
   it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', async () => {
     const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
     // 子セッションの起動の確認は、印のファイルがあるとき（allow）と無いとき（ask）の両方で
@@ -84,20 +113,13 @@ describe('シェルで動くアプリのフック', () => {
       [NOTIFICATION_FILE_COMMAND, ''],
       [IDLE_FILE_COMMAND, ''],
     ]) {
-      // 入力は、非同期の spawn で書いて閉じる（stdin.end）。前は spawnSync の input で渡していて、手元の Mac で、1MB の入力を書き終えたのに
-      // 標準入力が閉じず、フックの cat が入力の終わりを待ち続けて 10 秒の時間切れになることがあった（2026-10-21 に npm test の全体で 1 回、
-      // 2026-10-24 にこのファイルを含む 3 つを並べて流して 7 回に 2 回。どのフックでも、ただの `cat >/dev/null; printf` でも起きる。
-      // spawnSync では 1MB の入力で 150 回に 1〜2 回止まり、16KB では止まらず、非同期の spawn では 1MB を 450 回流して一度も止まらなかった）。
-      // フックではなく、テストの渡し方の問題なので、渡し方を変えた。時間切れは、止まったときに分かるよう残す
-      const result = await runHook(command, input, {
-        ...process.env,
-        [ASK_FILE_ENV]: join(dir, 's1.ask.json'),
-        [SESSIONS_NO_ASK_ENV]: noAskFile,
-        PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':'),
-      });
-      expect({ command, noAskFile, error: result.error, status: result.status }, result.detail).toEqual({ command, noAskFile, error: undefined, status: 0 });
+      const started = performance.now();
+      const result = await run(command, input, noAskFile);
+      // 標準出力に答え（suppressOutput）があれば、フックは入力の終わりを受け取って答えを書いたあと、空なら答えを書く前
+      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout.slice(-200))}・stderr ${JSON.stringify(result.stderr.slice(-500))}`;
+      expect({ command, noAskFile, error: result.error, timedOut: result.timedOut, status: result.status }, detail).toEqual({ command, noAskFile, error: undefined, timedOut: false, status: 0 });
     }
-  });
+  }, 80_000);
 
   it('Bash の前の確認・子セッションの起動の前の確認は、確認を出させるときも、許すときも、何もしないときも、suppressOutput を付ける', () => {
     const bash = (command: string) => sh(worktreeGuardCommand(), { session_id: 'x', cwd: '/r/proj', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
@@ -112,28 +134,3 @@ describe('シェルで動くアプリのフック', () => {
     expect(JSON.parse(sh(restartGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
   });
 });
-
-// フックを sh で動かし、入力を書いて閉じる。error: 入力を書けなかった（フックが読まずに閉じた EPIPE）・10 秒で終わらなかった
-function runHook(command: string, input: string, env: NodeJS.ProcessEnv): Promise<{ status: number | null; error: string | undefined; detail: string }> {
-  return new Promise((resolve) => {
-    const started = performance.now();
-    const child = spawn('sh', ['-c', command], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    let error: string | undefined;
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
-    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
-    child.stdin.on('error', (e: NodeJS.ErrnoException) => (error ??= e.code ?? e.message));
-    const timer = setTimeout(() => {
-      error ??= 'timed out';
-      child.kill('SIGTERM');
-    }, 10_000);
-    child.on('close', (status, signal) => {
-      clearTimeout(timer);
-      // 止まったら、標準出力に答え（suppressOutput）があるかで、答えを書いたあと（sh が終わらなかった）か、前（入力の終わりを待っていた）かが分かる
-      const detail = `${Math.round(performance.now() - started)}ms・signal ${signal}・stdout ${JSON.stringify(stdout.slice(-200))}・stderr ${JSON.stringify(stderr.slice(-500))}`;
-      resolve({ status, error, detail });
-    });
-    child.stdin.end(input);
-  });
-}
