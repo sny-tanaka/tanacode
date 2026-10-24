@@ -25,6 +25,7 @@ import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
+import type { NetworkPresetName } from './browser-tools';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -206,6 +207,11 @@ export const IpcChannel = {
   BrowserSelectTab: 'browser:select-tab',
   BrowserCloseTab: 'browser:close-tab',
   BrowserActivate: 'browser:activate',
+  // Claude が変えた画面の大きさ・遅くする設定。画面 → main: 人がツールバーで表示幅を選んだ（Claude が決めた大きさをやめる）/
+  // main → 画面: タブを遅くしている様子 / 画面 → main: 人がツールバーで遅くするのをやめた
+  BrowserViewportReset: 'browser:viewport-reset',
+  BrowserThrottle: 'browser:throttle',
+  BrowserThrottleClear: 'browser:throttle-clear',
   // 今のページを、ふだんのブラウザで開く
   BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
@@ -240,8 +246,9 @@ export const IpcChannel = {
 export type BrowserRect = { x: number; y: number; width: number; height: number };
 
 // Claude がアプリ内ブラウザを操作している様子。active: 「Claude が操作中」の帯を出す / label: 今の操作（終わったら null）/
-// box: これから押す要素（枠を出す）
-export type BrowserActivity = { sessionId: string; active: boolean; label: string | null; box: BrowserRect | null };
+// box: これから押す要素（枠を出す）/ touches: タッチしている指の位置（丸を出す。無ければ出さない）
+export type BrowserActivity = { sessionId: string; active: boolean; label: string | null; box: BrowserRect | null; touches?: BrowserPoint[] };
+export type BrowserPoint = { x: number; y: number };
 
 // Claude が、まだブラウザを開いていないセッションでページを開いた
 export type BrowserOpenRequest = { sessionId: string; url: string };
@@ -253,8 +260,17 @@ export type BrowserNewTabRequest = { sessionId: string; url: string; background:
 // セッションのタブ
 export type BrowserTabRef = { sessionId: string; tabId: string };
 
-// Claude が表示幅を変えた（0 は全幅）
-export type BrowserViewportChange = { sessionId: string; width: number };
+// Claude が表示幅を変えた（0 は全幅）。width だけなら、前からの表示幅の切り替え（全幅・スマホ・タブレット）。
+// 機種の名前か数字で決めたときは custom があり、ツールバーにその大きさを出す。height: 高さ（CSS の px。0 は枠の高さいっぱい）/
+// deviceScaleFactor: 画素密度（0 は画面のまま）/ device: 機種の名前（数字で決めたときは null）
+export type BrowserViewportChange = {
+  sessionId: string;
+  width: number;
+  custom?: { height: number; deviceScaleFactor: number; device: string | null };
+};
+
+// Claude がタブの CPU・通信を遅くしている様子（cpu: 何倍遅くするか。1 は遅くしていない / network: 通信の速さの名前。null は遅くしていない）
+export type BrowserThrottleChange = { sessionId: string; tabId: string; cpu: number; network: NetworkPresetName | null };
 
 // Claude がユーザーに頼んでいる操作（ask_user_to_act）。id: 頼むたびに変わる（返事をどの頼みへのものか見分ける）/ message: 頼む内容
 export type BrowserAsk = { id: string; message: string };
@@ -909,6 +925,11 @@ export type TanacodeApi = {
     openExternal(url: string): Promise<void>;
     onActivity(listener: (activity: BrowserActivity) => void): () => void;
     onViewport(listener: (change: BrowserViewportChange) => void): () => void;
+    // 人がツールバーで表示幅を選んだ（Claude が set_viewport で決めた大きさ・画素密度・タッチをやめる）
+    resetViewport(sessionId: string): void;
+    // Claude がタブを遅くした・やめた / 人がツールバーで遅くするのをやめた
+    onThrottle(listener: (change: BrowserThrottleChange) => void): () => void;
+    clearThrottle(sessionId: string, tabId: string): void;
     // ユーザーが足した、Claude に許す先（localhost などの既定は含まない）
     hosts(): Promise<string[]>;
     // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
@@ -1084,6 +1105,8 @@ export type IpcSend = {
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
+  [IpcChannel.BrowserViewportReset]: Api['browser']['resetViewport'];
+  [IpcChannel.BrowserThrottleClear]: Api['browser']['clearThrottle'];
   [IpcChannel.WalkthroughShown]: Api['walkthrough']['shown'];
   [IpcChannel.WalkthroughViewing]: Api['walkthrough']['viewing'];
 };
@@ -1128,6 +1151,7 @@ export type IpcEvent = {
   [IpcChannel.BrowserCloseTab]: Payload<Api['browser']['onCloseTab']>;
   [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
   [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
+  [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
   [IpcChannel.BrowserHostsOpen]: undefined;
   [IpcChannel.PromptsOpen]: undefined;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;

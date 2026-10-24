@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { Session, WebContents } from 'electron';
 import { browserToolId } from '../../src/shared/browser-tools';
@@ -38,6 +40,8 @@ export function textOf(result: ToolResult): string {
     .join('\n');
 }
 
+let dirs = 0;
+
 export function setup() {
   const sent: { channel: string; payload: unknown }[] = [];
   const asked: [string, BrowserAsk | null][] = [];
@@ -54,6 +58,8 @@ export function setup() {
     afterAttach: null as ((page: Tab) => void) | null,
     // アプリの画面を描かれる状態にするよう頼まれた・戻された（drawHost）
     draws: [] as ('頼む' | '戻す')[],
+    // screenshot の save で保存するフォルダ（作るのは保存するとき。保存するテストが消す）
+    screenshotDir: join(tmpdir(), `tanacode-shots-${process.pid}-${++dirs}`),
   };
   let tabs = 0;
   // 画面の代わりが作ったタブ
@@ -80,12 +86,14 @@ export function setup() {
       state.draws.push('頼む');
       return () => state.draws.push('戻す');
     },
+    screenshotDir: state.screenshotDir,
     hasSession: (id) => state.sessions.has(id),
     onAsk: (id, ask) => asked.push([id, ask]),
     channels: {
       open: IpcChannel.BrowserOpen,
       activity: IpcChannel.BrowserActivity,
       viewport: IpcChannel.BrowserViewport,
+      throttle: IpcChannel.BrowserThrottle,
       newTab: IpcChannel.BrowserNewTab,
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,

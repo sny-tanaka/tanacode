@@ -6035,6 +6035,14 @@ button.menu-tab:disabled {
 .preview-toolbar .icon-button.on {
   background: var(--send-bg);
 }
+.preview-throttle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--warn) !important;
+  border-color: var(--warn) !important;
+}
 .preview-errors {
   display: inline-flex;
   align-items: center;
@@ -6146,6 +6154,18 @@ button.menu-tab:disabled {
     animation: none;
   }
 }
+/* Claude がタッチしている指（ページの上に重ねる。位置は指の真ん中） */
+.preview-touch {
+  position: absolute;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 2px solid var(--claude);
+  background: color-mix(in srgb, var(--claude) 30%, transparent);
+}
 .preview-body {
   position: relative;
   flex: 1;
@@ -6171,6 +6191,20 @@ button.menu-tab:disabled {
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 0 0 1px var(--border-subtle);
+}
+/* Claude が機種の名前か数字で大きさを決めた。枠をその大きさのままにし、入りきらなければ、まわりでスクロールする
+   （縮めると、ページから見える大きさと、人に見える大きさがずれる）。margin: auto で、はみ出しても左上が切れないように真ん中に置く。
+   幅・高さを決めていないほう（0）は 100%（枠いっぱい） */
+.preview-body.sized {
+  overflow: auto;
+  justify-content: flex-start;
+  padding: 12px;
+}
+.preview-body.sized .preview-frame {
+  flex: none;
+  width: var(--preview-width);
+  height: var(--preview-height);
+  margin: 0 auto;
 }
 .preview-webview {
   position: absolute;

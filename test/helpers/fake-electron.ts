@@ -10,7 +10,13 @@ export class FakeImage {
     readonly width: number,
     readonly height: number,
     readonly name = 'shot',
+    // どの点も同じ色（BGRA）。見比べるテスト（looksSame）で、違う絵を作るときに変える
+    readonly color: readonly number[] = [255, 255, 255, 255],
   ) {}
+
+  toBitmap(): Buffer {
+    return Buffer.from(Array.from({ length: this.width * this.height }, () => this.color).flat());
+  }
 
   isEmpty(): boolean {
     return this.width === 0 || this.height === 0;
@@ -21,7 +27,12 @@ export class FakeImage {
   }
 
   resize(size: { width: number; height: number; quality?: string }): FakeImage {
-    return new FakeImage(size.width, size.height, `${this.name}（縮めた）`);
+    return new FakeImage(size.width, size.height, `${this.name}（縮めた）`, this.color);
+  }
+
+  // 切り出した範囲を控える（名前に入れる）
+  crop(rect: { x: number; y: number; width: number; height: number }): FakeImage {
+    return new FakeImage(rect.width, rect.height, `${this.name}（${rect.x},${rect.y} を切り出した）`, this.color);
   }
 
   toPNG(): Buffer {
@@ -77,7 +88,7 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
@@ -89,6 +100,7 @@ const SCRIPT_MARKS: [PageScript, string][] = [
   ['scroll', 'scrollBy('],
   ['wait', 'const state ='],
   ['clear', 'selectAllChildren(el)'],
+  ['frames', 'requestAnimationFrame(() => requestAnimationFrame('],
 ];
 
 export function scriptKind(code: string): PageScript | null {
@@ -113,7 +125,7 @@ export class FakeContents extends EventEmitter {
   // isLoading が、あと何回 true を返すか（読み込み中を少しの間だけ続ける）
   loadingPolls = 0;
   readonly debugger = new FakeDebugger();
-  // ページの中のスクリプトへの答え（種類ごと）。決めていない種類は、見えている範囲（viewport）・タブの大きさ（size）・フォーカス（focus）以外はエラー
+  // ページの中のスクリプトへの答え（種類ごと）。決めていない種類は、見えている範囲（viewport）・タブの大きさ（size）・フォーカス（focus）・描かれるのを待つ（frames）以外はエラー
   page: PageHandlers = {};
   readonly scripts: { world: number; kind: PageScript | null; code: string }[] = [];
   // evaluate（executeJavaScript）への答え
@@ -209,6 +221,7 @@ export class FakeContents extends EventEmitter {
     const handler = kind ? this.page[kind] : undefined;
     if (handler) return handler(code);
     if (kind === 'viewport') return { width: 800, height: 600, dpr: 1 };
+    if (kind === 'frames') return true;
     if (kind === 'size') return { laidOutWidth: 800, laidOutHeight: 600 };
     if (kind === 'focus') return null;
     throw new Error(`テストが答えを決めていないスクリプトです（${kind ?? '不明'}）`);
@@ -248,6 +261,20 @@ export const HOST = {
   setBackgroundThrottling(allowed: boolean): void {
     this.backgroundThrottling = allowed;
     this.throttling.push(allowed);
+  },
+  // 画面の中のタブの webview の左上（executeJavaScript の答え。null は見つからない）と、画面の拡大の倍率と、受けたスクリプト。
+  webviewAt: { x: 0, y: 0 } as { x: number; y: number } | null,
+  // そのうち、画面に出ている所（アプリの画面の CSS の px。null なら、どこまでも出ている）
+  webviewShown: null as { left: number; top: number; right: number; bottom: number } | null,
+  zoom: 1,
+  scripts: [] as string[],
+  async executeJavaScript(code: string): Promise<unknown> {
+    this.scripts.push(code);
+    const at = this.webviewAt;
+    return at && { ...at, visible: this.webviewShown ?? { left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 } };
+  },
+  getZoomFactor(): number {
+    return this.zoom;
   },
 };
 
