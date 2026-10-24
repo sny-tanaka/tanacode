@@ -323,6 +323,10 @@
       "empty": "{path} が空なので、Claude に渡していません",
       "tooLarge": "{path} が大きすぎる（1MB を超える）ので、Claude に渡していません",
       "unreadable": "{path} を読めないので、Claude に渡していません"
+    },
+    "toolPermissions": {
+      "syncFailedTitle": "MCP の設定の確認の選択を、Claude Code に効かせられませんでした",
+      "syncFailed": "印のファイルを書けませんでした（{error}）。既定から変えた確認の選択が効かず、毎回確認にしたツールが確認なしで動くことがあります。「tanacode → MCP の設定…」で選び直すか、tanacode を起動し直してください。"
     }
   },
   "commands": {

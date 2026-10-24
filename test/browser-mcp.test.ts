@@ -405,7 +405,7 @@ describe('起動の引数', () => {
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
-    expect(gateHooks(settings)).toEqual([{ matcher: `${browserToolId('navigate')}|${browserToolId('evaluate')}`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gateHooks(settings)).toEqual([{ matcher: `^(${browserToolId('navigate')}|${browserToolId('evaluate')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
     // permissions.ask では、ページによって変えられない。許可のルールも足さない
     expect(settings).not.toHaveProperty('permissions');
     expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('evaluate')]);
@@ -452,6 +452,9 @@ describe('確認のフック', () => {
 
   it('JavaScript の実行: localhost のページなら確認なし（allow）、それ以外は確認を出させる（ask）。ページが分からないときも ask', () => {
     expect(decision(gateOutput({ local: true, url: 'http://localhost:3000/' }))).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'allow' });
+    // plan のときは、localhost のページでも何も決めない（Claude Code の plan の扱いに任せる）。localhost 以外は ask のまま
+    expect(gateOutput({ local: true, url: 'http://localhost:3000/' }, true)).toBe('{}');
+    expect(decision(gateOutput({ local: false, url: 'https://staging.example.test/' }, true)).permissionDecision).toBe('ask');
     const remote = decision(gateOutput({ local: false, url: 'https://staging.example.test/' }));
     expect(remote.permissionDecision).toBe('ask');
     expect(remote.permissionDecisionReason).toContain('https://staging.example.test/');
@@ -522,6 +525,9 @@ describe('確認のフック', () => {
     await bridge.start();
     try {
       expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('allow');
+      // plan のときは、localhost のページでも何も決めない
+      expect(await runGate(socketPath, 's1', 5000, JSON.stringify({ permission_mode: 'plan', tool_name: browserToolId('evaluate'), tool_input: { expression: '1' } }))).toBe('{}');
+      asked.pop();
       expect(asked).toEqual([{ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('evaluate'), input: { expression: '1' } } }]);
       // 呼び出しの ID があれば、それもアプリに渡す（アプリは、その ID の呼び出しのために見たページを控える）
       await runGate(socketPath, 's1', 5000, JSON.stringify({ tool_name: browserToolId('evaluate'), tool_input: { expression: '1' }, tool_use_id: 'toolu_1' }));

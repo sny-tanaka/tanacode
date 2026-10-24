@@ -8,7 +8,7 @@ import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
 import { SUPPRESS_OUTPUT } from './hook-output';
 import { instructionsHooks } from './instructions-launch';
-import { toolPermissionHooks } from './tool-permissions';
+import { exactMatcher, toolPermissionHooks } from './tool-permissions';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
 import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
@@ -73,8 +73,8 @@ export function ownSettings(
     hooks: {
       PreToolUse: [
         { matcher: 'Bash', hooks: [{ type: 'command', command: worktreeGuardCommand() }] },
-        ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
-        ...(terminal ? [{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }] : []),
+        ...(browser ? [{ matcher: exactMatcher(...gatedBrowserToolIds()), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
+        ...(terminal ? [{ matcher: exactMatcher(TERMINAL_GATED_TOOL), hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }] : []),
         // ツールごとの許可（毎回確認・常に許可）。セッションを始める・tanacode の再起動の確認も、ここで出させる
         ...toolPermissionHooks(),
       ],

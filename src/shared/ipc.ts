@@ -703,9 +703,10 @@ export type TanacodeApi = {
     update(changes: PromptChanges): Promise<CustomPrompts>;
     onOpen(listener: () => void): () => void;
   };
-  // MCP の設定。enabled: MCP サーバーの入り・切り / permissions: 利用者が選んだツールの許可だけ（ツールの ID → ask・allow。無いツールは既定）
+  // MCP の設定。enabled: MCP サーバーの入り・切り / permissions: 利用者が選んだツールの許可だけ（ツールの ID → ask・allow。無いツールは既定）/
+  // problem: 起動したときに、確認の選択を Claude Code に効かせられなかった理由（人に見せる文。無ければ null）
   mcpSettings: {
-    get(): Promise<{ enabled: McpEnabled; permissions: Record<string, ToolPermission> }>;
+    get(): Promise<{ enabled: McpEnabled; permissions: Record<string, ToolPermission>; problem: string | null }>;
     setEnabled(server: McpToolGroup, on: boolean): Promise<McpEnabled>;
     setPermission(toolId: string, permission: ToolPermission): Promise<Record<string, ToolPermission>>;
     onOpen(listener: () => void): () => void;

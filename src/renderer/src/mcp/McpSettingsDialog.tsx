@@ -9,7 +9,7 @@ import { BrowserHostsEditor } from './BrowserHostsEditor';
 
 const PERMISSIONS: ToolPermission[] = ['ask', 'allow'];
 
-type Settings = { enabled: McpEnabled; permissions: Record<string, ToolPermission> };
+type Settings = { enabled: McpEnabled; permissions: Record<string, ToolPermission>; problem: string | null };
 
 // MCP の設定（アプリ全体で 1 つ）。メニューの「MCP の設定…」から開く。tanacode が Claude Code に足す MCP サーバーごとに、
 // 見出しに入り・切りのスイッチ、その下にツールの表（MCP名・説明・確認）。アプリ内ブラウザは、見出しの下に Claude に許す先も出す。
@@ -51,8 +51,9 @@ export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
     }
   };
   const setEnabled = (server: McpToolGroup, on: boolean) => save(async () => ({ enabled: await window.tanacode.mcpSettings.setEnabled(server, on) }));
+  // 保存できたら、印のファイルを全部書き直せたので、起動したときの問題も直っている
   const setPermission = (toolId: string, permission: ToolPermission) =>
-    save(async () => ({ permissions: await window.tanacode.mcpSettings.setPermission(toolId, permission) }));
+    save(async () => ({ permissions: await window.tanacode.mcpSettings.setPermission(toolId, permission), problem: null }));
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -73,6 +74,7 @@ export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
           <p>{t('mcpSettings.description')}</p>
           <p>{t('mcpSettings.scope')}</p>
         </div>
+        {settings?.problem && <div className="mcp-settings-problem">{settings.problem}</div>}
         <div className="quick-open-list mcp-settings-list">
           {settings &&
             PERMISSION_SERVERS.map((server) => {

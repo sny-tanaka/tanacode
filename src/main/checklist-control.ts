@@ -41,7 +41,7 @@ import { SessionNotices, type NoticeHost } from './session-notices';
 type Deps = {
   store: ChecklistStore;
   host: NoticeHost;
-  // メニューの「MCP → チェックリスト」
+  // 「MCP の設定」のチェックリストのスイッチ
   enabled: () => boolean;
   // 知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;

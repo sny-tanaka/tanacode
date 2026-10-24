@@ -110,8 +110,8 @@ describe('中継と起動の引数', () => {
     // 子セッションの起動と tanacode の再起動には、権限モードによらず確認を出させるフック（ツールごとの許可で常に許可にしたときを除く。tool-permissions.test.ts）
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
     for (const name of ['start_session', 'restart_app'])
-      expect(settings.hooks.PreToolUse.filter((h) => h.matcher === sessionToolId(name))).toEqual([
-        { matcher: sessionToolId(name), hooks: [{ type: 'command', command: toolPermissionCommand(sessionToolId(name), 'always'), timeout: 10 }] },
+      expect(settings.hooks.PreToolUse.filter((h) => h.matcher === `^${sessionToolId(name)}$`)).toEqual([
+        { matcher: `^${sessionToolId(name)}$`, hooks: [{ type: 'command', command: toolPermissionCommand(sessionToolId(name), 'always'), timeout: 10 }] },
       ]);
     const off = ownSettings(null, true) as { hooks: { PreToolUse: Hook[]; PermissionRequest?: Hook[] } };
     // 許可の確認を出す直前に、ツールの入力の全文を書かせるフック（何も決めない）。セッションの MCP を足さなくても、いつも足す

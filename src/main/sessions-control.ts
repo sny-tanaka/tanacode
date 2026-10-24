@@ -137,7 +137,7 @@ export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'cl
 
 type Deps = {
   host: SessionsHost;
-  // メニューの「MCP → セッションの操作」
+  // 「MCP の設定」のセッションのスイッチ
   enabled: () => boolean;
   // セッションをアーカイブする。画面からのアーカイブと同じ処理（アプリ内ブラウザ・シェルの後始末も）。worktree を消せなければ、
   // アーカイブはしたうえで、理由を添えて失敗する

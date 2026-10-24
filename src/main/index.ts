@@ -919,7 +919,7 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
   handle(IpcChannel.BrowserHostsGet, (e) => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
-  handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions() }));
+  handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions(), problem: toolPermissionsProblem }));
   handle(IpcChannel.McpEnabledSet, (_e, server: McpToolGroup, on: boolean) => setMcpEnabled(server, on));
   handle(IpcChannel.ToolPermissionsSet, (_e, toolId: string, permission: ToolPermission) => setToolPermission(toolId, permission));
 }
@@ -1258,6 +1258,9 @@ const toolPermissionsPath = () => join(app.getPath('userData'), TOOL_PERMISSIONS
 // 前のバージョンの、子セッションの起動の確認を省く印のファイル。今はツールごとの許可の印を使うので消す
 const LEGACY_SESSIONS_NO_ASK_FILE = 'sessions-start-no-ask';
 
+// 印のファイルを設定に合わせられなかった理由（人に見せる文。合わせられたら null）。MCP の設定のダイアログにも出す
+let toolPermissionsProblem: string | null = null;
+
 // 起動したとき。前のバージョンのメニューの「MCP → セッションを始める前に許可を求める」をオフにしていて、まだ start_session の許可を選んでいなければ、
 // 「常に許可」として引き継ぐ（選んだあとは、選んだ値のまま）。そのあと、前に動いていたアプリが置いた・消した印を、設定に合わせ直す
 // （設定ファイルを書き換えられていても、設定のとおりにする）。保存できない・置けなければ、ログに残して続ける
@@ -1271,14 +1274,20 @@ function setUpToolPermissions(): void {
       console.error('「セッションを始める前に許可を求める」の設定を、ツールごとの許可に引き継げませんでした', error);
     }
   }
-  syncToolPermissionFiles();
+  // 合わせられなければ、既定から変えた確認が効かない（毎回確認にしたツールが確認なしで動く）ので、人に知らせる
+  if (!syncToolPermissionFiles()) void showDialog({ type: 'warning', message: t('main.toolPermissions.syncFailedTitle'), detail: toolPermissionsProblem ?? '' });
 }
 
-function syncToolPermissionFiles(): void {
+// 印のファイルを、保存した設定に合わせる。できなければ理由を控えて false（ログにも残す）
+function syncToolPermissionFiles(): boolean {
   try {
     writeToolPermissionFiles(toolPermissionsPath(), settings.toolPermissions());
+    toolPermissionsProblem = null;
+    return true;
   } catch (error) {
     console.error('ツールごとの許可の印を、設定に合わせられませんでした', error);
+    toolPermissionsProblem = t('main.toolPermissions.syncFailed', { error: error instanceof Error ? error.message : String(error) });
+    return false;
   }
 }
 
@@ -1292,6 +1301,8 @@ function setToolPermission(toolId: unknown, permission: unknown): Record<string,
   try {
     writeToolPermissionFiles(toolPermissionsPath(), next);
     settings.setToolPermissions(next);
+    // 印のファイルを全部書き直せたので、前に合わせられなかった分も直っている
+    toolPermissionsProblem = null;
   } catch (error) {
     syncToolPermissionFiles();
     throw error;
@@ -1469,10 +1480,11 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
-  setUpToolPermissions();
   sharedPrefs = new SharedPrefStore(join(app.getPath('userData'), 'shared-prefs.json'));
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();
+  // 印のファイルを合わせられなかったときの知らせを、画面の言語で出すので、言語を決めたあと（プロファイルを開いて Claude Code を起動する前）
+  setUpToolPermissions();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
   // 前のバージョンで、足したプロファイルごとに持っていた設定を、アプリ全体の設定に移す（一度だけ）。移せなくても起動は続ける（次の起動でまた試す）
   try {

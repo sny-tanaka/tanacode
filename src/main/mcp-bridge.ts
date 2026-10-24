@@ -172,7 +172,7 @@ export type McpLaunch = {
   script: string;
   socketPath: string;
   version: string;
-  // ツールごとの許可の印のファイルのフォルダ（プロファイルごと。tool-permissions.ts）。フックが見るので、起動する Claude Code の環境に足す
+  // ツールごとの許可の印のファイルのフォルダ（アプリ全体で 1 つ。tool-permissions.ts）。フックが見るので、起動する Claude Code の環境に足す
   permissionsDir?: string;
 };
 

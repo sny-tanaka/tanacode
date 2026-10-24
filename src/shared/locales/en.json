@@ -328,6 +328,10 @@
       "empty": "{path} is empty, so it isn't passed to Claude",
       "tooLarge": "{path} is larger than 1 MB, so it isn't passed to Claude",
       "unreadable": "Couldn't read {path}, so it isn't passed to Claude"
+    },
+    "toolPermissions": {
+      "syncFailedTitle": "tanacode could not apply the confirmation choices in MCP Settings to Claude Code",
+      "syncFailed": "tanacode could not write its marker files ({error}). The confirmation choices you changed from the defaults may not take effect, and tools set to Ask Every Time may run without asking. Choose them again in “tanacode > MCP Settings…”, or restart tanacode."
     }
   },
   "commands": {

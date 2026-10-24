@@ -1405,6 +1405,7 @@ describe('メニュー', () => {
       await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toEqual({
         enabled: { browser: true, sessions: false, checklist: true, walkthrough: true, terminal: true },
         permissions: { [sessionToolId('start_session')]: 'allow' },
+        problem: null,
       });
     });
 
@@ -1497,6 +1498,25 @@ describe('メニュー', () => {
       });
       expect(marks()).toEqual([`${browserToolId('click')}.ask`]);
       expect(savedSettings().toolPermissions).toEqual({ [start]: 'ask', [browserToolId('click')]: 'ask' });
+    });
+
+    it('起動したときに印のファイルを合わせられなかったら、警告を出し、MCP の設定のダイアログにも理由を出させる', async () => {
+      await boot({
+        settings: { toolPermissions: { [browserToolId('get_text')]: 'ask' } },
+        // 印のフォルダの場所にファイルがあると、フォルダを作れない
+        before: (st) => writeFileSync(join(st.userData, 'tool-permissions'), ''),
+      });
+      const warning = state.dialog.showMessageBox.mock.calls.map((c) => c.at(-1) as { type?: string; message?: string; detail?: string }).find((o) => o.type === 'warning');
+      expect(warning?.message).toBe('MCP の設定の確認の選択を、Claude Code に効かせられませんでした');
+      expect(warning?.detail).toContain('毎回確認にしたツールが確認なしで動くことがあります');
+      const { problem } = (await invoke(IpcChannel.McpSettingsGet)) as { problem: string | null };
+      expect(problem).toBe(warning?.detail);
+    });
+
+    it('起動したときに印のファイルを合わせられたら、警告を出さない', async () => {
+      await boot({ settings: { toolPermissions: { [browserToolId('get_text')]: 'ask' } } });
+      expect(state.dialog.showMessageBox.mock.calls.some((c) => (c.at(-1) as { type?: string }).type === 'warning')).toBe(false);
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ problem: null });
     });
 
     it('保存できなかったら、印のファイルを保存した設定に戻して断る（確認を省いたままにしない）', async () => {

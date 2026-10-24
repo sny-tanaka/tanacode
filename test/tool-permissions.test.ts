@@ -111,10 +111,13 @@ describe('フック', () => {
   it('アプリに問い合わせる確認のフックのツール（開く・JavaScript の実行・ターミナルに打つ）を除く、全部のツールに 1 つずつ当たる', () => {
     const hooks = toolPermissionHooks();
     expect(hooks).toHaveLength(permissionToolDefaults().size - 3);
-    expect(hooks.map((h) => h.matcher)).not.toContain(browserToolId('navigate'));
-    expect(hooks.map((h) => h.matcher)).not.toContain(browserToolId('evaluate'));
-    expect(hooks.map((h) => h.matcher)).not.toContain(terminalToolId('type_in_terminal'));
-    expect(hooks.find((h) => h.matcher === sessionToolId('start_session'))?.hooks).toEqual([{ type: 'command', command: toolPermissionCommand(sessionToolId('start_session'), 'always'), timeout: 10 }]);
+    expect(hooks.map((h) => h.matcher)).not.toContain(`^${browserToolId('navigate')}$`);
+    expect(hooks.map((h) => h.matcher)).not.toContain(`^${browserToolId('evaluate')}$`);
+    expect(hooks.map((h) => h.matcher)).not.toContain(`^${terminalToolId('type_in_terminal')}$`);
+    expect(hooks.find((h) => h.matcher === `^${sessionToolId('start_session')}$`)?.hooks).toEqual([{ type: 'command', command: toolPermissionCommand(sessionToolId('start_session'), 'always'), timeout: 10 }]);
+    // matcher は、そのツールの名前だけに当たる（名前の一部が同じほかのツールに当たらない）
+    const ids = [...permissionToolDefaults().keys()];
+    for (const hook of hooks) expect(ids.filter((id) => new RegExp(hook.matcher).test(id)), hook.matcher).toHaveLength(1);
     // チャットのフックの一覧に出さない目印
     for (const hook of hooks) expect(hook.hooks[0].command).toContain('TANACODE_TOOL_PERMISSION=1');
   });

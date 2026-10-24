@@ -21,6 +21,7 @@ const ALL_ON: McpEnabled = { browser: true, sessions: true, checklist: true, wal
 type Overrides = {
   enabled?: Partial<McpEnabled>;
   permissions?: Record<string, ToolPermission>;
+  problem?: string;
   hosts?: string[];
   setEnabled?: (server: McpToolGroup, on: boolean) => Promise<McpEnabled>;
   setPermission?: (toolId: string, permission: ToolPermission) => Promise<Record<string, ToolPermission>>;
@@ -32,7 +33,7 @@ async function open(o: Overrides = {}) {
   let permissions = o.permissions ?? {};
   const onClose = vi.fn();
   api = mockApi({
-    'mcpSettings.get': () => Promise.resolve({ enabled, permissions }),
+    'mcpSettings.get': () => Promise.resolve({ enabled, permissions, problem: o.problem ?? null }),
     'mcpSettings.setEnabled': (o.setEnabled ??
       ((server: McpToolGroup, on: boolean) => {
         enabled = { ...enabled, [server]: on };
@@ -107,6 +108,15 @@ describe('McpSettingsDialog: ツールの表', () => {
     expect(await screen.findByText('読めません')).toBeTruthy();
     expect(screen.queryAllByRole('combobox')).toHaveLength(0);
     expect(screen.queryAllByRole('switch')).toHaveLength(0);
+  });
+});
+
+describe('McpSettingsDialog: 起動したときの問題', () => {
+  it('確認の選択を効かせられなかった理由を出し、選び直して保存できたら消す', async () => {
+    await open({ problem: '印のファイルを書けませんでした' });
+    expect(screen.getByText('印のファイルを書けませんでした')).toBeTruthy();
+    fireEvent.change(select('click'), { target: { value: 'ask' } });
+    await waitFor(() => expect(screen.queryByText('印のファイルを書けませんでした')).toBeNull());
   });
 });
 

@@ -248,7 +248,7 @@ describe('起動の準備', () => {
       (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
     const tools = toolPermissionHooks().map((h) => h.matcher);
     expect(matchers('s1')).toEqual(['Bash', ...tools]);
-    expect(matchers('s2', true)).toEqual(['Bash', 'mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate', ...tools]);
+    expect(matchers('s2', true)).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate)$', ...tools]);
   });
 
   it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {

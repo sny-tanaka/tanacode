@@ -10,7 +10,7 @@ import { walkthroughToolId } from '@shared/walkthrough-tools';
 import { changedToolPermissions, PERMISSION_SERVERS, toolDefaultRule, type ToolPermission } from '@shared/tool-permissions';
 import { SUPPRESS_OUTPUT } from './hook-output';
 
-// ツールごとの許可（メニューの「MCP → Claude のツールの許可…」）を、起動する Claude Code に効かせるもの。
+// ツールごとの許可（メニューの「MCP の設定…」の「確認」）を、起動する Claude Code に効かせるもの。
 // 既定から変えたツールにだけ、userData の tool-permissions に印のファイル（<ツールの ID>.ask か .allow。中身は空）を置く。
 // --settings の PreToolUse のフックは、呼ばれるたびに印のファイルがあるかを見る（Node を起動しない [ -f ]）ので、
 // 切り替えは動いているセッションにもすぐ効く。フックの数・形は起動のときに決まるので、この仕組みより前に始めたセッションには効かない。
@@ -76,13 +76,19 @@ export function toolPermissionCommand(toolId: string, rule: ReturnType<typeof to
   return `i=$(cat); if ${has(toolId, 'ask')}; then ${print('ask', t('main.hooks.toolAsk'))}; elif ${NOT_PLAN}; then ${allow}; else ${print(null)}; fi`;
 }
 
+// フックの matcher を、そのツールの名前だけに当たる正規表現にする。ツールの ID は - を含むので、Claude Code は matcher を正規表現として読む。
+// 囲まないと、名前の一部が同じほかのツールにも当たる（ID には、正規表現で意味を持つ文字は - のほかに無い）
+export function exactMatcher(...toolIds: string[]): string {
+  return toolIds.length === 1 ? `^${toolIds[0]}$` : `^(${toolIds.join('|')})$`;
+}
+
 // --settings の PreToolUse に足す、ツールごとのフック。足していない MCP のツールのフックは呼ばれないので、全部のツールに足す
 export function toolPermissionHooks(): { matcher: string; hooks: { type: 'command'; command: string; timeout: number }[] }[] {
   return PERMISSION_SERVERS.flatMap(({ def }) =>
     def.tools
       .map((tool) => ({ id: mcpToolId(def.name, tool.name), rule: toolDefaultRule(def, tool) }))
       .filter(({ id }) => !APP_GATED.has(id))
-      .map(({ id, rule }) => ({ matcher: id, hooks: [{ type: 'command' as const, command: toolPermissionCommand(id, rule), timeout: 10 }] })),
+      .map(({ id, rule }) => ({ matcher: exactMatcher(id), hooks: [{ type: 'command' as const, command: toolPermissionCommand(id, rule), timeout: 10 }] })),
   );
 }
 

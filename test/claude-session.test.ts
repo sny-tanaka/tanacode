@@ -9,6 +9,7 @@ import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protoco
 import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from '../src/main/stream/protocol';
 import { STATUS_FILE_ENV } from '../src/main/statusline';
 import { ScriptedHost } from './helpers/scripted-claude';
+import { exactMatcher } from '../src/main/tool-permissions';
 
 // claude の起動・引き継ぎ・止め方と、会話ログの追いかけ（ClaudeSession）。pty ホストは偽物（ScriptedHost）
 
@@ -218,7 +219,7 @@ describe('起動', () => {
   it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
     const terminal = { command: 'node', script: '/x/terminal-mcp.js', socketPath: '/u/terminal.sock', version: '1' };
     const gateHooks = (args: string[]) =>
-      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
+      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === exactMatcher(TERMINAL_GATED_TOOL));
     session({ terminal }).claude.start();
     const parent = host.spawned[0].request;
     expect(parent.env).toMatchObject({ TANACODE_TERMINAL_SOCKET: '/u/terminal.sock', TANACODE_TERMINAL_SESSION: 's1', TANACODE_TERMINAL_COMMAND: 'node', TANACODE_TERMINAL_SCRIPT: '/x/terminal-mcp.js' });

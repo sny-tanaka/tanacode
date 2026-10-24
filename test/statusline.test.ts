@@ -114,7 +114,7 @@ describe('アプリが Claude Code に渡す設定', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
     const tools = toolPermissionHooks().map((h) => h.matcher);
     expect(matchers(ownSettings(null))).toEqual(['Bash', ...tools]);
-    expect(matchers(ownSettings(null, true))).toEqual(['Bash', 'mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate', ...tools]);
+    expect(matchers(ownSettings(null, true))).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate)$', ...tools]);
     expect(JSON.parse(sessionSettings(true)).hooks.PreToolUse).toHaveLength(2 + tools.length);
   });
 
@@ -137,9 +137,9 @@ describe('アプリが Claude Code に渡す設定', () => {
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
     const gate = (s: Record<string, unknown>) =>
-      (s as { hooks: { PreToolUse: { matcher: string; hooks: { command: string; timeout: number }[] }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
+      (s as { hooks: { PreToolUse: { matcher: string; hooks: { command: string; timeout: number }[] }[] } }).hooks.PreToolUse.filter((h) => h.matcher === `^${TERMINAL_GATED_TOOL}$`);
     expect(gate(ownSettings(null))).toEqual([]);
-    expect(gate(ownSettings(null, false, null, false, true))).toEqual([{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gate(ownSettings(null, false, null, false, true))).toEqual([{ matcher: `^${TERMINAL_GATED_TOOL}$`, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
     expect(gate(JSON.parse(sessionSettings(false, null, false, true)))).toHaveLength(1);
   });
 

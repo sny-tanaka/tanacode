@@ -2763,6 +2763,16 @@ button.session-ref:hover {
 .mcp-settings-dialog .settings-files-head p + p {
   margin-top: 6px;
 }
+.mcp-settings-problem {
+  margin: 8px 16px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .mcp-settings-list {
   min-height: 0;
   flex: 1 1 auto;

@@ -29,7 +29,7 @@ import { Workspace } from './workspace';
 type Deps = {
   // セッションのフォルダ（worktree のセッションは worktree）。無いセッションなら null
   cwdOf: (sessionId: string) => string | null;
-  // メニューの「MCP → ウォークスルー」
+  // 「MCP の設定」のウォークスルーのスイッチ
   enabled: () => boolean;
   // 変わった（終えたら null）。画面に送る
   onChange: (sessionId: string, walkthrough: Walkthrough | null) => void;

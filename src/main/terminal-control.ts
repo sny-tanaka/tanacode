@@ -29,7 +29,7 @@ export type TerminalsApi = Pick<ShellTerminals, 'list' | 'info' | 'flush' | 'tai
 type Deps = {
   terminals: TerminalsApi;
   sessions: TerminalSessions;
-  // メニューの「MCP → ターミナル」
+  // 「MCP の設定」のターミナルのスイッチ
   enabled: () => boolean;
   clock?: () => number;
   // 打ったあと、出力が止まったとみなすまでの間と、待つ上限（テストでは短くする）

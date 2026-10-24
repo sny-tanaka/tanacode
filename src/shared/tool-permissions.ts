@@ -14,7 +14,7 @@ export type ToolPermission = 'ask' | 'allow';
 export const MCP_GROUPS: McpToolGroup[] = ['browser', 'sessions', 'checklist', 'walkthrough', 'terminal'];
 export type McpEnabled = Record<McpToolGroup, boolean>;
 
-// 既定の扱い。画面の注記と、フック（main の tool-permissions.ts）の形を決める
+// 既定の扱い。既定の値（毎回確認・常に許可）と、フック（main の tool-permissions.ts）の形を決める（outside・remote がどの場合に効くかは、画面の説明の文に書く）
 // - allowed: --allowedTools で許可済み（読むだけ・人に頼む・子への指示・チェックリスト・コードを示す）。既定は「常に許可」
 // - act: 何かを動かすツール。フックが確認なしに通す（allow。plan のときは Claude Code の plan の扱いに任せる）。既定は「常に許可」
 // - always: 権限モードによらず、フックがいつも確認を出させる（セッションを始める・tanacode の再起動・ターミナルに打つ・GitHub の PR に書き込む）。既定は「毎回確認」

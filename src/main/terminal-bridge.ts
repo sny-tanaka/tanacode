@@ -10,7 +10,7 @@ import { alwaysAllowed, alwaysAllowOutput } from './tool-permissions';
 // 2. アプリは打つものを確かめて「確認済みの印」を控え（terminal-control.ts）、タブの名前を返す。フックは ask と、タブの名前と打つものを入れた理由を返す
 // 3. ツールの呼び出しがアプリに届いたら、アプリは印を確かめて使い切る。印が無ければ断る（フックが動かなかったときの備え）
 // 権限モード（auto・bypassPermissions を含む）や「次から聞かない」によらず、毎回確認が出る（実測は test/cli/terminal.test.ts）。
-// ただし、ツールの許可（メニューの「MCP → Claude のツールの許可…」）で「常に許可」にしたら、2 で allow を返す（tool-permissions.ts）。
+// ただし、ツールの許可（メニューの「MCP の設定…」の「確認」）で「常に許可」にしたら、2 で allow を返す（tool-permissions.ts）。
 // アプリに聞けなかったときも、確認を出させる
 
 // 中継に渡す環境変数（--mcp-config の env）。ソケットのパスと、どのセッションの Claude Code か（呼び出し元。親子の関係はアプリの記録で判断する）

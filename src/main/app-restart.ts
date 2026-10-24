@@ -6,7 +6,7 @@ import { t } from '@shared/i18n';
 // 人がスマホの Remote Control から使っていて Mac の前にいなくても、親の Claude に「tanacode を更新して」と頼めるようにする。
 // 再起動はいつも「動かしたまま」（Claude Code を止めない）。常駐の pty ホストが claude を保ち、起動し直したアプリが引き継ぐ。
 // Homebrew でダウンロード済みの新しいバージョンがあれば、終わったあとに入れ替えてから起動し直す（タイトルバーの「再起動して更新」と同じ）。
-// 呼ぶ前の人の許可の確認は、Claude Code の PreToolUse のフックで出させる（tool-permissions.ts の toolPermissionCommand。メニューの「Claude のツールの許可…」で常に許可にもできる）。
+// 呼ぶ前の人の許可の確認は、Claude Code の PreToolUse のフックで出させる（tool-permissions.ts の toolPermissionCommand。メニューの「MCP の設定…」で常に許可にもできる）。
 // 結果を Claude に返してから少しあとに終える（先に終えると、中継への返事が届かない）。
 // 呼んだセッションには、起動し直したアプリが「再起動しました（古いバージョン → 新しいバージョン、または更新に失敗）」と知らせる
 // （SessionNotices の channel 'restart'。sessions.json に残して、次のアプリが送る。profile.ts）

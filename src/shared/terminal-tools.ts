@@ -61,7 +61,7 @@ export const TERMINAL_TOOLS: McpTool<McpToolName<'terminal'>>[] = [
     name: 'type_in_terminal',
     kind: 'act',
     description:
-      "Type into a terminal of the user's terminal panel of this session, as if the user typed it, and return what it printed until the output paused for 0.5 seconds (at most 3 seconds), with the line the cursor was on before typing (to see whether the user had left something half typed). Use it only when the user asked you to run something in their terminal or to take over a terminal; for your own work, use your Bash tool. Every call asks the user for permission, regardless of the permission mode, showing exactly what will be typed. Pass text (one line: line breaks are refused and control characters are removed, so type several lines one call at a time) or key. Read the rest of a long output with read_terminal",
+      "Type into a terminal of the user's terminal panel of this session, as if the user typed it, and return what it printed until the output paused for 0.5 seconds (at most 3 seconds), with the line the cursor was on before typing (to see whether the user had left something half typed). Use it only when the user asked you to run something in their terminal or to take over a terminal; for your own work, use your Bash tool. Depending on the user's setting in tanacode, the user may be asked for permission first, with exactly what will be typed (by default, every call asks, regardless of the permission mode). Pass text (one line: line breaks are refused and control characters are removed, so type several lines one call at a time) or key. Read the rest of a long output with read_terminal",
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,7 +84,7 @@ const READ_INSTRUCTIONS = [
   "- This is not Claude Code's own screen: these tools cannot see or control this conversation.",
 ];
 const TYPE_INSTRUCTIONS = [
-  '- Every type_in_terminal asks the user for permission, regardless of the permission mode. Type only what the user asked for, and before you type, say in one line, in the language the user is using, what you will type.',
+  '- By default, every type_in_terminal asks the user for permission, regardless of the permission mode, but the user can let it run without asking in tanacode, so the user may not see what you type before it runs. Type only what the user asked for, and before you type, say in one line, in the language the user is using, what you will type.',
   '- When you take over a terminal, read it first (read_terminal) to see where the user left off.',
 ];
 // 子セッション（読むツールだけ）にも、人が使っている言葉の決まりを伝える

@@ -500,7 +500,7 @@ export class DemoBackend {
       // デモにはメニューが無いので、Claude に送る文のダイアログは開かない
       prompts: { get: () => ok({}), update: () => ok({}), onOpen: () => () => {} },
       mcpSettings: {
-        get: () => ok({ enabled: { browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true }, permissions: {} }),
+        get: () => ok({ enabled: { browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true }, permissions: {}, problem: null }),
         setEnabled: () => ok({ browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true }),
         setPermission: () => ok({}),
         onOpen: () => () => {},
