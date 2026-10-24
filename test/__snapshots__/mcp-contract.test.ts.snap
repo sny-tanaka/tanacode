@@ -935,6 +935,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__cancel_wakeup",
     "mcp__tanacode-sessions__report_result",
     "mcp__tanacode-sessions__set_away_mode",
+    "mcp__tanacode-sessions__get_app_update",
   ],
   "tools": [
     {
@@ -1318,6 +1319,28 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "instruct",
       "label": "離席モード",
       "name": "set_away_mode",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "tanacode の更新を確かめる",
+      "name": "get_app_update",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "only_if_update": {
+            "type": "boolean",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "tanacode を再起動",
+      "name": "restart_app",
     },
   ],
 }

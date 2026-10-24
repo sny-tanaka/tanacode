@@ -27,6 +27,7 @@ import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
 import type { AppUpdate } from '@shared/app-update';
 import { CASK, HomebrewUpdater } from './homebrew-update';
+import { AppRestart, appUpdateInfo, type AppUpdateInfo } from './app-restart';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
@@ -80,8 +81,8 @@ let appUpdates: AppUpdateMonitor;
 let homebrew: HomebrewUpdater | null = null;
 // タイトルバーの「再起動して更新」で終了する（入れ替えたあと起動し直す）
 let relaunchAfterUpdate = false;
-// 言語を変えて「今すぐ再起動」を選んだ。終了したら起動し直す
-let relaunchForLanguage = false;
+// 言語を変えて「今すぐ再起動」を選んだ・Claude が restart_app で頼んだ（入れ替える新しいバージョンが無いとき）。終了したら起動し直す
+let relaunchOnQuit = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
 // 起動の途中に 2 つめが起動した（ウインドウを作ったら前に出す）
@@ -536,6 +537,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     preview: session.fromPartition(previewPartition(info.id)),
     remoteControl,
     onSessionsChanged: () => broadcastProfiles(),
+    app: { updateInfo: freshUpdateInfo, restart: appRestart },
   });
   // 起動の途中で終われと言われても、作ったものは片付けられるように、先に覚えておく
   opened.set(info.id, p);
@@ -1105,6 +1107,33 @@ function updatesOnQuit(): boolean {
   return relaunchAfterUpdate || (settings.updateOnQuitEnabled() && settings.updateCheckEnabled());
 }
 
+// Claude が頼む tanacode の更新と再起動（tanacode-sessions の get_app_update・restart_app。app-restart.ts）。
+// 人の許可の確認は Claude Code が出す（Remote Control からも答えられる）ので、Mac の画面には確認を出さず、いつも動かしたまま終える。
+// TANACODE_E2E_NO_RELAUNCH=1 なら、終えるだけで起動し直さない（E2E で、起動し直すのをテストがする。Playwright は自分で起動したアプリしか扱えない）
+const appRestart = new AppRestart({
+  info: currentUpdateInfo,
+  busy: () => confirmingQuit || quitDecided,
+  quit: (update) => {
+    // 入れ替えるときも relaunchOnQuit を立てておく（終えるまでに入れ替えられなくなっても、起動し直しはする）
+    if (process.env.TANACODE_E2E_NO_RELAUNCH !== '1') {
+      relaunchOnQuit = true;
+      if (update) relaunchAfterUpdate = true;
+    }
+    void quit(false);
+  },
+});
+
+function currentUpdateInfo(): AppUpdateInfo {
+  const install = !app.isPackaged ? 'dev' : homebrew ? 'homebrew' : 'other';
+  return appUpdateInfo(app.getVersion(), withHomebrew(appUpdates?.get() ?? null), settings.updateCheckEnabled(), install);
+}
+
+// 確かめ直してから返す（1 時間ごとの確認を待たない。確かめるのを止めていれば、問い合わせない）
+async function freshUpdateInfo(): Promise<AppUpdateInfo> {
+  await appUpdates?.refresh();
+  return currentUpdateInfo();
+}
+
 // タイトルバーの「再起動して更新」。Claude Code が動いているセッションがあれば、止めるかを聞いてから終了する。
 // 終了すると（before-quit）、brew upgrade のシェルを切り離して起動し、入れ替えたら起動し直す
 async function installUpdate(): Promise<void> {
@@ -1331,9 +1360,9 @@ async function changeLanguage(setting: LanguageSetting): Promise<void> {
   });
   if (response !== 0) return;
   // 起動し直すのは、終了が決まったときだけ（終了の確認で取りやめたら、あとでふつうに終了したときに起動し直さない）
-  relaunchForLanguage = true;
+  relaunchOnQuit = true;
   await confirmQuit();
-  if (!quitDecided) relaunchForLanguage = false;
+  if (!quitDecided) relaunchOnQuit = false;
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -1511,8 +1540,8 @@ app.on('before-quit', (event) => {
   claudeCompat?.stop();
   // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
   // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
-  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchForLanguage });
-  else if (relaunchForLanguage) app.relaunch();
+  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchOnQuit });
+  else if (relaunchOnQuit) app.relaunch();
   homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   for (const p of profiles()) p.close();

@@ -8,7 +8,7 @@ import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
 import { SUPPRESS_OUTPUT } from './hook-output';
 import { instructionsHooks } from './instructions-launch';
-import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
+import { restartGateCommand, RESTART_GATED_TOOL, sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
 import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
@@ -26,7 +26,7 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // - Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。ask は stream-json では can_use_tool として届く
 // - browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる
 //   （browser-gate.ts）。permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）
-// - sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
+// - sessions のときだけ: 子セッションの起動と tanacode の再起動（restart_app）の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
 // - terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
 // - checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）。
 //   自動の最適化圧縮のため、ツールの切れ目で止めるフックと、Claude Code の自動の圧縮を止めるフックも
@@ -76,6 +76,7 @@ export function ownSettings(
         { matcher: 'Bash', hooks: [{ type: 'command', command: worktreeGuardCommand() }] },
         ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
+        ...(sessions ? [{ matcher: RESTART_GATED_TOOL, hooks: [{ type: 'command', command: restartGateCommand(), timeout: 10 }] }] : []),
         ...(terminal ? [{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
       PermissionRequest: [{ matcher: '*', ...writeOnly(PERMISSION_FILE_COMMAND) }],

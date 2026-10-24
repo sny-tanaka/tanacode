@@ -224,6 +224,7 @@
       "terminalGate": "tanacode は、Claude がターミナルに打つ前に、権限モードによらず毎回確認を求めます。「{tab}」に打つもの: {typed}",
       "terminalGateUnknown": "tanacode にターミナルを確かめられなかったので、確認を求めています。打つもの: {typed}",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
+      "restartGate": "tanacode を再起動します。ダウンロード済みの新しいバージョンがあれば、入れ替えてから起動し直します。Claude Code は止めずに動かしたままにするので、セッションは続きます",
       "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
       "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
@@ -475,7 +476,9 @@
       "list_wakeups": "予約を読む",
       "cancel_wakeup": "予約を取り消す",
       "report_result": "結果を報告",
-      "set_away_mode": "離席モード"
+      "set_away_mode": "離席モード",
+      "get_app_update": "tanacode の更新を確かめる",
+      "restart_app": "tanacode を再起動"
     },
     "checklist": {
       "checklist_overview": "一覧",

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { appHookOutput, SUPPRESS_OUTPUT } from '../src/main/hook-output';
-import { sessionsGateCommand, SESSIONS_NO_ASK_ENV } from '../src/main/sessions-bridge';
+import { restartGateCommand, sessionsGateCommand, SESSIONS_NO_ASK_ENV } from '../src/main/sessions-bridge';
 import { AUTO_COMPACT_STOP_COMMAND, IDLE_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 import { worktreeGuardCommand } from '../src/main/worktree-guard';
 
@@ -78,6 +78,7 @@ describe('シェルで動くアプリのフック', () => {
       [AUTO_COMPACT_STOP_COMMAND, ''],
       [sessionsGateCommand(), ''],
       [sessionsGateCommand(), noAsk],
+      [restartGateCommand(), ''],
       [worktreeGuardCommand(), ''],
       [PERMISSION_FILE_COMMAND, ''],
       [NOTIFICATION_FILE_COMMAND, ''],
@@ -111,5 +112,7 @@ describe('シェルで動くアプリのフック', () => {
     const noAsk = join(dir, 'no-ask');
     writeFileSync(noAsk, '');
     expect(JSON.parse(sh(sessionsGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'allow' }, suppressOutput: true });
+    // tanacode の再起動の前の確認（いつも ask）も
+    expect(JSON.parse(sh(restartGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
   });
 });
