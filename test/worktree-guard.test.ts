@@ -50,6 +50,38 @@ describe('確認を出させるもの', () => {
   it.each(['rm -rf .', 'rm -rf ..', 'rm -rf ../b', 'rm -rf *', 'rm -rf /r/proj/.claude/worktrees/a'])('worktree の中で %s', (command) => {
     expect(run(command, '/r/proj/.claude/worktrees/a')).toContain('"ask"');
   });
+
+  // 消す先や消し方を awk で確かめられない形。コマンドのどこかに worktree か .claude の文字があれば、確認を出させる（系統ごとに 1 つ）
+  it.each([
+    // $(…)・バッククォート
+    'rm -rf $(echo .claude/worktrees/a)',
+    'rm -rf `echo .claude/worktrees/a`',
+    // 変数（タブなどの区切りを変数で入れるものも）
+    'X=.claude/worktrees/a; rm -rf $X',
+    'rm${IFS}-rf${IFS}.claude/worktrees/a',
+    // \ での行の継ぎ
+    'rm -rf \\\n.claude/worktrees/a',
+    // ほかのコマンドが消す
+    'echo .claude/worktrees/a | xargs rm -rf',
+    'find .claude/worktrees/a -delete',
+    // 先に cd してから消す
+    'cd .claude/worktrees && rm -rf a',
+    // .claude ごと・グロブ
+    'rm -rf .claude',
+    'rm -rf .claude/*/a',
+    // 長いオプションの省略形
+    'rm --rec .claude/worktrees/a',
+    'git branch --del --forc foo',
+    // git のサブコマンドや、消す git branch・git worktree remove の引数を確かめられないもの
+    'git branch -$(echo D) worktree-a',
+    'git branch -D "worktree-$n"',
+    'git -C .claude/worktrees/x $(echo branch) -D y',
+    'git -C /r/proj worktree remove $(echo .claude/worktrees/a)',
+    // worktree の中へ cd したあと、その上や全体を消す
+    'cd .claude/worktrees/x && rm -rf ..',
+  ])('確かめられない形: %s', (command) => {
+    expect(run(command)).toContain('"ask"');
+  });
 });
 
 describe('何もしないもの', () => {
@@ -71,6 +103,32 @@ describe('何もしないもの', () => {
 
   it('worktree の中でも、ほかのフォルダの rm -rf はそのまま', () => {
     expect(run('rm -rf dist', '/r/proj/.claude/worktrees/a')).toBe(NOTHING);
+  });
+
+  // 確かめられない形でも、コマンドに worktree か .claude の文字が無ければ、今のフォルダが worktree の中でも確認を出させない
+  // （ふだんの片付けのたびに確認が出ないように）
+  it.each(['rm -rf "$tmp"', 'tmp=$(mktemp -d) && rm -rf "$tmp"', 'cd sub && rm -rf dist', 'rm -rf dist/*', "find . -name '*.log' -delete"])(
+    'worktree の中で %s',
+    (command) => {
+      expect(run(command, '/r/proj/.claude/worktrees/a')).toBe(NOTHING);
+    },
+  );
+
+  it.each([
+    'git worktree add "$p" -b x',
+    'rm -rf .claude/tmp',
+    'ls .claude && rm -rf dist',
+    // worktree の中へ cd してからの片付け
+    'cd /r/proj/.claude/worktrees/x && npm ci && rm -rf node_modules/.vite',
+    'cd .claude/worktrees/x && npm run build && rm -r out',
+    'cd /r/proj/.claude/worktrees/x && tmp=$(mktemp -d) && cp a "$tmp" && rm -rf "$tmp"',
+    // 消さない git のサブコマンド
+    'git worktree add -b "$branch" .claude/worktrees/foo',
+    "git -C .claude/worktrees/x branch --list 'tc-*'",
+    'git -C "$wt" branch --show-current && ls .claude',
+    'git -C .claude/worktrees/x commit -m "remove dead code?"',
+  ])('%s', (command) => {
+    expect(run(command)).toBe(NOTHING);
   });
 });
 
@@ -160,6 +218,14 @@ describe('確かめの入り口があるとき', () => {
     expect(verified('git worktree remove --force .claude/worktrees/tc-1')).toBe(NOTHING);
     writeFileSync(join(path, 'new.txt'), 'x\n');
     expect(verified('git worktree remove --force .claude/worktrees/tc-1')).toContain('"ask"');
+  });
+
+  it('先頭の cd と消す操作だけで失うものが無ければ、今までどおり確認を出させず、確かめられない形は確認を出させる', () => {
+    const path = join(repo, '.claude', 'worktrees', 'tc-1');
+    git(repo, 'worktree', 'add', '-q', '-b', 'worktree-tc-1', path);
+    expect(verified(`cd ${repo} && git worktree remove --force .claude/worktrees/tc-1 && git branch -D worktree-tc-1`, path)).toBe(NOTHING);
+    git(repo, 'worktree', 'add', '-q', '-b', 'worktree-tc-2', join(repo, '.claude', 'worktrees', 'tc-2'));
+    expect(verified('git worktree remove --force $(echo .claude/worktrees/tc-2)')).toContain('"ask"');
   });
 
   it('worktree の rm -rf は、今までどおり確かめずに確認を出させる', () => {

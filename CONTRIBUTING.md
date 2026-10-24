@@ -615,7 +615,10 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - ターミナルモードの間に、確認待ちと、メニューが閉じたこと・TUI の権限モードを知るためです（下の「ターミナルモード」。Stop のファイルでは、ターンの終わりは決めない。`Notification` のファイルは、今は読んでいません）。チャットでは使いません（`can_use_tool` と `result` で分かる）。
   - 何も決めない（決める欄の無い `{"suppressOutput":true}` だけを書く）ので、`can_use_tool` と競いません（実測: フックが何も決めなければ、Claude Code はアプリの返事を待つ）。
   - ファイルの場所は、環境変数 `TANACODE_ASK_FILE`（`ASK_FILE_ENV`）の `<id>.ask.json` から作ります（このファイルそのものは書かない）。コマンドにこの変数が入るので、チャットのフックの一覧には出しません。
-- Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
+- Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -r`（`.claude` ごと消すものも）と、消す先や消し方を awk で確かめられない形だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
+  - 確かめられない形は、確認を出す側に倒します。引数に `$`・`` ` ``・`\`・グロブ・中括弧のある `rm`、`xargs` の後の `rm`、`find -delete`、前に `cd` のある `rm -r`、git のサブコマンド（`-C` などのグローバルオプションを飛ばした先）が確かめられないもの、削除の指定のある `git branch` で引数が確かめられないもの（オプションになりうる引数が確かめられないものも）、`git worktree remove` で引数が確かめられないもので、コマンドのどこかに `worktree` か `.claude` の文字があるものです。git はサブコマンドを見るので、`git worktree add -b "$branch" …` や `git -C "$wt" branch --show-current` には確認を出させません。awk でシェルを広く読み直して許す作りは、レビューのたびに穴が見つかったので、許す形を狭く決め、それ以外で消しうるものに確認を出させる向きにしました。
+  - worktree の中（`.claude/worktrees/<名前>` かその下。`..` を含まないもの）への `cd` は、前の `cd` にも、`worktree`・`.claude` の文字にも数えません（子セッションは `cd <worktree> && npm run build && rm -r out` のような片付けをよく使うため）。代わりに、そのあとの `rm -r` の `.`・`..`・`../…`・`*` には、文字が無くても確認を出させます。
+  - 今のフォルダが worktree の中かは見ません（子セッションはみな worktree の中で動くので、`rm -rf "$tmp"` のようなふだんの片付けのたびに確認が出てしまうため）。そのため、1 つのコマンドの中に `worktree` や `.claude` の手がかりが無いもの（前のコマンドで変数に入れたパスを、別のコマンドで消すものなど）は見分けられず、残る穴です。
   - `ask` は、権限モードが auto や bypassPermissions でも確認を出します（実測）。止めはしません。チャットでは `can_use_tool` として届きます（「今後は聞かない」の候補は付かない。実測）。
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
   - awk が確認を出させると決めたときだけ、tanacode 本体を Node として、確かめの入り口（`worktree-guard-hook.js`）を動かします。入り口の場所はフックのコマンドの文字列に直に書き（環境変数で渡すと、Claude Code の設定の `env` で差し替えられるため）、`NODE_OPTIONS`・`NODE_PATH` を消して動かします。`pass` にするのは、コマンド全体が片付けのコマンドの形だけでできているときに限ります（`worktree-guard-check.ts`）。シェルの文法を広く読んで「読むだけのコマンド」などを許すと、引数でコマンドを動かせるオプション（`git grep -O`・`--upload-pack`・`rg --pre` など）や、実行されるとは限らない `cd`、bash の `[[ -eq ]]` の算術式などから穴ができたため、形を絞りました（誤検知が少し残るのは受け入れる）。
@@ -1928,7 +1931,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-restart.test.ts`: Claude が頼む tanacode の再起動（入れ替えるか・`only_if_update`・終了の途中で断る・結果を返してから終える・理由と知らせの文）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
-  - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの。確かめの入り口をビルドして、フックのシェルから動かすものも）
+  - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの（awk で確かめられない形も）・出させないもの。確かめの入り口をビルドして、フックのシェルから動かすものも）
   - `worktree-guard-check.test.ts`: 歯止めの確かめ（コマンドの読み方・許す形でないもの・消すブランチと worktree に失うものが無いか。本物の git で）
   - `worktree-guard-hook-entry.test.ts`: 歯止めの確かめの入り口（標準入力の読み方・読めないときと時間切れのときの ask・時間切れで子のプロセスを止める）
   - `browser-windows.test.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先・ポップアップの別ウインドウの作り方と数・位置と大きさ・ポップアップから開くもの・閉じ方・題のオリジン）
