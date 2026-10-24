@@ -35,6 +35,11 @@ describe('確認を出させるもの', () => {
     "sudo rm -fr '/r/.claude/worktrees/a'",
     'echo hi; rm -Rf "x/worktrees/y"',
     'git status\nrm -rf .claude/worktrees/b',
+    // グロブ・中括弧・変数を含み、worktrees の入る区切り
+    'rm -rf .claude/worktrees*',
+    'rm -rf .claude/worktrees{,}',
+    'rm -rf $HOME/.claude/worktrees/a',
+    'rm -rf "$W"worktrees',
   ])('%s', (command) => {
     expect(JSON.parse(run(command))).toEqual({
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('tanacode') },
@@ -57,6 +62,9 @@ describe('何もしないもの', () => {
     'ls -la',
     'rm -rf .',
     'git push --force',
+    // パスの一部に worktrees という文字が入るだけのフォルダ（区切りがちょうど worktrees ではない）
+    'rm -rf ~/.claude-personal/projects/-Users-me-work-tanacode--claude-worktrees-tc-1024-abcd',
+    'rm -rf /tmp/my-worktrees-backup x/worktrees2',
   ])('%s', (command) => {
     expect(run(command)).toBe(NOTHING);
   });
@@ -113,24 +121,22 @@ describe('確かめの入り口があるとき', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('worktree でないものの rm -rf・文字列の中に出てくるだけのものは、確認を出させない', () => {
+  it('消す操作のほかのコマンドが入ったもの（文字列の中に出てくるだけのものも）は、確認を出させる', () => {
     for (const command of [
-      'rm -rf ~/.claude-personal/projects/-Users-me-work-tanacode--claude-worktrees-tc-1024-abcd',
       "echo 'git worktree remove --force x' > note.txt",
       'git commit -m "あとで git branch -D foo する"',
+      "perl -0pi -e 's/git worktree remove --force x/y/' GUIDE.md",
+      'git status && git branch -D no-such-branch',
     ]) {
-      expect({ command, out: verified(command) }).toEqual({ command, out: NOTHING });
+      expect({ command, out: verified(command) }).toEqual({ command, out: expect.stringContaining('"ask"') });
     }
   });
 
-  it('許す形でないもの（コマンドを動かせる知らないコマンド）は、文字列の中でも確認を出させる', () => {
-    expect(verified("perl -0pi -e 's/git worktree remove --force x/y/' GUIDE.md")).toContain('"ask"');
-  });
-
   it('入り口が無い・場所を単一引用符で囲めないときは、確かめずに確認を出させる', () => {
-    const b3 = 'rm -rf ~/.claude-personal/projects/-Users-me-work-tanacode--claude-worktrees-tc-1024-abcd';
-    expect(verified(b3, repo, { command: process.execPath, script: join(dir, 'none.js') })).toContain('"ask"');
-    expect(verified(b3, repo, { command: "/x/it's/node", script })).toContain('"ask"');
+    const command = 'git branch -D no-such-branch';
+    expect(verified(command)).toBe(NOTHING);
+    expect(verified(command, repo, { command: process.execPath, script: join(dir, 'none.js') })).toContain('"ask"');
+    expect(verified(command, repo, { command: "/x/it's/node", script })).toContain('"ask"');
   });
 
   it('origin の同じ名前のブランチと同じブランチの git branch -D は、確認を出させない', () => {
@@ -138,7 +144,7 @@ describe('確かめの入り口があるとき', () => {
     commit(repo, 'b.txt');
     git(repo, 'push', '-q', '-u', 'origin', 'release/v2.0.0');
     git(repo, 'switch', '-q', 'main');
-    expect(verified('git status && git branch -D release/v2.0.0')).toBe(NOTHING);
+    expect(verified('git branch -D release/v2.0.0')).toBe(NOTHING);
   });
 
   it('手元にしか無いコミットのあるブランチの git branch -D は、今までどおり確認を出させる', () => {

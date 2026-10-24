@@ -9,7 +9,7 @@ import { hostExecutable } from './pty-host-client';
 // 次の 3 つは、権限モード（auto・bypassPermissions を含む）にかかわらず、Claude Code の許可の確認を出させる（permissionDecision: ask）。
 // - git worktree remove の --force（-f）
 // - git branch -D（--delete --force も）
-// - worktree の rm -rf（パスの区切りの 1 つが worktrees のもの。worktree の中では . や .. や * も）
+// - worktree の rm -rf（パスの区切りの 1 つがちょうど worktrees のもの。グロブ・中括弧・変数を含み、worktrees の入る区切りも。worktree の中では . や .. や * も）
 // ただし、はじめの 2 つは、消して失うものが無いと確かめられたら確認を出させない（何も決めず、Claude Code のふだんの許可の決まりに任せる）。
 // 止めはしない。ユーザーが確認して許せば、そのまま動く。
 // 2 段で見る。
@@ -23,7 +23,7 @@ import { hostExecutable } from './pty-host-client';
 const program = (reason: string) => String.raw`
 function unq(v) { sub(/^"[a-z_]*"[[:space:]]*:[[:space:]]*"/, "", v); sub(/"$/, "", v); return v }
 function flag(a, c) { return a ~ "^-[a-zA-Z]*" c "[a-zA-Z]*$" }
-function risky(p, d,   t, m, k, j, a, git, rm, r, f, del, force) {
+function risky(p, d,   t, m, k, j, a, git, rm, r, f, del, force, ns, seg, q) {
   m = split(p, t, /[[:space:]]+/)
   for (k = 1; k <= m; k++) {
     a = t[k]
@@ -50,7 +50,8 @@ function risky(p, d,   t, m, k, j, a, git, rm, r, f, del, force) {
   for (j = rm + 1; j <= m; j++) {
     a = t[j]
     if (a == "" || a ~ /^-/) continue
-    if (a ~ /worktrees/) return 1
+    ns = split(a, seg, "/")
+    for (q = 1; q <= ns; q++) if (seg[q] == "worktrees" || (seg[q] ~ /worktrees/ && (seg[q] ~ /[*?{}$]/ || index(seg[q], "[") > 0))) return 1
     if (d ~ /\/\.claude\/worktrees\// && (a ~ /^\.\.?\/?$/ || a ~ /^\.\.\// || a ~ /^(\.\/)?\*$/ || a == d)) return 1
   }
   return 0

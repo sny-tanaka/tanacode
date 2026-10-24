@@ -1,11 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
 // worktree やブランチを消す操作の歯止め（worktree-guard）。消して失うものが無いと確かめられたもの（マージ済みの PR のブランチの
-// git branch -D）と、文字列の中に出てくるだけのものでは、許可の確認を出さず、手元にしか無いコミットのあるブランチの git branch -D では
+// git branch -D）と、パスの一部に worktrees が入るだけのフォルダの rm -rf では、許可の確認を出さず、手元にしか無いコミットのあるブランチの git branch -D では
 // 今までどおり出す。Bash は許可の設定で許してあるので、確認が出るのは歯止めが出させたときだけ。
 // PR（gh）は PATH の先頭に置いた偽物が返す（GitHub には問い合わせない）。ほかは本物（アプリ・確かめの入り口・Claude Code・git）
 
@@ -43,7 +41,7 @@ describe('worktree やブランチを消す操作の歯止め', () => {
           match: PROMPT,
           steps: [
             bash('toolu_merged', `git branch -D ${MERGED}`),
-            bash('toolu_text', "echo 'あとで git branch -D foo する' > note.txt"),
+            bash('toolu_text', 'mkdir -p logs-claude-worktrees-old && rm -rf logs-claude-worktrees-old'),
             bash('toolu_local', `git branch -D ${LOCAL}`),
             [{ type: 'text', text: DONE }],
           ],
@@ -66,13 +64,13 @@ describe('worktree やブランチを消す操作の歯止め', () => {
     await app?.close();
   });
 
-  it('マージ済みの PR のブランチの git branch -D と、文字列の中に出てくるだけのものでは、確認を出さない', async () => {
+  it('マージ済みの PR のブランチの git branch -D と、パスの一部に worktrees が入るだけのフォルダの rm -rf では、確認を出さない', async () => {
     await app.startSession(PROMPT, { mode: 'manual' });
     // 最初に出る確認は、手元にしか無いコミットのあるブランチのもの
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain(LOCAL);
     expect(branches()).not.toContain(MERGED);
-    expect(existsSync(join(app.work, 'note.txt'))).toBe(true);
+    expect(app.api.toolResults.length).toBeGreaterThanOrEqual(2);
     expect(app.api.toolResults.some((r) => r.includes(`Deleted branch ${MERGED}`))).toBe(true);
   });
 
