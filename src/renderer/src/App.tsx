@@ -33,9 +33,10 @@ import { useSessionWorkflows } from './workflow/useSessionWorkflows';
 import { ImportDialog } from './sessions/ImportDialog';
 import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
+import { WorktreeCleanupDialog } from './sessions/WorktreeCleanupDialog';
 import { WorktreeDialog } from './sessions/WorktreeDialog';
 import { isWorking, liveChildrenOf } from './sessions/sessionTree';
-import { pendingFolder, preparingLabel } from './sessions/worktree';
+import { pendingFolder, preparingLabel, removalNotes } from './sessions/worktree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
@@ -174,6 +175,9 @@ export function App() {
   const [importing, setImporting] = useState(false);
   // worktree のセッションをアーカイブ・一覧から削除するときの確認（worktree を残すか消すか）
   const [worktreeDialog, setWorktreeDialog] = useState<{ id: string; action: 'archive' | 'remove' } | null>(null);
+  // worktree の片付け（アーカイブ済みのセッションの、残っている worktree と控え）
+  const [worktreeCleanup, setWorktreeCleanup] = useState(false);
+  const openWorktreeCleanup = useCallback(() => setWorktreeCleanup(true), []);
   // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
   const settingsFilesOpen = useSettingsFilesDialogOpen();
   const profilesDialog = useProfilesDialog();
@@ -883,10 +887,7 @@ export function App() {
           ? await window.tanacode.sessions.archive(id, { removeWorktree })
           : await window.tanacode.sessions.remove(id, { removeWorktree });
       if (action === 'remove') forgetSession(id);
-      const notes = [
-        removal?.backupRef && t('app.session.backupKept', { ref: removal.backupRef }),
-        removal?.branchKept && t('app.session.branchKept', { branch: removal.branch }),
-      ].filter(Boolean);
+      const notes = removalNotes(removal);
       if (notes.length > 0) window.alert(t('app.session.worktreeRemoved', { notes: notes.join('\n') }));
     },
     [forgetSession],
@@ -1037,6 +1038,7 @@ export function App() {
           onImport={openImport}
           onRename={renameSession}
           onRemove={removeSession}
+          onCleanupWorktrees={openWorktreeCleanup}
           onArchive={archiveSession}
           onUnarchive={unarchiveSession}
           scheduled={scheduled}
@@ -1257,6 +1259,7 @@ export function App() {
             onClose={() => setWorktreeDialog(null)}
           />
         )}
+        {worktreeCleanup && <WorktreeCleanupDialog onClose={() => setWorktreeCleanup(false)} />}
         {leaving && (
           <UnsavedDialog files={leaving.files} conflicts={leaving.conflicts} onSave={saveAndLeave} onDiscard={finishLeaving} onCancel={stayInFolder} />
         )}

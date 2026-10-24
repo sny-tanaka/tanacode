@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
@@ -219,6 +220,8 @@ describe('createInWorktree', () => {
     initialized(pipe);
     await app.waitFor('用意', () => release !== undefined);
     await app.manager.archive(id);
+    // フォルダが残っていることを裏で見つけて、一覧を配り直し終えるまで待つ
+    await app.waitFor('残っている印', () => app.manager.summary(id)?.worktree?.left === true);
     const lists = app.sessionLists.length;
     step('installing');
     release(EMPTY);
@@ -417,18 +420,18 @@ describe('startInWorktree', () => {
   });
 });
 
-describe('worktree の片付けと作り直し', () => {
-  // worktree で始めて、受け付けるまで進める
-  async function ready(): Promise<{ id: string; pipe: ScriptedPipe; session: SessionSummary }> {
-    prepare.mockResolvedValueOnce(EMPTY);
-    const { creating, pipe, session } = await begin();
-    createWorktree(session);
-    const id = await creating;
-    initialized(pipe);
-    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
-    return { id, pipe, session };
-  }
+// worktree で始めて、受け付けるまで進める
+async function ready(): Promise<{ id: string; pipe: ScriptedPipe; session: SessionSummary }> {
+  prepare.mockResolvedValueOnce(EMPTY);
+  const { creating, pipe, session } = await begin();
+  createWorktree(session);
+  const id = await creating;
+  initialized(pipe);
+  await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+  return { id, pipe, session };
+}
 
+describe('worktree の片付けと作り直し', () => {
   it('worktreeLeftovers: 消す前に、残っているもの（未コミット・未追跡・手元だけのコミット）を数える。worktree でなければ null', async () => {
     start();
     const { id, session } = await ready();
@@ -436,13 +439,21 @@ describe('worktree の片付けと作り直し', () => {
     writeFileSync(join(session.cwd, 'new.txt'), 'new\n');
     expect(await app.manager.worktreeLeftovers(id)).toEqual({
       exists: true,
-      branch: session.worktree!.branch,
       uncommitted: 1,
       untracked: 1,
-      unpushed: 0,
-      contentIn: null,
       submodules: [],
-      pr: { state: 'unknown' },
+      branches: [
+        {
+          name: session.worktree!.branch,
+          launched: true,
+          current: true,
+          exists: true,
+          unpushed: 0,
+          contentIn: null,
+          pr: { state: 'unknown' },
+          keep: null,
+        },
+      ],
     });
     expect(await app.manager.worktreeLeftovers('nope')).toBeNull();
     const plain = app.create({ worktree: false });
@@ -455,8 +466,8 @@ describe('worktree の片付けと作り直し', () => {
     const { id, pipe, session } = await ready();
     const removal = await app.manager.archive(id, { removeWorktree: true });
     expect(pipe.requests('end_session')).toHaveLength(1);
+    expect(removal).toEqual({ backupRef: null, branches: [{ name: session.worktree!.branch, launched: true, current: true, deleted: true, keep: null }] });
     expect(pipe.exitedWith).toBe(0);
-    expect(removal).toEqual({ backupRef: null, branch: session.worktree!.branch, branchKept: false });
     expect(existsSync(session.cwd)).toBe(false);
     expect(app.manager.stateOf(id)).toBe('archived');
   });
@@ -471,7 +482,7 @@ describe('worktree の片付けと作り直し', () => {
     const archiving = app.manager.archive(id, { removeWorktree: true });
     pipe.exit(0);
     await restarting;
-    expect((await archiving)?.branch).toBe(session.worktree!.branch);
+    expect((await archiving)?.branches[0]?.name).toBe(session.worktree!.branch);
     await expect(sent).rejects.toThrow('Claude Code が終了しました');
     expect(app.host.pipes).toHaveLength(1);
     expect(existsSync(session.cwd)).toBe(false);
@@ -485,7 +496,7 @@ describe('worktree の片付けと作り直し', () => {
     writeFileSync(join(session.cwd, 'b.txt'), 'b\n');
     git(session.cwd, 'add', '.');
     git(session.cwd, 'commit', '-qm', 'b');
-    expect((await app.manager.archive(id, { removeWorktree: true }))?.branchKept).toBe(true);
+    expect((await app.manager.archive(id, { removeWorktree: true }))?.branches[0]).toMatchObject({ deleted: false, keep: 'localOnly' });
     expect(existsSync(session.cwd)).toBe(false);
     prepare.mockResolvedValueOnce(EMPTY);
     const opening = app.manager.open(id);
@@ -502,5 +513,187 @@ describe('worktree の片付けと作り直し', () => {
     initialized(next);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
     expect(infos(id)).toEqual([`消していた worktree .claude/worktrees/${session.worktree!.name}（ブランチ ${session.worktree!.branch}） を作り直しました`]);
+  });
+
+  it('open: 子が git switch -c で作って残したブランチで作り直し、未コミットの変更の控えを戻して、そのことを知らせる', async () => {
+    start();
+    const { id, session } = await ready();
+    git(session.cwd, 'switch', '-q', '-c', 'fix/x');
+    writeFileSync(join(session.cwd, 'b.txt'), 'b\n');
+    git(session.cwd, 'add', '.');
+    git(session.cwd, 'commit', '-qm', 'b');
+    writeFileSync(join(session.cwd, 'new.txt'), 'new\n');
+    const removal = await app.manager.archive(id, { removeWorktree: true });
+    expect(removal?.branches.map((b) => [b.name, b.deleted])).toEqual([
+      ['fix/x', false],
+      [session.worktree!.branch, true],
+    ]);
+    const backupRef = removal!.backupRef!;
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(git(session.cwd, 'branch', '--show-current')).toBe('fix/x');
+    expect(readFileSync(join(session.cwd, 'new.txt'), 'utf8')).toBe('new\n');
+    expect(git(app.cwd, 'for-each-ref', 'refs/tanacode/backup/')).toBe('');
+    initialized(app.pipe(id));
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+    expect(infos(id)).toEqual([
+      `消していた worktree .claude/worktrees/${session.worktree!.name}（ブランチ fix/x） を作り直しました。worktree を消す前の控え ${backupRef} の中身（未コミットの変更・未追跡のファイル）を戻し、控えを外しました`,
+    ]);
+  });
+});
+
+describe('worktree の片付け', () => {
+  it('アーカイブ済みで残っている worktree を一覧に出し（一覧の印 left も）、消しても子セッションには触らない。控えの削除は、戻すときの記録も外す', async () => {
+    start();
+    const { id, session } = await ready();
+    const child = app.manager.create(app.cwd, { ...NEW, worktree: false }, id);
+    await app.manager.archive(id);
+    // 人が子だけを戻した
+    app.manager.unarchive(child);
+    // フォルダが残っているかは、一覧を配るたびに同期では見ず、裏で見て配り直す
+    await app.waitFor('残っている印', () => app.manager.summary(id)?.worktree?.left === true);
+    const listed = await app.manager.worktreeCleanup();
+    expect(listed.worktrees).toEqual([{ id, title: expect.any(String), path: session.cwd, branch: session.worktree!.branch }]);
+    expect(listed.backups).toEqual([]);
+
+    writeFileSync(join(session.cwd, 'new.txt'), 'new\n');
+    const removal = await app.manager.removeLeftWorktree(id);
+    expect(existsSync(session.cwd)).toBe(false);
+    expect(app.manager.summary(id)?.worktree?.left).toBeUndefined();
+    expect(app.manager.summary(child)?.archived).toBe(false);
+    const after = await app.manager.worktreeCleanup();
+    expect(after.worktrees).toEqual([]);
+    expect(after.backups).toEqual([
+      { root: app.cwd, ref: removal.backupRef, date: expect.any(Number), subject: expect.stringContaining(session.worktree!.name), strays: false, session: { id, title: expect.any(String) } },
+    ]);
+    await app.manager.deleteBackup(app.cwd, removal.backupRef!);
+    expect((await app.manager.worktreeCleanup()).backups).toEqual([]);
+    // 控えが無ければ、作り直しても戻さない（知らせも出さない）
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(existsSync(join(session.cwd, 'new.txt'))).toBe(false);
+  });
+
+  it('アーカイブしていないセッションの worktree は、片付けでは消さない', async () => {
+    start();
+    const { id } = await ready();
+    await expect(app.manager.removeLeftWorktree(id)).rejects.toThrow();
+  });
+
+  it('アーカイブしていないほかのセッションが worktree の中で動いていれば、片付けの一覧に出さず、消すのも断る', async () => {
+    start();
+    const { id, session } = await ready();
+    await app.manager.archive(id);
+    // worktree を使わない子を、親の worktree の中で始めていた（親だけをアーカイブしたあとに戻した）
+    const inside = app.manager.create(session.cwd, { ...NEW, worktree: false });
+    expect(app.manager.summary(inside)?.archived).toBe(false);
+    expect((await app.manager.worktreeCleanup()).worktrees).toEqual([]);
+    await expect(app.manager.removeLeftWorktree(id)).rejects.toThrow('この worktree の中で動いているため');
+    expect(existsSync(session.cwd)).toBe(true);
+  });
+
+  it('片付けで消している最中に開くと、消し終わるのを待ってから作り直して起動する。同じ worktree をもう一度消すと、同じ結果を待つ', async () => {
+    start();
+    const { id, session } = await ready();
+    await app.manager.archive(id);
+    const removing = app.manager.removeLeftWorktree(id);
+    const again = app.manager.removeLeftWorktree(id);
+    // 消している最中は、片付けの一覧に出さない
+    expect((await app.manager.worktreeCleanup()).worktrees).toEqual([]);
+    prepare.mockResolvedValueOnce(EMPTY);
+    const opening = app.manager.open(id);
+    expect(app.manager.summary(id)?.worktree?.preparing).toBe('restoring');
+    const [first, second] = await Promise.all([removing, again]);
+    expect(second).toEqual(first);
+    await opening;
+    // 消したあとに作り直したので、フォルダはあり、Claude Code はそこで起動している
+    expect(existsSync(join(session.cwd, '.git'))).toBe(true);
+    expect(app.host.pipes.filter((p) => p.request.tag === id)).toHaveLength(2);
+  });
+
+  it('幹のブランチ（develop など）に切り替えていたら、そのブランチは覚えず、起動したときのブランチで作り直す', async () => {
+    start();
+    const { id, session } = await ready();
+    git(session.cwd, 'switch', '-q', '-c', 'develop');
+    const removal = await app.manager.archive(id, { removeWorktree: true });
+    expect(removal?.branches[0]).toMatchObject({ name: 'develop', deleted: false, keep: 'trunk' });
+    // 元のフォルダで develop を取り出した
+    git(app.cwd, 'switch', '-q', 'develop');
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(git(session.cwd, 'branch', '--show-current')).toBe(session.worktree!.branch);
+  });
+
+  it('残したブランチをほかの場所で取り出していたら、detached HEAD で作り直し、そのことを知らせる', async () => {
+    start();
+    const { id, session } = await ready();
+    git(session.cwd, 'switch', '-q', '-c', 'fix/x');
+    writeFileSync(join(session.cwd, 'b.txt'), 'b\n');
+    git(session.cwd, 'add', '.');
+    git(session.cwd, 'commit', '-qm', 'b');
+    await app.manager.archive(id, { removeWorktree: true });
+    git(app.cwd, 'switch', '-q', 'fix/x');
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(git(app.cwd, 'rev-parse', 'fix/x'));
+    initialized(app.pipe(id));
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+    expect(infos(id)[0]).toContain('ブランチ fix/x はほかの場所で取り出しているため、その先頭から、ブランチから外れた状態（detached HEAD）で作り直しました');
+    // detached HEAD のまま、もう一度消して作り直しても、残したブランチ（fix/x）を忘れない
+    app.manager.archive(id, { removeWorktree: true }).catch(() => null);
+    await app.waitFor('消す', () => !existsSync(session.cwd));
+    await app.waitFor('アーカイブ', () => app.manager.stateOf(id) === 'archived');
+    git(app.cwd, 'switch', '-q', 'main');
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(git(session.cwd, 'branch', '--show-current')).toBe('fix/x');
+  });
+
+  it('作り直しに失敗しても、残したブランチは忘れず、次に開いたときにそのブランチで作り直す', async () => {
+    start();
+    const { id, session } = await ready();
+    git(session.cwd, 'switch', '-q', '-c', 'fix/x');
+    writeFileSync(join(session.cwd, 'b.txt'), 'b\n');
+    git(session.cwd, 'add', '.');
+    git(session.cwd, 'commit', '-qm', 'b');
+    await app.manager.archive(id, { removeWorktree: true });
+    // worktree を置くフォルダをファイルにして、git が worktree を作れないようにする（一時的な失敗の代わり）
+    const parent = join(app.cwd, '.claude', 'worktrees');
+    rmSync(parent, { recursive: true, force: true });
+    writeFileSync(parent, '');
+    await expect(app.manager.open(id)).rejects.toThrow();
+    expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+    rmSync(parent);
+    mkdirSync(parent);
+    prepare.mockResolvedValueOnce(EMPTY);
+    await app.manager.open(id);
+    expect(git(session.cwd, 'branch', '--show-current')).toBe('fix/x');
+  });
+
+  it('アーカイブで worktree を消すときも、ほかのセッションが中で動いていれば消さずに理由を返す（ワークスペースに追加したフォルダも、シンボリックリンク越しでも）', async () => {
+    start();
+    const { id, session } = await ready();
+    const alias = join(mkdtempSync(join(tmpdir(), 'tanacode-alias-')), 'repo');
+    symlinkSync(app.cwd, alias);
+    const through = join(alias, '.claude', 'worktrees', session.worktree!.name);
+    const other = app.manager.create(app.cwd, { ...NEW, worktree: false, addedFolders: [through] });
+    expect(app.manager.addedFoldersOf(other)).toEqual([through]);
+    await expect(app.manager.archive(id, { removeWorktree: true })).rejects.toThrow('この worktree の中で動いているため');
+    expect(app.manager.stateOf(id)).toBe('archived');
+    expect(existsSync(session.cwd)).toBe(true);
+  });
+
+  it('消し終わるのを待っている間にアーカイブし直したら、「準備中」を一覧に残さない', async () => {
+    start();
+    const { id } = await ready();
+    await app.manager.archive(id);
+    const removing = app.manager.removeLeftWorktree(id);
+    const opening = app.manager.open(id);
+    expect(app.manager.summary(id)?.worktree?.preparing).toBe('restoring');
+    await app.manager.archive(id);
+    await removing;
+    await opening;
+    expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+    expect(app.sessionLists.at(-1)?.find((s) => s.id === id)?.worktree?.preparing).toBeNull();
   });
 });

@@ -5,7 +5,7 @@ import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import { carriedMessages, compactTriggerOf, lastReplyIn } from '@shared/optimized-compact';
 import { t, type MessageKey } from '@shared/i18n';
-import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeBranchKeep, WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/paste';
 import type { AskQuestion, PermissionMode } from '@shared/screen';
 import { answerText, type PendingPermission, type PendingQuestion, type PermissionReply } from '@shared/questions';
@@ -213,6 +213,7 @@ const WORKTREE_FAILURE: Record<WorktreeFailure, string> = {
   closedWhileCreating: 'the session was archived or removed from the session list while its worktree was being created',
   submoduleChanges:
     'removing the worktree would lose uncommitted changes, untracked files, stashes or commits that are on no remote inside the submodules listed in parentheses. Commit and push them inside each submodule, or discard them, before removing the worktree',
+  usedBySession: 'a session that is not archived (named in parentheses) is running inside the worktree. End or archive that session first, then remove the worktree',
 };
 
 // ターンが終わった状態（親が止めた印を片付ける）
@@ -903,16 +904,18 @@ export class SessionsControl {
         name: child.worktree.name,
         branch: child.worktree.branch,
         folder,
-        ...(removal ? { branch_kept: removal.branchKept, backup_ref: removal.backupRef } : {}),
+        ...(removal ? { backup_ref: removal.backupRef } : {}),
         ...(failure !== null ? { error: failure } : {}),
-        ...(leftovers ? { unpushed_commits: leftovers.unpushed, pull_request: pullRequestOf(leftovers) } : {}),
+        branches: branchesOf(leftovers, removal),
       };
       if (!removeWorktree) notes.push('Kept its worktree (remove_worktree was false). Call end_session again without it to remove the worktree.');
-      else if (failure !== null) notes.push('Could not remove its worktree (see worktree.error), so the folder and the branch are still there. Tell the user, or call end_session again once the cause is gone.');
+      else if (failure !== null) notes.push('Could not remove its worktree (see worktree.error), so the folder and the branches are still there. Tell the user, or call end_session again once the cause is gone.');
       else if (folder === 'already_removed') notes.push('Its worktree folder was already gone.');
-      else notes.push('Removed its worktree. If the user restores the session, the worktree is recreated.');
-      if (removal?.backupRef) notes.push(`It had uncommitted changes or untracked files. They are saved as a commit at ${removal.backupRef} (gitignored files are not included).`);
-      if (removal?.branchKept) notes.push(`Kept the branch ${removal.branch} because it has commits that exist only locally.`);
+      else notes.push('Removed its worktree. If the user restores the session, the worktree is recreated (on the branch it was using, if that branch was kept, with its uncommitted changes put back).');
+      if (removal?.backupRef) notes.push(`It had uncommitted changes or untracked files (or commits on no branch). They are saved as a commit at ${removal.backupRef} (gitignored files are not included).`);
+      const deleted = removal?.branches.filter((b) => b.deleted).map((b) => b.name) ?? [];
+      if (deleted.length > 0) notes.push(`Deleted the ${deleted.length === 1 ? 'branch' : 'branches'} ${deleted.join(', ')}.`);
+      for (const b of removal?.branches ?? []) if (!b.deleted) notes.push(`Kept the branch ${b.name} because ${KEEP_REASON[b.keep ?? 'failed']}.`);
     } else if (args.remove_worktree === true) {
       notes.push('It has no worktree, so no folder was removed.');
     }
@@ -1433,10 +1436,35 @@ function runningTasks(host: SessionsHost, id: string): { kind: string; name: str
   ];
 }
 
-function pullRequestOf(leftovers: WorktreeLeftovers): Record<string, unknown> {
-  const { pr } = leftovers;
+function pullRequestOf(pr: WorktreePr): Record<string, unknown> {
   if (pr.state === 'none' || pr.state === 'unknown') return { state: pr.state };
   return { state: pr.state, number: pr.number, base: pr.base, url: pr.url };
+}
+
+// end_session で、ブランチを残した理由（Claude に返す文）
+const KEEP_REASON: Record<WorktreeBranchKeep | 'failed', string> = {
+  localOnly: 'it has commits that exist only locally',
+  trunk: 'it is the default branch or a main line branch such as main or develop (the child only switched to it)',
+  checkedOut: 'it is checked out in another worktree',
+  failed: 'git could not delete it',
+};
+
+// end_session の結果の、worktree のブランチ。消す前に調べたもの（プッシュしていないコミット・PR）と、消した結果を合わせる
+function branchesOf(leftovers: WorktreeLeftovers | null, removal: WorktreeRemoval | null): Record<string, unknown>[] {
+  const names = [...new Set([...(leftovers?.branches ?? []).map((b) => b.name), ...(removal?.branches ?? []).map((b) => b.name)])];
+  return names.map((name) => {
+    const before = leftovers?.branches.find((b) => b.name === name);
+    const after = removal?.branches.find((b) => b.name === name);
+    const role = after ?? before!;
+    return {
+      name,
+      launched: role.launched,
+      current: role.current,
+      ...(before ? { unpushed_commits: before.unpushed, pull_request: pullRequestOf(before.pr) } : {}),
+      ...(after ? { deleted: after.deleted, ...(after.deleted ? {} : { kept_because: KEEP_REASON[after.keep ?? 'failed'] }) } : {}),
+      ...(!after && before && !before.exists ? { exists: false } : {}),
+    };
+  });
 }
 
 const KIND_MARK = { added: 'A', modified: 'M', deleted: 'D' } as const;

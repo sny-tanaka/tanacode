@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { access, readFile, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   bridgeUrlOf,
@@ -41,6 +41,8 @@ import type {
   SessionAttention,
   SessionSummary,
   SlashCommand,
+  WorktreeBackup,
+  WorktreeCleanup,
   WorktreeLeftovers,
   WorktreePreparing,
   WorktreeRemoval,
@@ -124,6 +126,8 @@ import {
   hideWorktrees,
   planWorktree,
   prepareNodeModules,
+  deleteBackup,
+  listBackups,
   removeWorktree,
   restoreWorktree,
   setupTroubleOf,
@@ -132,6 +136,8 @@ import {
   withSetupNote,
   WorktreeError,
   type NodeModulesResult,
+  type WorktreeRestored,
+  type WorktreeSaved,
   type WorktreeSetupTrouble,
 } from './worktree';
 
@@ -534,6 +540,11 @@ export class SessionManager {
 
   // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
   private readonly restoring = new Set<string>();
+  // worktree を消している最中のセッションと、その結果（消すのには数秒かかる。その間に開く・もう一度消すと、作り直さずに起動した
+  // フォルダが消される・同じ worktree を 2 つの削除が消し合うので、開くのは消し終わるまで待ち、もう一度消すときは同じ結果を待つ）
+  private readonly removingWorktrees = new Map<string, Promise<WorktreeRemoval>>();
+  // アーカイブ済みの worktree のセッションの、フォルダが残っているか（一覧を配るたびに同期でディスクを見ないよう、覚えておく）
+  private readonly leftFolders = new Map<string, boolean>();
   // worktree の準備（node_modules）でうまくいかなかったこと（セッションごと。準備のたびに置き換える。アプリを起動し直すと忘れる）
   private readonly setupTrouble = new Map<string, WorktreeSetupTrouble>();
   // Claude がアプリ内ブラウザでユーザーに操作を頼んでいるセッション（browser-control が知らせてくる）
@@ -566,7 +577,11 @@ export class SessionManager {
           remoteControl: this.wantsRemote(r),
           autoCompact: r.autoCompact !== false,
           worktree: r.worktree
-            ? { ...r.worktree, preparing: this.restoring.has(r.id) ? 'restoring' : rt?.process ? rt.preparing : null }
+            ? {
+                ...r.worktree,
+                preparing: this.restoring.has(r.id) ? 'restoring' : rt?.process ? rt.preparing : null,
+                ...(r.archived && this.worktreeLeft(r) ? { left: true } : {}),
+              }
             : null,
           parentId: r.parentId ?? null,
           addedFolders: r.addedFolders ?? [],
@@ -751,6 +766,21 @@ export class SessionManager {
     if (this.runtimes.get(id)?.process || this.restoring.has(id)) return;
     const record = this.store.get(id);
     if (record?.archived) this.store.update(id, { archived: false });
+    this.leftFolders.delete(id);
+    // worktree を消している最中なら、消し終わるまで待ってから作り直す（待たずに起動すると、起動したフォルダが消される）
+    const removing = this.removingWorktrees.get(id);
+    if (removing) {
+      this.restoring.add(id);
+      this.emitSessions();
+      try {
+        await removing.catch(() => null);
+      } finally {
+        this.restoring.delete(id);
+        // 待っている間にアーカイブし直して抜けるときも、「準備中」を一覧に残さない
+        this.emitSessions();
+      }
+      if (this.runtimes.get(id)?.process || !this.stillOpen(id)) return;
+    }
     // 前に起動した claude が残っていれば（ホストが止める間もなく落ちた）、止めてから起動する（同じ会話を 2 つのプロセスが書かないように）
     if (record?.claudeProcess) {
       this.restoring.add(id);
@@ -766,15 +796,30 @@ export class SessionManager {
       // 作り直してから起動するまで、一覧では「準備中」にする
       this.restoring.add(id);
       this.emitSessions();
+      // 記録は作り直したあとに外すので、先に読んでおく
+      const saved: WorktreeSaved = record.worktreeSaved ?? {};
+      const backupRef = saved.backupRef;
+      let restored: WorktreeRestored;
       try {
-        await restoreWorktree(record.worktree, record.cwd);
+        restored = await restoreWorktree(record.worktree, record.cwd, saved);
+        // 戻せなかった控えは、git には残る（worktree の片付けの画面に出る）。ほかで取り出していたブランチの先頭から detached HEAD で
+        // 作り直したときは、そのブランチを覚えたままにする（次に消して作り直すときも、そのブランチから作るように）。
+        // 作り直しに失敗したときは、記録をそのままにする（ブランチが無い・取り出し中は restoreWorktree が見分けて扱うので、
+        // 失敗は index.lock が残っていたなどの一時的なもの。次に開いたときに、同じブランチでやり直す）
+        this.store.update(id, { worktreeSaved: restored.busy ? { branch: restored.busy, backupRef: null } : null });
       } finally {
         this.restoring.delete(id);
         this.emitSessions();
       }
       if (!this.stillOpen(id)) return;
       this.start(id, record.launchMode ?? null, null, record.terminal ? 'tui' : 'stream');
-      void this.prepareWorktree(id, 'restored');
+      void this.prepareWorktree(id, {
+        branch: restored.branch ?? restored.busy ?? record.worktree.branch,
+        notes: [
+          ...(restored.busy ? [t('main.worktree.restoredDetached', { branch: restored.busy })] : []),
+          ...(restored.backup && backupRef ? [t(restored.backup === 'applied' ? 'main.worktree.backupApplied' : 'main.worktree.backupKept', { ref: backupRef })] : []),
+        ],
+      });
       return;
     }
     // 子セッションは起動のモードで。ほかのセッションは、新しいセッションと同じ決まり（設定の既定か auto。startMode）。
@@ -819,6 +864,8 @@ export class SessionManager {
     if (rt) this.watchFolders(rt, []);
     if (this.runtimes.get(id) === rt) this.runtimes.delete(id);
     this.store.update(id, { archived: true });
+    // フォルダが残っているかは、見直す
+    this.leftFolders.delete(id);
     this.emitSessions();
     this.changed(id);
     // 親だけをアーカイブしない。子も一緒にアーカイブする（子の worktree は消さない）
@@ -826,7 +873,122 @@ export class SessionManager {
       if (!this.store.get(child)?.archived) await this.archive(child);
     }
     if (!removing || !record?.worktree) return null;
-    return removeWorktree(record.worktree, record.cwd);
+    return this.removeWorktreeOf(id, record.worktree, record.cwd);
+  }
+
+  // アーカイブ済みのセッションの、残っている worktree を消す（worktree の片付け）。archive と違い、子セッションには触らない
+  // （アーカイブのあとに人が戻した子を、アーカイブし直さないため）
+  async removeLeftWorktree(id: string): Promise<WorktreeRemoval> {
+    const record = this.store.get(id);
+    if (!record?.worktree || !record.archived || this.restoring.has(id)) throw new Error(t('main.session.notFound'));
+    return this.removeWorktreeOf(id, record.worktree, record.cwd);
+  }
+
+  // 消している最中なら、その結果を待つ（同じ worktree を 2 つの削除が消し合わないように）。アーカイブ（画面・end_session）と
+  // 片付けのどちらから消すときも通る
+  private removeWorktreeOf(id: string, worktree: NonNullable<SessionRecord['worktree']>, cwd: string): Promise<WorktreeRemoval> {
+    const running = this.removingWorktrees.get(id);
+    if (running) return running;
+    const removing = this.runRemoveWorktree(id, worktree, cwd).finally(() => {
+      this.removingWorktrees.delete(id);
+      this.leftFolders.delete(id);
+      this.emitSessions();
+    });
+    this.removingWorktrees.set(id, removing);
+    this.emitSessions();
+    return removing;
+  }
+
+  private async runRemoveWorktree(id: string, worktree: NonNullable<SessionRecord['worktree']>, cwd: string): Promise<WorktreeRemoval> {
+    // アーカイブしていないほかのセッションが、この worktree の中で動いていれば（worktree を使わない子を、親の worktree の中の
+    // フォルダで始めたときなど）、消さずに理由を返す（--force で、動いているセッションのフォルダごと消さないように）
+    const user = await this.liveSessionIn(cwd, id);
+    if (user) {
+      const title = user.title ?? t('main.session.untitled');
+      throw new WorktreeError('usedBySession', t('main.worktree.usedBySession', { title }), title);
+    }
+    const removal = await removeWorktree(worktree, cwd);
+    // 作り直すときのために、残したもの（worktree で使っていて残したブランチ・控え）を覚えておく。幹のブランチ（develop など。
+    // 子が切り替えただけ）は覚えない（元のフォルダで取り出していることが多く、そこから作り直せない）。今のブランチが無かった
+    // とき（フォルダを手で消していた・detached HEAD）だけ、前の記録のブランチを使う（今回消したブランチの代わりに、古い名前で作り直さない。
+    // 取り出し中のブランチの先頭から detached HEAD で作り直したときは、前の記録にそのブランチが残っている）
+    const current = removal.branches.find((b) => b.current);
+    const keptCurrent = current && !current.deleted && current.keep !== 'trunk' ? current.name : null;
+    const before = this.store.get(id)?.worktreeSaved;
+    const saved = { branch: current ? keptCurrent : (before?.branch ?? null), backupRef: removal.backupRef ?? before?.backupRef ?? null };
+    if (this.store.get(id)) this.store.update(id, { worktreeSaved: saved.branch || saved.backupRef ? saved : null });
+    return removal;
+  }
+
+  // path（worktree）の中で動いている、アーカイブしていないほかのセッション（セッションのフォルダか、ワークスペースに追加したフォルダが
+  // その中にある）。シンボリックリンクを通した別の書き方（macOS の /tmp と /private/tmp など）でも見つけるよう、リンクを解いて比べる
+  private async liveSessionIn(path: string, except: string): Promise<SessionRecord | undefined> {
+    const resolve = (p: string) => realpath(p).catch(() => p);
+    const top = await resolve(path);
+    for (const r of this.store.all()) {
+      if (r.id === except || r.archived) continue;
+      for (const folder of [r.cwd, ...(r.addedFolders ?? [])]) {
+        const real = await resolve(folder);
+        if (real === top || real.startsWith(`${top}/`)) return r;
+      }
+    }
+    return undefined;
+  }
+
+  // アーカイブ済みの worktree のセッションの、フォルダが残っているか。まだ見ていなければ、裏で見て、残っていれば一覧を配り直す
+  private worktreeLeft(r: SessionRecord): boolean {
+    const known = this.leftFolders.get(r.id);
+    if (known !== undefined) return known;
+    this.leftFolders.set(r.id, false);
+    void access(r.cwd).then(
+      () => {
+        if (this.leftFolders.get(r.id) !== false) return;
+        this.leftFolders.set(r.id, true);
+        this.emitSessions();
+      },
+      () => {},
+    );
+    return false;
+  }
+
+  // worktree の片付けの一覧。アーカイブ済みのセッションの、残っている worktree のフォルダと、worktree のセッションのリポジトリの控え。
+  // 消している最中のものと、アーカイブしていないほかのセッションが中で動いているものは並べない
+  async worktreeCleanup(): Promise<WorktreeCleanup> {
+    const records = this.store.all().filter((r) => r.worktree);
+    const titleOf = (r: SessionRecord) => r.title ?? t('main.session.untitled');
+    const left = records.filter((r) => r.archived && existsSync(r.cwd));
+    // 一覧の印（left）も、見たものに合わせる
+    let changed = false;
+    for (const r of records.filter((r) => r.archived)) {
+      const now = left.includes(r);
+      if (this.leftFolders.get(r.id) !== now) changed = true;
+      this.leftFolders.set(r.id, now);
+    }
+    if (changed) this.emitSessions();
+    const worktrees: WorktreeCleanup['worktrees'] = [];
+    for (const r of left) {
+      if (this.removingWorktrees.has(r.id) || (await this.liveSessionIn(r.cwd, r.id))) continue;
+      worktrees.push({ id: r.id, title: titleOf(r), path: r.cwd, branch: r.worktree!.branch });
+    }
+    const backups: WorktreeBackup[] = [];
+    for (const root of new Set(records.map((r) => r.worktree!.root))) {
+      if (!existsSync(root)) continue;
+      for (const backup of await listBackups(root)) {
+        const owner = records.find((r) => r.worktree!.root === root && r.worktreeSaved?.backupRef === backup.ref);
+        backups.push({ root, ...backup, session: owner ? { id: owner.id, title: titleOf(owner) } : null });
+      }
+    }
+    return { worktrees, backups: backups.sort((a, b) => b.date - a.date) };
+  }
+
+  // 控えを消す。セッションが作り直すときに戻す控えなら、その記録も外す
+  async deleteBackup(root: string, ref: string): Promise<void> {
+    await deleteBackup(root, ref);
+    for (const r of this.store.all()) {
+      if (r.worktree?.root === root && r.worktreeSaved?.backupRef === ref) {
+        this.store.update(r.id, { worktreeSaved: r.worktreeSaved.branch ? { branch: r.worktreeSaved.branch, backupRef: null } : null });
+      }
+    }
   }
 
   // worktree の準備（node_modules）でうまくいかなかったこと（最後の準備のもの。無ければ・準備していなければ null）
@@ -2808,7 +2970,8 @@ export class SessionManager {
   }
 
   // worktree に node_modules を用意する。終わるまで ready を配信しない（最初の指示は、準備が終わってから送られる）
-  private async prepareWorktree(id: string, how: 'created' | 'restored'): Promise<void> {
+  // how: 新しく作った（created）か、消していたものを作り直したか（作り直したブランチと、チャットに添える知らせ）
+  private async prepareWorktree(id: string, how: 'created' | { branch: string; notes: string[] }): Promise<void> {
     const record = this.store.get(id);
     const rt = this.runtimes.get(id);
     if (!record?.worktree || !rt) return;
@@ -2840,7 +3003,8 @@ export class SessionManager {
     if (trouble) this.setupTrouble.set(id, trouble);
     else this.setupTrouble.delete(id);
     const notes = [
-      t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }),
+      how === 'created' ? t('main.worktree.started', { name, branch }) : t('main.worktree.restored', { name, branch: how.branch }),
+      ...(how === 'created' ? [] : how.notes),
       ...nodeModulesNotes(result),
       ...(failure ? [t('main.worktree.prepareFailed', { error: failure })] : []),
     ];

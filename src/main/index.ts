@@ -632,6 +632,9 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
   handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => P(e).archiveSession(id, options));
   handle(IpcChannel.SessionsWorktreeLeftovers, (e, id: string) => P(e).manager.worktreeLeftovers(id));
+  handle(IpcChannel.SessionsWorktreeCleanup, (e) => P(e).manager.worktreeCleanup());
+  handle(IpcChannel.SessionsDeleteBackup, (e, root: string, ref: string) => P(e).manager.deleteBackup(root, ref));
+  handle(IpcChannel.SessionsRemoveLeftWorktree, (e, id: string) => P(e).removeLeftWorktree(id));
   handle(IpcChannel.SessionsUnarchive, (e, id: string) => P(e).manager.unarchive(id));
   handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));
   const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);

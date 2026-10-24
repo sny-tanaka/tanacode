@@ -110,7 +110,10 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
   it('worktree を削除してアーカイブすると、未追跡のファイルの控えを残して消す。戻すと作り直して再開する', async () => {
     writeFileSync(join(path, 'note.txt'), 'メモ\n');
     const removal = await run.manager.archive(run.sessionId!, { removeWorktree: true });
-    expect(removal).toEqual({ backupRef: `refs/tanacode/backup/${summary().worktree!.name}`, branch, branchKept: false });
+    expect(removal).toEqual({
+      backupRef: `refs/tanacode/backup/${summary().worktree!.name}`,
+      branches: [{ name: branch, launched: true, current: true, deleted: true, keep: null }],
+    });
     expect(existsSync(path)).toBe(false);
     expect(git(run.cwd, 'worktree', 'list')).not.toContain(path);
     expect(git(run.cwd, 'show', `${removal!.backupRef}:note.txt`)).toBe('メモ');

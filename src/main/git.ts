@@ -385,7 +385,7 @@ export async function defaultBranch(cwd: string): Promise<string | null> {
 export type BranchBase = { ref: string; mergeBase: string; kind: 'branch' | 'upstream' };
 
 // 基点になりうるブランチの名前。これらのブランチにいるときは、分岐元ではなく上流と比べる
-const TRUNK_NAMES = ['main', 'master', 'develop', 'development', 'trunk'];
+export const TRUNK_NAMES = ['main', 'master', 'develop', 'development', 'trunk'];
 
 // 作業中のブランチの基点を決める。
 // 別のブランチにいるときは、main・master・develop などのうち分岐点がいちばん近いもの。

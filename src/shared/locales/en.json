@@ -152,6 +152,8 @@
       "commandAt": "{command} ({dir})",
       "started": "Started in worktree .claude/worktrees/{name} (branch {branch})",
       "restored": "Recreated the deleted worktree .claude/worktrees/{name} (branch {branch})",
+      "backupApplied": "Put back the contents of the backup {ref} made before the worktree was deleted (uncommitted changes and untracked files) and removed the backup",
+      "backupKept": "Could not put back the backup {ref} made before the worktree was deleted, for example because the branch has moved since then. The backup is kept",
       "cloned": "Copied {paths} from the original folder",
       "cloneFailed": "Couldn't copy {paths}",
       "topDir": "root",
@@ -166,7 +168,9 @@
       "locked": "The worktree is locked, so it wasn't deleted",
       "lockedWithReason": "The worktree is locked ({reason}), so it wasn't deleted",
       "submoduleChanges": "The worktree wasn't deleted because {count} submodules ({paths}) contain things that would be lost (uncommitted changes, untracked files, stashes, or unpushed commits)",
-      "submoduleChanges_one": "The worktree wasn't deleted because {count} submodule ({paths}) contains things that would be lost (uncommitted changes, untracked files, stashes, or unpushed commits)"
+      "submoduleChanges_one": "The worktree wasn't deleted because {count} submodule ({paths}) contains things that would be lost (uncommitted changes, untracked files, stashes, or unpushed commits)",
+      "restoredDetached": "The branch {branch} is checked out elsewhere, so the worktree was recreated at its tip without a branch (detached HEAD)",
+      "usedBySession": "Not deleted because the session “{title}”, which is not archived, is running inside this worktree"
     },
     "settingsFile": {
       "unusable": "Can't use settings file “{name}” ({path}): {reason}",
@@ -1174,8 +1178,10 @@
       "archiveChildrenWorking": "This will also archive {count} child sessions ({working} still working). Continue?",
       "archiveChildrenWorking_one": "This will also archive {count} child session ({working} still working). Continue?",
       "backupKept": "Backed up uncommitted changes and untracked files to {ref} (view them with git show {ref}).",
-      "branchKept": "Kept the branch {branch} because it has commits that exist only locally.",
-      "worktreeRemoved": "Deleted the worktree.\n{notes}"
+      "branchKept": "Kept the branch {branch} ({reason}).",
+      "worktreeRemoved": "Deleted the worktree.\n{notes}",
+      "branchesDeleted": "Deleted {count} branches: {branches}.",
+      "branchesDeleted_one": "Deleted {count} branch: {branches}."
     },
     "empty": {
       "composing": "Choose a folder in the chat on the left and send your first prompt to start a session",
@@ -1263,7 +1269,10 @@
       "lockedTip": "Order locked\nClick to unlock and sort by most recently updated",
       "unlockedTip": "Lock order\nWhile locked, sessions stay in place even when they update",
       "empty": "No sessions",
-      "archived": "Archived ({count})"
+      "archived": "Archived ({count})",
+      "worktreeCleanup": "Clean up worktrees",
+      "worktreeCleanupLeft": "Clean up worktrees\n{count} worktrees of archived sessions are still left",
+      "worktreeCleanupLeft_one": "Clean up worktrees\n{count} worktree of an archived session is still left"
     },
     "children": {
       "working": "{count} working",
@@ -1314,11 +1323,11 @@
       "removeLabel": "Remove Worktree Session from List",
       "archiveTitle": "Archive “{title}”",
       "removeTitle": "Remove “{title}” from List",
-      "about": "This session runs in worktree {path} (branch {branch}). Choose whether to keep or delete the worktree.",
+      "about": "This session runs in the worktree {path} (started on the branch {branch}). Choose whether to keep or delete the worktree.",
       "noteBackup": "If you delete it, uncommitted changes and untracked files are still backed up to {ref}.",
-      "noteBranch": "If there are commits that exist only locally, the branch is kept. If they're already on the remote, in a PR, or in the default branch, the branch is deleted too.",
+      "noteBranch": "Both the branch it started on and the branch the worktree is on now (such as one created with git switch -c) are checked. A branch with commits that exist only locally is kept; one whose commits are on a remote, in a PR, or in the default branch is deleted.",
       "noteIgnored": "Gitignored files (such as a .env you edited in the worktree) aren't included in the backup.",
-      "noteRestore": "If you unarchive a session whose worktree was deleted, the worktree is recreated from the kept branch.",
+      "noteRestore": "If you restore a session whose worktree was deleted, the worktree is recreated from the kept branch, with the backed-up changes put back.",
       "removingWorktree": "Deleting…",
       "archiveRemoveWorktree": "Archive and Delete Worktree",
       "removeRemoveWorktree": "Remove and Delete Worktree",
@@ -1345,7 +1354,21 @@
       "prMergedWithAfter_one": "{name} has been merged. {count} commit was added after that.",
       "prMerged": "{name} has been merged",
       "prOpen": "{name} hasn't been merged yet",
-      "prClosed": "{name} was closed without being merged"
+      "prClosed": "{name} was closed without being merged",
+      "branches": "Branches",
+      "branchCurrent": "current branch",
+      "branchLaunched": "started on",
+      "branchWillDelete": "Will be deleted",
+      "branchWillKeep": "Will be kept ({reason})",
+      "branchMissing": "Not in this repository",
+      "unpushedCount": "{count} unpushed commits",
+      "keep": {
+        "localOnly": "it has commits that exist only locally",
+        "trunk": "it is the default branch or a main line branch such as main or develop",
+        "checkedOut": "it is checked out in another worktree",
+        "failed": "it could not be deleted"
+      },
+      "unpushedCount_one": "{count} unpushed commit"
     },
     "newSession": {
       "startFailed": "Couldn't start the session: {error}",
@@ -1394,6 +1417,29 @@
       "restoring": "Recreating worktree",
       "copying": "Copying node_modules",
       "installing": "Installing packages"
+    },
+    "worktreeCleanup": {
+      "label": "Clean up worktrees",
+      "title": "Clean up worktrees",
+      "about": "Worktree folders still left by archived sessions, and the backups made before worktrees were deleted (refs/tanacode/backup/…).",
+      "loading": "Loading…",
+      "loadFailed": "Could not load: {error}",
+      "worktrees": "Worktrees left",
+      "noWorktrees": "No worktrees are left",
+      "remove": "Delete",
+      "removeAll": "Delete all",
+      "removing": "Deleting…",
+      "removed": "Deleted",
+      "removeFailed": "Could not delete: {error}",
+      "noteRemove": "They are deleted the same way as when you delete the worktree on archiving: uncommitted changes and untracked files are backed up, and a branch with commits that exist only locally is kept.",
+      "backups": "Backups",
+      "noBackups": "No backups",
+      "backupFor": "Put back when you restore “{title}”",
+      "backupShow": "View the contents with git show {ref}",
+      "deleteBackup": "Delete",
+      "confirmDeleteBackup": "Delete the backup {ref}?\nThe uncommitted changes and untracked files in it cannot be recovered.",
+      "deleteBackupFailed": "Could not delete the backup: {error}",
+      "confirmDeleteBackupStray": "Delete the backup {ref}?\nThe uncommitted changes and untracked files in it, and the commit on no branch that it was made on (its parent), cannot be recovered."
     }
   },
   "account": {

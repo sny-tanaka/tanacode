@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
-import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeBranch, WorktreeBranchKeep, WorktreeLeftovers, WorktreeRemovedBranch, WorktreeRemoval } from '../src/shared/ipc';
 import type { PendingPermission, PermissionReply } from '../src/shared/questions';
 import { elicitationFieldsOf, type PendingElicitation } from '../src/shared/elicitation';
 import type { AskQuestion, PermissionMode } from '../src/shared/screen';
@@ -1520,23 +1520,33 @@ describe('ツールの実行（SessionsControl）', () => {
   });
 
   describe('end_session', () => {
-    const leftovers = (patch: Partial<WorktreeLeftovers> = {}): WorktreeLeftovers => ({
+    const branch = (patch: Partial<WorktreeBranch> = {}): WorktreeBranch => ({
+      name: 'worktree-tc-a',
+      launched: true,
+      current: true,
       exists: true,
-      branch: 'worktree-tc-a',
-      uncommitted: 0,
-      untracked: 0,
       unpushed: 0,
       contentIn: null,
-      submodules: [],
       pr: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12', after: 0 },
+      keep: null,
       ...patch,
     });
+    const leftovers = (patch: Partial<WorktreeLeftovers> = {}, branches: WorktreeBranch[] = [branch()]): WorktreeLeftovers => ({
+      exists: true,
+      uncommitted: 0,
+      untracked: 0,
+      submodules: [],
+      branches,
+      ...patch,
+    });
+    // 起動したときのブランチ（今のブランチでもある）を消した・残した結果
+    const removed = (deleted = true, keep: WorktreeBranchKeep | null = null): WorktreeRemovedBranch => ({ name: 'worktree-tc-a', launched: true, current: true, deleted, keep });
     const end = (args: Record<string, unknown> = {}, caller = PARENT) => control.handle(caller, 'end_session', { session_id: CHILD, ...args });
 
     it('手の空いた worktree の子: アーカイブして worktree も消し、したことと PR の状態を返す', async () => {
       host.set(CHILD, 'idle');
       host.leftovers = leftovers();
-      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      host.removal = { backupRef: null, branches: [removed()] };
       const result = await end();
       expect(result.isError).toBeFalsy();
       expect(host.archives).toEqual([{ id: CHILD, options: { removeWorktree: true } }]);
@@ -1550,10 +1560,17 @@ describe('ツールの実行（SessionsControl）', () => {
           name: 'tc-a',
           branch: 'worktree-tc-a',
           folder: 'removed',
-          branch_kept: false,
           backup_ref: null,
-          unpushed_commits: 0,
-          pull_request: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12' },
+          branches: [
+            {
+              name: 'worktree-tc-a',
+              launched: true,
+              current: true,
+              unpushed_commits: 0,
+              pull_request: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12' },
+              deleted: true,
+            },
+          ],
         },
       });
       expect(ended).not.toHaveProperty('stopped_background_tasks');
@@ -1564,14 +1581,45 @@ describe('ツールの実行（SessionsControl）', () => {
 
     it('未コミットの変更の控えと、残したブランチを返す', async () => {
       host.set(CHILD, 'exited');
-      host.leftovers = leftovers({ uncommitted: 2, untracked: 1, unpushed: 3, pr: { state: 'none' } });
-      host.removal = { backupRef: 'refs/tanacode/backup/tc-a', branch: 'worktree-tc-a', branchKept: true };
+      host.leftovers = leftovers({ uncommitted: 2, untracked: 1 }, [branch({ unpushed: 3, pr: { state: 'none' }, keep: 'localOnly' })]);
+      host.removal = { backupRef: 'refs/tanacode/backup/tc-a', branches: [removed(false, 'localOnly')] };
       const ended = jsonOf<{ note: string }>(await end());
       expect(ended).toMatchObject({
-        worktree: { folder: 'removed', branch_kept: true, backup_ref: 'refs/tanacode/backup/tc-a', unpushed_commits: 3, pull_request: { state: 'none' } },
+        worktree: {
+          folder: 'removed',
+          backup_ref: 'refs/tanacode/backup/tc-a',
+          branches: [{ name: 'worktree-tc-a', unpushed_commits: 3, pull_request: { state: 'none' }, deleted: false, kept_because: 'it has commits that exist only locally' }],
+        },
       });
       expect(ended.note).toContain('saved as a commit at refs/tanacode/backup/tc-a');
-      expect(ended.note).toContain('Kept the branch worktree-tc-a');
+      expect(ended.note).toContain('Kept the branch worktree-tc-a because it has commits that exist only locally.');
+    });
+
+    it('子が worktree の中で作ったブランチ（git switch -c）も、起動したときのブランチと分けて、PR の状態と消したかを返す', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = leftovers({}, [
+        branch({ name: 'fix/login', launched: false, current: true, pr: { state: 'merged', number: 30, base: 'develop', url: 'https://example.test/pr/30', after: 0 } }),
+        branch({ current: false, pr: { state: 'none' } }),
+      ]);
+      host.removal = {
+        backupRef: null,
+        branches: [
+          { name: 'fix/login', launched: false, current: true, deleted: true, keep: null },
+          { name: 'worktree-tc-a', launched: true, current: false, deleted: false, keep: 'checkedOut' },
+        ],
+      };
+      const ended = jsonOf<{ note: string }>(await end());
+      expect(ended).toMatchObject({
+        worktree: {
+          branch: 'worktree-tc-a',
+          branches: [
+            { name: 'fix/login', launched: false, current: true, pull_request: { state: 'merged', number: 30 }, deleted: true },
+            { name: 'worktree-tc-a', launched: true, current: false, pull_request: { state: 'none' }, deleted: false, kept_because: 'it is checked out in another worktree' },
+          ],
+        },
+      });
+      expect(ended.note).toContain('Deleted the branch fix/login.');
+      expect(ended.note).toContain('Kept the branch worktree-tc-a because it is checked out in another worktree.');
     });
 
     it('remove_worktree: false なら、worktree を残す（残っているものも調べない）', async () => {
@@ -1646,15 +1694,15 @@ describe('ツールの実行（SessionsControl）', () => {
     it('PR の状態を調べられなくても、片付けは続ける', async () => {
       host.set(CHILD, 'idle');
       host.leftovers = new Error('gh が無い');
-      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      host.removal = { backupRef: null, branches: [removed()] };
       const ended = jsonOf<{ worktree: Record<string, unknown> }>(await end());
-      expect(ended.worktree).toMatchObject({ folder: 'removed', branch_kept: false });
-      expect(ended.worktree).not.toHaveProperty('pull_request');
+      expect(ended.worktree).toMatchObject({ folder: 'removed', branches: [{ name: 'worktree-tc-a', deleted: true }] });
+      expect((ended.worktree.branches as Record<string, unknown>[])[0]).not.toHaveProperty('pull_request');
     });
 
     it('裏のタスクの完了待ちの子も終える。動いているタスクだけを、止めたものとして返す', async () => {
       host.set(CHILD, 'background');
-      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      host.removal = { backupRef: null, branches: [removed()] };
       const task = (toolUseId: string, state: BashTask['state'], description: string | null): BashTask => ({
         toolUseId,
         taskId: toolUseId,
@@ -1797,7 +1845,7 @@ describe('ツールの実行（SessionsControl）', () => {
     it('アーカイブ済みの子: 残っている worktree を消す。もう無ければ、そのことを返す', async () => {
       host.set(CHILD, 'archived');
       host.leftovers = leftovers();
-      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      host.removal = { backupRef: null, branches: [removed()] };
       const first = jsonOf<{ note: string }>(await end());
       expect(first).toMatchObject({ archived: true, already_archived: true, worktree: { folder: 'removed' } });
       expect(first.note).toContain('It was already archived.');

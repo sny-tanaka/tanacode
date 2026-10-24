@@ -150,6 +150,8 @@
       "commandAt": "{command}（{dir}）",
       "started": "worktree .claude/worktrees/{name}（ブランチ {branch}） で始めました",
       "restored": "消していた worktree .claude/worktrees/{name}（ブランチ {branch}） を作り直しました",
+      "backupApplied": "worktree を消す前の控え {ref} の中身（未コミットの変更・未追跡のファイル）を戻し、控えを外しました",
+      "backupKept": "worktree を消す前の控え {ref} は戻せなかったので（ブランチの先頭が、控えを作ったときから変わったなど）、残しました",
       "cloned": "{paths} を元のフォルダから複製しました",
       "cloneFailed": "{paths} は複製できませんでした",
       "topDir": "いちばん上",
@@ -163,7 +165,9 @@
       "noName": "worktree の名前を決められませんでした",
       "locked": "worktree がロックされているため、消しませんでした",
       "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）",
-      "submoduleChanges": "submodule {paths}（{count} 個）の中に、消すと失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があるため、worktree を消しませんでした"
+      "submoduleChanges": "submodule {paths}（{count} 個）の中に、消すと失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があるため、worktree を消しませんでした",
+      "restoredDetached": "ブランチ {branch} はほかの場所で取り出しているため、その先頭から、ブランチから外れた状態（detached HEAD）で作り直しました",
+      "usedBySession": "アーカイブしていないセッション「{title}」が、この worktree の中で動いているため、削除しませんでした"
     },
     "settingsFile": {
       "unusable": "設定ファイル「{name}」（{path}）を使えません: {reason}",
@@ -1134,8 +1138,9 @@
       "archiveChildren": "子セッション {count} 件も一緒にアーカイブします。アーカイブしますか？",
       "archiveChildrenWorking": "子セッション {count} 件も一緒にアーカイブします（うち {working} 件は作業中です）。アーカイブしますか？",
       "backupKept": "未コミットの変更と未追跡のファイルの控えを {ref} に残しました（git show {ref} で見られます）。",
-      "branchKept": "ブランチ {branch} には、手元にしか無いコミットがあるので残しました。",
-      "worktreeRemoved": "worktree を削除しました。\n{notes}"
+      "branchKept": "ブランチ {branch} は残しました（{reason}）。",
+      "worktreeRemoved": "worktree を削除しました。\n{notes}",
+      "branchesDeleted": "ブランチ {count} 本（{branches}）を削除しました。"
     },
     "empty": {
       "composing": "左のチャット欄でフォルダを選び、最初の指示を送るとセッションが始まります",
@@ -1221,7 +1226,9 @@
       "lockedTip": "並びをロック中\nクリックで解除すると、最終更新の新しい順に戻ります",
       "unlockedTip": "並びをロック\nロックすると、更新があっても並びが入れ替わりません",
       "empty": "セッションはありません",
-      "archived": "アーカイブ済み（{count}）"
+      "archived": "アーカイブ済み（{count}）",
+      "worktreeCleanup": "worktree の片付け",
+      "worktreeCleanupLeft": "worktree の片付け\nアーカイブ済みのセッションの worktree が {count} 個残っています"
     },
     "children": {
       "working": "作業中 {count}",
@@ -1267,11 +1274,11 @@
       "removeLabel": "worktree のセッションを一覧から削除",
       "archiveTitle": "「{title}」をアーカイブ",
       "removeTitle": "「{title}」を一覧から削除",
-      "about": "このセッションは worktree {path}（ブランチ {branch}）で動いています。 worktree を残すか、削除するかを選んでください。",
+      "about": "このセッションは worktree {path}（起動したときのブランチ {branch}）で動いています。 worktree を残すか、削除するかを選んでください。",
       "noteBackup": "削除しても、未コミットの変更と未追跡のファイルは {ref} に控えを残します。",
-      "noteBranch": "手元にしか無いコミットがあれば、ブランチごと残します。リモートや PR、デフォルトブランチに入っていれば、ブランチも消します。",
+      "noteBranch": "起動したときのブランチと、worktree で今使っているブランチ（git switch -c で作ったものなど）を、それぞれ確かめます。手元にしか無いコミットがあれば残し、リモートや PR、デフォルトブランチに入っていれば消します。",
       "noteIgnored": "gitignore されたファイル（worktree の中で書き換えた .env など）は、控えに入りません。",
-      "noteRestore": "削除したセッションをアーカイブから戻すと、残したブランチから worktree を作り直します。",
+      "noteRestore": "削除したセッションをアーカイブから戻すと、残したブランチから worktree を作り直し、控えの中身も戻します。",
       "removingWorktree": "削除しています…",
       "archiveRemoveWorktree": "worktree を削除してアーカイブ",
       "removeRemoveWorktree": "worktree を削除して一覧から削除",
@@ -1296,7 +1303,20 @@
       "prMergedWithAfter": "{name}はマージ済みです。そのあとに足したコミットが {count} 件あります",
       "prMerged": "{name}はマージ済みです",
       "prOpen": "{name}は、まだマージされていません",
-      "prClosed": "{name}は、マージされずに閉じられています"
+      "prClosed": "{name}は、マージされずに閉じられています",
+      "branches": "ブランチ",
+      "branchCurrent": "今のブランチ",
+      "branchLaunched": "起動したときのブランチ",
+      "branchWillDelete": "削除します",
+      "branchWillKeep": "残します（{reason}）",
+      "branchMissing": "手元にありません",
+      "unpushedCount": "プッシュしていないコミット {count} 件",
+      "keep": {
+        "localOnly": "手元にしか無いコミットがあります",
+        "trunk": "デフォルトブランチや main・develop などの幹のブランチです",
+        "checkedOut": "ほかの worktree で使っています",
+        "failed": "削除できませんでした"
+      }
     },
     "newSession": {
       "startFailed": "セッションを始められませんでした: {error}",
@@ -1345,6 +1365,29 @@
       "restoring": "worktree を作り直しています",
       "copying": "node_modules を複製しています",
       "installing": "パッケージをインストールしています"
+    },
+    "worktreeCleanup": {
+      "label": "worktree の片付け",
+      "title": "worktree の片付け",
+      "about": "アーカイブ済みのセッションの、フォルダが残っている worktree と、worktree を消す前の控え（refs/tanacode/backup/…）です。",
+      "loading": "読み込んでいます…",
+      "loadFailed": "読み込めませんでした: {error}",
+      "worktrees": "残っている worktree",
+      "noWorktrees": "残っている worktree はありません",
+      "remove": "削除",
+      "removeAll": "すべて削除",
+      "removing": "削除しています…",
+      "removed": "削除しました",
+      "removeFailed": "削除できませんでした: {error}",
+      "noteRemove": "削除のしかたは、アーカイブのときに worktree を削除するのと同じです。未コミットの変更と未追跡のファイルは控えに残し、手元にしか無いコミットのあるブランチは残します。",
+      "backups": "控え",
+      "noBackups": "控えはありません",
+      "backupFor": "「{title}」をアーカイブから戻すと、中身を戻します",
+      "backupShow": "中身は git show {ref} で見られます",
+      "deleteBackup": "削除",
+      "confirmDeleteBackup": "控え {ref} を削除しますか？\n中の未コミットの変更と未追跡のファイルは、元に戻せなくなります。",
+      "deleteBackupFailed": "控えを削除できませんでした: {error}",
+      "confirmDeleteBackupStray": "控え {ref} を削除しますか？\n中の未コミットの変更と未追跡のファイルと、どのブランチにも無いコミット（控えの親）は、元に戻せなくなります。"
     }
   },
   "account": {

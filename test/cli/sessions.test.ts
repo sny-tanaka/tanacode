@@ -570,7 +570,13 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const ended = JSON.parse(textOf(result)) as { note: string; worktree: Record<string, unknown>; stopped_background_tasks: unknown[] };
       expect(ended).toMatchObject({ session_id: child.sessionId, archived: true, already_archived: false });
       expect(ended.stopped_background_tasks).toEqual([{ kind: 'bash', name: 'サーバーを起動' }]);
-      expect(ended.worktree).toMatchObject({ name, branch, folder: 'removed', branch_kept: false, backup_ref: `refs/tanacode/backup/${name}` });
+      expect(ended.worktree).toMatchObject({
+        name,
+        branch,
+        folder: 'removed',
+        backup_ref: `refs/tanacode/backup/${name}`,
+        branches: [{ name: branch, launched: true, current: true, deleted: true }],
+      });
       // 一覧でアーカイブ済みになり、worktree のフォルダとブランチが消える
       expect(child.summary()).toMatchObject({ archived: true, running: false });
       expect(state()).toBe('archived');

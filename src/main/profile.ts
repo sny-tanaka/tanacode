@@ -522,6 +522,12 @@ export class Profile {
     return this.manager.archive(id, options);
   }
 
+  // アーカイブ済みのセッションの、残っている worktree を消す（worktree の片付け）。そのフォルダで開いたシェルも閉じる
+  removeLeftWorktree(id: string): Promise<WorktreeRemoval> {
+    this.shells.killOwner(id);
+    return this.manager.removeLeftWorktree(id);
+  }
+
   // Claude Code と pty ホストを止める（「Claude Code も止めて終了」など）
   async stop(): Promise<void> {
     this.manager?.closeAll(true);
