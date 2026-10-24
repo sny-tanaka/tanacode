@@ -227,6 +227,7 @@
       "terminalGate": "tanacode asks every time before Claude types into a terminal, regardless of the permission mode. Typing into “{tab}”: {typed}",
       "terminalGateUnknown": "tanacode could not check the terminal, so it is asking for confirmation. Typing: {typed}",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
+      "restartGate": "This restarts tanacode, and installs a downloaded new version first if there is one. Claude Code keeps running, so your sessions continue.",
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
@@ -480,7 +481,9 @@
       "list_wakeups": "List Wake-ups",
       "cancel_wakeup": "Cancel a Wake-up",
       "report_result": "Report the Result",
-      "set_away_mode": "Away Mode"
+      "set_away_mode": "Away Mode",
+      "get_app_update": "Check for a tanacode Update",
+      "restart_app": "Restart tanacode"
     },
     "checklist": {
       "checklist_overview": "Overview",

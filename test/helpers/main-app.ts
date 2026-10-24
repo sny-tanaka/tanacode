@@ -622,7 +622,11 @@ vi.mock('../../src/main/terminal-control', () => modules['terminal-control']);
 vi.mock('../../src/main/walkthrough-github', () => modules['walkthrough-github']);
 vi.mock('../../src/main/github', () => modules.github);
 vi.mock('../../src/main/app-update', () => modules['app-update']);
-vi.mock('../../src/main/homebrew-update', () => modules['homebrew-update']);
+// 終えるときの入れ替えと起動し直しの決め方（upgradeOrRelaunch）は本物を使う（作り物の HomebrewUpdater の upgradeAfterExit を呼ぶ）
+vi.mock('../../src/main/homebrew-update', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/homebrew-update')>();
+  return { ...modules['homebrew-update'], upgradeOrRelaunch: actual.upgradeOrRelaunch };
+});
 vi.mock('../../src/main/session-discovery', () => modules['session-discovery']);
 vi.mock('../../src/main/source-control', () => modules['source-control']);
 vi.mock('../../src/main/commands', () => modules.commands);

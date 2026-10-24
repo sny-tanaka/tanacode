@@ -5,7 +5,7 @@ import { E2EApp } from './app';
 // - TANACODE.md: 起動した Claude Code の SessionStart のフック（ビルドした instructions-hook.js を、アプリの Helper が Node として動かす）が、
 //   新しい会話の始まりと /clear のあとに Claude に渡す。チャットのフックの一覧には出ない
 // - TANACODE_PARENT.md: 新規セッションの画面の「親として始める」で、最初の指示と一緒に渡る。チャットのヘッダーの「親にする」で、もう一度渡る。
-//   親の状態は覚えないので、会話を消したあとは渡らない
+//   会話の始まりには渡さないので、会話を消したあとも渡らない（もう一度押すか、子を始めたときに渡る）
 
 const RULES = '# プロジェクトの決まり\n- 答えは日本語で書く\n';
 const PARENT_RULES = '# 親として動くときの決まり\n- 作業は子のセッションに任せる\n';

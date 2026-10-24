@@ -246,7 +246,8 @@ describe('起動の準備', () => {
     const matchers = (sessionId: string, ...flags: boolean[]) =>
       (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
     expect(matchers('s1')).toEqual(['Bash']);
-    expect(matchers('s2', true, true)).toHaveLength(3);
+    // ブラウザの 1 つと、セッションの 2 つ（子セッションの起動と tanacode の再起動）
+    expect(matchers('s2', true, true)).toHaveLength(4);
   });
 
   it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {
