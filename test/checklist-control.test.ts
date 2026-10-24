@@ -133,12 +133,28 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     for (const cards of [undefined, [], 'A']) {
       const result = await call('card_add', { list: 'やること', cards });
       expect(result.isError).toBe(true);
-      expect(first(result)).toBe('Pass at least one card to add in cards.');
+      expect(first(result)).toBe('Pass at least one card to add in cards (an array of objects with title and, optionally, body).');
     }
+    // cards を使わず title を直に渡されたら、1 枚として受け取る
+    await call('list_create', { name: 'べつ' });
+    expect(first(await call('card_add', { list: 'べつ', title: '直に', body: '本文' }))).toBe('Added #1 "直に" to "べつ".');
+    expect(store.findList(ME, 'べつ')!.cards.map((c) => [c.title, c.body])).toEqual([['直に', '本文']]);
     expect(first(await call('card_add', { list: 'やること', cards: [{ title: 1 }] }))).toBe('タイトルが空のカードは作れません');
     expect(first(await call('card_add', { list: 'やること', cards: [null] }))).toBe('タイトルが空のカードは作れません');
     expect(first(await call('card_add', { list: 'やること', cards: [{ title: 'A', body: 3 }] }))).toBe('Added #1 "A" to "やること".');
     expect(store.findList(ME, 'やること')!.cards.map((c) => [c.number, c.title, c.body])).toEqual([[1, 'A', '']]);
+  });
+
+  it('番号の引数が無い・取り違えたときは、正しい引数の名前を返す', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
+    expect(first(await call('card_check', { list: 'やること', cards: '1' }))).toBe(
+      'Pass the card numbers in numbers, written like "3", "5-8" or "5,7,9" (you passed cards, which this tool does not take).',
+    );
+    expect(first(await call('card_check', { list: 'やること' }))).toBe('Pass the card numbers in numbers, written like "3", "5-8" or "5,7,9".');
+    expect(first(await call('card_update', { list: 'やること', numbers: '1', title: 'B' }))).toBe(
+      'Pass the card number in number, written like "3" (you passed numbers, which this tool does not take).',
+    );
+    expect(first(await call('card_check', { list: 'やること', numbers: 'x' }))).toBe('Write numbers like "3", "5-8" or "5,7,9".');
   });
 
   it('card_check・card_uncheck: もとからその状態のカードは、そう返す。枚数に合わせて単数・複数を書き分ける', async () => {

@@ -45,7 +45,7 @@ const START_PERMISSION = (child: string, name: string, prompt: string): PendingP
 
 // start_session の結果の note（Claude に返す英語の文。子セッションを worktree で始めたとき。main の SessionsControl.startSession）
 const START_NOTE =
-  'The first instruction will be sent as soon as the child has started. The worktree is set up before the first instruction is sent (the state is starting until then), so the child needs no setup for the worktree itself. If installing its dependencies fails, the first instruction says so and get_session shows it in worktree.setup_problems. Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (schedule a wake-up with schedule_wakeup and end your turn, so that the user can talk to you).';
+  'The first instruction will be sent as soon as the child has started. The worktree is set up before the first instruction is sent (the state is starting until then), so the child needs no setup for the worktree itself. If installing its dependencies fails, the first instruction says so and get_session shows it in worktree.setup_problems. A notice arrives when the child finishes its work or stops on a question or a permission prompt: end your turn and wait for it (do not wait synchronously, and do not schedule wake-ups to check on the child).';
 
 const README_QUESTION: PendingQuestion = {
   id: 'readme-question',
