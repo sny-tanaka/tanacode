@@ -55,6 +55,11 @@ const INITIAL: SessionSummary[] = [
     worktree: { name: 'tc-1002-p7mz', branch: 'worktree-tc-1002-p7mz', root: '/Users/me/work/cafe-menu', preparing: 'installing' },
   }),
   session(5, '古い調査', '/Users/me/work/notes', { archived: true }),
+  // アーカイブ済みで worktree のフォルダが残っている（見出しの右に、worktree の片付けの印が注意の色で出る）
+  session(9, '終わった並行作業', '/Users/me/work/cafe-menu/.claude/worktrees/tc-0930-x2y3', {
+    archived: true,
+    worktree: { name: 'tc-0930-x2y3', branch: 'worktree-tc-0930-x2y3', root: '/Users/me/work/cafe-menu', preparing: null, left: true },
+  }),
 ];
 
 // 予約したメッセージ。「README の更新」は今日の 18:30 に送る予約が 2 件、「社内 API の確認」は時刻に送れなかった予約がある
@@ -115,6 +120,7 @@ function Demo({ locked }: { locked: boolean }) {
           onUnarchive={noop}
           onRename={noop}
           onRemove={noop}
+          onCleanupWorktrees={noop}
           scheduled={SCHEDULED}
         />
       </div>
