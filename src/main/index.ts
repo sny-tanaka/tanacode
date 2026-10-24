@@ -914,7 +914,7 @@ function registerIpc(): void {
   });
   handle(IpcChannel.BrowserAsksGet, (e) => P(e).browser.pendingAsks());
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
-  handle(IpcChannel.BrowserHostsGet, (e) => settings.browserHosts());
+  handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
 }
 
@@ -1244,7 +1244,7 @@ function setBrowserControl(item: MenuItem): void {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) for (const profile of profiles()) profile.browser.turnOff();
+  if (!item.checked) forEachProfile((profile) => profile.browser.turnOff(), 'アプリ内ブラウザの操作を取り下げられませんでした');
 }
 
 // メニューの「MCP → セッションの操作」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
@@ -1299,10 +1299,21 @@ function setChecklistControl(item: MenuItem): void {
 
 // 最適化圧縮の状態（使えるか・自動で始める大きさ）を、すべてのプロファイルのセッションに知らせ直す
 function refreshCompact(): void {
-  for (const profile of profiles()) {
+  forEachProfile((profile) => {
     const ids = profile.manager?.list().map((s) => s.id) ?? [];
     profile.compact?.refresh(ids);
     for (const id of ids) profile.autoCompact?.check(id);
+  }, '最適化圧縮の状態を知らせ直せませんでした');
+}
+
+// アプリ全体の設定を変えたあと、すべてのプロファイルに効かせる。1 つのプロファイルで投げても、残りのプロファイルには効かせる（ログに残す）
+function forEachProfile(run: (profile: Profile) => void, failure: string): void {
+  for (const profile of profiles()) {
+    try {
+      run(profile);
+    } catch (error) {
+      console.error(failure, profile.id, error);
+    }
   }
 }
 
@@ -1359,7 +1370,7 @@ function setUsageLimitResume(item: MenuItem): void {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) for (const profile of profiles()) profile.usageLimit?.cancelAll();
+  if (!item.checked) forEachProfile((profile) => profile.usageLimit?.cancelAll(), '利用枠からの再開の予約を取り消せませんでした');
 }
 
 // メニューの「言語」の項目の名前。日本語と English は、どの言語の画面でもその言語の書き方で出す（読めない言語の画面からでも選べるように）

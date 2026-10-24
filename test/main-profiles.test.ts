@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { allOf, boot, cleanup, fakeEvent, invoke, invokeFrom, mainWindow, menuItem, sendWith, state, type Fake, type FakeView, type FakeWebContents } from './helpers/main-app';
 
@@ -130,18 +130,115 @@ describe('足したプロファイルを開く', () => {
     await expect(invokeFrom(view().webContents, IpcChannel.BrowserHostsGet)).resolves.toEqual(['a.test']);
   });
 
-  it('前のバージョンで足したプロファイルが持っていた許す先は、アプリ全体の許す先に足す（一度だけ。ほかの値は既定のプロファイルのものを引き継ぐ）', async () => {
+  it('前のバージョンで足したプロファイルが持っていた設定は、安全なほうに倒して 1 つにまとめる（一度だけ）: 許す機能・利用枠の再開はどれかでオフならオフ、許す先は和、大きさと待つ時間は既定のプロファイルの値', async () => {
     await boot({
       profiles: PROFILES,
-      settings: { browserHosts: ['shared.test', 'a.test'], terminalControl: false },
-      before: (s) => writeP2Settings(s, { browserHosts: ['p2.test', 'shared.test'], terminalControl: true, checklistControl: false }),
+      settings: { browserHosts: ['shared.test', 'a.test'], terminalControl: false, autoCompactPercent: 60, prompts: { usageResume: '続けて' } },
+      before: (s) =>
+        writeP2Settings(s, { browserHosts: ['p2.test', 'shared.test'], terminalControl: true, checklistControl: false, browserControl: false, usageLimitResume: false, autoCompactPercent: 40, awayWaitMinutes: 30 }),
     });
-    expect(globalSettings()).toMatchObject({ browserHosts: ['shared.test', 'a.test', 'p2.test'], terminalControl: false, checklistControl: true, profilesMerged: true });
+    expect(globalSettings()).toMatchObject({
+      browserHosts: ['shared.test', 'a.test', 'p2.test'],
+      browserControl: false,
+      sessionsControl: true,
+      checklistControl: false,
+      walkthroughControl: true,
+      terminalControl: false,
+      usageLimitResume: false,
+      autoCompactPercent: 60,
+      awayWaitMinutes: 5,
+      prompts: { usageResume: '続けて' },
+      profilesMerged: true,
+    });
     // 足したプロファイルのファイルは消さない
     expect(existsSync(p2SettingsFile())).toBe(true);
-    // 移し替えたあとは、外した先を、また足さない
-    await boot({ profiles: PROFILES, settings: { browserHosts: ['a.test'], profilesMerged: true }, before: (s) => writeP2Settings(s, { browserHosts: ['p2.test'] }) });
-    expect(globalSettings().browserHosts).toEqual(['a.test']);
+    // 移し替えたあとは、外した先を、また足さない（オンに戻したものも、またオフにしない）
+    await boot({ profiles: PROFILES, settings: { browserHosts: ['a.test'], profilesMerged: true }, before: (s) => writeP2Settings(s, { browserHosts: ['p2.test'], browserControl: false }) });
+    expect(globalSettings()).toEqual({ version: 1, browserHosts: ['a.test'], profilesMerged: true });
+    expect(menuItem('browserControl').checked).toBe(true);
+  });
+
+  it('アプリ全体の設定のファイルが壊れていたら、移し替えて書き換える前に、元の中身を横に控える', async () => {
+    await boot({
+      profiles: PROFILES,
+      before: (s) => {
+        writeFileSync(join(s.userData, 'settings.json'), '{ "prompts": { "usageResume": "続け');
+        writeP2Settings(s, { browserHosts: ['p2.test'] });
+      },
+    });
+    const aside = readdirSync(state.userData).filter((name) => name.startsWith('settings.json.broken-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(state.userData, aside[0]!), 'utf8')).toBe('{ "prompts": { "usageResume": "続け');
+    expect(globalSettings()).toMatchObject({ browserHosts: ['p2.test'], profilesMerged: true });
+  });
+
+  it('移し替えを保存できなくても、起動は続ける。印は付けないので、次の起動でまた移し替える', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await boot({
+      profiles: PROFILES,
+      settings: { browserHosts: ['a.test'] },
+      before: (s) => {
+        writeP2Settings(s, { browserHosts: ['p2.test'] });
+        // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
+        mkdirSync(join(s.userData, 'settings.json.tmp'));
+      },
+    });
+    expect(state.views).toHaveLength(1);
+    expect(globalSettings()).toEqual({ version: 1, browserHosts: ['a.test'] });
+    expect(error).toHaveBeenCalledWith('プロファイルごとの設定を、アプリ全体の設定に移せませんでした', expect.any(Error));
+    error.mockRestore();
+  });
+
+  it('足したプロファイルの画面から許す先を変えても、アプリ全体の設定に保存する', async () => {
+    await boot({ profiles: PROFILES });
+    await expect(invokeFrom(view().webContents, IpcChannel.BrowserHostsSet, ['p2.test'])).resolves.toEqual(['p2.test']);
+    expect(globalSettings().browserHosts).toEqual(['p2.test']);
+    expect(existsSync(p2SettingsFile())).toBe(false);
+    await expect(invoke(IpcChannel.BrowserHostsGet)).resolves.toEqual(['p2.test']);
+  });
+
+  it('利用枠の再開を切ったら、すべてのプロファイルで待っている予約を取り消す。1 つのプロファイルで投げても、残りでは取り消す', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await boot({ profiles: PROFILES });
+    const [first, second] = allOf('UsageLimitResume').map((c) => c.instance as Fake);
+    first!.cancelAll.mockImplementationOnce(() => {
+      throw new Error('取り消せません');
+    });
+    const item = menuItem('usageLimitResume');
+    item.checked = false;
+    item.click?.(item);
+    expect(first!.cancelAll).toHaveBeenCalledTimes(1);
+    expect(second!.cancelAll).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('利用枠からの再開の予約を取り消せませんでした', 'default', expect.any(Error));
+    error.mockRestore();
+  });
+
+  it('ブラウザの操作を切ったとき、1 つのプロファイルで投げても、残りでは頼んでいる操作を取り下げる', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await boot({ profiles: PROFILES });
+    const [first, second] = allOf('BrowserControl').map((c) => c.instance as Fake);
+    first!.turnOff.mockImplementationOnce(() => {
+      throw new Error('取り下げられません');
+    });
+    const item = menuItem('browserControl');
+    item.checked = false;
+    item.click?.(item);
+    expect(second!.turnOff).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('アプリ内ブラウザの操作を取り下げられませんでした', 'default', expect.any(Error));
+    error.mockRestore();
+  });
+
+  it('チェックリストを切り替えた・自動で最適化圧縮する大きさを変えたら、すべてのプロファイルのセッションに、最適化圧縮の状態を知らせ直す', async () => {
+    await boot({ profiles: PROFILES });
+    managerOf(0).list.mockReturnValue([{ id: 's1' }]);
+    managerOf(1).list.mockReturnValue([{ id: 's2' }]);
+    const compactSent = () => [sentTo(mainWindow().webContents, IpcChannel.CompactChanged), sentTo(view().webContents, IpcChannel.CompactChanged)];
+    const item = menuItem('checklistControl');
+    item.checked = false;
+    item.click?.(item);
+    expect(compactSent().map((sent) => sent.map((p) => (p as { sessionId: string }).sessionId))).toEqual([['s1'], ['s2']]);
+    menuItem('autoCompactPercent-40').click?.({});
+    expect(compactSent().map((sent) => sent.length)).toEqual([2, 2]);
   });
 
   it('足したプロファイルが無ければ、移し替えずに、設定のファイルも書かない', async () => {
