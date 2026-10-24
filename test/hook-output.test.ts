@@ -1,7 +1,8 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { appHookOutput, SUPPRESS_OUTPUT } from '../src/main/hook-output';
@@ -73,30 +74,61 @@ describe('シェルで動くアプリのフック', () => {
   // 数百回に 1 回、Node が入力を書き終えたのに子の標準入力を閉じず、cat が入力の終わりを待ち続ける（素の `cat >/dev/null` でも起こる。
   // 入力がソケットに入りきる大きさなら起こらない）。止まったときの lsof では、cat は 1MB を読み終えていて、Node が子の標準入力を開いたままだった
   const run = (command: string, input: string, noAskFile: string) =>
-    new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: string; timedOut: boolean }>((resolve) => {
+    new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: string; timedOut: boolean; stalled?: string }>((resolve) => {
+      // 止めるときに、sh の下の cat なども一緒に止められるよう、プロセスのグループを分ける
       const child = spawn('sh', ['-c', command], {
+        detached: true,
         env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
       });
       let stdout = '';
       let stderr = '';
       let error: string | undefined;
       let timedOut = false;
+      let stalled: string | undefined;
       child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
       child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
       // 読まずに閉じたフックへの書き込みの EPIPE は、ここに来る（失敗として返す）
       child.stdin.on('error', (e) => (error ??= `stdin: ${e.message}`));
       child.on('error', (e) => (error ??= e.message));
       // 止まったときに、どのコマンドで止まったかが分かる失敗にする（テストの時間切れで、何も残らずに落ちないように）
+      // 止める前に、どこで待っていたかを残す（手元で再現しなかったので、次に CI で止まったときに読む）。
+      // Node が子の標準入力を閉じたか（stdin の状態）と、子のプロセスの木（ps）と、それぞれの開いているファイル（lsof。パイプ・ソケットの相手）
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
+        stalled = describeStall(child.pid, child.stdin);
+        // sh だけを止めると、入力の終わりを待つ cat が標準出力を開いたまま残り、close が来ない
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGTERM');
       }, 10_000);
       child.on('close', (status, signal) => {
         clearTimeout(timer);
-        resolve({ status, signal, stdout, stderr, error, timedOut });
+        resolve({ status, signal, stdout, stderr, error, timedOut, stalled });
       });
       child.stdin.end(input);
     });
+
+  const describeStall = (pid: number | undefined, stdin: Writable) => {
+    const out = (cmd: string, args: string[]) => {
+      const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 5_000 });
+      return r.error ? `${cmd}: ${r.error.message}` : `${r.stdout}${r.stderr}`;
+    };
+    const lines = [`stdin: ended ${stdin.writableEnded}・finished ${stdin.writableFinished}・destroyed ${stdin.destroyed}`];
+    if (pid === undefined) return lines.join('\n');
+    // 子の木（sh とその下の cat・awk など）を、ps の一覧から親子でたどる
+    const ps = out('ps', ['-A', '-o', 'pid=,ppid=,stat=,etime=,command=']);
+    const rows = ps.split('\n').map((l) => l.trim().split(/\s+/)).filter((r) => r.length >= 2);
+    const tree = new Set([String(pid)]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const [p, pp] of rows)
+        if (tree.has(pp) && !tree.has(p)) {
+          tree.add(p);
+          grew = true;
+        }
+    }
+    lines.push('ps:', ...ps.split('\n').filter((l) => tree.has(l.trim().split(/\s+/)[0])));
+    lines.push('lsof:', out('lsof', ['-n', '-P', '-p', [...tree, String(process.pid)].join(',')]).split('\n').filter((l) => /PIPE|unix|FIFO|COMMAND/.test(l)).join('\n'));
+    return lines.join('\n');
+  };
 
   it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', async () => {
     const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
@@ -115,7 +147,7 @@ describe('シェルで動くアプリのフック', () => {
       const started = performance.now();
       const result = await run(command, input, noAskFile);
       // 標準出力に答え（suppressOutput）があれば、フックは入力の終わりを受け取って答えを書いたあと、空なら答えを書く前
-      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout.slice(-200))}・stderr ${JSON.stringify(result.stderr.slice(-500))}`;
+      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout.slice(-200))}・stderr ${JSON.stringify(result.stderr.slice(-500))}${result.stalled ? `\n${result.stalled}` : ''}`;
       expect({ command, noAskFile, error: result.error, timedOut: result.timedOut, status: result.status }, detail).toEqual({ command, noAskFile, error: undefined, timedOut: false, status: 0 });
     }
   }, 80_000);
