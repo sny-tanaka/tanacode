@@ -63,6 +63,9 @@ const MAX_MARKS = 20;
 // 撮った絵が空のとき、描かれるのを待って撮り直す時間と間隔（shoot）
 const EMPTY_SHOT_WAIT_MS = 3_000;
 const EMPTY_SHOT_POLL_MS = 100;
+// 要素まで動かしたあとの絵が描かれるのを待つスクリプト（2 コマ）と、待つ上限（screenshot）
+const FRAMES_DRAWN = 'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))';
+const FRAME_WAIT_MS = 500;
 // 画素密度を決めたタブを CDP で撮るのを待つ時間（過ぎたら capturePage で撮る。shoot）
 const DENSE_SHOT_WAIT_MS = 5_000;
 // タブが大きさを持つまで待つ時間と間隔（laidOut）
@@ -678,7 +681,8 @@ export class BrowserControl {
     if (name === 'close_tab') return this.closeTab(sessionId, args.index);
     const guest = await this.current(sessionId);
     // Claude が決めた画面の大きさが、このタブに当たっていなければ当てる（CDP が外れて消えた・当てる前に操作した）
-    if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport);
+    // 当てられなくても（CDP をつなげない など）、ツールは続ける（読むツールまで止めない）。当たっていないので、次の呼び出しでまた当てる
+    if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport).catch(() => undefined);
     switch (name) {
       case 'screenshot':
         return this.screenshot(guest, optionalString(args.selector), args.fullPage === true, args.save === true);
@@ -983,11 +987,18 @@ export class BrowserControl {
     });
   }
 
-  // CDP の Page.captureScreenshot で、見えている範囲（rect があれば、その中。CSS の px）を撮る。撮れなければ null
+  // CDP の Page.captureScreenshot で、見えている範囲（rect があれば、その中。CSS の px）を撮る。撮れなければ null。
+  // rect は、見えている範囲をまるごと撮ってから切り出す。clip は使わない（Electron 44.7 の webview で、clip をページの先頭から測るか
+  // 見えている範囲から測るかが、ブラウザを閉じているか・その前に captureBeyondViewport で撮ったかで入れ替わり、別の場所が撮れたため）
   private async cdpShot(guest: Guest, rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage | null> {
-    const shot = (await this.cdp(guest, 'Page.captureScreenshot', { format: 'png', ...(rect ? { clip: { ...rect, scale: 1 } } : {}) }).catch(() => null)) as { data?: unknown } | null;
+    const shot = (await this.cdp(guest, 'Page.captureScreenshot', { format: 'png' }).catch(() => null)) as { data?: unknown } | null;
     const image = typeof shot?.data === 'string' ? nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) : null;
-    return image && !image.isEmpty() ? image : null;
+    if (!image || image.isEmpty()) return null;
+    if (!rect) return image;
+    // 撮った画像は、見えている範囲（CSS の px）の画素密度倍
+    const scale = image.getSize().width / Math.max((await this.viewport(guest)).width, 1);
+    const cropped = image.crop({ x: Math.round(rect.x * scale), y: Math.round(rect.y * scale), width: Math.round(rect.width * scale), height: Math.round(rect.height * scale) });
+    return cropped.isEmpty() ? null : cropped;
   }
 
   private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean, save: boolean): Promise<ToolResult> {
@@ -1006,6 +1017,9 @@ export class BrowserControl {
       const width = Math.min(target.viewport.width - x, Math.ceil(target.rect.width + pad * 2));
       const height = Math.min(target.viewport.height - y, Math.ceil(target.rect.height + pad * 2));
       if (width <= 0 || height <= 0) throw new ToolError(`"${selector}" has zero size and cannot be captured.`);
+      // 要素まで動かした（locate の scrollIntoView）あとの絵が描かれるのを待つ。待たずに CDP で撮ると、動かす前の絵が撮れた
+      // （Electron 44.7 の webview。ブラウザを閉じて見ていないタブ）。描かれない状態でも先へ進むよう、待つのは長くても 0.5 秒
+      await Promise.race([this.world(guest, FRAMES_DRAWN).catch(() => undefined), sleep(FRAME_WAIT_MS)]);
       image = await this.shoot(guest, { x, y, width, height });
       cssWidth = width;
       note = `${selector} (${target.description})`;
@@ -1023,6 +1037,12 @@ export class BrowserControl {
         }),
       )) as { data: string };
       image = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
+      // captureBeyondViewport で撮ると、CDP で決めた大きさのうち、タッチ対応が外れる（Electron 44.7 で確かめた。大きさと画素密度は残る）ので、当て直す
+      if (guest.emulated) {
+        const emulation = guest.emulated;
+        guest.emulated = null;
+        await this.emulate(guest, emulation).catch(() => undefined);
+      }
       cssWidth = width;
       note = height < total ? `Top ${height}px of the page (full height ${total}px; scroll and take another screenshot for the rest)` : `Full page (${width}×${height})`;
     } else {
@@ -1425,7 +1445,9 @@ export class BrowserControl {
     if ((named !== undefined && !Object.hasOwn(VIEWPORTS, named)) || (args.width !== undefined && named === undefined && typeof args.width !== 'number')) {
       throw new ToolError(`width must be full, mobile or tablet, or a number: ${String(args.width)}`);
     }
-    const numbers = typeof args.width === 'number' || args.height !== undefined || args.deviceScaleFactor !== undefined || args.mobile !== undefined;
+    if (args.mobile !== undefined && typeof args.mobile !== 'boolean') throw new ToolError(`mobile must be true or false: ${String(args.mobile)}`);
+    // mobile: false だけ（数字なし）は、CDP で決めるものが何も無いので、幅だけの切り替えとして扱う
+    const numbers = typeof args.width === 'number' || args.height !== undefined || args.deviceScaleFactor !== undefined || args.mobile === true;
     if (!device && !numbers) {
       if (named === undefined) throw new ToolError('Provide device or width.');
       // 前と同じ、画面の幅だけを変えるもの。CDP で決めたものはやめる
@@ -1445,7 +1467,6 @@ export class BrowserControl {
       args.deviceScaleFactor === undefined
         ? (device?.deviceScaleFactor ?? 0)
         : ranged(args.deviceScaleFactor, 'deviceScaleFactor', VIEWPORT_LIMITS.minScale, VIEWPORT_LIMITS.maxScale);
-    if (args.mobile !== undefined && typeof args.mobile !== 'boolean') throw new ToolError(`mobile must be true or false: ${String(args.mobile)}`);
     const mobile = typeof args.mobile === 'boolean' ? args.mobile : !!device;
     const dims = `${width || 'pane width'}×${height || 'pane height'}${deviceScaleFactor ? ` @${deviceScaleFactor}x` : ''}`;
     const label = device ? `${device.name} ${dims}` : dims;
@@ -1536,11 +1557,16 @@ export class BrowserControl {
     const before = guest.contents.getURL();
     // Input.dispatchTouchEvent の位置は、タブの中ではなく、アプリのウインドウの中の位置として読まれる（Electron 44.7 の webview で確かめた。
     // タブの中の位置のまま送ると、webview の左上の分だけずれて届く。マウスの Input.dispatchMouseEvent は、タブの中の位置のまま届く）。
-    // それで、アプリの画面の中の webview の左上を足す。別プロセスの iframe の中も、その iframe のセッションに、同じウインドウの中の位置で送る
+    // それで、アプリの画面の中の webview の左上を足す（hostOffset）。別プロセスの iframe の中も、その iframe のセッションに、同じ位置で送る（実機では確かめていない）
     const child = target.child?.session;
-    const shift = await this.hostOffset(guest);
+    const at = await this.hostOffset(guest);
     const send = (type: string, points: BrowserPoint[]) =>
-      this.cdp(guest, 'Input.dispatchTouchEvent', { type, touchPoints: points.map((p, id) => ({ x: round(p.x + shift.x), y: round(p.y + shift.y), id })) }, child);
+      this.cdp(
+        guest,
+        'Input.dispatchTouchEvent',
+        { type, touchPoints: points.map((p, id) => ({ x: round(at.x + p.x * at.scale), y: round(at.y + p.y * at.scale), id })) },
+        child,
+      );
     const show = (points: BrowserPoint[]) => this.emit({ sessionId, active: true, label: null, box: null, touches: points.map((p) => ({ x: round(p.x), y: round(p.y) })) });
     // さわる前に、指を置く場所を見せる
     show(from);
@@ -1566,8 +1592,11 @@ export class BrowserControl {
     return textResult(lines.join('\n'));
   }
 
-  // アプリのウインドウの中の、タブ（webview）の左上（画面の拡大の分も掛ける）。画面がタブの webview に付けた data-tab-id で探す
-  private async hostOffset(guest: Guest): Promise<BrowserPoint> {
+  // タッチを送る位置の決め方。送る位置 = 左上 + タブの中の位置 × scale。画面がタブの webview に付けた data-tab-id で探す。
+  // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）:
+  // - 左上は、アプリの画面の CSS の px のまま（拡大の倍率を掛けない）
+  // - タブの中の位置は、CDP で大きさを決めていないタブではそのまま、決めたタブ（set_viewport の機種・数字）では倍率で割る
+  private async hostOffset(guest: Guest): Promise<BrowserPoint & { scale: number }> {
     const host = this.deps.host();
     const found = host && !host.isDestroyed()
       ? ((await host
@@ -1575,8 +1604,7 @@ export class BrowserControl {
           .catch(() => null)) as BrowserPoint | null)
       : null;
     if (!found) throw new ToolError('Could not find this tab in the tanacode window, so the touch was not sent.');
-    const zoom = host!.getZoomFactor();
-    return { x: found.x * zoom, y: found.y * zoom };
+    return { x: found.x, y: found.y, scale: guest.emulated ? 1 / host!.getZoomFactor() : 1 };
   }
 
   // 今のタブの CPU・通信を遅くする（やめる）。指定しなかったほうは、今のまま

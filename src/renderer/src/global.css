@@ -6192,8 +6192,9 @@ button.menu-tab:disabled {
   overflow: hidden;
   box-shadow: 0 0 0 1px var(--border-subtle);
 }
-/* Claude が高さも決めた（機種の名前か数字）。枠をその大きさのままにし、入りきらなければ、まわりでスクロールする
-   （縮めると、ページから見える大きさと、人に見える大きさがずれる）。margin: auto で、はみ出しても左上が切れないように真ん中に置く */
+/* Claude が機種の名前か数字で大きさを決めた。枠をその大きさのままにし、入りきらなければ、まわりでスクロールする
+   （縮めると、ページから見える大きさと、人に見える大きさがずれる）。margin: auto で、はみ出しても左上が切れないように真ん中に置く。
+   幅・高さを決めていないほう（0）は 100%（枠いっぱい） */
 .preview-body.sized {
   overflow: auto;
   justify-content: flex-start;

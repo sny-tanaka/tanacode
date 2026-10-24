@@ -66,11 +66,12 @@ export const スマホの大きさでタッチ: Story = {
   ),
 };
 
-// 2 本の指（touch の pinch・fingers 2）。数字で決めた大きさ（機種の名前なし）。遅くしているのは CPU だけ
+// 2 本の指（touch の pinch・fingers 2）。数字で幅だけを決めた（高さは枠いっぱい）。枠が狭くても幅は縮めず、横にスクロールする。
+// 遅くしているのは CPU だけ
 export const 二本指: Story = {
   args: { label: 'タッチ' },
   render: (args) => (
-    <div className="preview-pane" style={{ width: 520, height: 420, border: '1px solid var(--border-subtle)' }}>
+    <div className="preview-pane" style={{ flex: 'none', width: 340, height: 420, border: '1px solid var(--border-subtle)' }}>
       <div className="preview-toolbar">
         <select className="preview-width" value="custom" onChange={() => {}}>
           <option value="custom">{viewportLabel(390, { height: 0, deviceScaleFactor: 3, device: null })}</option>
@@ -78,7 +79,7 @@ export const 二本指: Story = {
         <ThrottleBadge throttle={{ cpu: 6, network: null }} onClear={() => {}} />
       </div>
       <ClaudeBar {...args} />
-      <div className="preview-body framed" style={{ '--preview-width': '390px' } as React.CSSProperties}>
+      <div className="preview-body framed sized" style={{ '--preview-width': '390px', '--preview-height': '100%' } as React.CSSProperties}>
         <div className="preview-frame">
           <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>
             <h1 style={{ margin: '0 0 16px', fontSize: 24 }}>地図</h1>

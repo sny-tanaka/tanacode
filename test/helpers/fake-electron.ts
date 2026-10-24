@@ -24,6 +24,11 @@ export class FakeImage {
     return new FakeImage(size.width, size.height, `${this.name}（縮めた）`);
   }
 
+  // 切り出した範囲を控える（名前に入れる）
+  crop(rect: { x: number; y: number; width: number; height: number }): FakeImage {
+    return new FakeImage(rect.width, rect.height, `${this.name}（${rect.x},${rect.y} を切り出した）`);
+  }
+
   toPNG(): Buffer {
     return Buffer.from(`${this.name}:${this.width}x${this.height}`);
   }
@@ -77,7 +82,7 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
@@ -89,6 +94,7 @@ const SCRIPT_MARKS: [PageScript, string][] = [
   ['scroll', 'scrollBy('],
   ['wait', 'const state ='],
   ['clear', 'selectAllChildren(el)'],
+  ['frames', 'requestAnimationFrame(() => requestAnimationFrame('],
 ];
 
 export function scriptKind(code: string): PageScript | null {
@@ -113,7 +119,7 @@ export class FakeContents extends EventEmitter {
   // isLoading が、あと何回 true を返すか（読み込み中を少しの間だけ続ける）
   loadingPolls = 0;
   readonly debugger = new FakeDebugger();
-  // ページの中のスクリプトへの答え（種類ごと）。決めていない種類は、見えている範囲（viewport）・タブの大きさ（size）・フォーカス（focus）以外はエラー
+  // ページの中のスクリプトへの答え（種類ごと）。決めていない種類は、見えている範囲（viewport）・タブの大きさ（size）・フォーカス（focus）・描かれるのを待つ（frames）以外はエラー
   page: PageHandlers = {};
   readonly scripts: { world: number; kind: PageScript | null; code: string }[] = [];
   // evaluate（executeJavaScript）への答え
@@ -209,6 +215,7 @@ export class FakeContents extends EventEmitter {
     const handler = kind ? this.page[kind] : undefined;
     if (handler) return handler(code);
     if (kind === 'viewport') return { width: 800, height: 600, dpr: 1 };
+    if (kind === 'frames') return true;
     if (kind === 'size') return { laidOutWidth: 800, laidOutHeight: 600 };
     if (kind === 'focus') return null;
     throw new Error(`テストが答えを決めていないスクリプトです（${kind ?? '不明'}）`);

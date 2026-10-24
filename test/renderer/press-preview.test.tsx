@@ -180,10 +180,11 @@ describe('PreviewPane: アドレス欄と表示幅', () => {
     expect(body().className).toBe('preview-body framed sized');
     expect(body().style.getPropertyValue('--preview-width')).toBe('393px');
     expect(body().style.getPropertyValue('--preview-height')).toBe('852px');
-    // 数字だけ（高さは枠いっぱい）
+    // 幅だけ（高さは枠いっぱい）。枠が狭くても、ページの右が切れずにスクロールできるように、幅はそのままにする
     act(() => api.emit('browser.onViewport', { sessionId: 's1', width: 390, custom: { height: 0, deviceScaleFactor: 2, device: null } }));
     expect(select.selectedOptions[0]!.textContent).toBe('幅 390 @2x');
-    expect(body().className).toBe('preview-body framed');
+    expect(body().className).toBe('preview-body framed sized');
+    expect(body().style.getPropertyValue('--preview-height')).toBe('100%');
     expect(api.argsOf('browser.resetViewport')).toEqual([]);
     fireEvent.change(select, { target: { value: '768' } });
     expect(api.argsOf('browser.resetViewport')).toEqual([['s1']]);

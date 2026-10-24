@@ -279,6 +279,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'tap taps, long_press holds the finger still for durationMs (default 800), swipe slides the finger to toX and toY (or by deltaX and deltaY) in durationMs (default 300), and pinch moves two fingers apart (scale above 1, zoom in) or together (scale below 1). ' +
       'Where to touch: selector (the center of the first visible element matching it; same-origin iframes are searched too), or x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
       'fingers 2 taps or swipes with two fingers side by side (40px apart). The user sees the fingers as circles on the page. ' +
+      'pinch only sends the touch events to the page (for pages that handle pinches themselves); the browser does not zoom the page by it. ' +
       'Touch events reach the page even without set_viewport, but a page that checks for touch support (navigator.maxTouchPoints, pointer: coarse) needs set_viewport with device or mobile first.',
     inputSchema: {
       type: 'object',
@@ -307,7 +308,8 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       `cpu is how many times slower the CPU runs (1 turns it off, up to ${THROTTLE_LIMITS.maxCpu}; a mid-range phone is about 4, a low-end one about 6). ` +
       'network is a connection preset (slow-3g, 3g, 4g, offline; off turns it off), with the same speeds as Chrome DevTools. ' +
       'The setting applies only to the current tab and stays across reloads and navigations in that tab (reload with navigate to measure the start of a page), until you turn it off with this tool, the user turns it off in the toolbar, or the tab is closed. ' +
-      'The user sees that the tab is slowed down in the toolbar. Turn it off when you are done. Cross-origin iframes (which run in another process) are not slowed down by cpu.',
+      'The user sees that the tab is slowed down in the toolbar. Turn it off when you are done. ' +
+      'cpu slows down the renderer process of the tab: cross-origin iframes (which run in another process) are not slowed down, and if Chromium has put other tabs of the same site into the same process (which happens when there are many tabs), they are slowed down too.',
     inputSchema: {
       type: 'object',
       properties: {

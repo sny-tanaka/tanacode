@@ -1814,7 +1814,8 @@
         "offline": "Offline"
       },
       "label": "Claude is slowing down this tab: {state}. Click to restore the normal speed",
-      "tip": "Claude is slowing down this tab (it continues after reloads and navigations). Click to restore the normal speed"
+      "tip": "Claude is slowing down this tab (it continues after reloads and navigations). Click to restore the normal speed",
+      "separator": ", "
     }
   },
   "checklist": {

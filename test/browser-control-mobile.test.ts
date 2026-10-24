@@ -157,6 +157,32 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     control.resetViewport('S9');
   });
 
+  it('当て直せなくても（CDP をつなげない）、読むツールは止めない。つなげるようになったら当て直す', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.text = () => ({ title: 'ページ', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] });
+    await call('set_viewport', { device: 'iPhone 14' });
+    page.debugger.detachNow();
+    page.debugger.attachError = new Error('Another debugger is already attached');
+    expect(textOf(await call('get_text'))).toContain('本文');
+    page.debugger.attachError = null;
+    await call('get_text');
+    expect(commands(page, 'Emulation.setDeviceMetricsOverride')).toHaveLength(2);
+  });
+
+  it('mobile: false だけ（数字なし）は、幅だけの切り替えとして扱う。mobile: true だけなら、枠の大きさのままタッチの画面にする', async () => {
+    const { call, open, sentOn } = setup();
+    const page = open('http://localhost:3000/');
+    expect(textOf(await call('set_viewport', { width: 'full', mobile: false }))).toBe('Set the viewport to full (page width 800px, height 600px)');
+    expect(page.debugger.attachCount).toBe(0);
+    await call('set_viewport', { mobile: true });
+    expect(commands(page, 'Emulation.setDeviceMetricsOverride')).toEqual([{ method: 'Emulation.setDeviceMetricsOverride', width: 0, height: 0, deviceScaleFactor: 0, mobile: true }]);
+    expect(sentOn<BrowserViewportChange>(IpcChannel.BrowserViewport)).toEqual([
+      { sessionId: 'S1', width: 0 },
+      { sessionId: 'S1', width: 0, custom: { height: 0, deviceScaleFactor: 0, device: null } },
+    ]);
+  });
+
   it('CDP が外れて消えたら、次にそのタブを操作するときに当て直す', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
@@ -187,13 +213,17 @@ describe('タッチ（touch）', () => {
     expect(activities().at(-1)).toEqual({ sessionId: 'S1', active: true, label: null, box: null });
   });
 
-  it('画面を拡大しているときは、webview の左上に倍率を掛ける', async () => {
+  it('アプリの画面を拡大しているとき: webview の左上はそのまま。タブの中の位置は、大きさを決めたタブでだけ倍率で割る（実機で測った決まり）', async () => {
     const { call, open } = setup();
     const page = plain(open('http://localhost:3000/'));
     HOST.webviewAt = { x: 100, y: 50 };
     HOST.zoom = 1.25;
     await call('touch', { action: 'tap', x: 10, y: 20 });
-    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[135, 82.5]] });
+    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[110, 70]] });
+    await call('set_viewport', { device: 'iPhone 15' });
+    page.debugger.commands.length = 0;
+    await call('touch', { action: 'tap', x: 10, y: 20 });
+    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[108, 66]] });
   });
 
   it('2 本指のタップ: 横に 40px 離して 2 本置く', async () => {
@@ -399,7 +429,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('画素密度を決めたタブは、先に CDP で撮る（その画素密度の大きさで撮れる）。Claude には CSS の px に縮めて返す', async () => {
-    const { call, open } = setup();
+    const { call, open, state } = setup();
     const page = open('http://localhost:3000/');
     page.page.viewport = () => ({ width: 393, height: 852, dpr: 3 });
     await call('set_viewport', { device: 'iPhone 15' });
@@ -407,10 +437,32 @@ describe('スクリーンショットの撮り直しと保存', () => {
     images.fromBuffer = new FakeImage(1179, 2556, 'dense');
     expect(textOf(await call('screenshot'))).toBe('Visible area, http://localhost:3000/, image 393×852');
     expect(page.captures).toEqual([]);
-    // 要素: 切り出す範囲を CSS の px で渡す
+    // 要素: 見えている範囲をまるごと撮って、要素のまわりを画素密度倍の位置で切り出す（CDP の clip は使わない）
     page.page.locate = () => found({ x: 100, y: 100, width: 50, height: 50 });
-    await call('screenshot', { selector: '#pad' });
-    expect(commands(page, 'Page.captureScreenshot').at(-1)).toEqual({ method: 'Page.captureScreenshot', format: 'png', clip: { x: 92, y: 92, width: 66, height: 66, scale: 1 } });
+    const result = await call('screenshot', { selector: '#pad', save: true });
+    expect(commands(page, 'Page.captureScreenshot').at(-1)).toEqual({ method: 'Page.captureScreenshot', format: 'png' });
+    expect(textOf(result)).toContain('#pad (div#pad), http://localhost:3000/, image 66×66\nSaved to ');
+    expect(textOf(result)).toContain('(198×198)');
+    // 切り出した位置も、画素密度倍（要素のまわり 8px から: 92 × 3）
+    expect(Buffer.from((result.content[0] as { data: string }).data, 'base64').toString()).toBe('dense（276,276 を切り出した）（縮めた）:66x66');
+    rmSync(state.screenshotDir, { recursive: true, force: true });
+  });
+
+  it('ページ全体を撮ったら（captureBeyondViewport でタッチ対応が外れる）、機種の大きさを当て直す', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    await call('set_viewport', { device: 'iPhone 15' });
+    answerCdp(page, {
+      'Page.getLayoutMetrics': () => ({ cssContentSize: { width: 393, height: 3000 }, cssLayoutViewport: { clientWidth: 393 } }),
+      'Page.captureScreenshot': () => ({ data: Buffer.from('full').toString('base64') }),
+    });
+    await call('screenshot', { fullPage: true });
+    expect(commands(page, 'Emulation.').map((c) => c.method)).toEqual([
+      'Emulation.setDeviceMetricsOverride',
+      'Emulation.setTouchEmulationEnabled',
+      'Emulation.setDeviceMetricsOverride',
+      'Emulation.setTouchEmulationEnabled',
+    ]);
   });
 
   it('画素密度を決めたタブを CDP で撮れなければ、capturePage で撮る', async () => {

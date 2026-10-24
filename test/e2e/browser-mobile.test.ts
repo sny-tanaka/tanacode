@@ -18,6 +18,8 @@ const FIRST = 'スマホの大きさで確かめてください';
 const SECOND = '続けて確かめてください';
 const DONE = '一通り確かめました';
 const DONE_AGAIN = '続きを確かめました';
+const ZOOMED = 'アプリの画面を拡大して確かめてください';
+const DONE_ZOOMED = '拡大して確かめました';
 const tool = (id: string, name: string, input: Record<string, unknown>): Block[] => [{ type: 'tool_use', id, name: browserToolId(name), input }];
 // ページの様子を読む（tag で、どの読み取りかを見分ける）
 const read = (id: string, tag: string, expression: string): Block[] => tool(id, 'evaluate', { expression: `(async () => ({ tag: ${JSON.stringify(tag)}, ...(await ${expression}) }))()` });
@@ -31,6 +33,9 @@ const EVENTS = 'Promise.resolve({ events: takeEvents() })';
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>スマホのページ</title>
 <style>body { margin: 0 } #pad { width: 240px; height: 240px; background: #8cf; touch-action: none }</style>
 <div id="pad"></div>
+<div style="height: 1500px"></div>
+<div id="mark" style="width: 120px; height: 80px; background: #ff0000"></div>
+<div style="height: 1500px"></div>
 <script>
   let events = [];
   window.takeEvents = () => { const out = events; events = []; return out; };
@@ -62,7 +67,7 @@ describe('Claude がスマホ向けのページを確かめる', () => {
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
     app = await E2EApp.launch({
       trusted: true,
-      claudeSettings: { permissions: { allow: ['navigate', 'set_viewport', 'touch', 'throttle', 'evaluate'].map(browserToolId) } },
+      claudeSettings: { permissions: { allow: ['navigate', 'set_viewport', 'touch', 'throttle', 'scroll', 'evaluate'].map(browserToolId) } },
       conversations: () => [
         {
           match: FIRST,
@@ -91,11 +96,25 @@ describe('Claude がスマホ向けのページを確かめる', () => {
             read('toolu_work2', 'work-cleared', WORK),
             read('toolu_fetch2', 'fetch-cleared', FETCH),
             tool('toolu_shot', 'screenshot', { save: true }),
+            // ページの下のほうの要素（撮る前に、見える位置までスクロールする）
+            tool('toolu_shot_mark', 'screenshot', { selector: '#mark', save: true }),
+            // ページ全体を撮っても（CDP の captureBeyondViewport）、機種の大きさは残る
+            tool('toolu_shot_full', 'screenshot', { fullPage: true }),
+            read('toolu_size_after_full', 'after-full-page', SIZE),
+            tool('toolu_top', 'scroll', { deltaY: -100000 }),
             tool('toolu_reload', 'navigate', { action: 'reload' }),
             read('toolu_size2', 'reloaded', SIZE),
             tool('toolu_full', 'set_viewport', { width: 'full' }),
             read('toolu_size3', 'full', SIZE),
             [{ type: 'text', text: DONE_AGAIN }],
+            // アプリの画面を拡大したあと（テストが拡大してから、次の発言を送る）
+            tool('toolu_zoom_tap_plain', 'touch', { action: 'tap', x: 200, y: 100 }),
+            read('toolu_zoom_plain_events', 'zoom-plain', EVENTS),
+            tool('toolu_zoom_device', 'set_viewport', { device: 'iPhone 15' }),
+            tool('toolu_zoom_tap_device', 'touch', { action: 'tap', x: 200, y: 100 }),
+            read('toolu_zoom_device_events', 'zoom-device', EVENTS),
+            tool('toolu_zoom_full', 'set_viewport', { width: 'full' }),
+            [{ type: 'text', text: DONE_ZOOMED }],
           ],
         },
       ],
@@ -190,11 +209,43 @@ describe('Claude がスマホ向けのページを確かめる', () => {
     expect([Number(path![2]), Number(path![3])]).toEqual([393 * 3, 852 * 3]);
   });
 
+  it('スクロールしたページの要素も、その要素の場所を撮る（画素密度を決めたタブは CDP で撮るので、ページの先頭からの位置で切り出す）', async () => {
+    const result = app.api.toolResults.find((r) => r.includes('#mark (div#mark)'));
+    const path = /Saved to (\S+\.png)/.exec(result ?? '')?.[1];
+    expect(path).toBeDefined();
+    // 保存した画像の真ん中の色（BGRA）
+    const pixel = await app.app.evaluate(({ nativeImage }, file) => {
+      const image = nativeImage.createFromPath(file);
+      const { width, height } = image.getSize();
+      const bitmap = image.toBitmap();
+      const at = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
+      return [bitmap[at + 2], bitmap[at + 1], bitmap[at]];
+    }, path!);
+    // 赤（色の管理で、少し変わる。Electron 44.7 では 234,51,35）
+    expect(pixel[0]).toBeGreaterThan(200);
+    expect(pixel[1]).toBeLessThan(100);
+    expect(pixel[2]).toBeLessThan(100);
+  });
+
   it('機種の大きさは読み込み直しても残り、width full で元に戻る', async () => {
+    expect(reads()['after-full-page']).toMatchObject({ width: 393, height: 852, dpr: 3, touchPoints: 5 });
     expect(reads().reloaded).toMatchObject({ width: 393, height: 852, dpr: 3, touchPoints: 5 });
     expect(reads().full).toMatchObject({ touchPoints: 0, coarse: false });
     expect(reads().full!.width).not.toBe(393);
     await app.page.locator('.preview-body.sized').waitFor({ state: 'detached' });
+  });
+
+  it('アプリの画面を拡大していても、タッチはさわった位置に届く（大きさを決めたタブでも、決めていないタブでも）', async () => {
+    await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1.1));
+    try {
+      await app.send(ZOOMED);
+      await app.byText('.chat-list', DONE_ZOOMED).waitFor();
+    } finally {
+      await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
+    }
+    const start = (tag: string) => (reads()[tag]!.events as { type: string; x: number; y: number }[]).find((e) => e.type === 'touchstart');
+    expect(start('zoom-plain')).toMatchObject({ x: 200, y: 100 });
+    expect(start('zoom-device')).toMatchObject({ x: 200, y: 100 });
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

@@ -491,7 +491,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         </div>
       )}
       <div
-        className={`preview-body${width || height ? ' framed' : ''}${height ? ' sized' : ''}`}
+        className={`preview-body${width || height ? ' framed' : ''}${viewport?.custom ? ' sized' : ''}`}
         style={{ '--preview-width': width ? `${width}px` : '100%', '--preview-height': height ? `${height}px` : '100%' } as React.CSSProperties}
       >
         <div className="preview-frame" ref={hostRef}>
@@ -650,7 +650,7 @@ export function ThrottleBadge({ throttle, onClear }: { throttle: Throttle; onCle
   const state = [
     ...(throttle.cpu !== 1 ? [t('preview.throttle.cpu', { rate: throttle.cpu })] : []),
     ...(throttle.network ? [t(`preview.throttle.network.${throttle.network}`)] : []),
-  ].join('・');
+  ].join(t('preview.throttle.separator'));
   return (
     <button className="ghost-button preview-throttle" onClick={onClear} aria-label={t('preview.throttle.label', { state })} data-tip={t('preview.throttle.tip')}>
       {state}

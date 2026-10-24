@@ -252,7 +252,7 @@ describe('スクリーンショット', () => {
     page.page.locate = () => found({ x: 100, y: 50, width: 200, height: 40 });
     await call('screenshot', { selector: '#go' });
     expect(capturedAfter).toEqual([5, 6]);
-    expect(page.scripts.map((s) => s.kind).slice(-2)).toEqual(['size', 'locate']);
+    expect(page.scripts.map((s) => s.kind).slice(-3)).toEqual(['size', 'locate', 'frames']);
   });
 
   it('待ってもタブの大きさが決まらなければ、そのまま進める', async () => {
