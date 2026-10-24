@@ -14,8 +14,10 @@ import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
-import { SESSIONS_NO_ASK_FILE, writeSessionsNoAskFile } from './sessions-bridge';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
+import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
+import { permissionToolDefaults, type ToolPermission } from '@shared/tool-permissions';
+import { sessionToolId } from '@shared/session-tools';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared/prompts';
@@ -537,7 +539,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     claudeDir: info.claudeDir,
     // 既定のプロファイルの設定は、アプリ全体の設定と同じファイル
     settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
-    sessionsNoAskFile: sessionsNoAskPath(),
+    toolPermissionsDir: toolPermissionsPath(),
     prompts: () => settings.prompts(),
     send: sendTo(info.id),
     host: () => contentsOf(info.id),
@@ -921,6 +923,8 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
   handle(IpcChannel.BrowserHostsGet, (e) => P(e).settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
+  handle(IpcChannel.ToolPermissionsGet, () => settings.toolPermissions());
+  handle(IpcChannel.ToolPermissionsSet, (_e, toolId: string, permission: ToolPermission) => setToolPermission(toolId, permission));
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
@@ -999,11 +1003,19 @@ function buildMenu(): void {
               },
               { type: 'separator' },
               { id: 'sessionsControl', label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-              { id: 'sessionsStartConfirm', label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
               { type: 'separator' },
               { id: 'checklistControl', label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
               { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
               { id: 'terminalControl', label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
+              { type: 'separator' },
+              {
+                id: 'toolPermissions',
+                label: t('main.menu.toolPermissions'),
+                click: () => {
+                  showWindow();
+                  sendTo(activeId)(IpcChannel.ToolPermissionsOpen, undefined);
+                },
+              },
             ],
           },
           { type: 'separator' },
@@ -1262,29 +1274,50 @@ function setSessionsControl(item: MenuItem): void {
   }
 }
 
-// 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts）
-const sessionsNoAskPath = () => join(app.getPath('userData'), SESSIONS_NO_ASK_FILE);
+// ツールごとの許可の印のファイルのフォルダ（アプリ全体で 1 つ。tool-permissions.ts）
+const toolPermissionsPath = () => join(app.getPath('userData'), TOOL_PERMISSIONS_DIR);
+// 前のバージョンの、子セッションの起動の確認を省く印のファイル。今はツールごとの許可の印を使うので消す
+const LEGACY_SESSIONS_NO_ASK_FILE = 'sessions-start-no-ask';
 
-// 印のファイルを、保存した設定に合わせる（起動したときと、切り替えられなかったとき）。置けない・消せなければ、ログに残して続ける
-function syncSessionsNoAskFile(): void {
+// 起動したとき。前のバージョンのメニューの「MCP → セッションを始める前に許可を求める」をオフにしていて、まだ start_session の許可を選んでいなければ、
+// 「常に許可」として引き継ぐ（選んだあとは、選んだ値のまま）。そのあと、前に動いていたアプリが置いた・消した印を、設定に合わせ直す
+// （設定ファイルを書き換えられていても、設定のとおりにする）。保存できない・置けなければ、ログに残して続ける
+function setUpToolPermissions(): void {
+  void rm(join(app.getPath('userData'), LEGACY_SESSIONS_NO_ASK_FILE), { force: true });
+  const id = sessionToolId('start_session');
+  if (!settings.sessionsStartConfirmEnabled() && !settings.toolPermissions()[id]) {
+    try {
+      settings.setToolPermissions({ ...settings.toolPermissions(), [id]: 'allow' });
+    } catch (error) {
+      console.error('「セッションを始める前に許可を求める」の設定を、ツールごとの許可に引き継げませんでした', error);
+    }
+  }
+  syncToolPermissionFiles();
+}
+
+function syncToolPermissionFiles(): void {
   try {
-    writeSessionsNoAskFile(sessionsNoAskPath(), settings.sessionsStartConfirmEnabled());
+    writeToolPermissionFiles(toolPermissionsPath(), settings.toolPermissions());
   } catch (error) {
-    console.error('子セッションの起動の確認の印を、設定に合わせられませんでした', error);
+    console.error('ツールごとの許可の印を、設定に合わせられませんでした', error);
   }
 }
 
-// メニューの「MCP → セッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
-// 起動の確認のフックは、呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く（sessions-bridge.ts の sessionsGateCommand）。
-// 印のファイルを先に置く・消してから保存する。どちらかができなかったら、チェックと印のファイルを、保存した設定に戻す
-function setSessionsStartConfirm(item: MenuItem): void {
+// ツールごとの許可を 1 つ変える（メニューの「MCP → Claude のツールの許可…」のダイアログ）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// フックは呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く。印のファイルを先に置く・消してから保存する。
+// どちらかができなかったら、印のファイルを保存した設定に戻して投げる
+function setToolPermission(toolId: unknown, permission: unknown): Record<string, ToolPermission> {
+  const value = permission === 'ask' || permission === 'allow' ? permission : null;
+  if (typeof toolId !== 'string' || !permissionToolDefaults().has(toolId) || !value) throw new Error(`Unknown tool permission: ${String(toolId)}`);
+  const next: Record<string, ToolPermission> = { ...settings.toolPermissions(), [toolId]: value };
   try {
-    writeSessionsNoAskFile(sessionsNoAskPath(), item.checked);
-    settings.setSessionsStartConfirmEnabled(item.checked);
-  } catch {
-    item.checked = settings.sessionsStartConfirmEnabled();
-    syncSessionsNoAskFile();
+    writeToolPermissionFiles(toolPermissionsPath(), next);
+    settings.setToolPermissions(next);
+  } catch (error) {
+    syncToolPermissionFiles();
+    throw error;
   }
+  return settings.toolPermissions();
 }
 
 // メニューの「MCP → チェックリスト」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
@@ -1489,8 +1522,7 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
-  // 前に動いていたアプリが置いた・消した印を、設定に合わせ直す（設定ファイルを書き換えられていても、設定のとおりにする）
-  syncSessionsNoAskFile();
+  setUpToolPermissions();
   sharedPrefs = new SharedPrefStore(join(app.getPath('userData'), 'shared-prefs.json'));
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();

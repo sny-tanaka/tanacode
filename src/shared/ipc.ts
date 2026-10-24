@@ -24,6 +24,7 @@ import type { SessionWalkthrough, WalkthroughShown } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
+import type { ToolPermission } from './tool-permissions';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
 
@@ -185,6 +186,11 @@ export const IpcChannel = {
   PromptsGet: 'prompts:get',
   PromptsUpdate: 'prompts:update',
   PromptsOpen: 'prompts:open',
+  // tanacode の MCP のツールごとの許可（アプリ全体で 1 つ。shared/tool-permissions.ts）。読む・1 つ変える /
+  // メニューの「MCP → Claude のツールの許可…」から。ツールの許可のダイアログを開かせる
+  ToolPermissionsGet: 'tool-permissions:get',
+  ToolPermissionsSet: 'tool-permissions:set',
+  ToolPermissionsOpen: 'tool-permissions:open',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -697,6 +703,12 @@ export type TanacodeApi = {
     update(changes: PromptChanges): Promise<CustomPrompts>;
     onOpen(listener: () => void): () => void;
   };
+  // tanacode の MCP のツールごとの許可。返すのは、利用者が選んだツールだけ（ツールの ID → ask・allow。無いツールは既定）
+  toolPermissions: {
+    get(): Promise<Record<string, ToolPermission>>;
+    set(toolId: string, permission: ToolPermission): Promise<Record<string, ToolPermission>>;
+    onOpen(listener: () => void): () => void;
+  };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
   prefs: {
     // 起動したときにそろえる。この画面が持っている値を渡し、main がまだ覚えていないものはそれを採って、そろえた値を返す
@@ -1022,6 +1034,8 @@ export type IpcInvoke = {
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
   [IpcChannel.PromptsGet]: Api['prompts']['get'];
   [IpcChannel.PromptsUpdate]: Api['prompts']['update'];
+  [IpcChannel.ToolPermissionsGet]: Api['toolPermissions']['get'];
+  [IpcChannel.ToolPermissionsSet]: Api['toolPermissions']['set'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
@@ -1160,6 +1174,7 @@ export type IpcEvent = {
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
   [IpcChannel.BrowserHostsOpen]: undefined;
   [IpcChannel.PromptsOpen]: undefined;
+  [IpcChannel.ToolPermissionsOpen]: undefined;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };

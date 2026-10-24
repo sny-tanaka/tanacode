@@ -537,6 +537,8 @@ export const SESSIONS_GATE_HOOK_ENV = 'TANACODE_SESSIONS_GATE';
 export const CHECKLIST_HOOK_ENV = 'TANACODE_CHECKLIST_HOOK';
 // アプリが足した、人のターミナルに打つ前に、権限モードによらず人の許可の確認を出させるフック（main の terminal-bridge.ts）の目印
 export const TERMINAL_GATE_HOOK_ENV = 'TANACODE_TERMINAL_GATE';
+// アプリが足した、ツールごとの許可（毎回確認・常に許可）を効かせるフック（main の tool-permissions.ts）の目印
+export const TOOL_PERMISSION_HOOK_ENV = 'TANACODE_TOOL_PERMISSION';
 // 前のバージョンのアプリが足した、AskUserQuestion の質問をアプリに渡して答えを待つフックの目印（前の会話ログに残る行を、チャットのフックの一覧に出さない）
 export const QUESTION_HOOK_ENV = 'TANACODE_QUESTION_HOOK';
 // アプリが足した、TANACODE.md を Claude に渡すフック（main の instructions-hook.ts）の目印
@@ -548,6 +550,7 @@ const APP_HOOK_MARKS = [
   SESSIONS_GATE_HOOK_ENV,
   CHECKLIST_HOOK_ENV,
   TERMINAL_GATE_HOOK_ENV,
+  TOOL_PERMISSION_HOOK_ENV,
   QUESTION_HOOK_ENV,
   INSTRUCTIONS_HOOK_ENV,
 ];

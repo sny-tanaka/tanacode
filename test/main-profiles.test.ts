@@ -20,7 +20,7 @@ const listenersOf = (index: number) => managers()[index]!.args[4] as Listeners;
 // SessionManager に渡す、プロファイルの Claude Code の設定のフォルダ（index.ts の new SessionManager(...) の 13 番目の引数）
 const claudeDirOf = (index: number) => managers()[index]!.args[12];
 // SessionManager に渡す、セッションの MCP サーバーの材料（10 番目の引数）
-const sessionsLaunchOf = (index: number) => (managers()[index]!.args[9] as () => { noAskFile?: string } | null)();
+const sessionsLaunchOf = (index: number) => (managers()[index]!.args[9] as () => { permissionsDir?: string } | null)();
 const view = () => state.views[0] as FakeView;
 const sentTo = (contents: { sent: [string, unknown][] }, channel: string) => contents.sent.filter(([c]) => c === channel).map(([, payload]) => payload);
 
@@ -73,22 +73,18 @@ describe('足したプロファイルを開く', () => {
     expect(view().visible).toBe(false);
   });
 
-  it('「MCP → セッションを始める前に許可を求める」はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のファイルを見て、見ているプロファイルによらず同じ設定を切り替える', async () => {
+  it('Claude のツールの許可はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のフォルダを見て、見ているプロファイルによらず同じ設定を変える', async () => {
     await boot({ profiles: PROFILES });
-    const noAskFile = join(state.userData, 'sessions-start-no-ask');
-    expect(sessionsLaunchOf(0)).toMatchObject({ noAskFile });
-    expect(sessionsLaunchOf(1)).toMatchObject({ noAskFile });
+    const permissionsDir = join(state.userData, 'tool-permissions');
+    expect(sessionsLaunchOf(0)).toMatchObject({ permissionsDir });
+    expect(sessionsLaunchOf(1)).toMatchObject({ permissionsDir });
     await invoke(IpcChannel.ProfilesSwitch, 'p2');
-    const item = menuItem('sessionsStartConfirm');
-    expect(item.checked).toBe(true);
-    item.checked = false;
-    item.click?.(item);
-    expect(existsSync(noAskFile)).toBe(true);
+    await invokeFrom(view().webContents, IpcChannel.ToolPermissionsSet, 'mcp__tanacode-sessions__start_session', 'allow');
+    expect(existsSync(join(permissionsDir, 'mcp__tanacode-sessions__start_session.allow'))).toBe(true);
     // アプリ全体の設定（既定のプロファイルと同じファイル）に保存し、足したプロファイルの設定には書かない
-    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ sessionsStartConfirm: false });
+    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ toolPermissions: { 'mcp__tanacode-sessions__start_session': 'allow' } });
     expect(existsSync(join(state.userData, 'profiles', 'p2', 'settings.json'))).toBe(false);
-    await invoke(IpcChannel.ProfilesSwitch, 'default');
-    expect(menuItem('sessionsStartConfirm').checked).toBe(false);
+    await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({ 'mcp__tanacode-sessions__start_session': 'allow' });
   });
 
   it('アプリ内ブラウザの webview は、プロファイルごとのセッション（Cookie）を使わせる', async () => {

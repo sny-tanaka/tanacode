@@ -664,7 +664,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - pty ホスト（別のプロセスで動き、言語を知らない）。
   - MCP の中継が `tools/list` で返すツールの短い名前（`title`）は、アプリが `--mcp-config` の `env` で渡す `TANACODE_LANGUAGE`（Claude Code を起動したときの言語）で読みます。チャットのツールの行の名前は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
   - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。モデル別の週の枠は、`label` が「週」で、`model` にサーバーが付けたモデルの名前（訳さない）。
-- hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`sessionsGateCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
+- hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`toolPermissionCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
 - 言語の決め方: アプリの設定（`settings.json` の `language`）の `system`・`ja`・`en`。`system`（既定）なら、`app.getPreferredSystemLanguages()` に日本語があれば日本語、無ければ英語（`resolveLanguage`）。
   - main は起動するときに決めます（`applyLanguage`。プロファイルの既定の名前やダイアログが使うので、ほかのものを作る前）。
   - 画面には、ウインドウ（と足したプロファイルの画面）を作るときの起動の引数（`webPreferences.additionalArguments` の `--tanacode-language=`）で渡し、preload の `language()` で読みます。IPC を待たないので、起動は遅くなりません。`src/renderer/src/main.tsx` が、描く前に `setLanguage` します。
@@ -1185,7 +1185,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 差し込みの印は `{trigger}`（どう始まったか。`handoff`・`resume`・`resumeMidTurn`）と `{chars}`（1 枚のカードの長さの目安。`handoff`）だけ。`fill`（`src/shared/i18n.ts`）で置き換え、知らない印はそのまま残します。印を消してもかまいません（見分けは囲みの属性で行う）。
 - 既定の文（`defaultPrompt`）は、今までの文言（`schedule.usageResume.*`・`chat.compactPrompt.*`）を、今までと同じ順につないだもの。変えていなければ、今までと同じ文を送ります。違うのは 2 つだけ。囲みに属性が付いた（上の「最適化圧縮」）・仕上げができなかったときの 1 行が、指示の 2 行目から終わりに移った（変えた文と同じく、本文の終わりに足すため）。
 - tanacode が足し続けるもの: 囲み（見分けに使う）と、再開の文のデータ（決定事項と「いまの状態」のカード・ほかのリスト・発言の原文・最後の応答か止めた場所・裏のタスク）と、その見出し（次の切り替えで、発言の原文を取り出す目印にもなる）。
-- 保存（`AppSettings.prompts`）: アプリ全体で 1 つ。既定のプロファイルの `settings.json` の `prompts` に置きます（`sessionsStartConfirm` と同じ置き方）。各 `Profile` には `prompts` の関数で渡し、`OptimizedCompact`・`UsageLimitResume` が送るたびに読みます。画面は、ダイアログで変えた欄だけを送り（`prompts:update`。`null` は既定に戻す）、main が今の保存の値に重ねます（`promptChangesOf`・`applyPromptChanges`）。7 つの欄を丸ごと送って置き換えると、2 つのウインドウでダイアログを開いて保存したときに、あとの保存が、先に保存した側の変更を消すためです。空の欄は既定に戻し、既定の文と同じ欄（前後の空白は見ない）は持ちません（`changedPrompts`）。設定のファイルから読んだ値も、知っている欄の、空でない文字列だけにします（`customPromptsOf`）。持たない欄は、画面の言語やバージョンで既定の文が変わったら、それに付いていきます。1 つの欄は 10,000 文字まで（`PROMPT_MAX_CHARS`。再開の文は全体で 4 万文字までなので、長いと終わりのデータが切れる）。
+- 保存（`AppSettings.prompts`）: アプリ全体で 1 つ。既定のプロファイルの `settings.json` の `prompts` に置きます（`toolPermissions` と同じ置き方）。各 `Profile` には `prompts` の関数で渡し、`OptimizedCompact`・`UsageLimitResume` が送るたびに読みます。画面は、ダイアログで変えた欄だけを送り（`prompts:update`。`null` は既定に戻す）、main が今の保存の値に重ねます（`promptChangesOf`・`applyPromptChanges`）。7 つの欄を丸ごと送って置き換えると、2 つのウインドウでダイアログを開いて保存したときに、あとの保存が、先に保存した側の変更を消すためです。空の欄は既定に戻し、既定の文と同じ欄（前後の空白は見ない）は持ちません（`changedPrompts`）。設定のファイルから読んだ値も、知っている欄の、空でない文字列だけにします（`customPromptsOf`）。持たない欄は、画面の言語やバージョンで既定の文が変わったら、それに付いていきます。1 つの欄は 10,000 文字まで（`PROMPT_MAX_CHARS`。再開の文は全体で 4 万文字までなので、長いと終わりのデータが切れる）。
 - 画面（`src/renderer/src/prompts/PromptsDialog.tsx`）: メニューから `prompts:open` で開きます。左に文の種類、右にその文の欄。欄には、変えた文か既定の文が入っていて、そこから直します。変えた欄には「変更済み」と、たたんだ「既定の文」（見比べるため）を出し、「既定に戻す」で既定の文を入れます。「保存」まで送る文は変えません。空の欄は保存させません（既定に戻すよう案内する）。保存していない変更があるときは、閉じる前に聞きます。保存した文を読めなかったときは、欄を出さずに理由を出します（分からないまま直させると、保存で上書きするため）。
 - 守り: 変えた仕上げの頼みで、リストが最新にならないかもしれません。Claude がチェックリストのツールを 1 回も使わなければ取りやめる守り（`not-used`）は、文によらず働きます。それ以上は強めません（読むだけで「最新です」と答える場合を止めると、押しても圧縮できなくなる。上の「最適化圧縮」）。代わりに、画面の仕上げの頼みに、ここで書かせたことしか残らないという注意を出します。
 - 再開のあとに作業を続けたかは、再開のターンでチェックリスト以外のツールを使ったかで見分けます（`compact-notice.ts` の `continuesWork`・`sessions-control.ts` の `continuedAt`）。既定の文が、答えを待つときにほかのツールを使わせないことが前提です。待つときにもほかのツールを使わせる文に変えると、報告して待っただけのターンも作業を続けたものとして扱い、人への通知は「作業が完了しました」、親には作業の終わりを知らせ、親が読む会話からも、引き継ぎの報告を切り替えの分として除きません。画面の再開の文のタブに、この注意を出します（GUIDE にも書いた）。利用枠からの再開は、再開のターンをふだんの作業のターンとして扱うので（知らせに `compact` が付かない）、この前提はありません。
@@ -1448,6 +1448,28 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面: `PreviewPane.tsx` の `AskBar`。頼まれている間は、「Claude が操作中」の帯の代わりに出します。画面を作り直したとき用に、`browser.asks()`（`browser:asks-get`）で今頼んでいるものを読みます。返事は `browser.answer()`（`browser:answer`）。ストーリーは `ClaudeBrowsing.stories.tsx`。
 - オン・オフ: メニューの「tanacode → MCP → アプリ内ブラウザ」（`settings.json` の `browserControl`）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。待ち受けを始められなかったときも、足しません。
 
+### ツールごとの許可（毎回確認・常に許可）
+
+- tanacode が足す MCP のツール（5 つのサーバーの全部。`src/shared/tool-permissions.ts` の `PERMISSION_SERVERS`）ごとに、利用者が「毎回確認」（`ask`）か「常に許可」（`allow`）を選べます。メニューの「tanacode → MCP → Claude のツールの許可…」のダイアログ（`src/renderer/src/mcp/ToolPermissionsDialog.tsx`）。変えられないツールは作りません（既定から変えるのは利用者の判断）。
+- 既定（`toolDefaultRule`）は、この仕組みの前の扱いのままです。
+  - `allowed`: `--allowedTools` で許可済みのもの（`kind` が `read`・`ask`・`instruct`・`note`・`show`）。既定は常に許可。
+  - `mode`: そのほかの `act`。Claude Code の権限モードに任せる（フックは何も決めない）。既定は毎回確認。
+  - `always`: `start_session`・`restart_app`・`type_in_terminal`。権限モードによらず、フックがいつも `ask`。
+  - `outside`: `navigate`。許す先の外を開くときだけ `ask`（`browser-gate.ts`）。
+  - `remote`: `evaluate`。localhost 以外のページで `ask`（`browser-gate.ts`）。
+- 保存はアプリ全体で 1 つ（`settings.json` の `toolPermissions`。ツールの ID → `ask`・`allow`。利用者が選んだツールだけで、既定と同じ値も持つ。前の設定を引き継ぎ直さないため。`toolPermissionsOf`）。IPC は `tool-permissions:get`・`tool-permissions:set`（1 つずつ変える。2 つのウインドウで開いても、片方の変更をもう片方が消さない）。
+- 効かせ方（`src/main/tool-permissions.ts`）
+  - 既定から変えたツールにだけ、userData の `tool-permissions/` に印のファイル `<ツールの ID>.ask`・`<ツールの ID>.allow`（中身は空）を置きます（`writeToolPermissionFiles`。ほかのファイルは消す）。変えるときは、印を先に置く・消してから保存し、どちらかができなければ印を保存した設定に戻します。アプリを起動したときにも、印を設定に合わせ直します。
+  - `--settings` の `PreToolUse` に、ツールごとに 1 つのフック（matcher はツールの ID そのもの）を、いつも足します（`toolPermissionHooks`。足していない MCP のツールのフックは呼ばれない）。フックは、呼ばれるたびに `[ -f "$TANACODE_TOOL_PERMISSIONS_DIR/<ID>.<値>" ]` で印を見る（Node を起動しない）ので、切り替えは動いているセッションにもすぐ効きます。印のフォルダは、起動する Claude Code の環境変数 `TANACODE_TOOL_PERMISSIONS_DIR` で渡します（`McpLaunch.permissionsDir` から。無ければ空で上書きし、受け継いだ値を読ませない）。
+    - `allowed` のツール: `.ask` があれば `ask`（`--allowedTools`・「次から聞かない」・bypassPermissions より強い。`test/cli/tool-permissions.test.ts` で実測）。
+    - `mode` のツール: `.allow` があれば `allow`（manual でも確認なし）。
+    - `always` のツール（`start_session`・`restart_app`）: `.allow` があれば `allow`、無ければ `ask`。
+    - plan のときは `allow` を返しません（標準入力の `"permission_mode":"plan"` を `case` で見る。ツールの入力に同じ文字があっても plan とみなし、allow しない側に倒す）。
+    - 何も決めないときも `{"suppressOutput":true}` を書きます（hook-output.ts）。入力は最後まで読みます。チャットのフックの一覧には出しません（目印は `TANACODE_TOOL_PERMISSION`）。
+  - アプリに問い合わせる確認のフックがあるツール（`navigate`・`evaluate`・`type_in_terminal`）には、このフックを足しません（同じツールに 2 つのフックが答えると `ask` が勝つため）。それぞれのフック（`browser-gate.ts` の `runGate`・`terminal-bridge.ts` の `runTerminalGate`）が、アプリに問い合わせた（アプリが確認した印を控えた）あとに `alwaysAllowed` で印を見て、常に許可なら `allow` を返します。アプリ側の印の確かめ（`browser-control.ts` の `permit`・evaluate の控え・`terminal-control.ts`）は、そのまま通ります。
+  - フックの数と形は起動のときに決まるので、この仕組みより前のバージョンが起動した Claude Code には、起動し直すまで効きません（ダイアログに注記）。
+- 確かめ: 判定とファイルは `test/tool-permissions.test.ts`、本物の Claude Code では `test/cli/tool-permissions.test.ts`（毎回確認にした読むツールで manual・bypassPermissions でも確認が出る、常に許可にした打つツールで確認が出ない、plan では出る、印の切り替えがすぐ効く）、画面は `test/renderer/press-tool-permissions.test.tsx` と E2E（`test/e2e/sessions.test.ts` の「セッションを始める」の切り替え）。
+
 ### セッション間の連携（Claude による操作）
 
 - Claude Code に足す MCP サーバー（`tanacode-sessions`）は、アプリ内ブラウザと同じ形の stdio の中継（`src/main/sessions-mcp.ts` → `out/main/sessions-mcp.js`。`electron.vite.config.ts` の入口）。JSON-RPC（`mcp-relay.ts`）とソケット（`mcp-bridge.ts`）はブラウザと共通で、渡すサーバーの定義（ツールの一覧と説明。`src/shared/session-tools.ts` の `SESSIONS_MCP`）だけが違います。
@@ -1456,14 +1478,9 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `--mcp-config` の `timeout`（1 回のツールの呼び出しを Claude Code が待つ上限）を長めに付けます。`end_session` の worktree の削除と PR の問い合わせなど、時間のかかるツールがあるためです。子を待つ `wait_sessions`（最大 60 秒）＜中継の待ち（`SESSIONS_CALL_TIMEOUT_MS`。660 秒）＜ Claude Code の待ち（720 秒）の順にします。`timeout` を付ければ、75 秒かかる呼び出しも切られません（Claude Code 2.1.288 で実測）。
   - 起動に足す材料は `index.ts` の `sessionsLaunch`。`SessionManager` が起動のたびに聞き、`claudeArgs` がブラウザのサーバーと合わせて渡します（`sessions-bridge.ts` の `sessionsMcpServer`）。
 - 許可: 読むだけのツール（`kind: 'read'`）と、子への指示・質問への回答・許可の確認への回答・子の設定の変更・役目を終えた子の片付け（`send_message`・`answer_question`・`answer_permission`・`configure_session`・`end_session`。`kind: 'instruct'`）は `--allowedTools` で許可済みに。親が人の手を借りずに子を回すためです。子のモードは親より強くできません（始めるときも、`configure_session` で変えるときも）。子のツールの実行の許可には、人のほかに親も答えられますが（`answer_permission`）、親が許せるのは、親のモードが acceptEdits 以上のときに「今回だけ許す」だけです（下の `answer_permission`）。`end_session` も、アーカイブは一覧から戻せ、worktree を消しても控えとブランチが残る（失うものが無い）ので、確認を出しません。`instruct` は読むだけではないので、`readOnlyHint` は付けません。`stop_session` は、ふつうの許可の確認を通します。
-  - `start_session` だけは、`--settings` の `PreToolUse` のフック（`sessionsGateCommand()`）が `permissionDecision: "ask"` を返し、権限モードによらず確認を出させます。ふつうの許可の確認は、auto・bypassPermissions では出ないためです（フックの `ask` なら bypassPermissions でも出る。Claude Code 2.1.288 で実測）。確認の理由（`permissionDecisionReason`）に、起動したセッションも利用枠をその数だけ使うことを書きます。
-  - メニューの「tanacode → MCP → セッションを始める前に許可を求める」（`settings.json` の `sessionsStartConfirm`。既定はオン）をオフにすると、フックは `ask` の代わりに `allow` を返し、権限モードによらず（manual でも）確認なしに始めさせます。理由とアプリのフックの印は `ask` と同じ。
-    - アプリ全体で 1 つ（どのプロファイルでも、アプリ全体の `settings.json` を読む。`index.ts` の `settings`）。オフの間だけ、userData に印のファイル `sessions-start-no-ask`（`SESSIONS_NO_ASK_FILE`）を置きます。フックは、呼ばれるたびに `[ -f "$TANACODE_SESSIONS_NO_ASK_FILE" ]` で見るので、切り替えは動いているセッションにもすぐ効きます（`--settings` は起動のときに決まるので、設定の値をコマンドに埋め込むと、起動し直すまで効かない）。
-    - パスは、起動する Claude Code の環境変数 `TANACODE_SESSIONS_NO_ASK_FILE` で渡します（`sessionsGateEnv`。`Profile.sessionsLaunch` が `SessionsMcpLaunch.noAskFile` に入れる）。シェルに埋め込まないので、空白や引用符のあるパスでも分かれません。渡すものが無いときも空で上書きし、アプリを起動した環境から受け継いだ値を読ませません。ファイルが無い・環境変数が空なら `ask` に倒します。
-    - 切り替えるときは、印のファイルを先に置く・消してから保存します。どちらかができなければ、チェックと印のファイルを、保存した設定に戻します（確認を省いたままにしない）。アプリを起動したときにも、印のファイルを設定に合わせ直します（`syncSessionsNoAskFile`）。
+  - `start_session` だけは、`--settings` の `PreToolUse` のフック（`tool-permissions.ts` の `toolPermissionCommand`。既定の扱いが `always`）が `permissionDecision: "ask"` を返し、権限モードによらず確認を出させます。ふつうの許可の確認は、auto・bypassPermissions では出ないためです（フックの `ask` なら bypassPermissions でも出る。Claude Code 2.1.288 で実測）。確認の理由（`permissionDecisionReason`）に、起動したセッションも利用枠をその数だけ使うことを書きます。
+    - 「Claude のツールの許可」で「常に許可」にすると、権限モードによらず（manual でも。plan を除く）確認なしに始めさせます（下の「ツールごとの許可」）。前のバージョンのメニューの「セッションを始める前に許可を求める」（`settings.json` の `sessionsStartConfirm`）がオフなら、起動したときに `start_session` を `allow` として引き継ぎます（`index.ts` の `setUpToolPermissions`。まだ選んでいないときだけ）。
     - MCP の説明（`start_session` の説明と `instructions`）は、MCP サーバーを起動したときに決まり、あとから変えられないので、どちらの設定でも通る書き方（「設定によっては許可を求める」）にし、利用枠を使うので本当に並べるときだけ、という注意を残します。
-    - Claude が自分で印のファイルを置けば確認を省けます。bypassPermissions などで Bash を確認なしに動かせるセッションは、アプリの設定のファイルも書き換えられるので、ここでは防ぎません。
-  - フックは、決まった JSON を `printf` で書くだけ（Node も awk も使わない）。チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_SESSIONS_GATE`）。登録した設定ファイルを重ねるときは、登録した設定のフックと並べて足します（`mergeSettings`）。
 - 実行はメインプロセス（`sessions-control.ts` の `SessionsControl`）。`SessionManager` を `SessionsHost` の形で使います。
   - 見える範囲（`canSee`）: 自分・親子・兄弟（同じ親の子）と、同じフォルダのセッション。フォルダは `projectRootOf`（worktree のセッションは元のフォルダ。`.claude/worktrees/<名前>` のフォルダも元のフォルダに直す）。中のフォルダは同じとみなしません（`~/work` を開いたセッションに、その下の別々のリポジトリを見せないため）。入力欄の `@` の候補も同じ `canSee` で絞ります。一覧や `read_session` の見出しの子も、見えるものだけを出します。
   - `session_id` は、全体か先頭 8 文字以上で、見えるセッションから探します（2 つ以上に当たったら断る）。一覧・状態の `parent_id` は、呼び出し元から見える親のときだけ出します（見えない親の ID は出さない）。`send_message`・`answer_question`・`answer_permission`・`stop_session`・`end_session` と、`wait_sessions` の `session_ids` は、`parentId` が呼び出し元のものだけ。子からの `start_session` は断ります（親子は 1 段まで。独立したセッションも始めさせない）。
@@ -1529,7 +1546,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - `list_wakeups` は、このセッションの予約を人のものも返します（`by`・`state`・時刻・本文は 300 文字まで）。送れなかったものの `error` は、保存した理由（`reason`）から作る英語の文です（画面と通知に出す文は画面の言語なので、そのまま返さない。理由の分からないものは、送れなかったことだけ）。`cancel_wakeup` は ID（先頭 8 文字以上）で、`by: 'claude'` のものだけを取り消します。人の予約は「人だけが取り消せる」と断ります。
   - `set_away_mode`: 自分のセッションの離席モードを入れる・解く（[離席モード](#離席モード)）。人に頼まれたときだけ使うよう説明に書きます。子には見せず（`PARENT_ONLY`）、呼ばれても断ります。
   - `get_app_update`・`restart_app`: tanacode 自身の更新の様子を返す・起動し直す（`app-restart.ts`）。人がスマホの Remote Control から使っていて Mac の前にいなくても、「tanacode を更新して」と頼めるようにするためです。子には見せず（`PARENT_ONLY`。アプリ全体を起動し直すので、人が動かすセッションからだけ）、呼ばれても断ります。
-    - `restart_app` は `act` で、さらに `--settings` の PreToolUse のフック（`sessions-bridge.ts` の `restartGateCommand`。`start_session` の確認と違い、印のファイルは見ない）が、権限モードによらずいつも `ask` を返します。Claude Code の許可の確認なので、Remote Control からも答えられます。Mac の画面のダイアログ（タイトルバーの「再起動して更新」の 3 択）は出さず、いつも「動かしたまま」終えます（常駐の pty ホストが claude を保ち、起動し直したアプリが引き継ぐので、ターンの途中でもセッションは続く）。
+    - `restart_app` は `act` で、さらに `--settings` の PreToolUse のフック（`tool-permissions.ts` の `toolPermissionCommand`。既定の扱いが `always`）が、権限モードによらず `ask` を返します（「Claude のツールの許可」で常に許可にしたときを除く）。Claude Code の許可の確認なので、Remote Control からも答えられます。Mac の画面のダイアログ（タイトルバーの「再起動して更新」の 3 択）は出さず、いつも「動かしたまま」終えます（常駐の pty ホストが claude を保ち、起動し直したアプリが引き継ぐので、ターンの途中でもセッションは続く）。
     - Homebrew でダウンロード済みの新しいバージョン（`HomebrewUpdater` が `ready`）があれば、終えたあとに入れ替えてから起動し直します（`relaunchAfterUpdate`。タイトルバーの「再起動して更新」と同じ `upgradeAfterExit`）。無ければ、`only_if_update: true` なら起動し直さずに理由（開発用のビルド・Homebrew で入れていない・ダウンロードの途中・失敗・最新）を返し、省いたとき（`false`）はそのまま起動し直します（`app.relaunch()`）。人が「更新して」と頼んだのか「再起動して」と頼んだのかを、Claude が引数で分けられるようにするためです（決めたこと）。入れ替えるものが無くて起動し直さなかったのはエラーにせず、終了の確認・ほかの再起動の途中で断ったときはエラーにします。
     - 結果を Claude に返してから 1 秒あとに終えます（`RESTART_DELAY_MS`。先に終えると、中継（`callBridge`）への返事が届かない）。終える前に、呼んだセッションへの知らせ（`SessionNotices` の channel `restart`。中身は終える前のバージョンと入れ替えるはずのバージョン）を記録に残し、起動し直したアプリが、手が空いたら送ります。送るときに今のバージョンと比べて、「v◯ から v◯ に更新した」「入れ替えに失敗した」「入れ替えずに起動し直した」「起動し直した」を書きます。入れ替えるはずだったのにバージョンが変わっていないとき、失敗か入れ替えずに起動し直したかは、起動したときに `homebrew-update.result` があったか（`upgradeRan`。`reportUpdateResult` が消す前に見る）で分けます。頼まれてから終えるまでの 1 秒に用意が無くなったときなどに、「失敗した・Mac に理由を出した」と誤って伝えないためです。終えると決めたアプリでは送りません（`holds`）。ターミナルモードのセッションには、ほかの Claude への知らせと同じく送りません（捨てる）。
     - 終えるのが取りやめになったら（終えるときの例外・画面が閉じるのを拒んだ `will-prevent-unload`）、`AppRestart.cancel` と `quitDecided`・起動し直しの印を戻し、もう一度頼めるようにします。今のアプリの画面は閉じるのを拒まないので、念のためです。
@@ -1772,11 +1789,11 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・ワークスペースに追加したフォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）・最後に起動したチャットの claude の pid と initialize の返事の一部・アプリを閉じたときに送信中だった発言など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
-| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude がセッションを始める前に許可を求めるか（`sessionsStartConfirm`。アプリ全体で 1 つ）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）。Claude にターミナルを使わせるか（`terminalControl`）） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude のツールの許可（`toolPermissions`。アプリ全体で 1 つ。前のバージョンの `sessionsStartConfirm` は、引き継いだあとも読むだけ）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）。Claude にターミナルを使わせるか（`terminalControl`）） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す。ただし、読めなかったファイルは消さない。この起動でまだ読んでいなければ、消す前に読んで確かめる）。読めない（権限が無いなど）・形の分からない（新しいバージョンのアプリが書いたものなど）ときは空で始め、上書きしないよう保存しない（一覧の `checklistUnsaved` でチェックリストのパネルに出し、チェックリストの MCP の結果にも、呼んだセッションと対象のセッションの組ごとに最初の 1 回だけ添える。Claude が呼ぶたびに人へ伝え直さないように）。壊れた JSON は `<id>.json.broken-<時刻>` に移してから空で始め、保存は続ける（`saved-json.ts`） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `sessions.sock` | ほかのセッションを扱う MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
-| `sessions-start-no-ask` | 子セッション・独立したセッションの起動の確認を省く印（中身は空）。メニューの「tanacode → MCP → セッションを始める前に許可を求める」をオフにしている間だけ置き、起動の確認のフックが、あるかを見る |
+| `tool-permissions/<ツールの ID>.ask`・`.allow` | Claude のツールの許可で、既定から変えたツールの印（中身は空）。ツールごとの許可のフックが、呼ばれるたびにあるかを見る。前のバージョンの `sessions-start-no-ask` は、起動したときに消す |
 | `checklist.sock` | チェックリストの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `walkthrough.sock` | ウォークスルーの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `terminal.sock` | 人のターミナルの MCP の中継と、打つ前の確認のフックがつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |

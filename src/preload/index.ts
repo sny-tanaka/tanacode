@@ -129,6 +129,11 @@ const api: TanacodeApi = {
     update: (changes) => invoke(IpcChannel.PromptsUpdate, changes),
     onOpen: (listener) => subscribe(IpcChannel.PromptsOpen, () => listener()),
   },
+  toolPermissions: {
+    get: () => invoke(IpcChannel.ToolPermissionsGet),
+    set: (toolId, permission) => invoke(IpcChannel.ToolPermissionsSet, toolId, permission),
+    onOpen: (listener) => subscribe(IpcChannel.ToolPermissionsOpen, () => listener()),
+  },
   system: {
     onStats: (listener) => subscribe(IpcChannel.SystemStats, listener),
   },

@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { browserToolId } from '@shared/browser-tools';
+import { sessionToolId } from '@shared/session-tools';
 import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
@@ -295,9 +297,9 @@ describe('Claude Code に足す MCP サーバー', () => {
     const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
     const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
     launches.forEach((name, i) => {
-      // セッションには、子セッションの起動の確認を省く印のファイル（userData。アプリ全体で 1 つ）のパスも渡す
-      const extra = name === 'sessionsLaunch' ? { noAskFile: join(state.userData, 'sessions-start-no-ask') } : {};
-      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7', ...extra });
+      // ツールごとの許可の印のフォルダ（userData。アプリ全体で 1 つ）も渡す
+      const permissionsDir = join(state.userData, 'tool-permissions');
+      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7', permissionsDir });
     });
   });
 
@@ -1234,14 +1236,13 @@ describe('メニュー', () => {
     ]);
     // MCP の中は、MCP サーバーごとに区切る
     const mcp = menuItem('mcp').submenu!;
-    expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'sessionsStartConfirm', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl']);
+    expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl', 'separator', 'toolPermissions']);
     const checks = [...appMenu.submenu!, ...mcp].filter((i) => i.type === 'checkbox');
     expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({
       notifyUpdates: false,
       updateOnQuit: true,
       browserControl: true,
       sessionsControl: false,
-      sessionsStartConfirm: false,
       checklistControl: true,
       walkthroughControl: false,
       terminalControl: true,
@@ -1283,10 +1284,10 @@ describe('メニュー', () => {
       'アプリ内ブラウザ',
       'アプリ内ブラウザで Claude に許す先…',
       'セッションの操作',
-      'セッションを始める前に許可を求める',
       'チェックリスト',
       'ウォークスルー',
       'ターミナル',
+      'Claude のツールの許可…',
     ]);
     await boot({ settings: { language: 'en' } });
     expect(labels()).toEqual([
@@ -1301,10 +1302,10 @@ describe('メニュー', () => {
       'In-App Browser',
       'Allowed Sites for Claude in the In-App Browser…',
       'Session Control',
-      'Ask Before Starting a Session',
       'Checklists',
       'Walkthroughs',
       'Terminal',
+      'Claude Tool Permissions…',
     ]);
   });
 
@@ -1437,7 +1438,6 @@ describe('メニュー', () => {
   it.each([
     'updateOnQuit',
     'sessionsControl',
-    'sessionsStartConfirm',
     'checklistControl',
     'walkthroughControl',
     'terminalControl',
@@ -1450,42 +1450,50 @@ describe('メニュー', () => {
     expect(savedSettings()[key]).toBe(true);
   });
 
-  describe('「MCP → セッションを始める前に許可を求める」', () => {
-    const noAskFile = () => join(state.userData, 'sessions-start-no-ask');
+  describe('Claude のツールの許可', () => {
+    const dir = () => join(state.userData, 'tool-permissions');
+    const start = sessionToolId('start_session');
+    const marks = () => (existsSync(dir()) ? readdirSync(dir()).sort() : []);
 
-    it('オフにしたら印のファイルを置き、オンにしたら消す（起動の確認のフックが、動いているセッションでも次の呼び出しから読む）', async () => {
+    it('1 つ変えると、印のファイルを置き・消してから設定に保存する（フックが、動いているセッションでも次の呼び出しから読む）', async () => {
       await boot();
-      expect(existsSync(noAskFile())).toBe(false);
-      toggle('sessionsStartConfirm');
-      expect(existsSync(noAskFile())).toBe(true);
-      toggle('sessionsStartConfirm');
-      expect(existsSync(noAskFile())).toBe(false);
+      await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({});
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'allow')).resolves.toEqual({ [start]: 'allow' });
+      expect(marks()).toEqual([`${start}.allow`]);
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'allow' });
+      // 既定に戻すと印は消え、選んだ値は残る
+      await invoke(IpcChannel.ToolPermissionsSet, start, 'ask');
+      expect(marks()).toEqual([]);
+      await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({ [start]: 'ask' });
+      // 知らないツール・値は断る
+      await expect(invoke(IpcChannel.ToolPermissionsSet, 'mcp__other__x', 'allow')).rejects.toThrow();
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'yes')).rejects.toThrow();
     });
 
-    it('起動したら、印のファイルを保存した設定に合わせ直す（前のアプリが残した印は消し、オフなら置く）', async () => {
-      await boot({ before: (s) => writeFileSync(join(s.userData, 'sessions-start-no-ask'), '') });
-      expect(existsSync(noAskFile())).toBe(false);
-      await boot({ settings: { sessionsStartConfirm: false } });
-      expect(existsSync(noAskFile())).toBe(true);
+    it('前のバージョンの「セッションを始める前に許可を求める」がオフなら、起動したときに start_session を常に許可に引き継ぎ、前の印のファイルは消す', async () => {
+      await boot({ settings: { sessionsStartConfirm: false }, before: (st) => writeFileSync(join(st.userData, 'sessions-start-no-ask'), '') });
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'allow' });
+      expect(marks()).toEqual([`${start}.allow`]);
+      await vi.waitFor(() => expect(existsSync(join(state.userData, 'sessions-start-no-ask'))).toBe(false));
     });
 
-    it('保存できなかったら、チェックも印のファイルも元に戻す（確認を省いたままにしない）', async () => {
+    it('選び直したあとは、引き継ぎ直さない。起動したら、印のファイルを保存した設定に合わせ直す', async () => {
+      await boot({
+        settings: { sessionsStartConfirm: false, toolPermissions: { [start]: 'ask', [browserToolId('click')]: 'allow' } },
+        before: (st) => {
+          mkdirSync(join(st.userData, 'tool-permissions'), { recursive: true });
+          writeFileSync(join(st.userData, 'tool-permissions', `${start}.allow`), '');
+        },
+      });
+      expect(marks()).toEqual([`${browserToolId('click')}.allow`]);
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'ask', [browserToolId('click')]: 'allow' });
+    });
+
+    it('保存できなかったら、印のファイルを保存した設定に戻して断る（確認を省いたままにしない）', async () => {
       await boot();
       mkdirSync(join(state.userData, 'settings.json.tmp'));
-      const item = toggle('sessionsStartConfirm');
-      expect(item.checked).toBe(true);
-      expect(existsSync(noAskFile())).toBe(false);
-    });
-
-    it('印のファイルを置けなかったら、設定も変えずにチェックを元に戻す', async () => {
-      await boot();
-      // ファイルの場所に、中身のあるフォルダがあると置けない
-      mkdirSync(join(noAskFile(), 'x'), { recursive: true });
-      const item = toggle('sessionsStartConfirm');
-      expect(item.checked).toBe(true);
-      // 設定は保存しない
-      expect(existsSync(join(state.userData, 'settings.json'))).toBe(false);
-      expect(menuItem('sessionsStartConfirm').checked).toBe(true);
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'allow')).rejects.toThrow();
+      expect(marks()).toEqual([]);
     });
   });
 
@@ -1502,7 +1510,6 @@ describe('メニュー', () => {
     'updateOnQuit',
     'browserControl',
     'sessionsControl',
-    'sessionsStartConfirm',
     'checklistControl',
     'walkthroughControl',
     'terminalControl',
@@ -1520,16 +1527,18 @@ describe('メニュー', () => {
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「MCP → アプリ内ブラウザで Claude に許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「MCP → アプリ内ブラウザで Claude に許す先…」「MCP → Claude のツールの許可…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
     menuItem('browserHosts').click?.({});
     expect(state.windows).toHaveLength(2);
+    menuItem('toolPermissions').click?.({});
     menuItem('prompts').click?.({});
     menuItem('newSession').click?.({});
-    expect(mainWindow().show).toHaveBeenCalledTimes(3);
+    expect(mainWindow().show).toHaveBeenCalledTimes(4);
     expect(mainWindow().webContents.sent).toEqual([
       [IpcChannel.BrowserHostsOpen, undefined],
+      [IpcChannel.ToolPermissionsOpen, undefined],
       [IpcChannel.PromptsOpen, undefined],
       [IpcChannel.SessionsNew, undefined],
     ]);

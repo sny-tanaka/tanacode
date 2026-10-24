@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
+import { toolPermissionHooks } from '../src/main/tool-permissions';
 import { IDLE_FILE_COMMAND } from '../src/main/statusline';
 import type { SettingsFile } from '../src/shared/settings-file';
 
@@ -183,12 +184,12 @@ describe('起動の準備', () => {
     const files = make();
     const mine = { hooks: [{ type: 'command', command: 'npm test' }] };
     const { id } = files.add(file('a.json', { hooks: { Stop: [mine] } }));
-    const without = JSON.parse(readFileSync(files.prepare('s', id, false, false).settingsFile, 'utf8'));
+    const without = JSON.parse(readFileSync(files.prepare('s', id, false).settingsFile, 'utf8'));
     // ターンの終わりを書くだけのフックは、いつも足す
     const idle = { hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] };
     expect(without.hooks.Stop).toEqual([mine, idle]);
     expect(without.hooks.UserPromptSubmit).toBeUndefined();
-    const written = JSON.parse(readFileSync(files.prepare('s', id, false, false, true).settingsFile, 'utf8'));
+    const written = JSON.parse(readFileSync(files.prepare('s', id, false, true).settingsFile, 'utf8'));
     expect(written.hooks.Stop).toEqual([mine, idle, { hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] }]);
     expect(written.hooks.UserPromptSubmit).toHaveLength(1);
     expect(written.hooks.SessionStart[0].matcher).toBe('compact');
@@ -199,7 +200,7 @@ describe('起動の準備', () => {
     const mine = { matcher: 'startup', hooks: [{ type: 'command', command: 'echo hi' }] };
     const { id } = files.add(file('a.json', { hooks: { SessionStart: [mine] } }));
     expect(JSON.parse(readFileSync(files.prepare('s', id).settingsFile, 'utf8')).hooks.SessionStart).toEqual([mine]);
-    const written = JSON.parse(readFileSync(files.prepare('s', id, false, false, true, false, true).settingsFile, 'utf8'));
+    const written = JSON.parse(readFileSync(files.prepare('s', id, false, true, false, true).settingsFile, 'utf8'));
     expect(written.hooks.SessionStart).toEqual([
       mine,
       { matcher: 'startup|resume|clear|compact', hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_INSTRUCTIONS_HOOK=1') })] },
@@ -240,14 +241,14 @@ describe('起動の準備', () => {
     expect(files.prepare('s', id).model).toBeNull();
   });
 
-  it('アプリ内ブラウザ・セッションの確認のフックは、使うときだけ足す', () => {
+  it('アプリ内ブラウザの確認のフックは使うときだけ、ツールごとの許可のフックはいつも足す', () => {
     const files = make();
     const { id } = files.add(file('a.json', {}));
     const matchers = (sessionId: string, ...flags: boolean[]) =>
       (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
-    expect(matchers('s1')).toEqual(['Bash']);
-    // ブラウザの 1 つと、セッションの 2 つ（子セッションの起動と tanacode の再起動）
-    expect(matchers('s2', true, true)).toHaveLength(4);
+    const tools = toolPermissionHooks().map((h) => h.matcher);
+    expect(matchers('s1')).toEqual(['Bash', ...tools]);
+    expect(matchers('s2', true)).toEqual(['Bash', 'mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate', ...tools]);
   });
 
   it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {

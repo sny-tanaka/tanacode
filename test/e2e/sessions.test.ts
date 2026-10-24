@@ -90,9 +90,8 @@ describe('Claude がセッションの MCP で子セッションを始める', (
   });
 });
 
-// メニューの「MCP → セッションを始める前に許可を求める」をオフにすると、manual の親でも、許可の確認を出さずに子が始まる。
-// オンに戻すと、動いている親（Claude Code を起動し直さない）でも、次の起動からまた確認が出る（フックが呼ばれるたびに印のファイルを見る）
-const NO_ASK_ID = 'sessionsStartConfirm';
+// メニューの「MCP → Claude のツールの許可…」で「セッションを始める」を常に許可にすると、manual の親でも、許可の確認を出さずに子が始まる。
+// 毎回確認に戻すと、動いている親（Claude Code を起動し直さない）でも、次の起動からまた確認が出る（フックが呼ばれるたびに印のファイルを見る）
 const NO_ASK_PARENT = '確認なしで別のセッションを始めてください';
 const NO_ASK_CHILD = '確認なしで始めた子の作業として、返事だけしてください';
 const NO_ASK_CHILD_NAME = '確認なしの子';
@@ -103,7 +102,7 @@ const ASK_AGAIN_CHILD = '確認を戻したあとの子の作業として、返�
 const ASK_AGAIN_CHILD_NAME = '確認を戻したあとの子';
 const ASK_AGAIN_DONE = '確認を戻したあとに子を始めました';
 
-describe('「MCP → セッションを始める前に許可を求める」の切り替え', () => {
+describe('「Claude のツールの許可」の「セッションを始める」の切り替え', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
@@ -133,17 +132,23 @@ describe('「MCP → セッションを始める前に許可を求める」の�
     await app?.close();
   });
 
-  // メニューの項目を id で探して押す（人が押したときと同じく、チェックを切り替えてから押した処理を動かす）。押したあとのチェックを返す
-  const toggleMenu = (id: string) =>
-    app.app.evaluate(({ Menu }, id) => {
-      const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-      if (!item) throw new Error(`メニューに「${id}」がありません`);
+  // メニューの「MCP → Claude のツールの許可…」を押してダイアログを開き、「セッションを始める」を選んで、保存されたら（既定から変えた印が変わったら）閉じる
+  const choose = async (label: string, changed: boolean) => {
+    await app.app.evaluate(({ Menu }) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById('toolPermissions');
+      if (!item) throw new Error('メニューに「toolPermissions」がありません');
       item.click();
-      return item.checked;
-    }, id);
+    });
+    const select = app.page.getByLabel('セッションを始める の許可');
+    await select.selectOption({ label });
+    const row = app.page.locator('.tool-permission-row', { has: select });
+    await expect.poll(async () => (await row.getAttribute('class'))?.split(' ').includes('changed')).toBe(changed);
+    await app.page.keyboard.press('Escape');
+    await app.page.locator('.tool-permissions-dialog').waitFor({ state: 'detached' });
+  };
 
-  it('オフにすると、manual の親でも、許可の確認を出さずに子が始まる', async () => {
-    expect(await toggleMenu(NO_ASK_ID)).toBe(false);
+  it('常に許可にすると、manual の親でも、許可の確認を出さずに子が始まる', async () => {
+    await choose('常に許可', true);
     await app.startSession(NO_ASK_PARENT, { mode: 'manual' });
     await app.byText('.chat-list', NO_ASK_DONE).waitFor();
     expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
@@ -151,9 +156,9 @@ describe('「MCP → セッションを始める前に許可を求める」の�
     await app.byText('.chat-list', NO_ASK_CHILD_REPLY).waitFor();
   });
 
-  it('オンに戻すと、動いている親でも（起動し直さずに）、次の起動から許可の確認が出る', async () => {
+  it('毎回確認に戻すと、動いている親でも（起動し直さずに）、次の起動から許可の確認が出る', async () => {
     const running = await app.claudePids();
-    expect(await toggleMenu(NO_ASK_ID)).toBe(true);
+    await choose('毎回確認（既定）', false);
     await app.byText('.session-list .session-row', NO_ASK_PARENT).click();
     await app.byText('.chat-list', NO_ASK_DONE).waitFor();
     await app.send(ASK_AGAIN);

@@ -20,6 +20,7 @@ import {
   NOTIFICATION_FILE_COMMAND,
   PERMISSION_FILE_COMMAND,
 } from '../src/main/statusline';
+import { toolPermissionHooks } from '../src/main/tool-permissions';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
 // JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json。test/cli/terminal-mode.test.ts が TUI で取る）を使う。
@@ -109,13 +110,12 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(userStatusLineCommand()).toBeNull();
   });
 
-  it('Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す。質問の入力を書くフックは足さない', () => {
+  it('Bash の前のフックとツールごとの許可のフックはいつも、ブラウザの確認のフックは使うときだけ足す。質問の入力を書くフックは足さない', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
-    expect(matchers(ownSettings(null))).toEqual(['Bash']);
-    // セッションは、子セッションの起動と tanacode の再起動（restart_app）の 2 つ
-    expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
-    expect(matchers(ownSettings(null, false, true))).toEqual(['Bash', 'mcp__tanacode-sessions__start_session', 'mcp__tanacode-sessions__restart_app']);
-    expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(2);
+    const tools = toolPermissionHooks().map((h) => h.matcher);
+    expect(matchers(ownSettings(null))).toEqual(['Bash', ...tools]);
+    expect(matchers(ownSettings(null, true))).toEqual(['Bash', 'mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate', ...tools]);
+    expect(JSON.parse(sessionSettings(true)).hooks.PreToolUse).toHaveLength(2 + tools.length);
   });
 
   it('書くだけのフック（許可の確認の入力・Claude Code の知らせ・ターンの終わり）は、いつも足す。どれも、セッションごとのファイルに書くだけ', () => {
@@ -131,33 +131,33 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(PERMISSION_FILE_COMMAND).toBe(write('permission'));
     expect(NOTIFICATION_FILE_COMMAND).toBe(write('notification'));
     expect(IDLE_FILE_COMMAND).toBe(write('idle'));
-    // セッションの MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
-    expect(JSON.parse(sessionSettings(false, true)).hooks.PermissionRequest).toHaveLength(1);
+    // MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
+    expect(JSON.parse(sessionSettings(true)).hooks.PermissionRequest).toHaveLength(1);
   });
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
     const gate = (s: Record<string, unknown>) =>
       (s as { hooks: { PreToolUse: { matcher: string; hooks: { command: string; timeout: number }[] }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
     expect(gate(ownSettings(null))).toEqual([]);
-    expect(gate(ownSettings(null, false, false, null, false, true))).toEqual([{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
-    expect(gate(JSON.parse(sessionSettings(false, false, null, false, true)))).toHaveLength(1);
+    expect(gate(ownSettings(null, false, null, false, true))).toEqual([{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gate(JSON.parse(sessionSettings(false, null, false, true)))).toHaveLength(1);
   });
 
   it('TANACODE.md を渡すフック（会話の始まり・再開・/clear・圧縮のあと）は、instructions のときだけ足す。チェックリストの圧縮のあとのフックより前', () => {
     expect(Object.keys(ownSettings(null).hooks as object)).not.toContain('SessionStart');
-    const only = ownSettings(null, false, false, null, false, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string; timeout?: number }[] }[]>;
+    const only = ownSettings(null, false, null, false, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string; timeout?: number }[] }[]>;
     expect(only.SessionStart).toEqual([{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: INSTRUCTIONS_HOOK_COMMAND, timeout: 10 }] }]);
     // チャットのフックの一覧に出さない目印と、起動する Claude Code の環境変数で渡す実行ファイル・スクリプト
     expect(INSTRUCTIONS_HOOK_COMMAND).toBe('TANACODE_INSTRUCTIONS_HOOK=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_INSTRUCTIONS_COMMAND" "$TANACODE_INSTRUCTIONS_SCRIPT"');
-    const both = ownSettings(null, false, false, null, true, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
+    const both = ownSettings(null, false, null, true, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
     expect(both.SessionStart.map((h) => h.matcher)).toEqual(['startup|resume|clear|compact', 'compact']);
     expect(both.SessionStart[1].hooks[0].command).toContain('--hook');
-    expect(JSON.parse(sessionSettings(false, false, null, false, false, true)).hooks.SessionStart).toHaveLength(1);
+    expect(JSON.parse(sessionSettings(false, null, false, false, true)).hooks.SessionStart).toHaveLength(1);
   });
 
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {
     expect(Object.keys(ownSettings(null).hooks as object)).not.toContain('UserPromptSubmit');
-    const hooks = ownSettings(null, false, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
+    const hooks = ownSettings(null, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
     expect(Object.keys(hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
     expect(hooks.SessionStart[0].matcher).toBe('compact');
     // 自動の最適化圧縮: Claude Code の自動の圧縮の前に、アプリに聞く。ツールのあとは、止めるファイルを見るだけ（アプリには聞かない）
@@ -169,7 +169,7 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(AUTO_COMPACT_STOP_COMMAND).toContain('TANACODE_ASK_FILE');
     // ターンの終わりは、書くだけのフックのあとに、チェックリストのフック
     expect(hooks.Stop.map((h) => h.hooks[0].command)).toEqual([IDLE_FILE_COMMAND, expect.stringContaining('--hook')]);
-    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(2);
+    expect(JSON.parse(sessionSettings(false, null, true)).hooks.Stop).toHaveLength(2);
   });
 
   it('プロファイルの設定のフォルダで起動するときだけ、~/.claude の指示ファイルを読ませない設定を足す', () => {
@@ -177,13 +177,13 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(JSON.parse(sessionSettings())).not.toHaveProperty('claudeMdExcludes');
     const excludes = [join(home, '.claude', 'CLAUDE.md'), join(home, '.claude', 'rules', '**')];
     const dir = join(home, '.claude-work');
-    expect(ownSettings(null, false, false, dir).claudeMdExcludes).toEqual(excludes);
-    expect(JSON.parse(sessionSettings(false, false, dir)).claudeMdExcludes).toEqual(excludes);
+    expect(ownSettings(null, false, dir).claudeMdExcludes).toEqual(excludes);
+    expect(JSON.parse(sessionSettings(false, dir)).claudeMdExcludes).toEqual(excludes);
   });
 
   it('描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）。登録した設定ファイルの tui はそのまま', () => {
     expect(ownSettings(null)).not.toHaveProperty('tui');
-    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true))).not.toHaveProperty('tui');
+    expect(JSON.parse(sessionSettings(true, join(home, '.claude-work'), true, true))).not.toHaveProperty('tui');
     expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('default');
   });
 });

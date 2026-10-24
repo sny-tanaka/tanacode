@@ -41,7 +41,7 @@ import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { SendError, type SendFailure } from '../src/main/send-error';
 import { textResult } from '../src/main/mcp-bridge';
-import { restartGateCommand, RESTART_GATED_TOOL, sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_ASK_ENV, writeSessionsNoAskFile } from '../src/main/sessions-bridge';
+import { toolPermissionCommand } from '../src/main/tool-permissions';
 import type { AppUpdateInfo, RestartOutcome } from '../src/main/app-restart';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
@@ -107,13 +107,13 @@ describe('中継と起動の引数', () => {
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('start_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
-    // 子セッションの起動には、権限モードによらず確認を出させるフック
+    // 子セッションの起動と tanacode の再起動には、権限モードによらず確認を出させるフック（ツールごとの許可で常に許可にしたときを除く。tool-permissions.test.ts）
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
-    expect(settings.hooks.PreToolUse.filter((h) => h.matcher === SESSIONS_GATED_TOOL)).toEqual([
-      { matcher: sessionToolId('start_session'), hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] },
-    ]);
-    const off = ownSettings(null, true, false) as { hooks: { PreToolUse: Hook[]; PermissionRequest?: Hook[] } };
-    expect(off.hooks.PreToolUse.some((h) => h.matcher === SESSIONS_GATED_TOOL)).toBe(false);
+    for (const name of ['start_session', 'restart_app'])
+      expect(settings.hooks.PreToolUse.filter((h) => h.matcher === sessionToolId(name))).toEqual([
+        { matcher: sessionToolId(name), hooks: [{ type: 'command', command: toolPermissionCommand(sessionToolId(name), 'always'), timeout: 10 }] },
+      ]);
+    const off = ownSettings(null, true) as { hooks: { PreToolUse: Hook[]; PermissionRequest?: Hook[] } };
     // 許可の確認を出す直前に、ツールの入力の全文を書かせるフック（何も決めない）。セッションの MCP を足さなくても、いつも足す
     expect(off.hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
     const on = settings as unknown as { hooks: { PermissionRequest: Hook[] } };
@@ -145,88 +145,6 @@ describe('中継と起動の引数', () => {
     expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('start_session');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('tanacode-parent-message');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('do not wait to be asked');
-  });
-
-  // 起動の確認のフックを、起動する Claude Code と同じ形（環境変数で印のファイルのパスを渡す）で動かし、決めたことを返す
-  const gate = (noAskFile: string | undefined, input = '{"tool_name":"mcp__tanacode-sessions__start_session"}') => {
-    const env: Record<string, string> = { PATH: process.env.PATH ?? '', ...sessionsGateEnv({ ...launch, ...(noAskFile === undefined ? {} : { noAskFile }) }) };
-    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8', input, env });
-    return JSON.parse(out) as { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string }; suppressOutput: boolean };
-  };
-
-  it('起動の確認のフックは、印のファイルが無ければ ask と、子も利用枠を使うことを書いた理由を出す', () => {
-    const decision = gate(join(root, 'sessions-start-no-ask')).hookSpecificOutput;
-    expect(decision.permissionDecision).toBe('ask');
-    expect(decision.permissionDecisionReason).toContain('利用枠');
-    // パスを渡されていない（空）・環境変数が無いときも、確認を出させる
-    expect(gate(undefined).hookSpecificOutput.permissionDecision).toBe('ask');
-    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
-    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('ask');
-  });
-
-  it('印のファイルがあれば、権限モードによらず allow を出す（理由とアプリのフックの印は ask と同じ）', () => {
-    const file = join(root, 'sessions-start-no-ask');
-    writeFileSync(file, '');
-    const allow = gate(file);
-    const ask = gate(join(root, 'missing'));
-    expect(allow).toEqual({ ...ask, hookSpecificOutput: { ...ask.hookSpecificOutput, permissionDecision: 'allow' } });
-    expect(allow.suppressOutput).toBe(true);
-    // チャットのフックの一覧に出さない目印は、どちらのときもコマンドに入っている
-    expect(sessionsGateCommand()).toContain('TANACODE_SESSIONS_GATE=1');
-    // フォルダは印にならない（ふつうのファイルだけを見る）
-    const dir = join(root, 'dir');
-    mkdirSync(dir);
-    expect(gate(dir).hookSpecificOutput.permissionDecision).toBe('ask');
-  });
-
-  it('同じコマンドのまま、印のファイルを置く・消すと、次の呼び出しから切り替わる（動いているセッションにもすぐ効く）', () => {
-    const file = join(root, 'userData', 'sessions-start-no-ask');
-    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
-    writeSessionsNoAskFile(file, false);
-    expect(readFileSync(file, 'utf8')).toBe('');
-    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('allow');
-    writeSessionsNoAskFile(file, true);
-    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
-    // 無いファイルを消すのは、何もしない
-    writeSessionsNoAskFile(file, true);
-    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
-  });
-
-  it('環境変数の名前とパスは、シェルで分かれない（空白・引用符を含む userData でも読める）', () => {
-    expect(SESSIONS_NO_ASK_ENV).toBe('TANACODE_SESSIONS_NO_ASK_FILE');
-    const file = join(root, "Application Support", "it's here", 'sessions-start-no-ask');
-    writeSessionsNoAskFile(file, false);
-    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('allow');
-  });
-
-  it('起動の確認の理由は、Claude Code を起動するときの言語で書く（英語でも JSON として読める）', () => {
-    setLanguage('en');
-    try {
-      expect(gate(undefined).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
-      const file = join(root, 'sessions-start-no-ask');
-      writeFileSync(file, '');
-      expect(gate(file).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
-    } finally {
-      setLanguage('ja');
-    }
-  });
-
-  it('tanacode の再起動（restart_app）の確認のフックは、印のファイルがあっても、権限モードによらずいつも ask を出す', () => {
-    const file = join(root, 'sessions-start-no-ask');
-    writeFileSync(file, '');
-    const env = { PATH: process.env.PATH ?? '', ...sessionsGateEnv({ ...launch, noAskFile: file }) };
-    const out = execFileSync('/bin/sh', ['-c', restartGateCommand()], { encoding: 'utf8', input: '{"tool_name":"mcp__tanacode-sessions__restart_app"}', env });
-    const decision = JSON.parse(out) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }; suppressOutput: boolean };
-    expect(decision.hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: t('main.hooks.restartGate') });
-    expect(decision.suppressOutput).toBe(true);
-    expect(restartGateCommand()).toContain('TANACODE_SESSIONS_GATE=1');
-    // --settings の PreToolUse に、restart_app だけに当たるフックとして入る
-    const hooks = (ownSettings(null, false, true).hooks as { PreToolUse: { matcher: string; hooks: { command: string }[] }[] }).PreToolUse;
-    expect(hooks.find((h) => h.matcher === RESTART_GATED_TOOL)?.hooks[0].command).toBe(restartGateCommand());
-    expect(RESTART_GATED_TOOL).toBe('mcp__tanacode-sessions__restart_app');
-    // 確認なしに通るツール（--allowedTools）には入れない。更新の様子を読むだけのツールは入れる
-    expect(allowedSessionToolIds()).not.toContain(RESTART_GATED_TOOL);
-    expect(allowedSessionToolIds()).toContain(sessionToolId('get_app_update'));
   });
 
   it('「MCP → セッションを始める前に許可を求める」は既定でオンで、保存される', () => {
@@ -286,7 +204,7 @@ describe('会話ログの見分け', () => {
   });
 
   it('子セッションの起動の確認のフックは、チャットのフックの一覧に出さない', () => {
-    const hook = { type: 'attachment', uuid: 'h1', attachment: { type: 'hook_success', hookName: 'PreToolUse:x', hookEvent: 'PreToolUse', command: sessionsGateCommand(), content: '' } } as TranscriptEntry;
+    const hook = { type: 'attachment', uuid: 'h1', attachment: { type: 'hook_success', hookName: 'PreToolUse:x', hookEvent: 'PreToolUse', command: toolPermissionCommand(sessionToolId('start_session'), 'always'), content: '' } } as TranscriptEntry;
     expect(toChatEvents(hook, '/r')).toEqual([]);
   });
 

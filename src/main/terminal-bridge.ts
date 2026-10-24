@@ -2,6 +2,7 @@ import { TERMINAL_GATE_HOOK_ENV } from '@shared/chat';
 import { language, t } from '@shared/i18n';
 import { readTypeInput, TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD, terminalToolId, typedPreview } from '@shared/terminal-tools';
 import { callBridge, MCP_LANGUAGE_ENV, mcpServerEntry, type McpLaunch, type McpServerEntry, type ToolResult } from './mcp-bridge';
+import { alwaysAllowed, alwaysAllowOutput } from './tool-permissions';
 
 // 人のターミナルの中継（terminal-mcp.ts。Claude Code が起動する MCP サーバー）に渡すものと、打つ前の確認のフック。ソケットのやりとりは mcp-bridge.ts。
 // 打つ前の確認（type_in_terminal の PreToolUse）は、アプリ内ブラウザの JavaScript の実行の確認（browser-gate.ts）と同じ形:
@@ -9,6 +10,7 @@ import { callBridge, MCP_LANGUAGE_ENV, mcpServerEntry, type McpLaunch, type McpS
 // 2. アプリは打つものを確かめて「確認済みの印」を控え（terminal-control.ts）、タブの名前を返す。フックは ask と、タブの名前と打つものを入れた理由を返す
 // 3. ツールの呼び出しがアプリに届いたら、アプリは印を確かめて使い切る。印が無ければ断る（フックが動かなかったときの備え）
 // 権限モード（auto・bypassPermissions を含む）や「次から聞かない」によらず、毎回確認が出る（実測は test/cli/terminal.test.ts）。
+// ただし、ツールの許可（メニューの「MCP → Claude のツールの許可…」）で「常に許可」にしたら、2 で allow を返す（tool-permissions.ts）。
 // アプリに聞けなかったときも、確認を出させる
 
 // 中継に渡す環境変数（--mcp-config の env）。ソケットのパスと、どのセッションの Claude Code か（呼び出し元。親子の関係はアプリの記録で判断する）
@@ -95,5 +97,7 @@ export async function runTerminalGate(socketPath: string, session: string, hookI
     return terminalGateOutput(null, input);
   }
   const result = await callBridge(socketPath, { session, tool: TERMINAL_GATE_REQUEST, args: input }, timeoutMs, TERMINAL_CLOSED_MESSAGE);
+  // ツールの許可で「常に許可」にしていれば、確認を出させない（アプリは上の問い合わせで、確認した印を控えてある。plan のときは既定のまま）
+  if (alwaysAllowed(TERMINAL_GATED_TOOL, hookInput)) return alwaysAllowOutput();
   return terminalGateOutput(readGateAnswer(result), input);
 }
