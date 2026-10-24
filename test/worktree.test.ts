@@ -44,6 +44,19 @@ vi.mock('node:crypto', async (importOriginal) => {
   };
 });
 
+// アプリの git の呼び出しの前に、1 度だけ割り込ませる（ほかの Claude Code が間に入る場面を作る）。中身は本物の git
+const gitHook = vi.hoisted(() => ({ before: null as null | ((args: string[]) => void) }));
+vi.mock('../src/main/git', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/git')>();
+  return {
+    ...actual,
+    git: (cwd: string, args: string[], ...rest: unknown[]) => {
+      gitHook.before?.(args);
+      return (actual.git as (...a: unknown[]) => Promise<string>)(cwd, args, ...rest);
+    },
+  };
+});
+
 let root: string;
 let repo: string;
 
@@ -52,6 +65,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd,
 beforeEach(() => {
   // 既定は、gh で調べられない
   prs.mockReset().mockResolvedValue(null);
+  gitHook.before = null;
   names.queue = [];
   names.fixed = null;
   names.calls = 0;
@@ -737,6 +751,20 @@ describe('削除', () => {
     expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branches: [launched(plan, 'checkedOut', false)] });
     // ロックしたまま登録を残す（git worktree prune は、ロックしたものを片付けない）
     expect(git(repo, 'worktree', 'list')).toMatch(new RegExp(`${plan.path} .* locked`));
+  });
+
+  // 同じリポジトリのほかの Claude Code が、裏の掃除で pid のもう無い claude session のロックを外すことがある
+  // （確かめてから unlock するまでの間に入ると、git worktree unlock は「is not locked」で失敗する）
+  it('確かめてから外すまでの間に、ほかの Claude Code がロックを外していても、worktree とブランチを消す', async () => {
+    const plan = await create();
+    gitHook.before = (args) => {
+      if (args[0] !== 'worktree' || args[1] !== 'unlock') return;
+      gitHook.before = null;
+      git(repo, 'worktree', 'unlock', plan.path);
+    };
+    expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branches: [launched(plan)] });
+    expect(existsSync(plan.path)).toBe(false);
+    expect(git(repo, 'worktree', 'list')).not.toContain(plan.name);
   });
 
   it('フォルダをもう手で消していたら、git の登録を片付けて、ブランチの扱いは同じ', async () => {
