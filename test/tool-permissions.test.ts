@@ -39,15 +39,17 @@ describe('既定', () => {
     expect(permissionToolDefaults().size).toBe(PERMISSION_SERVERS.reduce((n, s) => n + s.def.tools.length, 0));
   });
 
-  it('今までの扱いのまま: 許可済みのツールは常に許可、ほかは毎回確認（いつも聞くもの・開く・JavaScript の実行は、それぞれの決まり）', () => {
+  it('既定: 毎回確認はターミナルに打つ・再起動・セッションを始める・開く（許す先の外）・JavaScript の実行（localhost 以外）・PR に載せるだけ。ほかは常に許可', () => {
+    const asks = [...permissionToolDefaults()].filter(([, p]) => p === 'ask').map(([id]) => id).sort();
+    expect(asks).toEqual([browserToolId('evaluate'), browserToolId('navigate'), sessionToolId('restart_app'), sessionToolId('start_session'), terminalToolId('type_in_terminal'), walkthroughToolId('post_walkthrough')].sort());
     expect(ruleOf(browserToolId('screenshot'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(browserToolId('ask_user_to_act'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(sessionToolId('send_message'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(checklistToolId('card_add'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(walkthroughToolId('show_code'))).toEqual({ rule: 'allowed', permission: 'allow' });
-    expect(ruleOf(browserToolId('click'))).toEqual({ rule: 'mode', permission: 'ask' });
-    expect(ruleOf(sessionToolId('stop_session'))).toEqual({ rule: 'mode', permission: 'ask' });
-    expect(ruleOf(walkthroughToolId('post_walkthrough'))).toEqual({ rule: 'mode', permission: 'ask' });
+    expect(ruleOf(browserToolId('click'))).toEqual({ rule: 'act', permission: 'allow' });
+    expect(ruleOf(sessionToolId('stop_session'))).toEqual({ rule: 'act', permission: 'allow' });
+    expect(ruleOf(walkthroughToolId('post_walkthrough'))).toEqual({ rule: 'always', permission: 'ask' });
     expect(ruleOf(sessionToolId('start_session'))).toEqual({ rule: 'always', permission: 'ask' });
     expect(ruleOf(sessionToolId('restart_app'))).toEqual({ rule: 'always', permission: 'ask' });
     expect(ruleOf(terminalToolId('type_in_terminal'))).toEqual({ rule: 'always', permission: 'ask' });
@@ -65,9 +67,9 @@ describe('既定', () => {
   });
 
   it('保存の値は、知っているツールの ask・allow だけにする。既定と同じ値も持つ。印は既定から変えたものだけ', () => {
-    const saved = toolPermissionsOf({ [browserToolId('click')]: 'allow', [browserToolId('screenshot')]: 'allow', 'mcp__other__x': 'allow', [browserToolId('scroll')]: 'yes' });
-    expect(saved).toEqual({ [browserToolId('click')]: 'allow', [browserToolId('screenshot')]: 'allow' });
-    expect(changedToolPermissions(saved)).toEqual({ [browserToolId('click')]: 'allow' });
+    const saved = toolPermissionsOf({ [browserToolId('click')]: 'ask', [browserToolId('screenshot')]: 'allow', 'mcp__other__x': 'allow', [browserToolId('scroll')]: 'yes' });
+    expect(saved).toEqual({ [browserToolId('click')]: 'ask', [browserToolId('screenshot')]: 'allow' });
+    expect(changedToolPermissions(saved)).toEqual({ [browserToolId('click')]: 'ask' });
     expect(toolPermissionsOf(null)).toEqual({});
     expect(toolPermissionsOf(['x'])).toEqual({});
   });
@@ -85,10 +87,10 @@ describe('既定', () => {
 describe('印のファイル', () => {
   it('既定から変えたツールの印だけを置き、ほかの印は消す', () => {
     const dir = join(root, 'tool-permissions');
-    writeToolPermissionFiles(dir, { [browserToolId('click')]: 'allow', [browserToolId('screenshot')]: 'ask', [browserToolId('get_text')]: 'allow' });
-    expect(readdirSync(dir).sort()).toEqual([`${browserToolId('click')}.allow`, `${browserToolId('screenshot')}.ask`]);
+    writeToolPermissionFiles(dir, { [browserToolId('click')]: 'ask', [browserToolId('evaluate')]: 'allow', [browserToolId('get_text')]: 'allow' });
+    expect(readdirSync(dir).sort()).toEqual([`${browserToolId('click')}.ask`, `${browserToolId('evaluate')}.allow`]);
     writeFileSync(join(dir, 'stale'), '');
-    writeToolPermissionFiles(dir, { [browserToolId('click')]: 'ask' });
+    writeToolPermissionFiles(dir, { [browserToolId('click')]: 'allow' });
     expect(readdirSync(dir)).toEqual([]);
   });
 });
@@ -132,27 +134,31 @@ describe('フック', () => {
     expect(decisionOf(command, id, dir, 'bypassPermissions')).toBe('ask');
   });
 
-  it('既定で権限モードに任せるツール: 常に許可の印があれば allow。plan のときと、印が無いときは何も決めない', () => {
+  it('動かすツール: 既定は allow（manual でも）。plan のときは何も決めない。毎回確認の印があれば ask（plan でも）', () => {
     const dir = join(root, 'p');
     const id = browserToolId('click');
-    const command = toolPermissionCommand(id, 'mode');
+    const command = toolPermissionCommand(id, 'act');
     writeToolPermissionFiles(dir, {});
-    expect(decisionOf(command, id, dir)).toBeNull();
-    writeToolPermissionFiles(dir, { [id]: 'allow' });
-    expect(decisionOf(command, id, dir)).toBe('allow');
+    expect(run(command, input(id, 'default'), dir).hookSpecificOutput).toMatchObject({ permissionDecision: 'allow', permissionDecisionReason: t('main.hooks.toolAllow') });
     expect(decisionOf(command, id, dir, 'plan')).toBeNull();
+    expect(decisionOf(command, id, null)).toBe('allow');
+    writeToolPermissionFiles(dir, { [id]: 'ask' });
+    expect(decisionOf(command, id, dir)).toBe('ask');
+    expect(decisionOf(command, id, dir, 'bypassPermissions')).toBe('ask');
+    expect(decisionOf(command, id, dir, 'plan')).toBe('ask');
+    writeToolPermissionFiles(dir, {});
     // 空白入りの plan も
     const out = execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8', input: '{"permission_mode": "plan","tool_name":"x"}', env: { PATH: process.env.PATH ?? '', [TOOL_PERMISSIONS_DIR_ENV]: dir } });
     expect(JSON.parse(out)).toEqual({ suppressOutput: true });
   });
 
-  it('既定でいつも確認を出させるツール（セッションを始める・tanacode の再起動）: 常に許可の印があれば allow。plan のとき・印が無いときは ask', () => {
+  it('既定でいつも確認を出させるツール（セッションを始める・tanacode の再起動・PR に載せる）: 常に許可の印があれば allow。plan のとき・印が無いときは ask', () => {
     const dir = join(root, 'p');
-    for (const name of ['start_session', 'restart_app']) {
-      const id = sessionToolId(name);
+    const reasons = { [sessionToolId('start_session')]: 'main.hooks.sessionsGate', [sessionToolId('restart_app')]: 'main.hooks.restartGate', [walkthroughToolId('post_walkthrough')]: 'main.hooks.postWalkthroughGate' } as const;
+    for (const [id, reason] of Object.entries(reasons)) {
       const command = toolPermissionCommand(id, 'always');
       writeToolPermissionFiles(dir, {});
-      expect(run(command, input(id), dir).hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: t(name === 'restart_app' ? 'main.hooks.restartGate' : 'main.hooks.sessionsGate') });
+      expect(run(command, input(id), dir).hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: t(reason) });
       writeToolPermissionFiles(dir, { [id]: 'allow' });
       expect(run(command, input(id), dir).hookSpecificOutput).toMatchObject({ permissionDecision: 'allow', permissionDecisionReason: t('main.hooks.toolAllow') });
       expect(decisionOf(command, id, dir, 'plan')).toBe('ask');

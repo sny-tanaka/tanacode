@@ -6,6 +6,7 @@ import { browserToolId } from '@shared/browser-tools';
 import { mcpToolId } from '@shared/mcp-tools';
 import { sessionToolId } from '@shared/session-tools';
 import { terminalToolId } from '@shared/terminal-tools';
+import { walkthroughToolId } from '@shared/walkthrough-tools';
 import { changedToolPermissions, PERMISSION_SERVERS, toolDefaultRule, type ToolPermission } from '@shared/tool-permissions';
 import { SUPPRESS_OUTPUT } from './hook-output';
 
@@ -13,12 +14,12 @@ import { SUPPRESS_OUTPUT } from './hook-output';
 // 既定から変えたツールにだけ、userData の tool-permissions に印のファイル（<ツールの ID>.ask か .allow。中身は空）を置く。
 // --settings の PreToolUse のフックは、呼ばれるたびに印のファイルがあるかを見る（Node を起動しない [ -f ]）ので、
 // 切り替えは動いているセッションにもすぐ効く。フックの数・形は起動のときに決まるので、この仕組みより前に始めたセッションには効かない。
-// - 既定が「常に許可」のツール: .ask があれば ask（--allowedTools や権限モードより強く、bypassPermissions でも確認が出る）。無ければ何も決めない
-// - 既定が「Claude Code の権限モードに任せる」ツール: .allow があれば allow（manual でも確認なし）。無ければ何も決めない
-// - 既定でいつも確認を出させるツール（セッションを始める・tanacode の再起動）: .allow があれば allow、無ければ ask
+// - --allowedTools で許可済みのツール（既定は常に許可）: .ask があれば ask（--allowedTools や権限モードより強く、bypassPermissions でも確認が出る）。無ければ何も決めない
+// - 何かを動かすツール（既定は常に許可）: .ask があれば ask。無ければ allow（manual でも確認なし。plan のときは何も決めない）
+// - 既定でいつも確認を出させるツール（セッションを始める・tanacode の再起動・PR に載せる）: .allow があれば allow、無ければ ask
 // - 開く（navigate）・JavaScript の実行（evaluate）・ターミナルに打つ（type_in_terminal）: アプリに問い合わせる確認のフック
 //   （browser-gate.ts・terminal-bridge.ts）が、alwaysAllowed で印を見る（アプリ側の「確認した印」は、そのフックが控える）
-// 権限モードが plan のときは、allow を返さない（Claude Code の plan の扱いに任せる。既定で確認を出させるツールは、確認を出させる）
+// 権限モードが plan のときは、読むだけでないツールに allow を返さない（Claude Code の plan の扱いに任せる。既定で確認を出させるツールは、確認を出させる）
 
 // 印のファイルのフォルダを、フックに渡す環境変数（起動する Claude Code の環境に足す。フックは Claude Code の環境で動く）
 export const TOOL_PERMISSIONS_DIR_ENV = 'TANACODE_TOOL_PERMISSIONS_DIR';
@@ -61,10 +62,18 @@ export function toolPermissionCommand(toolId: string, rule: ReturnType<typeof to
   const allow = print('allow', t('main.hooks.toolAllow'));
   if (rule === 'allowed') return `cat >/dev/null; if ${has(toolId, 'ask')}; then ${print('ask', t('main.hooks.toolAsk'))}; else ${print(null)}; fi`;
   if (rule === 'always') {
-    const reason = toolId === sessionToolId('restart_app') ? t('main.hooks.restartGate') : t('main.hooks.sessionsGate');
+    const reason =
+      toolId === sessionToolId('restart_app')
+        ? t('main.hooks.restartGate')
+        : toolId === sessionToolId('start_session')
+          ? t('main.hooks.sessionsGate')
+          : toolId === walkthroughToolId('post_walkthrough')
+            ? t('main.hooks.postWalkthroughGate')
+            : t('main.hooks.toolAsk');
     return `i=$(cat); if ${has(toolId, 'allow')} && ${NOT_PLAN}; then ${allow}; else ${print('ask', reason)}; fi`;
   }
-  return `i=$(cat); if ${has(toolId, 'allow')} && ${NOT_PLAN}; then ${allow}; else ${print(null)}; fi`;
+  // act: 既定で確認なしに通す
+  return `i=$(cat); if ${has(toolId, 'ask')}; then ${print('ask', t('main.hooks.toolAsk'))}; elif ${NOT_PLAN}; then ${allow}; else ${print(null)}; fi`;
 }
 
 // --settings の PreToolUse に足す、ツールごとのフック。足していない MCP のツールのフックは呼ばれないので、全部のツールに足す
@@ -81,10 +90,15 @@ export function toolPermissionHooks(): { matcher: string; hooks: { type: 'comman
 // hookInput: Claude Code がフックの標準入力に渡した JSON。dir: 印のファイルのフォルダ（環境変数から。無ければ false）
 export function alwaysAllowed(toolId: string, hookInput: string, dir = process.env[TOOL_PERMISSIONS_DIR_ENV] ?? ''): boolean {
   if (!dir || !existsSync(permissionFile(dir, toolId, 'allow'))) return false;
+  return !isPlanMode(hookInput);
+}
+
+// 標準入力（Claude Code の PreToolUse の入力）の権限モードが plan か。読めなければ plan とみなす（allow しない側に倒す）
+export function isPlanMode(hookInput: string): boolean {
   try {
-    return (JSON.parse(hookInput) as { permission_mode?: unknown }).permission_mode !== 'plan';
+    return (JSON.parse(hookInput) as { permission_mode?: unknown }).permission_mode === 'plan';
   } catch {
-    return false;
+    return true;
   }
 }
 

@@ -200,7 +200,7 @@ export function mcpServerEntry(def: McpServerDef, launch: McpLaunch, env: Record
 }
 
 // --mcp-config と --allowedTools。どちらも 1 回にまとめて渡す（値をいくつも取る引数で、2 回渡したときの扱いが決まっていないため）。
-// 読むだけのツールは許可済みにし、それ以外は Claude Code の許可の確認を通す
+// 読むだけのツールは許可済みにし、それ以外は --allowedTools に入れない（確認を出すかは、--settings のツールごとの許可のフックが決める。tool-permissions.ts）
 export function mcpArgs(entries: McpServerEntry[]): string[] {
   if (entries.length === 0) return [];
   const servers = Object.fromEntries(entries.map((e) => [e.name, e.config]));

@@ -137,9 +137,9 @@ describe('シェルで動くアプリのフック', () => {
     // ツールごとの許可のフックは、印のファイルがあるとき（allow・ask）と無いときの両方で
     const marked = join(dir, 'marked');
     mkdirSync(marked);
-    for (const name of [`${sessionToolId('start_session')}.allow`, `${browserToolId('click')}.allow`, `${browserToolId('screenshot')}.ask`]) writeFileSync(join(marked, name), '');
+    for (const name of [`${sessionToolId('start_session')}.allow`, `${browserToolId('click')}.ask`, `${browserToolId('screenshot')}.ask`]) writeFileSync(join(marked, name), '');
     const start = toolPermissionCommand(sessionToolId('start_session'), 'always');
-    const click = toolPermissionCommand(browserToolId('click'), 'mode');
+    const click = toolPermissionCommand(browserToolId('click'), 'act');
     const screenshot = toolPermissionCommand(browserToolId('screenshot'), 'allowed');
     for (const [command, permissionsDir] of [
       [AUTO_COMPACT_STOP_COMMAND, ''],
@@ -174,7 +174,7 @@ describe('シェルで動くアプリのフック', () => {
     mkdirSync(marked);
     writeFileSync(join(marked, `${sessionToolId('start_session')}.allow`), '');
     expect(JSON.parse(sh(start, { hook_event_name: 'PreToolUse' }, marked))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'allow' }, suppressOutput: true });
-    // 何も決めないときも（既定が権限モードに任せるツール）
-    expect(sh(toolPermissionCommand(browserToolId('click'), 'mode'), { hook_event_name: 'PreToolUse' }, marked).trim()).toBe(SUPPRESS_OUTPUT);
+    // 何も決めないときも（動かすツールの、plan のとき）
+    expect(sh(toolPermissionCommand(browserToolId('click'), 'act'), { hook_event_name: 'PreToolUse', permission_mode: 'plan' }, marked).trim()).toBe(SUPPRESS_OUTPUT);
   });
 });

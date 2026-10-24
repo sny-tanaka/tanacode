@@ -49,30 +49,35 @@ describe('ToolPermissionsDialog', () => {
     expect(within(row).getByText('type_in_terminal')).toBeTruthy();
     expect(within(row).getByText('人のターミナルに打ち込む')).toBeTruthy();
     expect(within(row).getByText('操作する')).toBeTruthy();
-    expect(within(row).getByText('既定のままなら、権限モードによらず毎回確認します。')).toBeTruthy();
     expect(within(row).getByText('子セッションには出しません')).toBeTruthy();
-    // 外に書き込むツール
+    // 外に書き込むツール。既定は毎回確認
     expect(within(select('PR に載せる').closest('.tool-permission-row') as HTMLElement).getByText('外に書き込む')).toBeTruthy();
+    expect(select('PR に載せる').value).toBe('ask');
+    // 操作するツールも、既定は常に許可
+    expect(optionTexts('クリック')).toEqual(['毎回確認', '常に許可（既定）']);
+    // 開く・JavaScript の実行には、どの場合に効く選択かを添える
+    expect(within(select('開く').closest('.tool-permission-row') as HTMLElement).getByText(/許す先の外のページを開くとき/)).toBeTruthy();
+    expect(within(select('JavaScript の実行').closest('.tool-permission-row') as HTMLElement).getByText(/localhost 以外のページで実行するとき/)).toBeTruthy();
   });
 
   it('選んだらすぐ保存し、既定から変えたものに印を付ける', async () => {
     await open({ 'mcp__tanacode-sessions__start_session': 'allow' });
     expect(select('セッションを始める').value).toBe('allow');
     expect(select('セッションを始める').closest('.tool-permission-row')!.classList.contains('changed')).toBe(true);
-    fireEvent.change(select('クリック'), { target: { value: 'allow' } });
-    await waitFor(() => expect(select('クリック').value).toBe('allow'));
-    expect(api.calls.filter((c) => c.name === 'toolPermissions.set').map((c) => c.args)).toEqual([['mcp__tanacode-browser__click', 'allow']]);
+    fireEvent.change(select('クリック'), { target: { value: 'ask' } });
+    await waitFor(() => expect(select('クリック').value).toBe('ask'));
+    expect(api.calls.filter((c) => c.name === 'toolPermissions.set').map((c) => c.args)).toEqual([['mcp__tanacode-browser__click', 'ask']]);
     expect(select('クリック').closest('.tool-permission-row')!.classList.contains('changed')).toBe(true);
     // 既定に戻すと、印が消える
-    fireEvent.change(select('クリック'), { target: { value: 'ask' } });
+    fireEvent.change(select('クリック'), { target: { value: 'allow' } });
     await waitFor(() => expect(select('クリック').closest('.tool-permission-row')!.classList.contains('changed')).toBe(false));
   });
 
   it('保存できなかったら、理由を出して、選んだものを元に戻す', async () => {
     await open({}, () => Promise.reject(new Error("Error invoking remote method 'tool-permissions:set': Error: 書けません")));
-    fireEvent.change(select('クリック'), { target: { value: 'allow' } });
+    fireEvent.change(select('クリック'), { target: { value: 'ask' } });
     expect(await screen.findByText('書けません')).toBeTruthy();
-    expect(select('クリック').value).toBe('ask');
+    expect(select('クリック').value).toBe('allow');
   });
 
   it('読めなかったら、選ぶ欄を出さずに理由を出す', async () => {

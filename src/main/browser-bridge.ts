@@ -34,7 +34,7 @@ export function browserGateEnv(launch: BrowserMcpLaunch, sessionId: string): Rec
 }
 
 // --mcp-config に入れるアプリ内ブラウザのサーバー。sessionId: どのセッションの Claude Code か（中継の env で渡す）。
-// 読むだけのツールは許可済みにし、ページを動かすツールは Claude Code の許可の確認を通す（JavaScript の実行は、フックが決める）
+// 読むだけのツールは許可済みにし、ページを動かすツールは --allowedTools に入れない（確認を出すかは、--settings のフックが決める。tool-permissions.ts・browser-gate.ts）
 export function browserMcpServer(launch: BrowserMcpLaunch, sessionId: string): McpServerEntry {
   return mcpServerEntry(BROWSER_MCP, launch, { [BROWSER_SOCKET_ENV]: launch.socketPath, [BROWSER_SESSION_ENV]: sessionId });
 }

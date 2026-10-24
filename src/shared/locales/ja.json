@@ -231,7 +231,9 @@
       "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
       "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています",
       "toolAsk": "tanacode のツールの許可で、このツールを毎回確認にしています",
-      "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています"
+      "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています",
+      "browserGateInside": "Claude に許す先のページなので、確認なしで開きます",
+      "postWalkthroughGate": "GitHub の PR に、ウォークスルーをコメントとして載せます（外に書き込みます）"
     },
     "translate": {
       "invalidTexts": "訳す文字の形が違います",
@@ -1116,7 +1118,7 @@
   },
   "toolPermissions": {
     "title": "Claude のツールの許可",
-    "description": "tanacode が Claude Code に足す MCP のツールごとに、使う前にあなたの確認を求めるか（毎回確認）、確認なしで使わせるか（常に許可）を選べます。既定から変えた「毎回確認」は、権限モードによらず（auto や bypassPermissions でも）確認を出します。「常に許可」は、権限モードが plan のときは効きません。既定から変えるときは、何をするツールかを確かめてから選んでください。",
+    "description": "tanacode が Claude Code に足す MCP のツールごとに、使う前にあなたの確認を求めるか（毎回確認）、確認なしで使わせるか（常に許可）を選べます。毎回確認は、権限モードによらず（auto や bypassPermissions でも）確認を出します。常に許可は、manual でも確認なしで使わせます。ただし権限モードが plan のときは、読むだけでないツールは Claude Code の plan の扱いに任せます。既定から変えるときは、何をするツールかを確かめてから選んでください。",
     "scope": "アプリ全体の設定です。変えるとすぐ、動いているセッションにも効きます。ただし、この設定ができる前のバージョンで始めたセッションには、Claude Code を起動し直すまで効きません。",
     "ask": "毎回確認",
     "allow": "常に許可",
@@ -1134,10 +1136,8 @@
       "openWorld": "外に書き込む"
     },
     "rule": {
-      "mode": "既定のままなら、Claude Code の権限モードに従います（manual では毎回確認し、auto などでは確認なしで動くことがあります）。",
-      "always": "既定のままなら、権限モードによらず毎回確認します。",
-      "outside": "既定のままなら、Claude に許す先の外のページを開くたびに、権限モードによらず確認します。許す先の中は、Claude Code の権限モードに従います。",
-      "remote": "既定のままなら、localhost 以外のページでは権限モードによらず確認し、localhost のページでは確認しません。"
+      "outside": "この選択が効くのは、Claude に許す先の外のページを開くときです。許す先の中は、いつも確認なしで開きます。",
+      "remote": "この選択が効くのは、localhost 以外のページで実行するときです。localhost のページでは、いつも確認なしで実行します。"
     },
     "closeTip": "閉じる（Esc）",
     "desc": {

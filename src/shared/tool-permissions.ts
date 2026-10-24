@@ -12,11 +12,11 @@ export type ToolPermission = 'ask' | 'allow';
 
 // 既定の扱い。画面の注記と、フック（main の tool-permissions.ts）の形を決める
 // - allowed: --allowedTools で許可済み（読むだけ・人に頼む・子への指示・チェックリスト・コードを示す）。既定は「常に許可」
-// - mode: Claude Code の権限モードに任せる（manual なら毎回聞かれ、auto などでは聞かれないことがある）。既定は「毎回確認」
-// - always: 権限モードによらず、フックがいつも確認を出させる（セッションを始める・tanacode の再起動・ターミナルに打つ）
-// - outside: 許す先の外を開くときだけ、権限モードによらず確認を出させる。許す先の中は mode と同じ（navigate）
-// - remote: localhost 以外のページでだけ確認を出させる。localhost では確認なし（evaluate）
-export type ToolDefaultRule = 'allowed' | 'mode' | 'always' | 'outside' | 'remote';
+// - act: 何かを動かすツール。フックが確認なしに通す（allow。plan のときは Claude Code の plan の扱いに任せる）。既定は「常に許可」
+// - always: 権限モードによらず、フックがいつも確認を出させる（セッションを始める・tanacode の再起動・ターミナルに打つ・GitHub の PR に書き込む）。既定は「毎回確認」
+// - outside: 許す先の外を開くときだけ、権限モードによらず確認を出させる。許す先の中は act と同じ（navigate）。既定は「毎回確認」（許す先の外を開くとき）
+// - remote: localhost 以外のページでだけ確認を出させる。localhost では確認なし（evaluate）。既定は「毎回確認」（localhost 以外のページで）
+export type ToolDefaultRule = 'allowed' | 'act' | 'always' | 'outside' | 'remote';
 
 // 設定の画面に並べる順。child: 子セッションに足す定義（無ければ、子にも同じツールを出す）
 export const PERMISSION_SERVERS: { def: McpServerDef; child?: McpServerDef }[] = [
@@ -27,7 +27,12 @@ export const PERMISSION_SERVERS: { def: McpServerDef; child?: McpServerDef }[] =
   { def: TERMINAL_MCP, child: TERMINAL_MCP_FOR_CHILD },
 ];
 
-const ALWAYS_ASK = new Set([mcpToolId(SESSIONS_MCP.name, 'start_session'), mcpToolId(SESSIONS_MCP.name, 'restart_app'), mcpToolId(TERMINAL_MCP.name, 'type_in_terminal')]);
+const ALWAYS_ASK = new Set([
+  mcpToolId(SESSIONS_MCP.name, 'start_session'),
+  mcpToolId(SESSIONS_MCP.name, 'restart_app'),
+  mcpToolId(TERMINAL_MCP.name, 'type_in_terminal'),
+  mcpToolId(WALKTHROUGH_MCP.name, 'post_walkthrough'),
+]);
 const NAVIGATE = mcpToolId(BROWSER_MCP.name, 'navigate');
 
 export function toolDefaultRule(def: McpServerDef, tool: McpTool): ToolDefaultRule {
@@ -35,11 +40,12 @@ export function toolDefaultRule(def: McpServerDef, tool: McpTool): ToolDefaultRu
   if (ALWAYS_ASK.has(id)) return 'always';
   if (id === NAVIGATE) return 'outside';
   if (tool.kind === 'eval') return 'remote';
-  return tool.kind === 'act' ? 'mode' : 'allowed';
+  return tool.kind === 'act' ? 'act' : 'allowed';
 }
 
 export function defaultToolPermission(def: McpServerDef, tool: McpTool): ToolPermission {
-  return toolDefaultRule(def, tool) === 'allowed' ? 'allow' : 'ask';
+  const rule = toolDefaultRule(def, tool);
+  return rule === 'allowed' || rule === 'act' ? 'allow' : 'ask';
 }
 
 // 子セッションに出さないツールか

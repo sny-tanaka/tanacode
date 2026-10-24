@@ -234,7 +234,9 @@
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
       "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation",
       "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
-      "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode"
+      "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode",
+      "browserGateInside": "The page is on a site allowed for Claude, so it opens without confirmation",
+      "postWalkthroughGate": "This posts the walkthrough as a comment on a GitHub pull request (it writes outside this Mac)"
     },
     "translate": {
       "invalidTexts": "Invalid text to translate",
@@ -1156,7 +1158,7 @@
   },
   "toolPermissions": {
     "title": "Claude Tool Permissions",
-    "description": "For each tool of the MCP servers that tanacode adds to Claude Code, choose whether Claude asks you before using it (Ask Every Time) or uses it without asking (Always Allow). Ask Every Time, when changed from the default, asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow has no effect while the permission mode is plan. Before you change a default, check what the tool does.",
+    "description": "For each tool of the MCP servers that tanacode adds to Claude Code, choose whether Claude asks you before using it (Ask Every Time) or uses it without asking (Always Allow). Ask Every Time asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow lets Claude use the tool without asking, even in manual. While the permission mode is plan, tools that do more than read follow the plan mode of Claude Code. Before you change a default, check what the tool does.",
     "scope": "This applies to the whole app and takes effect at once, also in running sessions. Sessions started in a version before this setting existed are not affected until you restart Claude Code in them.",
     "ask": "Ask Every Time",
     "allow": "Always Allow",
@@ -1174,10 +1176,8 @@
       "openWorld": "Writes outside"
     },
     "rule": {
-      "mode": "By default, this follows the permission mode of Claude Code (manual asks every time; auto and other modes may not ask).",
-      "always": "By default, this asks every time, regardless of the permission mode.",
-      "outside": "By default, this asks every time it opens a page outside the sites allowed for Claude, regardless of the permission mode. Inside the allowed sites, it follows the permission mode of Claude Code.",
-      "remote": "By default, this asks on pages other than localhost, regardless of the permission mode, and does not ask on localhost pages."
+      "outside": "This choice applies when Claude opens a page outside the sites allowed for Claude. Pages on the allowed sites always open without asking.",
+      "remote": "This choice applies when Claude runs JavaScript on a page other than localhost. On localhost pages, it always runs without asking."
     },
     "closeTip": "Close (Esc)",
     "desc": {

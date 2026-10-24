@@ -55,6 +55,8 @@ describe('Claude が MCP でアプリを操作する', () => {
     app = await E2EApp.launch({
       trusted: true,
       files: { 'src/tax.ts': TAX },
+      // タブの一覧を読むツールを「毎回確認」にしておく（起動したときに、アプリが印のファイルを置く）
+      appSettings: { toolPermissions: { [browserToolId('list_tabs')]: 'ask' } },
       conversations: () => [
         {
           match: USE,
@@ -68,6 +70,8 @@ describe('Claude が MCP でアプリを操作する', () => {
                 { path: 'src/tax.ts', start_line: 3, end_line: 5, title: STEPS[1].title, body: STEPS[1].body },
               ],
             }),
+            // 毎回確認にしたツール。答えるまで、ブラウザを開かない（ウォークスルーを確かめる間、エディタを見せておく）
+            tool('toolu_tabs', browserToolId('list_tabs'), {}),
             tool('toolu_open', browserToolId('navigate'), { url }),
             tool('toolu_text', browserToolId('get_text'), {}),
             tool('toolu_ask', browserToolId(BROWSER_ASK_TOOL), { message: ASK }),
@@ -175,11 +179,10 @@ describe('Claude が MCP でアプリを操作する', () => {
     await app.page.locator('.walk-box').waitFor({ state: 'detached' });
   });
 
-  it('ページを開く前に許可の確認が出て、答えるとアプリ内ブラウザに開く', async () => {
+  it('毎回確認にしたツール（タブの一覧）の前に許可の確認が出る。答えると、localhost のページは確認なしにアプリ内ブラウザに開く', async () => {
     const card = await app.menuCard('permission');
-    // ツールは、チャットのツールの行と同じ名前で出る。開く先の URL も出る
-    expect(await card.textContent()).toContain('アプリ内ブラウザ · 開く');
-    expect(await card.textContent()).toContain(url);
+    // ツールは、チャットのツールの行と同じ名前で出る
+    expect(await card.textContent()).toContain('アプリ内ブラウザ · タブの一覧');
     await app.choose(card, /^許可する/);
     await app.page.locator('.preview-pane .preview-address input').waitFor();
     await app.page.waitForFunction((expected) => document.querySelector<HTMLInputElement>('.preview-pane .preview-address input')?.value === expected, url);

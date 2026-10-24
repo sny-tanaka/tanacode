@@ -5,7 +5,7 @@ import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool, t
 
 export const BROWSER_MCP_SERVER = 'tanacode-browser';
 
-// read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（Claude Code の許可の確認を通す。navigate は、許す先の外を開くときだけ、フックが毎回許可の確認を通す）/
+// read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（ツールごとの許可のフックが決める。既定は確認なし。navigate は、許す先の外を開くときだけ、フックが毎回許可の確認を通す）/
 // eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）/
 // ask: ユーザーに操作を頼む（ページは動かさないので、読むだけのツールと同じく許可済みにする）
 // 名前は、短い名前の文言（tools.browser.<名前>）があるもの

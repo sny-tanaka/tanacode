@@ -228,7 +228,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect(calls[0]).toEqual({ session: run.sessionId, tool: 'list_sessions', args: {} });
     });
 
-    it('子への指示・質問への回答・子の片付け・自分への予約・人への報告は確認なしに届き、子の中断と起動は許可の確認を通る', async () => {
+    it('子への指示・質問への回答・子の片付け・自分への予約・人への報告・子の中断は確認なしに届き、子の起動は許可の確認を通る', async () => {
       // 確認が出ていれば、答えないかぎりここで止まる
       await run.waitUntil('報告の結果', () => resultOf(run, 'toolu_report'));
       expect(calls[1]).toEqual({ session: run.sessionId, tool: 'send_message', args: { session_id: CHILD, message: 'テストも書いて' } });
@@ -240,15 +240,10 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
         ['cancel_wakeup', { id: '0123456789abcdef' }],
         ['report_result', { message: '子を片付けました。' }],
       ]);
-      const stop = await run.permission('中断の許可の確認');
-      expect(stop.tool).toBe(sessionToolId('stop_session'));
-      expect(calls).toHaveLength(8);
-      run.replyPermission(stop, { kind: 'allow' });
+      // 中断は、ツールの許可の既定が常に許可なので、確認なしに届く
       await run.waitUntil('中断の結果', () => resultOf(run, 'toolu_stop'));
-      const start = await run.waitUntil('起動の許可の確認', () => {
-        const permission = run.manager.pendingPermission(run.sessionId!);
-        return permission?.id !== stop.id && permission;
-      });
+      expect(calls[8]).toMatchObject({ tool: 'stop_session' });
+      const start = await run.permission('起動の許可の確認');
       expect(start.tool).toBe(sessionToolId('start_session'));
       run.replyPermission(start, { kind: 'allow' });
       await run.waitUntil('返事', replied(run, '扱いました'));

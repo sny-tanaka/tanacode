@@ -3,14 +3,13 @@ import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
 import { t } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
 import { callBridge, type ToolResult } from './mcp-bridge';
-import { alwaysAllowed, alwaysAllowOutput } from './tool-permissions';
+import { alwaysAllowed, alwaysAllowOutput, isPlanMode } from './tool-permissions';
 
 // アプリ内ブラウザのツールの確認。アプリが起動する Claude Code に、--settings で PreToolUse のフックとして足す。
 // - JavaScript の実行（evaluate）: 今のページが localhost（isLocalUrl）なら、確認なしで実行させる（permissionDecision: allow）。
 //   それ以外のページは、Claude Code の許可の確認を出させる（ask）
 // - 開く（navigate）: 許す先の外のページを開くときは、権限モードによらず、毎回 Claude Code の許可の確認を出させる（ask）。
-//   許す先・そのタブで許可したオリジンを同じタブで開くときは、何も決めない（Claude Code のふだんの許可の決まりに任せる）。
-//   allow は返さない（manual のセッションの確認まで飛ばしてしまうため）
+//   許す先・そのタブで許可したオリジンを同じタブで開くときは、確認なしで開かせる（allow。plan のときは何も決めない）
 // 「次から聞かない」で許可を残されていても、ask の確認は出る（実測は test/cli/browser.test.ts）。
 // ツールの許可（メニューの「MCP → Claude のツールの許可…」）で「常に許可」にしたツールは、どのページ・どの先でも allow を返す（tool-permissions.ts）。
 // どちらかは、アプリに聞く（中継とアプリの間のソケット）。ツールの名前と入力は、Claude Code がフックの標準入力に渡す JSON から読む。
@@ -79,9 +78,11 @@ export function gateOutput(answer: GateAnswer | null): string {
   return decide('ask', t('main.hooks.browserGateRemote', { url: answer.url }));
 }
 
-// 開く。何も決めないときは、空の JSON
-export function navigateGateOutput(answer: NavigateGateAnswer | null): string {
-  return answer?.outside ? decide('ask', t('main.hooks.browserGateOutside', { origin: answer.outside })) : '{}';
+// 開く。許す先の外なら ask。許す先の中（outside が null）なら、確認なしに通す（plan のときは何も決めない）。
+// アプリに聞けなかったときは、何も決めない（空の JSON）
+export function navigateGateOutput(answer: NavigateGateAnswer | null, plan = false): string {
+  if (answer?.outside) return decide('ask', t('main.hooks.browserGateOutside', { origin: answer.outside }));
+  return answer && !plan ? decide('allow', t('main.hooks.browserGateInside')) : '{}';
 }
 
 // フックの本体。アプリにツールの名前と入力を渡して聞き、標準出力に書く内容を返す。hookInput: 標準入力に届いた JSON
@@ -93,5 +94,5 @@ export async function runGate(socketPath: string, session: string, timeoutMs: nu
   const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input, ...(toolUseId ? { toolUseId } : {}) } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
   // ツールの許可で「常に許可」にしていれば、確認を出させない（アプリは上の問い合わせで、確認した印を控えてある。plan のときは既定のまま）
   if (alwaysAllowed(tool, hookInput)) return alwaysAllowOutput();
-  return navigate ? navigateGateOutput(readNavigateAnswer(result)) : gateOutput(readAnswer(result));
+  return navigate ? navigateGateOutput(readNavigateAnswer(result), isPlanMode(hookInput)) : gateOutput(readAnswer(result));
 }

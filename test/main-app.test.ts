@@ -1479,14 +1479,14 @@ describe('メニュー', () => {
 
     it('選び直したあとは、引き継ぎ直さない。起動したら、印のファイルを保存した設定に合わせ直す', async () => {
       await boot({
-        settings: { sessionsStartConfirm: false, toolPermissions: { [start]: 'ask', [browserToolId('click')]: 'allow' } },
+        settings: { sessionsStartConfirm: false, toolPermissions: { [start]: 'ask', [browserToolId('click')]: 'ask' } },
         before: (st) => {
           mkdirSync(join(st.userData, 'tool-permissions'), { recursive: true });
           writeFileSync(join(st.userData, 'tool-permissions', `${start}.allow`), '');
         },
       });
-      expect(marks()).toEqual([`${browserToolId('click')}.allow`]);
-      expect(savedSettings().toolPermissions).toEqual({ [start]: 'ask', [browserToolId('click')]: 'allow' });
+      expect(marks()).toEqual([`${browserToolId('click')}.ask`]);
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'ask', [browserToolId('click')]: 'ask' });
     });
 
     it('保存できなかったら、印のファイルを保存した設定に戻して断る（確認を省いたままにしない）', async () => {

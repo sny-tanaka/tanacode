@@ -14,7 +14,7 @@ import {
   isLocalUrl,
   normalizeHostPattern,
 } from '../src/shared/browser-tools';
-import { setLanguage } from '../src/shared/i18n';
+import { setLanguage, t } from '../src/shared/i18n';
 import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
@@ -459,14 +459,15 @@ describe('確認のフック', () => {
     expect(decision(gateOutput(null)).permissionDecision).toBe('ask');
   });
 
-  it('開く: 許す先の外なら、オリジンを添えて確認を出させる（ask）。それ以外と、アプリの答えが分からないときは何も決めない（allow は返さない）', () => {
+  it('開く: 許す先の外なら、オリジンを添えて確認を出させる（ask）。許す先の中は確認なし（allow。plan では何も決めない）。アプリの答えが分からないときは何も決めない', () => {
     const outside = decision(navigateGateOutput({ outside: 'https://example.com' }));
     expect(outside).toEqual({
       hookEventName: 'PreToolUse',
       permissionDecision: 'ask',
       permissionDecisionReason: 'Claude に許す先の外のページ（https://example.com）を開きます。許すと、Claude はこのタブで https://example.com のページを確認なしで読んだり操作したりします',
     });
-    expect(navigateGateOutput({ outside: null })).toBe('{}');
+    expect(decision(navigateGateOutput({ outside: null }))).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: t('main.hooks.browserGateInside') });
+    expect(navigateGateOutput({ outside: null }, true)).toBe('{}');
     expect(navigateGateOutput(null)).toBe('{}');
     // 理由は、Claude Code を起動したときの言語で書く
     setLanguage('en');
@@ -508,7 +509,7 @@ describe('確認のフック', () => {
     expect(readNavigateAnswer(textResult('{"outside":"https://example.com"}', true))).toBeNull();
   });
 
-  it('アプリ（ソケット）に、ツールの名前と入力を渡して聞いて答える。アプリが無いときは、JavaScript の実行は ask、開くのは何も決めない', async () => {
+  it('アプリ（ソケット）に、ツールの名前と入力を渡して聞いて答える。アプリが無いときは、JavaScript の実行は ask、開くのは何も決めない（許す先の中なら allow）', async () => {
     const socketPath = join(root, 'gate.sock');
     const asked: { session: string; tool: string; args: Record<string, unknown> }[] = [];
     let page = 'http://localhost:3000/';
@@ -531,7 +532,7 @@ describe('確認のフック', () => {
       expect(decision(await runGate(socketPath, 's1', 5000, open))).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('https://example.com') });
       expect(asked.at(-1)).toEqual({ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('navigate'), input: { url: 'https://example.com/a', newTab: true } } });
       outside = null;
-      expect(await runGate(socketPath, 's1', 5000, open)).toBe('{}');
+      expect(decision(await runGate(socketPath, 's1', 5000, open)).permissionDecision).toBe('allow');
       // フックの設定と合わないツール・読めない標準入力は、アプリに聞かずに確認を出させる（localhost のページでも allow にしない）
       page = 'http://localhost:3000/';
       const count = asked.length;

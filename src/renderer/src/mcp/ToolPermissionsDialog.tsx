@@ -125,7 +125,7 @@ function ToolRow({
           ))}
         </div>
         <span className="tool-permission-desc">{t(`toolPermissions.desc.${def.labels}.${tool.name}` as MessageKey)}</span>
-        {rule !== 'allowed' && <span className="tool-permission-note">{t(`toolPermissions.rule.${rule}`)}</span>}
+        {(rule === 'outside' || rule === 'remote') && <span className="tool-permission-note">{t(`toolPermissions.rule.${rule}`)}</span>}
         {childHidden && <span className="tool-permission-note">{t('toolPermissions.childHidden')}</span>}
       </div>
       <select
