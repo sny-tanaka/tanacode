@@ -63,9 +63,8 @@ describe('Claude がアプリ内ブラウザを撮る', () => {
   };
 
   it('ブラウザが見えているとき、表示中の範囲・ページ全体・要素を撮れる', async () => {
+    // localhost（許す先）を開くのは、manual でも確認なしに通る
     await app.startSession(OPEN, { mode: 'manual' });
-    const card = await app.menuCard('permission');
-    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', DONE).waitFor();
     expectShots(results());
   });

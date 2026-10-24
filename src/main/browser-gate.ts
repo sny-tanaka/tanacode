@@ -3,14 +3,15 @@ import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
 import { t } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
 import { callBridge, type ToolResult } from './mcp-bridge';
+import { alwaysAllowed, alwaysAllowOutput, isPlanMode } from './tool-permissions';
 
 // アプリ内ブラウザのツールの確認。アプリが起動する Claude Code に、--settings で PreToolUse のフックとして足す。
 // - JavaScript の実行（evaluate）: 今のページが localhost（isLocalUrl）なら、確認なしで実行させる（permissionDecision: allow）。
 //   それ以外のページは、Claude Code の許可の確認を出させる（ask）
 // - 開く（navigate）: 許す先の外のページを開くときは、権限モードによらず、毎回 Claude Code の許可の確認を出させる（ask）。
-//   許す先・そのタブで許可したオリジンを同じタブで開くときは、何も決めない（Claude Code のふだんの許可の決まりに任せる）。
-//   allow は返さない（manual のセッションの確認まで飛ばしてしまうため）
+//   許す先・そのタブで許可したオリジンを同じタブで開くときは、確認なしで開かせる（allow。plan のときは何も決めない）
 // 「次から聞かない」で許可を残されていても、ask の確認は出る（実測は test/cli/browser.test.ts）。
+// ツールの許可（メニューの「MCP の設定…」の「確認」）で「常に許可」にしたツールは、どのページ・どの先でも allow を返す（tool-permissions.ts）。
 // どちらかは、アプリに聞く（中継とアプリの間のソケット）。ツールの名前と入力は、Claude Code がフックの標準入力に渡す JSON から読む。
 // JavaScript の実行で、アプリに聞けなかったときや、答えを読めなかったときは、確認を出させる側に倒す。開くときは何も決めない
 // （開くのはアプリなので、アプリが動いていなければ開けない。アプリは、人に確認した印の無い外の先を開かない）。
@@ -70,16 +71,18 @@ function decide(permissionDecision: 'allow' | 'ask', permissionDecisionReason: s
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason } });
 }
 
-// JavaScript の実行
-export function gateOutput(answer: GateAnswer | null): string {
+// JavaScript の実行。localhost のページでも、plan のときは何も決めない（Claude Code の plan の扱いに任せる。空の JSON）
+export function gateOutput(answer: GateAnswer | null, plan = false): string {
   if (!answer) return decide('ask', t('main.hooks.browserGateUnknown'));
-  if (answer.local) return decide('allow', t('main.hooks.browserGateLocal'));
+  if (answer.local) return plan ? '{}' : decide('allow', t('main.hooks.browserGateLocal'));
   return decide('ask', t('main.hooks.browserGateRemote', { url: answer.url }));
 }
 
-// 開く。何も決めないときは、空の JSON
-export function navigateGateOutput(answer: NavigateGateAnswer | null): string {
-  return answer?.outside ? decide('ask', t('main.hooks.browserGateOutside', { origin: answer.outside })) : '{}';
+// 開く。許す先の外なら ask。許す先の中（outside が null）なら、確認なしに通す（plan のときは何も決めない）。
+// アプリに聞けなかったときは、何も決めない（空の JSON）
+export function navigateGateOutput(answer: NavigateGateAnswer | null, plan = false): string {
+  if (answer?.outside) return decide('ask', t('main.hooks.browserGateOutside', { origin: answer.outside }));
+  return answer && !plan ? decide('allow', t('main.hooks.browserGateInside')) : '{}';
 }
 
 // フックの本体。アプリにツールの名前と入力を渡して聞き、標準出力に書く内容を返す。hookInput: 標準入力に届いた JSON
@@ -89,5 +92,8 @@ export async function runGate(socketPath: string, session: string, timeoutMs: nu
   // ほかのツールで呼ばれたら（フックの設定と合わない）、確認を出させる。localhost のページでも allow は返さない
   if (!navigate && tool !== browserToolId('evaluate')) return gateOutput(null);
   const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input, ...(toolUseId ? { toolUseId } : {}) } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
-  return navigate ? navigateGateOutput(readNavigateAnswer(result)) : gateOutput(readAnswer(result));
+  // ツールの許可で「常に許可」にしていれば、確認を出させない（アプリは上の問い合わせで、確認した印を控えてある。plan のときは既定のまま）
+  if (alwaysAllowed(tool, hookInput)) return alwaysAllowOutput();
+  const plan = isPlanMode(hookInput);
+  return navigate ? navigateGateOutput(readNavigateAnswer(result), plan) : gateOutput(readAnswer(result), plan);
 }

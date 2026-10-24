@@ -9,6 +9,7 @@ import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protoco
 import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from '../src/main/stream/protocol';
 import { STATUS_FILE_ENV } from '../src/main/statusline';
 import { ScriptedHost } from './helpers/scripted-claude';
+import { exactMatcher } from '../src/main/tool-permissions';
 
 // claude の起動・引き継ぎ・止め方と、会話ログの追いかけ（ClaudeSession）。pty ホストは偽物（ScriptedHost）
 
@@ -154,21 +155,21 @@ describe('起動', () => {
     expect(host.spawned[0].request.env).toMatchObject({ TANACODE_BROWSER_SOCKET: '/u/browser.sock', TANACODE_BROWSER_SESSION: 's1' });
   });
 
-  it('セッションの MCP を足すときは、起動の確認のフックが見る印のファイルのパスを渡す。パスが無ければ空で上書きする（受け継いだ値を読ませない）', () => {
+  it('ツールごとの許可のフックが見る印のフォルダを、MCP の材料から渡す。無ければ空で上書きする（受け継いだ値を読ませない）', () => {
     const sessions = { command: 'node', script: '/x/sessions-mcp.js', socketPath: '/u/sessions.sock', version: '1' };
-    const before = process.env.TANACODE_SESSIONS_NO_ASK_FILE;
-    process.env.TANACODE_SESSIONS_NO_ASK_FILE = '/from/parent';
+    const before = process.env.TANACODE_TOOL_PERMISSIONS_DIR;
+    process.env.TANACODE_TOOL_PERMISSIONS_DIR = '/from/parent';
     try {
-      session({ sessions: { ...sessions, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
-      expect(host.spawned[0].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+      session({ sessions: { ...sessions, permissionsDir: '/u/tool-permissions' } }).claude.start();
+      expect(host.spawned[0].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('/u/tool-permissions');
       session({ sessions }).claude.start();
-      expect(host.spawned[1].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('');
-      // 子セッションにも渡す（子の中継には起動のツールが無いので、フックは呼ばれない）
-      session({ sessions: { ...sessions, child: true, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
-      expect(host.spawned[2].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+      expect(host.spawned[1].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('');
+      // 子セッションにも、ほかの MCP の材料からでも渡す
+      session({ sessions: { ...sessions, child: true }, checklist: { ...sessions, permissionsDir: '/u/tool-permissions' } }).claude.start();
+      expect(host.spawned[2].request.env.TANACODE_TOOL_PERMISSIONS_DIR).toBe('/u/tool-permissions');
     } finally {
-      if (before === undefined) delete process.env.TANACODE_SESSIONS_NO_ASK_FILE;
-      else process.env.TANACODE_SESSIONS_NO_ASK_FILE = before;
+      if (before === undefined) delete process.env.TANACODE_TOOL_PERMISSIONS_DIR;
+      else process.env.TANACODE_TOOL_PERMISSIONS_DIR = before;
     }
   });
 
@@ -218,7 +219,7 @@ describe('起動', () => {
   it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
     const terminal = { command: 'node', script: '/x/terminal-mcp.js', socketPath: '/u/terminal.sock', version: '1' };
     const gateHooks = (args: string[]) =>
-      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
+      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === exactMatcher(TERMINAL_GATED_TOOL));
     session({ terminal }).claude.start();
     const parent = host.spawned[0].request;
     expect(parent.env).toMatchObject({ TANACODE_TERMINAL_SOCKET: '/u/terminal.sock', TANACODE_TERMINAL_SESSION: 's1', TANACODE_TERMINAL_COMMAND: 'node', TANACODE_TERMINAL_SCRIPT: '/x/terminal-mcp.js' });

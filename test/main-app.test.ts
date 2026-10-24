@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { browserToolId } from '@shared/browser-tools';
+import { sessionToolId } from '@shared/session-tools';
 import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
@@ -295,17 +297,16 @@ describe('Claude Code に足す MCP サーバー', () => {
     const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
     const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
     launches.forEach((name, i) => {
-      // セッションには、子セッションの起動の確認を省く印のファイル（userData。アプリ全体で 1 つ）のパスも渡す
-      const extra = name === 'sessionsLaunch' ? { noAskFile: join(state.userData, 'sessions-start-no-ask') } : {};
-      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7', ...extra });
+      // ツールごとの許可の印のフォルダ（userData。アプリ全体で 1 つ）も渡す
+      const permissionsDir = join(state.userData, 'tool-permissions');
+      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7', permissionsDir });
     });
   });
 
-  it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
+  it('MCP の設定で切っているものは足さない（次に起動する Claude Code から）', async () => {
     await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
-    menuItem('checklistControl').checked = true;
-    menuItem('checklistControl').click?.(menuItem('checklistControl'));
+    await invoke(IpcChannel.McpEnabledSet, 'checklist', true);
     expect(launch('checklistLaunch')).not.toBeNull();
   });
 
@@ -1206,7 +1207,7 @@ describe('メニュー', () => {
   const shape = (items: MenuItem[]) => items.map((i) => i.id ?? i.role ?? i.type);
 
   it('アプリのメニュー: 更新 ／ MCP ／ Claude の自動の動きと送る文 ／ 言語 の順に、区切って並べる', async () => {
-    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, sessionsStartConfirm: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
+    await boot({ settings: { updateCheck: false, usageLimitResume: false } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
     expect(shape(appMenu.submenu!)).toEqual([
@@ -1215,7 +1216,7 @@ describe('メニュー', () => {
       'notifyUpdates',
       'updateOnQuit',
       'separator',
-      'mcp',
+      'mcpSettings',
       'separator',
       'usageLimitResume',
       'autoCompactPercent',
@@ -1232,21 +1233,10 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    // MCP の中は、MCP サーバーごとに区切る
-    const mcp = menuItem('mcp').submenu!;
-    expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'sessionsStartConfirm', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl']);
-    const checks = [...appMenu.submenu!, ...mcp].filter((i) => i.type === 'checkbox');
-    expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({
-      notifyUpdates: false,
-      updateOnQuit: true,
-      browserControl: true,
-      sessionsControl: false,
-      sessionsStartConfirm: false,
-      checklistControl: true,
-      walkthroughControl: false,
-      terminalControl: true,
-      usageLimitResume: false,
-    });
+    // MCP の入り・切り・許す先・ツールの許可は、「MCP の設定…」のダイアログで変える（メニューにチェックを置かない）
+    expect(menuItem('mcpSettings').submenu).toBeUndefined();
+    const checks = appMenu.submenu!.filter((i) => i.type === 'checkbox');
+    expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({ notifyUpdates: false, updateOnQuit: true, usageLimitResume: false });
     expect(fileMenu.id).toBe('file');
     expect(shape(fileMenu.submenu!)).toEqual(['newSession', 'separator', 'close', 'separator', 'stopAndQuit']);
     expect(menuItem('newSession').accelerator).toBe('CmdOrCtrl+N');
@@ -1268,43 +1258,29 @@ describe('メニュー', () => {
   it('メニューの項目の名前（日本語と英語）', async () => {
     const labels = () => {
       const appMenu = state.menu![0].submenu!;
-      return [...appMenu, ...menuItem('mcp').submenu!].filter((i) => i.id).map((i) => i.label);
+      return appMenu.filter((i) => i.id).map((i) => i.label);
     };
     await boot();
     expect(labels()).toEqual([
       '新しいバージョンが出たら通知する',
       '終了するときに新しいバージョンを入れる（Homebrew）',
-      'MCP',
+      'MCP の設定…',
       '利用枠で止まったら、戻ったときに自動で再開する',
       '自動で最適化圧縮する大きさ',
       '離席モードで答えを待つ時間',
       'Claude に送る文…',
       '言語（Language）',
-      'アプリ内ブラウザ',
-      'アプリ内ブラウザで Claude に許す先…',
-      'セッションの操作',
-      'セッションを始める前に許可を求める',
-      'チェックリスト',
-      'ウォークスルー',
-      'ターミナル',
     ]);
     await boot({ settings: { language: 'en' } });
     expect(labels()).toEqual([
       'Notify When Updates Are Available',
       'Install Updates on Quit (Homebrew)',
-      'MCP',
+      'MCP Settings…',
       'Resume Automatically When the Usage Limit Resets',
       'Auto Optimized Compact At',
       'Away Mode Wait Time',
       'Messages Sent to Claude…',
       'Language',
-      'In-App Browser',
-      'Allowed Sites for Claude in the In-App Browser…',
-      'Session Control',
-      'Ask Before Starting a Session',
-      'Checklists',
-      'Walkthroughs',
-      'Terminal',
     ]);
   });
 
@@ -1423,24 +1399,59 @@ describe('メニュー', () => {
     expect(savedSettings().updateCheck).toBe(true);
   });
 
-  it('「MCP → アプリ内ブラウザ」: オフにしたら、頼んでいる操作を取り下げ、許した外の先も捨てる', async () => {
-    await boot();
-    toggle('browserControl');
-    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
-    expect(savedSettings().browserControl).toBe(false);
-    toggle('browserControl');
-    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
-    expect(savedSettings().browserControl).toBe(true);
+  describe('MCP の設定の入り・切り', () => {
+    it('読むと、入り・切りとツールの許可を返す', async () => {
+      await boot({ settings: { sessionsControl: false, toolPermissions: { [sessionToolId('start_session')]: 'allow' } } });
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toEqual({
+        enabled: { browser: true, sessions: false, checklist: true, walkthrough: true, terminal: true },
+        permissions: { [sessionToolId('start_session')]: 'allow' },
+        problem: null,
+      });
+    });
+
+    it('アプリ内ブラウザを切ったら、頼んでいる操作を取り下げ、許した外の先も捨てる（入れたときは何もしない）', async () => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'browser', false)).resolves.toMatchObject({ browser: false });
+      expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
+      expect(savedSettings().browserControl).toBe(false);
+      await invoke(IpcChannel.McpEnabledSet, 'browser', true);
+      expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
+      expect(savedSettings().browserControl).toBe(true);
+    });
+
+    // 入り・切りは、それぞれ同じ名前の設定に保存する
+    it.each([
+      ['sessions', 'sessionsControl'],
+      ['checklist', 'checklistControl'],
+      ['walkthrough', 'walkthroughControl'],
+      ['terminal', 'terminalControl'],
+    ])('「%s」: %s に保存する', async (server, key) => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, server, false)).resolves.toMatchObject({ [server]: false });
+      expect(savedSettings()[key]).toBe(false);
+      await invoke(IpcChannel.McpEnabledSet, server, true);
+      expect(savedSettings()[key]).toBe(true);
+    });
+
+    it('知らない MCP・値は断る', async () => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'other', false)).rejects.toThrow();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'browser', 'no')).rejects.toThrow();
+    });
+
+    it.each(['browser', 'sessions', 'checklist', 'walkthrough', 'terminal'])('「%s」: 保存できなかったら断り、値もほかも変えない', async (server) => {
+      await boot();
+      // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
+      mkdirSync(join(state.userData, 'settings.json.tmp'));
+      await expect(invoke(IpcChannel.McpEnabledSet, server, false)).rejects.toThrow();
+      expect(((await invoke(IpcChannel.McpSettingsGet)) as { enabled: Record<string, boolean> }).enabled[server]).toBe(true);
+      expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
+    });
   });
 
   // 項目の id は、保存する設定の名前と同じ
   it.each([
     'updateOnQuit',
-    'sessionsControl',
-    'sessionsStartConfirm',
-    'checklistControl',
-    'walkthroughControl',
-    'terminalControl',
     'usageLimitResume',
   ])('「%s」: 同じ名前の設定に保存する', async (key) => {
     await boot();
@@ -1450,42 +1461,69 @@ describe('メニュー', () => {
     expect(savedSettings()[key]).toBe(true);
   });
 
-  describe('「MCP → セッションを始める前に許可を求める」', () => {
-    const noAskFile = () => join(state.userData, 'sessions-start-no-ask');
+  describe('Claude のツールの許可', () => {
+    const dir = () => join(state.userData, 'tool-permissions');
+    const start = sessionToolId('start_session');
+    const marks = () => (existsSync(dir()) ? readdirSync(dir()).sort() : []);
 
-    it('オフにしたら印のファイルを置き、オンにしたら消す（起動の確認のフックが、動いているセッションでも次の呼び出しから読む）', async () => {
+    it('1 つ変えると、印のファイルを置き・消してから設定に保存する（フックが、動いているセッションでも次の呼び出しから読む）', async () => {
       await boot();
-      expect(existsSync(noAskFile())).toBe(false);
-      toggle('sessionsStartConfirm');
-      expect(existsSync(noAskFile())).toBe(true);
-      toggle('sessionsStartConfirm');
-      expect(existsSync(noAskFile())).toBe(false);
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ permissions: {} });
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'allow')).resolves.toEqual({ [start]: 'allow' });
+      expect(marks()).toEqual([`${start}.allow`]);
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'allow' });
+      // 既定に戻すと印は消え、選んだ値は残る
+      await invoke(IpcChannel.ToolPermissionsSet, start, 'ask');
+      expect(marks()).toEqual([]);
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ permissions: { [start]: 'ask' } });
+      // 知らないツール・値は断る
+      await expect(invoke(IpcChannel.ToolPermissionsSet, 'mcp__other__x', 'allow')).rejects.toThrow();
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'yes')).rejects.toThrow();
     });
 
-    it('起動したら、印のファイルを保存した設定に合わせ直す（前のアプリが残した印は消し、オフなら置く）', async () => {
-      await boot({ before: (s) => writeFileSync(join(s.userData, 'sessions-start-no-ask'), '') });
-      expect(existsSync(noAskFile())).toBe(false);
-      await boot({ settings: { sessionsStartConfirm: false } });
-      expect(existsSync(noAskFile())).toBe(true);
+    it('前のバージョンの「セッションを始める前に許可を求める」がオフなら、起動したときに start_session を常に許可に引き継ぎ、前の印のファイルは消す', async () => {
+      await boot({ settings: { sessionsStartConfirm: false }, before: (st) => writeFileSync(join(st.userData, 'sessions-start-no-ask'), '') });
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'allow' });
+      expect(marks()).toEqual([`${start}.allow`]);
+      await vi.waitFor(() => expect(existsSync(join(state.userData, 'sessions-start-no-ask'))).toBe(false));
     });
 
-    it('保存できなかったら、チェックも印のファイルも元に戻す（確認を省いたままにしない）', async () => {
+    it('選び直したあとは、引き継ぎ直さない。起動したら、印のファイルを保存した設定に合わせ直す', async () => {
+      await boot({
+        settings: { sessionsStartConfirm: false, toolPermissions: { [start]: 'ask', [browserToolId('click')]: 'ask' } },
+        before: (st) => {
+          mkdirSync(join(st.userData, 'tool-permissions'), { recursive: true });
+          writeFileSync(join(st.userData, 'tool-permissions', `${start}.allow`), '');
+        },
+      });
+      expect(marks()).toEqual([`${browserToolId('click')}.ask`]);
+      expect(savedSettings().toolPermissions).toEqual({ [start]: 'ask', [browserToolId('click')]: 'ask' });
+    });
+
+    it('起動したときに印のファイルを合わせられなかったら、警告を出し、MCP の設定のダイアログにも理由を出させる', async () => {
+      await boot({
+        settings: { toolPermissions: { [browserToolId('get_text')]: 'ask' } },
+        // 印のフォルダの場所にファイルがあると、フォルダを作れない
+        before: (st) => writeFileSync(join(st.userData, 'tool-permissions'), ''),
+      });
+      const warning = state.dialog.showMessageBox.mock.calls.map((c) => c.at(-1) as { type?: string; message?: string; detail?: string }).find((o) => o.type === 'warning');
+      expect(warning?.message).toBe('MCP の設定の確認の選択を、Claude Code に効かせられませんでした');
+      expect(warning?.detail).toContain('毎回確認にしたツールが確認なしで動くことがあります');
+      const { problem } = (await invoke(IpcChannel.McpSettingsGet)) as { problem: string | null };
+      expect(problem).toBe(warning?.detail);
+    });
+
+    it('起動したときに印のファイルを合わせられたら、警告を出さない', async () => {
+      await boot({ settings: { toolPermissions: { [browserToolId('get_text')]: 'ask' } } });
+      expect(state.dialog.showMessageBox.mock.calls.some((c) => (c.at(-1) as { type?: string }).type === 'warning')).toBe(false);
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ problem: null });
+    });
+
+    it('保存できなかったら、印のファイルを保存した設定に戻して断る（確認を省いたままにしない）', async () => {
       await boot();
       mkdirSync(join(state.userData, 'settings.json.tmp'));
-      const item = toggle('sessionsStartConfirm');
-      expect(item.checked).toBe(true);
-      expect(existsSync(noAskFile())).toBe(false);
-    });
-
-    it('印のファイルを置けなかったら、設定も変えずにチェックを元に戻す', async () => {
-      await boot();
-      // ファイルの場所に、中身のあるフォルダがあると置けない
-      mkdirSync(join(noAskFile(), 'x'), { recursive: true });
-      const item = toggle('sessionsStartConfirm');
-      expect(item.checked).toBe(true);
-      // 設定は保存しない
-      expect(existsSync(join(state.userData, 'settings.json'))).toBe(false);
-      expect(menuItem('sessionsStartConfirm').checked).toBe(true);
+      await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'allow')).rejects.toThrow();
+      expect(marks()).toEqual([]);
     });
   });
 
@@ -1500,12 +1538,6 @@ describe('メニュー', () => {
   it.each([
     'notifyUpdates',
     'updateOnQuit',
-    'browserControl',
-    'sessionsControl',
-    'sessionsStartConfirm',
-    'checklistControl',
-    'walkthroughControl',
-    'terminalControl',
     'usageLimitResume',
   ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (id) => {
     await boot();
@@ -1520,16 +1552,16 @@ describe('メニュー', () => {
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「MCP → アプリ内ブラウザで Claude に許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「MCP の設定…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
-    menuItem('browserHosts').click?.({});
+    menuItem('mcpSettings').click?.({});
     expect(state.windows).toHaveLength(2);
     menuItem('prompts').click?.({});
     menuItem('newSession').click?.({});
     expect(mainWindow().show).toHaveBeenCalledTimes(3);
     expect(mainWindow().webContents.sent).toEqual([
-      [IpcChannel.BrowserHostsOpen, undefined],
+      [IpcChannel.McpSettingsOpen, undefined],
       [IpcChannel.PromptsOpen, undefined],
       [IpcChannel.SessionsNew, undefined],
     ]);

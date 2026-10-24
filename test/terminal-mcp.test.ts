@@ -46,8 +46,8 @@ describe('起動の引数', () => {
     expect(args[args.indexOf('--allowedTools') + 1].split(',')).toEqual([terminalToolId('list_terminals'), terminalToolId('read_terminal')]);
     expect(allowedTerminalToolIds()).not.toContain(terminalToolId('type_in_terminal'));
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
-    expect(settings.hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL)).toEqual([
-      { matcher: terminalToolId('type_in_terminal'), hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] },
+    expect(settings.hooks.PreToolUse.filter((h) => h.matcher === `^${TERMINAL_GATED_TOOL}$`)).toEqual([
+      { matcher: `^${terminalToolId('type_in_terminal')}$`, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] },
     ]);
   });
 
@@ -56,7 +56,7 @@ describe('起動の引数', () => {
     const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-terminal'].env.TANACODE_TERMINAL_CHILD).toBe('1');
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
-    expect(settings.hooks.PreToolUse.some((h) => h.matcher === TERMINAL_GATED_TOOL)).toBe(false);
+    expect(settings.hooks.PreToolUse.some((h) => h.matcher === `^${TERMINAL_GATED_TOOL}$`)).toBe(false);
   });
 
   it('確認のフックは、中継の入口を --gate 付きで動かす。使う環境変数は、起動する Claude Code に足す', () => {

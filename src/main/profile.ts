@@ -62,8 +62,8 @@ export type ProfileOptions = {
   settings: AppSettings;
   // アプリ全体の設定（Claude に許す機能・アプリ内ブラウザの許す先・Claude の自動の動き。どのプロファイルのセッションにも同じに効く）
   appSettings: AppSettings;
-  // 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts の SESSIONS_NO_ASK_FILE）
-  sessionsNoAskFile: string;
+  // ツールごとの許可の印のファイルのフォルダ（アプリ全体で 1 つ。tool-permissions.ts）。起動する Claude Code のフックが見る
+  toolPermissionsDir: string;
   // 利用者が変えた、Claude に送る文（アプリ全体で 1 つ。メニューの「Claude に送る文…」。無い欄は既定の文）
   prompts: () => CustomPrompts;
   // このプロファイルの画面への知らせと、画面（アプリ内ブラウザの webview を持つもの）
@@ -533,11 +533,10 @@ export class Profile {
   // 起動する Claude Code に足す、アプリ内ブラウザの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private browserLaunch(): BrowserMcpLaunch | null {
     if (!this.browserBridge || !this.appSettings.browserControlEnabled()) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: this.browserBridge.socketPath, version: app.getVersion() };
+    return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: this.browserBridge.socketPath, version: app.getVersion(), permissionsDir: this.options.toolPermissionsDir };
   }
 
   // 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない。
-  // 子セッションの起動の確認のフックが見る、印のファイルのパスも渡す
   private sessionsLaunch(): SessionsMcpLaunch | null {
     if (!this.sessionsBridge || !this.appSettings.sessionsControlEnabled()) return null;
     return {
@@ -545,26 +544,26 @@ export class Profile {
       script: join(__dirname, 'sessions-mcp.js'),
       socketPath: this.sessionsBridge.socketPath,
       version: app.getVersion(),
-      noAskFile: this.options.sessionsNoAskFile,
+      permissionsDir: this.options.toolPermissionsDir,
     };
   }
 
   // 起動する Claude Code に足す、チェックリストの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private checklistLaunch(): McpLaunch | null {
     if (!this.checklistBridge || !this.appSettings.checklistControlEnabled()) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: this.checklistBridge.socketPath, version: app.getVersion() };
+    return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: this.checklistBridge.socketPath, version: app.getVersion(), permissionsDir: this.options.toolPermissionsDir };
   }
 
   // 起動する Claude Code に足す、ウォークスルーの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private walkthroughLaunch(): McpLaunch | null {
     if (!this.walkthroughBridge || !this.appSettings.walkthroughControlEnabled()) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion() };
+    return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion(), permissionsDir: this.options.toolPermissionsDir };
   }
 
   // 起動する Claude Code に足す、人のターミナルの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
   private terminalLaunch(): McpLaunch | null {
     if (!this.terminalBridge || !this.appSettings.terminalControlEnabled()) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
+    return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion(), permissionsDir: this.options.toolPermissionsDir };
   }
 
   // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。

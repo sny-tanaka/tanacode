@@ -77,7 +77,7 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
     description: 'Return the steps of the current walkthrough and which step the user is viewing now (the steps already viewed, any aside), or that the user is viewing another session or file. If the user has finished it, it says so',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
-  // GitHub に書き込むので、許可済みにせず、Claude Code の許可の確認を通す
+  // GitHub に書き込むので、許可済みにせず、ツールごとの許可のフックが毎回確認を出させる（既定。tool-permissions.ts）
   {
     name: 'post_walkthrough',
     kind: 'act',

@@ -50,19 +50,12 @@
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
       "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
-      "mcp": "MCP",
-      "browserControl": "アプリ内ブラウザ",
-      "sessionsControl": "セッションの操作",
-      "sessionsStartConfirm": "セッションを始める前に許可を求める",
-      "checklistControl": "チェックリスト",
-      "walkthroughControl": "ウォークスルー",
-      "terminalControl": "ターミナル",
+      "mcpSettings": "MCP の設定…",
       "usageLimitResume": "利用枠で止まったら、戻ったときに自動で再開する",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
       "awayWait": "離席モードで答えを待つ時間",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
-      "browserHosts": "アプリ内ブラウザで Claude に許す先…",
       "prompts": "Claude に送る文…",
       "file": "ファイル",
       "newSession": "新規セッション",
@@ -229,7 +222,11 @@
       "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
       "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
-      "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています"
+      "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています",
+      "toolAsk": "tanacode のツールの許可で、このツールを毎回確認にしています",
+      "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています",
+      "browserGateInside": "Claude に許す先のページなので、確認なしで開きます",
+      "postWalkthroughGate": "GitHub の PR に、ウォークスルーをコメントとして載せます（外に書き込みます）"
     },
     "translate": {
       "invalidTexts": "訳す文字の形が違います",
@@ -326,6 +323,10 @@
       "empty": "{path} が空なので、Claude に渡していません",
       "tooLarge": "{path} が大きすぎる（1MB を超える）ので、Claude に渡していません",
       "unreadable": "{path} を読めないので、Claude に渡していません"
+    },
+    "toolPermissions": {
+      "syncFailedTitle": "MCP の設定の確認の選択を、Claude Code に効かせられませんでした",
+      "syncFailed": "印のファイルを書けませんでした（{error}）。既定から変えた確認の選択が効かず、毎回確認にしたツールが確認なしで動くことがあります。「tanacode → MCP の設定…」で選び直すか、tanacode を起動し直してください。"
     }
   },
   "commands": {
@@ -573,8 +574,8 @@
         "waiting": "最適化圧縮: 再開の文を送るのを待っています（入力欄が空くと送ります）"
       },
       "compactUnavailable": {
-        "checklistOff": "メニューの「tanacode → {mcp} → {item}」をオンにすると使えます",
-        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「tanacode → {mcp} → {item}」をオンにして、セッションを起動し直すと使えます"
+        "checklistOff": "メニューの「tanacode → {item}」で「{mcp}」をオンにすると使えます",
+        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「tanacode → {item}」で「{mcp}」をオンにして、セッションを起動し直すと使えます"
       },
       "compactFailure": {
         "interrupted": "仕上げを中断したので、最適化圧縮を取りやめました。会話は消していません",
@@ -1111,6 +1112,100 @@
     "saveFailed": "保存できませんでした: {error}",
     "loadFailed": "保存した文を読めませんでした: {error}",
     "confirmDiscard": "保存していない変更を捨てて閉じますか？"
+  },
+  "mcpSettings": {
+    "title": "MCP の設定",
+    "description": "tanacode が Claude Code に足す MCP サーバーごとに、Claude に使わせるか（見出しのスイッチ）と、ツールごとに使う前にあなたの確認を求めるか（確認）を選べます。「毎回確認」は、権限モードによらず（auto や bypassPermissions でも）確認を出します。「常に許可」は、manual でも確認なしで使わせます。ただし権限モードが plan のときは、読むだけでないツールは Claude Code の plan の扱いに任せます。既定から変えるときは、何をするツールかを確かめてから選んでください。",
+    "scope": "アプリ全体の設定です。確認の選択は、動いているセッションにもすぐ効きます（この設定ができる前のバージョンで始めたセッションには、Claude Code を起動し直すまで効きません）。スイッチを切ると、次に起動する Claude Code からその MCP サーバーを足さず、動いている Claude Code から呼ばれても断ります。",
+    "columns": {
+      "name": "MCP名",
+      "description": "説明",
+      "confirm": "確認"
+    },
+    "switchLabel": "{server} を Claude に使わせる",
+    "off": "切っています。入れ直すと、確認の選択はそのまま使います。",
+    "hostsTitle": "Claude に許す先",
+    "ask": "毎回確認",
+    "allow": "常に許可",
+    "withDefault": "{label}（既定）",
+    "choiceLabel": "{tool} の確認",
+    "childHidden": "子セッションには出しません",
+    "closeTip": "閉じる（Esc）",
+    "desc": {
+      "browser": {
+        "screenshot": "ページの見た目を画像で撮る",
+        "get_text": "ページの文字を読む",
+        "get_accessibility_tree": "ページの部品の構造を読む",
+        "inspect": "要素の HTML と、効いているスタイルを読む",
+        "get_console_logs": "コンソールの出力を読む",
+        "get_failed_requests": "失敗した通信を読む",
+        "navigate": "許す先の外のページを開く（許す先の中は、いつも確認なしで開く）",
+        "list_tabs": "タブの一覧を読む",
+        "select_tab": "見るタブを切り替える",
+        "close_tab": "タブを閉じる",
+        "click": "要素をクリックする",
+        "type": "入力欄に文字を打つ",
+        "press_key": "キーを押す",
+        "scroll": "ページをスクロールする",
+        "wait_for": "要素や文字が出るまで待つ",
+        "set_viewport": "画面の大きさや、まねる端末を変える",
+        "touch": "タップ・スワイプ・ピンチをする",
+        "throttle": "CPU や通信を遅くする",
+        "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
+        "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"
+      },
+      "sessions": {
+        "list_sessions": "セッションの一覧を読む",
+        "read_session": "セッションの会話を読む",
+        "get_session_diff": "セッションのフォルダの変更を読む",
+        "get_session": "子セッションの状態と結果を読む",
+        "wait_sessions": "子セッションが終わるのを少し待つ",
+        "start_session": "子セッションか、独立したセッションを始める（利用枠を使う）",
+        "send_message": "子セッションに指示を送る",
+        "answer_question": "子セッションの質問に答える",
+        "answer_permission": "子セッションの許可の確認に答える",
+        "configure_session": "子セッションの権限モード・モデル・effort を変える",
+        "stop_session": "子セッションのターンを中断する",
+        "end_session": "役目を終えた子セッションをアーカイブし、worktree を消す",
+        "schedule_wakeup": "あとで続きを頼む予約を、自分に入れる",
+        "list_wakeups": "自分への予約を読む",
+        "cancel_wakeup": "自分への予約を取り消す",
+        "report_result": "ターンの終わりの通知に載せる報告を書く",
+        "set_away_mode": "離席モードを入り・切りする",
+        "get_app_update": "tanacode の新しいバージョンがあるかを確かめる",
+        "restart_app": "tanacode を再起動する（新しいバージョンがあれば入れ替える）"
+      },
+      "checklist": {
+        "checklist_overview": "チェックリストの一覧を読む",
+        "card_get": "カードの中身と返信を読む",
+        "list_create": "リストを作る",
+        "list_update": "リストの名前や説明を変える",
+        "list_delete": "リストをゴミ箱に移す",
+        "card_add": "カードを足す",
+        "card_update": "カードの題や本文を変える",
+        "card_check": "カードにチェックを付ける",
+        "card_uncheck": "カードのチェックを外す",
+        "card_revoke": "決定事項を取り消す",
+        "card_reply": "カードに返信する",
+        "card_move": "カードを動かす",
+        "card_delete": "カードをゴミ箱に移す",
+        "card_restore": "ゴミ箱のカードを戻す",
+        "checklist_trash": "ゴミ箱を読む",
+        "list_restore": "ゴミ箱のリストを戻す",
+        "cards_copy": "別のセッションのリストに、カードを写す"
+      },
+      "walkthrough": {
+        "start_walkthrough": "エディタでコードを示しながら、説明を始める",
+        "show_code": "エディタで、コードの場所を示す",
+        "walkthrough_status": "人が今どのステップを見ているかを読む",
+        "post_walkthrough": "ウォークスルーを、GitHub の PR にコメントとして載せる"
+      },
+      "terminal": {
+        "list_terminals": "ターミナルの一覧を読む",
+        "read_terminal": "ターミナルの出力を読む",
+        "type_in_terminal": "人のターミナルに打ち込む"
+      }
+    }
   },
   "translate": {
     "failure": {
@@ -1761,12 +1856,10 @@
     "hosts": {
       "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
       "empty": "（空）",
-      "title": "アプリ内ブラウザで Claude に許す先",
       "description": "ここにある先のページは、Claude がアプリ内ブラウザで確認なしで開いて・読んで・操作できます。ほかの先は、Claude が開くたびにあなたの許可を求めます。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
       "default": "既定",
       "placeholder": "例: myapp.test・*.example.test",
-      "inputLabel": "足す先",
-      "closeTip": "閉じる（Esc）"
+      "inputLabel": "足す先"
     },
     "picked": {
       "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",

@@ -33,7 +33,7 @@ export type CompactPhase = 'finalizing' | 'clearing' | 'resuming' | 'waiting';
 // usage-limit: 仕上げのターンが、プランの利用枠に当たって止まった（会話は消さない。枠が戻ったら、続きを頼む予約が入る）
 export type CompactFailure = 'interrupted' | 'prompted' | 'not-used' | 'interleaved' | 'not-cleared' | 'exited' | 'busy' | 'usage-limit';
 
-// 使えない理由。checklist-off: 「MCP → チェックリスト」がオフ / no-checklist: このセッションの Claude Code にチェックリストの MCP が足されていない
+// 使えない理由。checklist-off: 「MCP の設定」でチェックリストを切っている / no-checklist: このセッションの Claude Code にチェックリストの MCP が足されていない
 export type CompactUnavailable = 'checklist-off' | 'no-checklist';
 
 // セッションごとの、最適化圧縮の状態（画面のボタンと「自動」のトグルに出す）。failure は、次に始めるまで残す。

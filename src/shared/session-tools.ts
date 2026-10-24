@@ -339,10 +339,10 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
   },
   {
     name: 'restart_app',
-    // 人の許可の確認を、権限モードによらず出させる（--settings の PreToolUse のフック。sessions-bridge.ts の restartGateCommand）
+    // 既定では、人の許可の確認を権限モードによらず出させる（--settings の PreToolUse のフック。tool-permissions.ts。MCP の設定で常に許可にもできる）
     kind: 'act',
     description:
-      "Restarts tanacode itself (this app), and updates it first when a new version has been downloaded (tanacode installed with Homebrew downloads new versions in the background). Use it only when the user asks you to update or restart tanacode (for example from Remote Control, when they are away from the Mac); do not call it on your own. The user is always asked for permission first. Claude Code keeps running while tanacode restarts, so this and the other sessions continue (in rare cases where the new version changed how tanacode keeps Claude Code running, Claude Code is restarted with --resume, and a command running at that moment is cut off). The whole app restarts, not only this session. After the result, end your turn briefly: a notice tells you when tanacode is back and whether the update succeeded.",
+      "Restarts tanacode itself (this app), and updates it first when a new version has been downloaded (tanacode installed with Homebrew downloads new versions in the background). Use it only when the user asks you to update or restart tanacode (for example from Remote Control, when they are away from the Mac); never call it on your own, even when it runs without asking. Depending on the user's setting in tanacode, the user may be asked for permission first (by default, every call asks, regardless of the permission mode). Claude Code keeps running while tanacode restarts, so this and the other sessions continue (in rare cases where the new version changed how tanacode keeps Claude Code running, Claude Code is restarted with --resume, and a command running at that moment is cut off). The whole app restarts, not only this session. After the result, end your turn briefly: a notice tells you when tanacode is back and whether the update succeeded.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -405,7 +405,7 @@ const PARENT_INSTRUCTIONS = [
 // 子でないセッション（人が動かすセッション。独立したセッションも）にだけ渡すもの。子は人に通知しないので、報告もしない
 const TOP_LEVEL_INSTRUCTIONS = [
   '- Away mode: when the user tells you they are leaving or going to sleep and asks for away mode, turn it on with set_away_mode; when they say they are back, turn it off. While it is on, tanacode reminds you of the rules with each message, and the permission prompts and questions of this session that nobody answers are declined after a few minutes.',
-  '- When the user asks you to update or restart tanacode itself (for example from Remote Control), check with get_app_update and call restart_app (only_if_update: true for an update). It always asks the user for permission, and the sessions keep running while tanacode restarts.',
+  "- When the user asks you to update or restart tanacode itself (for example from Remote Control), check with get_app_update and call restart_app (only_if_update: true for an update). Call it only when the user asked for it: depending on the user's setting it may run without asking the user. The sessions keep running while tanacode restarts.",
   '- At the end of a turn in which you worked on a task for the user (not for a quick answer), call report_result as your last tool call with one or two sentences on how it ended: what was done, or what is blocking and what you need from the user. Write it in the language the user is using. tanacode shows it in the end-of-turn notification instead of the plain "finished" one. Skip it when the work is not finished and you end the turn only to wait (for children, a wake-up or background tasks).',
 ];
 const COMMON_INSTRUCTIONS = [

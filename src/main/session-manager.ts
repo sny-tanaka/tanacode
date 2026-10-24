@@ -2047,14 +2047,12 @@ export class SessionManager {
 
   // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
   // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
-  // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
   // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（合わせる設定に、打つ前の確認のフックを入れる）
   private prepareSettings(
     id: string,
     settingsFile: string | null | undefined,
     browser: boolean,
-    sessions: boolean,
     checklist: boolean,
     terminal: boolean,
     instructions: boolean,
@@ -2065,7 +2063,7 @@ export class SessionManager {
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal, instructions);
+    return this.settingsFiles.prepare(id, settingsFile, browser, checklist, terminal, instructions);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -2500,7 +2498,7 @@ export class SessionManager {
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child, !!instructions);
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!checklist, !!terminal && !terminal.child, !!instructions);
     // 引き継ぐ claude は起動しないので、渡すモードは使わない（前のアプリが渡したモードのまま動いている）
     const permissionMode = adopted ? (record.knownMode ?? 'manual') : this.startMode(record, mode, settings);
 

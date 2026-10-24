@@ -26,8 +26,8 @@ function entries(head: string): IpcEntry[] {
 // 増えたら、test/preload-api.test.ts の「中身の無い知らせ」のテストが落ちるので、ここに足す
 export const EMPTY_EVENTS: Record<string, string> = {
   SessionsNew: 'sessions.onNew',
-  BrowserHostsOpen: 'browser.onHostsOpen',
   PromptsOpen: 'prompts.onOpen',
+  McpSettingsOpen: 'mcpSettings.onOpen',
   AppUpdateChecked: 'appUpdate.onChecked',
 };
 export const emptyEventKeys = [...block('export type IpcEvent = {').matchAll(/\[IpcChannel\.(\w+)\]: undefined;/g)].map((m) => m[1]);

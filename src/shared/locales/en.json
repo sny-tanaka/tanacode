@@ -50,19 +50,12 @@
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
       "updateOnQuit": "Install Updates on Quit (Homebrew)",
-      "mcp": "MCP",
-      "browserControl": "In-App Browser",
-      "sessionsControl": "Session Control",
-      "sessionsStartConfirm": "Ask Before Starting a Session",
-      "checklistControl": "Checklists",
-      "walkthroughControl": "Walkthroughs",
-      "terminalControl": "Terminal",
+      "mcpSettings": "MCP Settings…",
       "usageLimitResume": "Resume Automatically When the Usage Limit Resets",
       "autoCompactPercent": "Auto Optimized Compact At",
       "awayWait": "Away Mode Wait Time",
       "language": "Language",
       "languageSystem": "System Default",
-      "browserHosts": "Allowed Sites for Claude in the In-App Browser…",
       "prompts": "Messages Sent to Claude…",
       "file": "File",
       "newSession": "New Session",
@@ -232,7 +225,11 @@
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
-      "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation"
+      "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation",
+      "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
+      "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode",
+      "browserGateInside": "The page is on a site allowed for Claude, so it opens without confirmation",
+      "postWalkthroughGate": "This posts the walkthrough as a comment on a GitHub pull request (it writes outside this Mac)"
     },
     "translate": {
       "invalidTexts": "Invalid text to translate",
@@ -331,6 +328,10 @@
       "empty": "{path} is empty, so it isn't passed to Claude",
       "tooLarge": "{path} is larger than 1 MB, so it isn't passed to Claude",
       "unreadable": "Couldn't read {path}, so it isn't passed to Claude"
+    },
+    "toolPermissions": {
+      "syncFailedTitle": "tanacode could not apply the confirmation choices in MCP Settings to Claude Code",
+      "syncFailed": "tanacode could not write its marker files ({error}). The confirmation choices you changed from the defaults may not take effect, and tools set to Ask Every Time may run without asking. Choose them again in “tanacode > MCP Settings…”, or restart tanacode."
     }
   },
   "commands": {
@@ -580,8 +581,8 @@
         "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
       },
       "compactUnavailable": {
-        "checklistOff": "Turn on “tanacode > {mcp} > {item}” in the menu to use this",
-        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > {mcp} > {item}” in the menu and restart the session to use this"
+        "checklistOff": "Turn on “{mcp}” in “tanacode > {item}” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “{mcp}” in “tanacode > {item}” in the menu and restart the session to use this"
       },
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
@@ -1151,6 +1152,100 @@
     "saveFailed": "Couldn’t save: {error}",
     "loadFailed": "Couldn’t load the saved messages: {error}",
     "confirmDiscard": "Discard your unsaved changes and close?"
+  },
+  "mcpSettings": {
+    "title": "MCP Settings",
+    "description": "For each MCP server that tanacode adds to Claude Code, choose whether Claude can use it (the switch in its heading), and for each tool, whether Claude asks you before using it (Confirmation). Ask Every Time asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow lets Claude use the tool without asking, even in manual. While the permission mode is plan, tools that do more than read follow the plan mode of Claude Code. Before you change a default, check what the tool does.",
+    "scope": "This applies to the whole app. A confirmation choice takes effect at once, also in running sessions (sessions started in a version before this setting existed are not affected until you restart Claude Code in them). When you turn a server off, Claude Code started after that does not get it, and running Claude Code is refused when it calls it.",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "confirm": "Confirmation"
+    },
+    "switchLabel": "Let Claude use {server}",
+    "off": "Turned off. When you turn it back on, the confirmation choices stay as they are.",
+    "hostsTitle": "Sites Allowed for Claude",
+    "ask": "Ask Every Time",
+    "allow": "Always Allow",
+    "withDefault": "{label} (Default)",
+    "choiceLabel": "Confirmation for {tool}",
+    "childHidden": "Not given to child sessions",
+    "closeTip": "Close (Esc)",
+    "desc": {
+      "browser": {
+        "screenshot": "Takes an image of how the page looks",
+        "get_text": "Reads the text of the page",
+        "get_accessibility_tree": "Reads the structure of the page",
+        "inspect": "Reads the HTML and the applied styles of an element",
+        "get_console_logs": "Reads the console output",
+        "get_failed_requests": "Reads the failed requests",
+        "navigate": "Opens a page outside the sites allowed for Claude (pages on the allowed sites always open without asking)",
+        "list_tabs": "Reads the list of tabs",
+        "select_tab": "Switches the current tab",
+        "close_tab": "Closes a tab",
+        "click": "Clicks an element",
+        "type": "Types text into a field",
+        "press_key": "Presses a key",
+        "scroll": "Scrolls the page",
+        "wait_for": "Waits for an element or text to appear",
+        "set_viewport": "Changes the screen size or the emulated device",
+        "touch": "Taps, swipes and pinches",
+        "throttle": "Slows down the CPU or the network",
+        "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
+        "ask_user_to_act": "Asks you to act in the browser, such as logging in"
+      },
+      "sessions": {
+        "list_sessions": "Reads the list of sessions",
+        "read_session": "Reads the conversation of a session",
+        "get_session_diff": "Reads the changes in the folder of a session",
+        "get_session": "Reads the state and result of a child session",
+        "wait_sessions": "Waits briefly for child sessions to finish",
+        "start_session": "Starts a child session or an independent one (uses your usage limits)",
+        "send_message": "Sends an instruction to a child session",
+        "answer_question": "Answers a question from a child session",
+        "answer_permission": "Answers a permission prompt of a child session",
+        "configure_session": "Changes the permission mode, model or effort of a child session",
+        "stop_session": "Interrupts the turn of a child session",
+        "end_session": "Archives a child session that has done its job and removes its worktree",
+        "schedule_wakeup": "Schedules a wake-up for itself to continue later",
+        "list_wakeups": "Reads its scheduled wake-ups",
+        "cancel_wakeup": "Cancels a scheduled wake-up",
+        "report_result": "Writes the report shown in the end-of-turn notification",
+        "set_away_mode": "Turns away mode on or off",
+        "get_app_update": "Checks whether a new version of tanacode is available",
+        "restart_app": "Restarts tanacode (installs a new version first if there is one)"
+      },
+      "checklist": {
+        "checklist_overview": "Reads the list of checklists",
+        "card_get": "Reads a card and its replies",
+        "list_create": "Creates a list",
+        "list_update": "Changes the name or description of a list",
+        "list_delete": "Moves a list to the trash",
+        "card_add": "Adds cards",
+        "card_update": "Changes the title or body of a card",
+        "card_check": "Checks cards",
+        "card_uncheck": "Unchecks cards",
+        "card_revoke": "Revokes decisions",
+        "card_reply": "Replies to a card",
+        "card_move": "Moves cards",
+        "card_delete": "Moves cards to the trash",
+        "card_restore": "Restores cards from the trash",
+        "checklist_trash": "Reads the trash",
+        "list_restore": "Restores a list from the trash",
+        "cards_copy": "Copies cards to a list of another session"
+      },
+      "walkthrough": {
+        "start_walkthrough": "Starts explaining code while showing it in the editor",
+        "show_code": "Shows a place in the code in the editor",
+        "walkthrough_status": "Reads which step you are looking at",
+        "post_walkthrough": "Posts the walkthrough as a comment on a GitHub pull request"
+      },
+      "terminal": {
+        "list_terminals": "Reads the list of terminals",
+        "read_terminal": "Reads the output of a terminal",
+        "type_in_terminal": "Types into your terminal"
+      }
+    }
   },
   "translate": {
     "failure": {
@@ -1820,12 +1915,10 @@
     "hosts": {
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",
       "empty": "(empty)",
-      "title": "Allowed Sites for Claude in the In-App Browser",
       "description": "In the in-app browser, Claude can open, read, and interact with pages on the sites listed here without asking. For any other site, Claude asks for your permission every time it opens one. The in-app browser shares sign-in state, so add only development sites you trust.",
       "default": "Default",
       "placeholder": "e.g., myapp.test, *.example.test",
-      "inputLabel": "Site to add",
-      "closeTip": "Close (Esc)"
+      "inputLabel": "Site to add"
     },
     "picked": {
       "heading": "Element selected in the in-app browser ({url}):",

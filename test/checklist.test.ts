@@ -356,11 +356,11 @@ describe('MCP のツール（ChecklistControl）', () => {
     expect((await call('checklist_overview')).content).toHaveLength(1);
   });
 
-  it('メニューでオフにしていれば、メニューの項目の名前（画面の言語）を添えて断る', async () => {
+  it('MCP の設定で切っていれば、MCP の名前とメニューの項目の名前（画面の言語）を添えて断る', async () => {
     enabled = false;
     const result = await call('checklist_overview');
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Ask the user to turn on "チェックリスト" under tanacode > MCP.');
+    expect(textOf(result)).toBe('The user has turned off the tanacode MCP "チェックリスト". Ask the user to turn it on in tanacode > MCP の設定….');
   });
 
   describe('Claude への知らせ', () => {

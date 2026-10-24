@@ -124,10 +124,8 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(shown).toMatchObject({ type: 'tool-result', isError: false });
   });
 
-  it('ページを動かすツールは、許可の確認を通る', async () => {
-    const menu = await run.permission('クリックの許可の確認');
-    expect(calls).toHaveLength(1);
-    run.replyPermission(menu, { kind: 'allow' });
+  it('ページを動かすツールも、許可の確認なしに通る（ツールの許可の既定は常に許可。manual でも、フックが allow を返す）', async () => {
+    // 確認が出ていれば、答えないかぎりここで止まる
     await run.waitUntil('クリックの結果', () => resultOf('toolu_click'));
     expect(calls[1]).toEqual({ session: run.sessionId, tool: 'click', args: { selector: '#save' } });
   });
@@ -324,13 +322,9 @@ describe.each([
     if (socketDir) rmSync(socketDir, { recursive: true, force: true });
   });
 
-  it('許す先は、今までどおり開く（manual では、ふつうの許可の確認が出る。「次から聞かない」で許す）', async () => {
+  it('許す先は、manual でも許可の確認なしに開く（フックが allow を返す）', async () => {
     await run.send(OPEN);
-    if (mode === 'manual') {
-      const menu = await run.permission('localhost を開く許可の確認');
-      expect(menu.always?.length ?? 0, '「今後は聞かない」の候補').toBeGreaterThan(0);
-      run.replyPermission(menu, { kind: 'allow', always: true });
-    }
+    // 確認が出ていれば、答えないかぎりここで止まる
     await run.waitUntil('localhost を開いた結果', () => resultOf('toolu_local'));
     expect(calls).toEqual([{ tool: 'navigate', args: { url: LOCAL } }]);
     // フックは、ツールの名前と入力と、呼び出しの ID（tool_use_id）をアプリに渡す。中継も、同じ ID（tools/call の _meta）を渡す
@@ -356,6 +350,5 @@ describe.each([
     await run.waitUntil('返事', replied('開き終えました'));
     expect(opened()).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
     expect(gates.map((g) => (g.input as { url: string }).url)).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
-    if (mode === 'manual') expect(readFileSync(join(run.cwd, '.claude', 'settings.local.json'), 'utf8')).toContain(browserToolId('navigate'));
   });
 });
