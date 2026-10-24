@@ -609,6 +609,7 @@
       "becomeParentFailed": "Couldn't make this session a parent: {error}",
       "export": "Export session…",
       "exportTip": "Export this session's history to a single HTML file",
+      "more": "More actions",
       "terminal": "Terminal mode",
       "terminalTip": "Show and operate Claude Code in its own terminal screen instead of the chat. Switching restarts Claude Code and continues the same conversation (only while it's idle)",
       "pasteComments": "Paste into prompt",

@@ -180,6 +180,41 @@ describe('ヘッダー', () => {
     expect(alerts).toEqual(['親にできませんでした: TANACODE_PARENT.md が見つかりません']);
   });
 
+  // 「…」は、欄が狭いときだけ CSS（@container）で出る。テストでは CSS を読まないので、いつも押せる
+  it('「…」（その他の操作）は、親にする・再起動・書き出すのメニューを開く。開いているときに押すと閉じる。押せない「親にする」には、わけを添える', async () => {
+    install({ 'sessions.parentInstructions': () => Promise.resolve(null) });
+    render(<ClaudePane {...props()} />);
+    await settle();
+    const more = () => screen.getByRole('button', { name: 'その他の操作' });
+    const items = () => screen.queryAllByRole('menuitem') as HTMLButtonElement[];
+    expect(items()).toEqual([]);
+    fireEvent.click(more());
+    expect(more().getAttribute('aria-expanded')).toBe('true');
+    expect(items().map((item) => [item.textContent, item.disabled, item.getAttribute('data-tip')])).toEqual([
+      ['親にする', true, 'セッションのフォルダに TANACODE_PARENT.md（親として動くときの決まり）を置くと使えます'],
+      ['再起動', false, null],
+      ['作業を書き出す…', false, null],
+    ]);
+    // 開いているときに押すと、閉じるだけ（外を押したことにして閉じ、すぐ開き直さない）
+    fireEvent.mouseDown(more());
+    fireEvent.click(more());
+    expect(items()).toEqual([]);
+    expect(more().getAttribute('aria-expanded')).toBe('false');
+    // 外を押しても閉じる
+    fireEvent.click(more());
+    fireEvent.mouseDown(document.body);
+    expect(items()).toEqual([]);
+    // 項目は、ヘッダーのボタンと同じことをする
+    fireEvent.click(more());
+    fireEvent.click(screen.getByRole('menuitem', { name: '再起動' }));
+    expect(api.argsOf('sessions.restart')).toEqual([['s1']]);
+    expect(items()).toEqual([]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(more());
+    fireEvent.click(screen.getByRole('menuitem', { name: '作業を書き出す…' }));
+    expect(within(screen.getByRole('dialog')).getByText('作業を書き出す')).toBeTruthy();
+  });
+
   it('「親にする」は、子のセッション・止まっているセッションには出さない', async () => {
     install({ 'sessions.parentInstructions': () => Promise.resolve('/work/TANACODE_PARENT.md') });
     const view = render(<ClaudePane {...props({ session: { ...S1, parentId: 'p1' } })} />);

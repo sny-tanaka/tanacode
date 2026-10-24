@@ -228,6 +228,14 @@ export const MinusIcon: IconComponent = (p) => (
   </Svg>
 );
 
+export const MoreIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <circle cx="5.5" cy="12" r="1" fill="currentColor" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" />
+    <circle cx="18.5" cy="12" r="1" fill="currentColor" />
+  </Svg>
+);
+
 export const TrashIcon: IconComponent = (p) => (
   <Svg {...p}>
     <path d="M4 7h16" />
