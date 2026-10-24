@@ -71,7 +71,8 @@ echo $? >"$result"
 if [ "$relaunch" = 1 ]; then "$opener" "$app"; fi
 `;
 
-export type UpgradeOptions = { pid: number; log: string; result: string; relaunch: boolean; opener?: string };
+// onSpawnError: シェルを起動できなかったと、あとから分かった（spawn の error。起動したら true を返したあとに届く）
+export type UpgradeOptions = { pid: number; log: string; result: string; relaunch: boolean; opener?: string; onSpawnError?: () => void };
 
 type Options = {
   brew: string;
@@ -79,8 +80,8 @@ type Options = {
   // 動いているアプリのバージョン
   current: string;
   onChange: () => void;
-  // テストで差し替える
-  spawnShell?: (args: string[], env: NodeJS.ProcessEnv) => void;
+  // テストで差し替える。onError: 起動できなかったと、あとから分かった
+  spawnShell?: (args: string[], env: NodeJS.ProcessEnv, onError: () => void) => void;
 };
 
 type DetectOptions = Omit<Options, 'brew' | 'run'> & { bundle: string; brew?: string | null; run?: BrewRunner };
@@ -165,7 +166,7 @@ export class HomebrewUpdater {
 
   // 用意できていれば、このプロセスが終わるのを待って brew upgrade する、切り離したシェルを起動する。起動したら true。
   // 終了の片付けの途中で呼ぶので、ログを書けないなどで失敗しても投げない（入れ替えずに終わる）
-  upgradeAfterExit({ pid, log, result, relaunch, opener = '/usr/bin/open' }: UpgradeOptions): boolean {
+  upgradeAfterExit({ pid, log, result, relaunch, opener = '/usr/bin/open', onSpawnError }: UpgradeOptions): boolean {
     if (this.state?.status !== 'ready' || this.upgrading) return false;
     try {
       // ログは、この更新の分だけにする
@@ -178,7 +179,16 @@ export class HomebrewUpdater {
     this.upgrading = true;
     const args = [String(pid), this.options.brew, CASK, APP_BUNDLE, log, result, relaunch ? '1' : '0', opener];
     const env = { ...process.env, ...BREW_ENV };
-    (this.options.spawnShell ?? spawnDetached)(args, env);
+    const failed = () => {
+      this.upgrading = false;
+      onSpawnError?.();
+    };
+    try {
+      (this.options.spawnShell ?? spawnDetached)(args, env, failed);
+    } catch {
+      this.upgrading = false;
+      return false;
+    }
     return true;
   }
 
@@ -189,10 +199,25 @@ export class HomebrewUpdater {
   }
 }
 
-// アプリが終わっても動き続けるよう、切り離して起動する
-function spawnDetached(args: string[], env: NodeJS.ProcessEnv): void {
+// 終えるときに入れ替える（upgrade）なら、入れ替えのシェルを起動して、入れ替えたあとに起動し直させる（relaunch）。
+// シェルを起動できなかったら（ログを書けない・起動したあとに spawn の失敗が分かったときも）、入れ替えずに、そのまま起動し直す。
+// 起動し直すはずだったのに終わったままだと、スマホの Remote Control から頼んだ人は気づけないため
+export function upgradeOrRelaunch(
+  updater: Pick<HomebrewUpdater, 'upgradeAfterExit'> | null,
+  upgrade: boolean,
+  options: Omit<UpgradeOptions, 'relaunch' | 'onSpawnError'>,
+  relaunch: boolean,
+  relaunchApp: () => void,
+): void {
+  const started = upgrade && !!updater?.upgradeAfterExit({ ...options, relaunch, onSpawnError: () => relaunch && relaunchApp() });
+  if (!started && relaunch) relaunchApp();
+}
+
+// アプリが終わっても動き続けるよう、切り離して起動する。起動できなかったことは onError で知らせる（spawn の error は、あとから届く。
+// アプリが終わる前に届けば、起動し直せる）
+function spawnDetached(args: string[], env: NodeJS.ProcessEnv, onError: () => void): void {
   const child = spawn('/bin/sh', ['-c', UPGRADE_SCRIPT, 'tanacode-update', ...args], { detached: true, stdio: 'ignore', env });
   // 起動できなくても、終了の流れを止めない（入れ替えずに終わる）
-  child.on('error', () => {});
+  child.on('error', onError);
   child.unref();
 }

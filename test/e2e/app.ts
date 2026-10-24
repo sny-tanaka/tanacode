@@ -240,6 +240,18 @@ export class E2EApp {
     await this.start();
   }
 
+  // アプリが自分で終わるのを待って、起動し直す（Claude が restart_app で頼んだ再起動。アプリは TANACODE_E2E_NO_RELAUNCH=1 で、
+  // 終えるだけで起動し直さない。Playwright は自分で起動したアプリしか扱えないため）。whileClosed: 閉じている間に確かめること。
+  // 画面のカバレッジは残さない（いつ閉じるかをアプリが決めるので、写す前に閉じることがある）
+  async relaunchAfterExit(whileClosed?: () => Promise<void>): Promise<void> {
+    const child = this.app.process();
+    this.electronApp = null;
+    this.window = null;
+    await new Promise<void>((resolve) => (child.exitCode !== null || child.signalCode !== null ? resolve() : child.once('exit', () => resolve())));
+    await whileClosed?.();
+    await this.start();
+  }
+
   // pty ホストで動いている Claude Code の pid（起動し直したことを確かめるため）
   claudePids(): Promise<number[]> {
     return ptyPids(socketPathIn(this.userData, 'pty-host', 'pty'));

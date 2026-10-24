@@ -1742,7 +1742,29 @@ describe('Homebrew での更新', () => {
       log: join(state.userData, 'homebrew-update.log'),
       result: join(state.userData, 'homebrew-update.result'),
       relaunch: true,
+      onSpawnError: expect.any(Function),
     });
+    // 起動し直すのは、入れ替えたあとのシェル
+    expect(state.relaunch).not.toHaveBeenCalled();
+  });
+
+  it('「再起動して更新」: 入れ替えのシェルを起動できなければ、入れ替えずに起動し直す（起動の失敗があとから分かったときも）', async () => {
+    const homebrew = updater();
+    homebrew.upgradeAfterExit.mockReturnValueOnce(false);
+    await bootWith(homebrew);
+    await invoke(IpcChannel.AppUpdateInstall);
+    quitOnce();
+    expect(state.relaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('「再起動して更新」: シェルの起動の失敗があとから届いたら、起動し直す', async () => {
+    await bootWith(updater());
+    await invoke(IpcChannel.AppUpdateInstall);
+    quitOnce();
+    expect(state.relaunch).not.toHaveBeenCalled();
+    const [{ onSpawnError }] = upgrade().mock.calls[0] as unknown as [{ onSpawnError: () => void }];
+    onSpawnError();
+    expect(state.relaunch).toHaveBeenCalledTimes(1);
   });
 
   it('「再起動して更新」: Claude Code が動いていれば、止めるかを聞く。キャンセルなら何もしない', async () => {
@@ -1830,5 +1852,36 @@ describe('Homebrew での更新', () => {
     await vi.waitFor(() => expect(existsSync(join(state.userData, 'homebrew-update.result'))).toBe(false));
     await new Promise((r) => setTimeout(r, 10));
     expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  // Claude の restart_app（tanacode-sessions）。Profile が SessionsControl に渡すものを、index.ts がつなぐ
+  type AppControl = { restart: (id: string, onlyIfUpdate: boolean) => { restarting: boolean; to?: string | null } };
+  const appControl = () => (argsOf('SessionsControl')[0] as { app: AppControl }).app;
+
+  it('restart_app: ダウンロード済みなら、確認のダイアログを出さず、結果を返してから動かしたまま終え、入れ替えてから起動し直す', async () => {
+    await bootWith(updater());
+    manager().liveSessions.mockReturnValue(live);
+    expect(appControl().restart('s1', true)).toMatchObject({ restarting: true, to: '9.9.0' });
+    // 結果を返した時点では、まだ終えない
+    expect(state.quit).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(quitOnce().preventDefault).not.toHaveBeenCalled();
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(manager().closeAll).not.toHaveBeenCalledWith(true);
+    expect(upgrade()).toHaveBeenCalledWith(expect.objectContaining({ relaunch: true }));
+    expect(state.relaunch).not.toHaveBeenCalled();
+  });
+
+  it('restart_app: 入れ替えるものが無ければ、only_if_update では終えない。省けば、動かしたまま終えて起動し直す', async () => {
+    await bootWith(updater(null));
+    manager().liveSessions.mockReturnValue(live);
+    expect(appControl().restart('s1', true)).toMatchObject({ restarting: false });
+    expect(appControl().restart('s1', false)).toMatchObject({ restarting: true, to: null });
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    quitOnce();
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(manager().closeAll).not.toHaveBeenCalledWith(true);
+    expect(upgrade()).not.toHaveBeenCalled();
+    expect(state.relaunch).toHaveBeenCalledTimes(1);
   });
 });
