@@ -4012,18 +4012,20 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     }
   });
 
-  it('説明: 親は裏の sleep の代わりに予約で子を見に行く。報告の決まりは子でないセッションにだけ渡す。どれも確認なしに通す', () => {
-    expect(SESSIONS_MCP.instructions).toContain('schedule a wake-up with schedule_wakeup');
-    expect(SESSIONS_MCP.instructions).toContain('When <tanacode-wakeup> arrives');
+  it('説明: 親は子を予約で見回らず、知らせを待つ。CI は裏で待つ。報告の決まりは子でないセッションにだけ渡す。どれも確認なしに通す', () => {
+    // 見回りの予約は届くたびに親を起こして利用枠を使うので、勧めない（知らせの取りこぼしは #268・#290 で直した）
+    expect(SESSIONS_MCP.instructions).toContain('Do not schedule wake-ups to check on children');
+    expect(SESSIONS_MCP.instructions).not.toContain('at regular intervals');
+    expect(SESSIONS_MCP.instructions).toContain('gh pr checks <number> --watch');
     expect(SESSIONS_MCP.instructions).not.toContain('sleep 300');
-    // 見回りの予約は 1 つにし、重ねようとしたら前のものを見て決める（Issue #277）
-    expect(SESSIONS_MCP.instructions).toContain('Keep one wake-up for checking on children');
+    // 重ねようとしたら前のものを見て決める（Issue #277）
     const wakeup = SESSIONS_MCP_FOR_CHILD.tools.find((t) => t.name === 'schedule_wakeup');
     expect(wakeup?.description).toContain('If one of your wake-ups is already waiting in this session, it is not scheduled');
     expect(wakeup?.inputSchema.properties).toHaveProperty('even_if_scheduled', expect.objectContaining({ type: 'boolean' }));
     expect(SESSIONS_MCP.instructions).toContain('call report_result as your last tool call');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('report_result');
-    expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).toContain('schedule_wakeup');
+    expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).toContain('do not schedule wake-ups to check on it');
+    expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).not.toContain('at regular intervals');
     expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).not.toContain('background timer');
     for (const name of ['schedule_wakeup', 'cancel_wakeup', 'report_result', 'list_wakeups']) expect(allowedSessionToolIds()).toContain(sessionToolId(name));
   });
