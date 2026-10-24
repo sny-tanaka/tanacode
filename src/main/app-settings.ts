@@ -1,6 +1,6 @@
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT } from '@shared/optimized-compact';
 import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
 import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
@@ -198,13 +198,20 @@ export class AppSettings {
   }
 
   // 前のバージョンでは、足したプロファイルが、Claude に許す機能・許す先・Claude の自動の動きを、それぞれの設定のファイルに持っていた。
-  // 今はアプリ全体の設定（既定のプロファイルのファイル）だけを使う。値は既定のプロファイルのものを引き継ぎ、許す先だけは、
-  // 足したプロファイルのものも足す（どのプロファイルで許した先も、許したままにする）。一度だけ動かす（あとで外した先を、また足さない）。
-  // 足したプロファイルのファイルは消さない（登録した設定ファイルは、今もプロファイルごとにそこに置く）
+  // 今はアプリ全体の設定（既定のプロファイルのファイル）だけを使う。安全なほうに倒して引き継ぐ:
+  // - Claude に許す機能と利用枠からの再開は、どれかのプロファイル（既定を含む）でオフならオフ（オフにしていた機能を、黙ってオンに戻さない）
+  // - 許す先は、すべてのプロファイルのものを足す（どのプロファイルで許した先も、許したままにする）
+  // - 自動で最適化圧縮する大きさと、離席モードで答えを待つ時間は、既定のプロファイルの値
+  // 一度だけ動かす（あとで外した先を、また足さない）。足したプロファイルのファイルは消さない（登録した設定ファイルは、今もそこに置く）。
+  // このファイルが壊れていたら、書き換える前に、元の中身を横（settings.json.broken-<時刻>）に控える（Claude に送る文や言語を取り戻せるように）。
+  // 控えられなければ、移し替えずに投げる
   mergeProfiles(others: AppSettings[]): void {
     if (this.values.profilesMerged || others.length === 0) return;
-    const browserHosts = [...new Set([...this.values.browserHosts, ...others.flatMap((o) => o.browserHosts())])];
-    this.update({ browserHosts, profilesMerged: true });
+    if (isBroken(this.file)) copyFileSync(this.file, `${this.file}.broken-${Date.now()}`);
+    const merged: Partial<Values> = { profilesMerged: true };
+    for (const key of OFF_WINS) merged[key] = this.values[key] && others.every((o) => o.values[key]);
+    merged.browserHosts = [...new Set([...this.values.browserHosts, ...others.flatMap((o) => o.browserHosts())])];
+    this.update(merged);
   }
 
   // 保存できなかったら、値を元に戻して例外を投げる（画面の表示と食い違わせない）
@@ -224,6 +231,19 @@ export class AppSettings {
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify({ version: 1, ...this.values }, null, 2));
     renameSync(tmp, this.file);
+  }
+}
+
+// 移し替えで、どれかのプロファイルでオフならオフにする設定
+const OFF_WINS = ['browserControl', 'sessionsControl', 'checklistControl', 'walkthroughControl', 'terminalControl', 'usageLimitResume'] as const;
+
+// 設定のファイルがあるのに、設定として読めない（JSON でない・オブジェクトでない・読めない）か。無いだけなら壊れていない
+function isBroken(file: string): boolean {
+  try {
+    const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return typeof data !== 'object' || data === null || Array.isArray(data);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
   }
 }
 
