@@ -342,7 +342,7 @@ export class SessionsControl {
         case 'wait_sessions':
           return await this.waitSessions(caller, args, signal);
         case 'start_session':
-          return await this.startSession(caller, args);
+          return await this.startSession(caller, args, signal);
         case 'send_message':
           return await this.sendMessage(caller, args);
         case 'answer_question':
@@ -496,7 +496,7 @@ export class SessionsControl {
 
   // --- 子セッションを動かすツール ---
 
-  private async startSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
+  private async startSession(caller: SessionSummary, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const { host } = this.deps;
     if (caller.parentId) throw new ToolError('A child session cannot start sessions (only one level of children, and no independent sessions).');
     const prompt = stringArg(args.prompt);
@@ -568,8 +568,10 @@ export class SessionsControl {
     });
     // 「親にする」を押さずに子を始めた（チャットで親を頼まれたなど）なら、親の決まり（TANACODE_PARENT.md）をこの結果に付けて渡す。
     // 知らせ（ターンが終わってから届く）ではなく結果に付けるのは、子を始めた同じターンのうちに読ませるため（見回りの予約などは、このあとすぐにする）
-    const rules = independent ? null : (host.takeParentRules?.(caller.id) ?? null);
-    return rules ? { content: [...result.content, { type: 'text', text: parentRulesResult(rules) }] } : result;
+    // 呼び出しが取り消された（Esc で中断した）なら、結果は Claude に届かないので、渡したことにしない
+    const rules = independent || signal?.aborted ? null : (host.takeParentRules?.(caller.id) ?? null);
+    const used = result.content.reduce((sum, c) => sum + (c.type === 'text' ? c.text.length : 0), 0);
+    return rules ? { content: [...result.content, { type: 'text', text: parentRulesResult(rules, used) }] } : result;
   }
 
   private async sendMessage(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {

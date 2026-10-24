@@ -1865,6 +1865,9 @@ export class SessionManager {
     );
     if (!result.rewound) return failed(rewindReasonText(result.reason, result.error), choice.code);
     if (rt.process === process) this.cutBefore(id, rt, messageId);
+    // 戻した先の会話に、渡した TANACODE_PARENT.md が残っているかは見ずに、渡していないことにする（次に子を始めたときに渡す。
+    // 残っていれば重なるだけで、消えたのに渡さないよりよい）
+    this.store.update(id, { parentRules: false });
     // 「親として始める」の最初の指示を戻したときは、人が打った指示だけを入力欄に戻す（囲み・前書き・TANACODE_PARENT.md の中身は戻さない）
     const role = result.prefillText === null ? null : parseParentRole(result.prefillText);
     return { ok: true, prefillText: role ? role.rest || null : result.prefillText, error: null };

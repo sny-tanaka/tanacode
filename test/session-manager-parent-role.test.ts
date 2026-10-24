@@ -226,6 +226,24 @@ describe('takeParentRules（「親にする」を押さずに子を始めた親�
     expect(app.manager.takeParentRules(id)).not.toBeNull();
   });
 
+  it('「ここまで戻す」で会話を戻したら、次に子を始めたときにもう一度渡す（戻した先に残っていても、重なるほうに倒す）', async () => {
+    const { id, pipe } = await idleSession();
+    putRules();
+    const first = await app.prompt(id, app.manager.withParentRole(id, 'ログイン画面を作って'));
+    app.say(id, { ...line.text('はい'), parentUuid: first });
+    app.finish(id);
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
+    expect(app.manager.takeParentRules(id)).toBeNull();
+    // 戻せなかったときは、そのまま
+    pipe.answers.set('rewind_conversation', { rewound: false, reason: 'turn_running' });
+    expect((await app.manager.rewind(id, first, { conversation: true, code: false })).ok).toBe(false);
+    expect(app.manager.takeParentRules(id)).toBeNull();
+    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: app.manager.withParentRole(id, 'ログイン画面を作って') });
+    expect((await app.manager.rewind(id, first, { conversation: true, code: false })).ok).toBe(true);
+    expect(app.manager.takeParentRules(id)).not.toBeNull();
+    expect(app.manager.takeParentRules(id)).toBeNull();
+  });
+
   it('会話を消したら（/clear・最適化圧縮で会話ログが替わる）、次に子を始めたときにもう一度渡す', async () => {
     const { id, pipe } = await idleSession();
     putRules();

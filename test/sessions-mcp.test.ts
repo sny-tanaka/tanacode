@@ -665,6 +665,20 @@ describe('ツールの実行（SessionsControl）', () => {
     const long = parentRulesResult([{ path: '/p/TANACODE_PARENT.md', content: 'x'.repeat(MAX_PARENT_RULES_RESULT_CHARS) }]);
     expect(long).toContain('read the whole file with the Read tool before you go on (/p/TANACODE_PARENT.md)');
     expect(long.length).toBeLessThan(2_000);
+    // 上限は、結果のほかの部分（JSON）も含めて測る（Claude Code の上限は結果の全体のトークン数）
+    const half = [{ path: '/p/TANACODE_PARENT.md', content: '決'.repeat(MAX_PARENT_RULES_RESULT_CHARS / 2) }];
+    expect(parentRulesResult(half)).toContain('決'.repeat(100));
+    expect(parentRulesResult(half, MAX_PARENT_RULES_RESULT_CHARS / 2)).not.toContain('決'.repeat(100));
+  });
+
+  it('start_session: 呼び出しが取り消された（Esc で中断した）ときは、親の決まりを渡したことにしない', async () => {
+    const taken: string[] = [];
+    host.takeParentRules = (id) => (taken.push(id), [{ path: '/p/TANACODE_PARENT.md', content: '決まり' }]);
+    const aborted = new AbortController();
+    aborted.abort();
+    const result = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }, aborted.signal);
+    expect(result.content).toHaveLength(1);
+    expect(taken).toEqual([]);
   });
 
   it('start_session: 子を始められなかったときは、親の決まりを受け取ったことにしない', async () => {
