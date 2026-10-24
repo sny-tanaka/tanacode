@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserRect } from '@shared/ipc';
+import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserPoint, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
@@ -59,6 +59,10 @@ type Props = {
 
 // Claude がそのセッションのブラウザを操作している様子（main の browser-control から）
 type ClaudeActivity = Omit<BrowserActivity, 'sessionId'>;
+// セッションの画面の大きさ（0 は全幅）。custom: Claude が機種の名前か数字で決めた大きさ（高さ・画素密度・機種の名前）
+type Viewport = Omit<BrowserViewportChange, 'sessionId'>;
+// Claude がタブを遅くしている様子
+type Throttle = Omit<BrowserThrottleChange, 'sessionId' | 'tabId'>;
 
 export function normalizeUrl(input: string): string | null {
   const text = input.trim();
@@ -93,8 +97,10 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   // タブの ID → ページの様子
   const [pages, setPages] = useState<Record<string, PageState>>({});
   const [picking, setPicking] = useState(false);
-  // セッションごとの表示幅（0 は全幅）。Claude も変える
-  const [widths, setWidths] = useState<Record<string, number>>({});
+  // セッションごとの画面の大きさ（幅の 0 は全幅）。Claude も変える
+  const [viewports, setViewports] = useState<Record<string, Viewport>>({});
+  // タブの ID → Claude が遅くしている様子（遅くしていないタブは無い）
+  const [throttles, setThrottles] = useState<Record<string, Throttle>>({});
   const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
   // Claude がユーザーに頼んでいる操作（ask_user_to_act）
   const [asks, setAsks] = useState<Record<string, BrowserAsk>>({});
@@ -109,7 +115,10 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   // 空のタブ（「＋」で開いたもの）は、まだ何も開いていないのと同じに扱う
   const url = page?.url && page.url !== 'about:blank' ? page.url : null;
   const [address, setAddress] = useState(url ?? '');
-  const width = sessionId ? (widths[sessionId] ?? 0) : 0;
+  const viewport = sessionId ? viewports[sessionId] : undefined;
+  const width = viewport?.width ?? 0;
+  const height = viewport?.custom?.height ?? 0;
+  const throttle = activeTab ? throttles[activeTab] : undefined;
   const activity = sessionId ? claude[sessionId] : undefined;
   const ask = sessionId ? asks[sessionId] : undefined;
 
@@ -129,6 +138,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
     const tabId = `tab-${++tabSeq}`;
     const wv = document.createElement('webview') as Webview;
     wv.setAttribute('partition', PARTITION);
+    // main が、アプリの画面の中のタブの位置を探すのに使う（Claude のタッチは、ウインドウの中の位置で送るため。browser-control.ts の hostOffset）
+    wv.dataset.tabId = tabId;
     // allowpopups が無いと、新しいウィンドウで開くもの（target=_blank・window.open）は main に届かずに捨てられる。
     // 届いたものは、main がウィンドウを作らずに新しいタブで開かせる（setWindowOpenHandler）
     wv.setAttribute('allowpopups', '');
@@ -188,6 +199,11 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
       const { [tabId]: _, ...rest } = prev;
       return rest;
     });
+    // タブを閉じると、Claude が遅くしていたのも終わる
+    setThrottles((prev) => {
+      const { [tabId]: _, ...rest } = prev;
+      return rest;
+    });
     const next = list.filter((id) => id !== tabId);
     if (next.length > 0) tabsRef.current.set(sid, next);
     else tabsRef.current.delete(sid);
@@ -206,7 +222,13 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         setClaude((prev) => ({ ...prev, [id]: rest }));
         if (rest.active) setOperated((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
       }),
-      window.tanacode.browser.onViewport(({ sessionId: id, width: w }) => setWidths((prev) => ({ ...prev, [id]: w }))),
+      window.tanacode.browser.onViewport(({ sessionId: id, ...next }) => setViewports((prev) => ({ ...prev, [id]: next }))),
+      window.tanacode.browser.onThrottle(({ sessionId: _, tabId, ...next }) =>
+        setThrottles((prev) => {
+          const { [tabId]: __, ...rest } = prev;
+          return next.cpu !== 1 || next.network ? { ...rest, [tabId]: next } : rest;
+        }),
+      ),
       // Claude が、まだタブの無いセッションでページを開く
       window.tanacode.browser.onOpen(({ sessionId: id, url: next }) => {
         const current = activeRef.current.get(id);
@@ -267,14 +289,17 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         if (!wv) continue;
         const shown = visible && sid === sessionId && tabId === current;
         const background = !shown && tabId === current && operated.has(sid);
-        const w = widths[sid] ?? 0;
+        const w = viewports[sid]?.width ?? 0;
+        const h = viewports[sid]?.custom?.height ?? 0;
+        const other = background && sid !== sessionId;
         Object.assign(wv.style, {
           display: shown || background ? '' : 'none',
           opacity: background ? '0' : '',
           pointerEvents: background ? 'none' : '',
           zIndex: background ? '-1' : '',
-          // ほかのセッションの表示幅は、そのセッションのもの（見せているセッションは枠の幅に合わせる）
-          width: background && sid !== sessionId && w ? `${w}px` : '',
+          // ほかのセッションの大きさは、そのセッションのもの（見せているセッションは枠の大きさに合わせる）
+          width: other && w ? `${w}px` : '',
+          height: other && h ? `${h}px` : '',
         });
       }
     }
@@ -406,10 +431,16 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         </form>
         <select
           className="preview-width"
-          value={width}
-          onChange={(e) => sessionId && setWidths((prev) => ({ ...prev, [sessionId]: Number(e.target.value) }))}
+          value={viewport?.custom ? 'custom' : width}
+          onChange={(e) => {
+            if (!sessionId || e.target.value === 'custom') return;
+            // Claude が決めた大きさをやめて、選んだ幅にする
+            if (viewport?.custom) window.tanacode.browser.resetViewport(sessionId);
+            setViewports((prev) => ({ ...prev, [sessionId]: { width: Number(e.target.value) } }));
+          }}
           title={t('preview.toolbar.width')}
         >
+          {viewport?.custom && <option value="custom">{viewportLabel(viewport.width, viewport.custom)}</option>}
           {WIDTHS.map((w) => (
             <option key={w.value} value={w.value}>
               {t(`preview.width.${w.name}`)}
@@ -424,6 +455,9 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
           disabled={!shown}
           onClick={() => void pick()}
         />
+        {throttle && activeTab && sessionId && (
+          <ThrottleBadge throttle={throttle} onClear={() => window.tanacode.browser.clearThrottle(sessionId, activeTab)} />
+        )}
         {page && page.consoleErrors.length > 0 && (
           <button
             className="ghost-button preview-errors"
@@ -456,9 +490,13 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
           <IconButton icon={ReloadIcon} label={t('preview.hint.retry')} onClick={() => wv?.reload()} />
         </div>
       )}
-      <div className={`preview-body${width ? ' framed' : ''}`} style={{ '--preview-width': width ? `${width}px` : '100%' } as React.CSSProperties}>
+      <div
+        className={`preview-body${width || height ? ' framed' : ''}${height ? ' sized' : ''}`}
+        style={{ '--preview-width': width ? `${width}px` : '100%', '--preview-height': height ? `${height}px` : '100%' } as React.CSSProperties}
+      >
         <div className="preview-frame" ref={hostRef}>
           {activity?.box && visible && <ClickBox rect={activity.box} />}
+          {activity?.touches && visible && <TouchPoints points={activity.touches} />}
         </div>
         {!url && (
           <div className="preview-empty">
@@ -580,6 +618,45 @@ export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answ
 // Claude がこれから押す要素の枠（ページの上に重ねる。ページの中には描かない）
 export function ClickBox({ rect }: { rect: BrowserRect }) {
   return <div className="preview-click-box" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} />;
+}
+
+// Claude がタッチしている指の位置（丸。ページの上に重ねる）
+export function TouchPoints({ points }: { points: BrowserPoint[] }) {
+  return (
+    <>
+      {points.map((p, i) => (
+        <div key={i} className="preview-touch" style={{ left: p.x, top: p.y }} />
+      ))}
+    </>
+  );
+}
+
+// ツールバーに出す、Claude が決めた画面の大きさ（「iPhone 15（393×852 @3x）」「390×844」「幅 390 @3x」。0 は枠いっぱいなので書かない）
+export function viewportLabel(width: number, custom: NonNullable<Viewport['custom']>): string {
+  const dims =
+    width && custom.height
+      ? `${width}×${custom.height}`
+      : width
+        ? t('preview.width.widthOnly', { width })
+        : custom.height
+          ? t('preview.width.heightOnly', { height: custom.height })
+          : t('preview.width.full');
+  const size = `${dims}${custom.deviceScaleFactor ? ` @${custom.deviceScaleFactor}x` : ''}`;
+  return custom.device ? t('preview.width.customDevice', { device: custom.device, size }) : t('preview.width.custom', { size });
+}
+
+// Claude がタブを遅くしている印（ツールバー）。押すと、元の速さに戻す
+export function ThrottleBadge({ throttle, onClear }: { throttle: Throttle; onClear: () => void }) {
+  const state = [
+    ...(throttle.cpu !== 1 ? [t('preview.throttle.cpu', { rate: throttle.cpu })] : []),
+    ...(throttle.network ? [t(`preview.throttle.network.${throttle.network}`)] : []),
+  ].join('・');
+  return (
+    <button className="ghost-button preview-throttle" onClick={onClear} aria-label={t('preview.throttle.label', { state })} data-tip={t('preview.throttle.tip')}>
+      {state}
+      <CloseIcon size={12} />
+    </button>
+  );
 }
 
 // 選んだ要素のまわりを切り出して画像にし、添付として保存する

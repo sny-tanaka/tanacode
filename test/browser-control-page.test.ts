@@ -144,9 +144,12 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.shot = new FakeImage(4000, 1000);
+    page.page.viewport = () => ({ width: 4000, height: 1000, dpr: 1 });
     expect(textOf(await call('screenshot'))).toContain('image 1568×392');
     page.shot = new FakeImage(1000, 4000);
+    page.page.viewport = () => ({ width: 1000, height: 4000, dpr: 1 });
     expect(textOf(await call('screenshot'))).toContain('image 392×1568');
+    page.page.viewport = () => ({ width: 800, height: 600, dpr: 1 });
     page.shot = new FakeImage(800, 600);
     const same = await call('screenshot');
     expect(same.content[0]).toEqual({ type: 'image', data: Buffer.from('shot:800x600').toString('base64'), mimeType: 'image/png' });
@@ -156,7 +159,9 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 100.5, y: 50, width: 200, height: 40 });
-    expect(textOf(await call('screenshot', { selector: '#go' }))).toBe('#go (button#go "送る"), http://localhost:3000/, image 800×600');
+    // Retina で撮ったので、切り出した範囲の 2 倍の大きさ。切り出した範囲の大きさ（CSS の px）に縮めて返す
+    page.shot = new FakeImage(432, 112);
+    expect(textOf(await call('screenshot', { selector: '#go' }))).toBe('#go (button#go "送る"), http://localhost:3000/, image 216×56');
     expect(page.captures).toEqual([{ x: 92, y: 42, width: 216, height: 56 }]);
     expect(page.scriptsOf('locate')[0]).toContain('__all("#go")');
     // 左上と右下の端では、見えている範囲で切る
@@ -247,7 +252,7 @@ describe('スクリーンショット', () => {
     page.page.locate = () => found({ x: 100, y: 50, width: 200, height: 40 });
     await call('screenshot', { selector: '#go' });
     expect(capturedAfter).toEqual([5, 6]);
-    expect(page.scripts.map((s) => s.kind).slice(-3)).toEqual(['size', 'locate', 'viewport']);
+    expect(page.scripts.map((s) => s.kind).slice(-2)).toEqual(['size', 'locate']);
   });
 
   it('待ってもタブの大きさが決まらなければ、そのまま進める', async () => {
@@ -278,7 +283,7 @@ describe('スクリーンショット', () => {
     page.capture = async () => {
       throw new Error('Current display surface not available for capture');
     };
-    expect(await call('screenshot')).toEqual(textResult('Current display surface not available for capture', true));
+    expect(await call('screenshot')).toEqual(textResult('Could not take a screenshot (Current display surface not available for capture).', true));
     expect(page.throttling).toEqual([false, true]);
     expect(HOST.throttling).toEqual([false, true]);
     expect(state.draws).toEqual(['頼む', '戻す']);
@@ -1223,7 +1228,7 @@ describe('表示幅（set_viewport）', () => {
     const { call, open, sentOn } = setup();
     open('http://localhost:3000/');
     for (const width of ['toString', 'constructor', '__proto__']) {
-      expect(await call('set_viewport', { width }), width).toEqual(textResult(`width must be full, mobile or tablet: ${width}`, true));
+      expect(await call('set_viewport', { width }), width).toEqual(textResult(`width must be full, mobile or tablet, or a number: ${width}`, true));
     }
     expect(sentOn(IpcChannel.BrowserViewport)).toEqual([]);
   });
@@ -1231,8 +1236,8 @@ describe('表示幅（set_viewport）', () => {
   it('知らない幅・幅が無いときは、画面に送らない', async () => {
     const { call, open, sentOn } = setup();
     open('http://localhost:3000/');
-    expect(await call('set_viewport', { width: 'desktop' })).toEqual(textResult('width must be full, mobile or tablet: desktop', true));
-    expect(await call('set_viewport', {})).toEqual(textResult('Provide width.', true));
+    expect(await call('set_viewport', { width: 'desktop' })).toEqual(textResult('width must be full, mobile or tablet, or a number: desktop', true));
+    expect(await call('set_viewport', {})).toEqual(textResult('Provide device or width.', true));
     expect(sentOn(IpcChannel.BrowserViewport)).toEqual([]);
   });
 });

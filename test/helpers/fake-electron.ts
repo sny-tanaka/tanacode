@@ -249,6 +249,17 @@ export const HOST = {
     this.backgroundThrottling = allowed;
     this.throttling.push(allowed);
   },
+  // 画面の中のタブの webview の左上（executeJavaScript の答え。null は見つからない）と、画面の拡大の倍率と、受けたスクリプト
+  webviewAt: { x: 0, y: 0 } as { x: number; y: number } | null,
+  zoom: 1,
+  scripts: [] as string[],
+  async executeJavaScript(code: string): Promise<unknown> {
+    this.scripts.push(code);
+    return this.webviewAt;
+  },
+  getZoomFactor(): number {
+    return this.zoom;
+  },
 };
 
 // nativeImage.createFromBuffer に渡されたもの（fullPage のスクリーンショット）と、返す画像

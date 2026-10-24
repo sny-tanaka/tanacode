@@ -500,6 +500,7 @@ describe('部品から画面への知らせ', () => {
       open: IpcChannel.BrowserOpen,
       activity: IpcChannel.BrowserActivity,
       viewport: IpcChannel.BrowserViewport,
+      throttle: IpcChannel.BrowserThrottle,
       newTab: IpcChannel.BrowserNewTab,
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
