@@ -48,6 +48,24 @@ describe('AppRestart', () => {
     expect(quits).toEqual([false]);
   });
 
+  it('終えられなかった・取りやめになったら、もう一度頼めるように戻す', () => {
+    restart = new AppRestart({
+      info: () => current,
+      busy: () => false,
+      quit: () => {
+        throw new Error('終えられない');
+      },
+      delayMs: 1000,
+    });
+    expect(restart.request(false, notify).restarting).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(restart.pending()).toBe(false);
+    expect(restart.request(false, notify).restarting).toBe(true);
+    // 画面が閉じるのを拒んだとき（index.ts が cancel を呼ぶ）
+    restart.cancel();
+    expect(restart.pending()).toBe(false);
+  });
+
   it('終了の確認・ほかの再起動の途中なら断る。起動し直すと決めたあとに、もう一度頼まれても終え直さない', () => {
     busy = true;
     expect(restart.request(false, notify)).toMatchObject({ restarting: false, noUpdate: false });
@@ -83,17 +101,24 @@ describe('Claude に返す文', () => {
   });
 
   it('起動し直したあとの知らせ: バージョンが変わった・入れ替えに失敗した・入れ替えずに起動し直した', () => {
-    expect(restartNoticeText({ from: '2.4.0', to: '2.5.0' }, '2.5.0')).toContain('updated from v2.4.0 to v2.5.0');
-    expect(restartNoticeText({ from: '2.4.0', to: '2.5.0' }, '2.4.0')).toContain('the update to v2.5.0 failed');
-    expect(restartNoticeText({ from: '2.4.0', to: null }, '2.4.0')).toBe('tanacode has restarted (v2.4.0). Tell the user in one line.');
+    expect(restartNoticeText({ from: '2.4.0', to: '2.5.0' }, '2.5.0', true)).toContain('updated from v2.4.0 to v2.5.0');
+    expect(restartNoticeText({ from: '2.4.0', to: '2.5.0' }, '2.4.0', true)).toContain('the update to v2.5.0 failed');
+    expect(restartNoticeText({ from: '2.4.0', to: null }, '2.4.0', false)).toBe('tanacode has restarted (v2.4.0). Tell the user in one line.');
     // 入れ替えるつもりが無くても、終了の入れ替え（メニューの設定）で新しくなったら、そう伝える
-    expect(restartNoticeText({ from: '2.4.0', to: null }, '2.5.0')).toContain('updated from v2.4.0 to v2.5.0');
+    expect(restartNoticeText({ from: '2.4.0', to: null }, '2.5.0', true)).toContain('updated from v2.4.0 to v2.5.0');
+  });
+
+  it('入れ替えるはずだったのに入れ替えを試さなかった（結果のファイルが無い）ときは、失敗ではなく、入れ替えずに起動し直したと伝える', () => {
+    const text = restartNoticeText({ from: '2.4.0', to: '2.5.0' }, '2.4.0', false);
+    expect(text).toContain('restarted without installing v2.5.0');
+    // Mac に理由を出したとは言わない（入れ替えを試していないので、ダイアログは出ない）
+    expect(text).not.toContain('on the Mac');
   });
 
   it('get_app_update: ダウンロード済みなら restart_app で入れられること、新しいバージョンが無ければその旨', () => {
-    const ready = appUpdateInfo('2.4.0', { latest: '2.5.0', available: true, url: '', homebrew: { status: 'ready', version: '2.5.0' } }, true, 'homebrew');
+    const ready = appUpdateInfo('2.4.0', { latest: '2.5.0', available: true, url: '' }, true, 'homebrew', { status: 'ready', version: '2.5.0' });
     expect(appUpdateJson(ready)).toMatchObject({ current_version: '2.4.0', latest_version: '2.5.0', update_available: true, installed_with: 'Homebrew', download: 'ready', ready_to_install: '2.5.0' });
-    const latest = appUpdateInfo('2.4.0', { latest: '2.4.0', available: false, url: '' }, true, 'other');
+    const latest = appUpdateInfo('2.4.0', { latest: '2.4.0', available: false, url: '' }, true, 'other', null);
     expect(appUpdateJson(latest)).toMatchObject({ update_available: false, note: 'restart_app restarts tanacode without updating.' });
     expect(appUpdateJson(latest)).not.toHaveProperty('download');
   });

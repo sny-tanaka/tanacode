@@ -15,7 +15,7 @@ import { compareVersions } from '@shared/claude-code';
 export type AppInstall = 'dev' | 'homebrew' | 'other';
 
 // 今の更新の様子。latest: GitHub の Releases の最新バージョン（確かめていない・確かめるのを止めているときは null）/
-// checkEnabled: 「新しいバージョンが出たら通知する」がオンか / download: Homebrew での用意（Homebrew で入れていない・新しいバージョンが無いときは null）
+// checkEnabled: 「新しいバージョンが出たら通知する」がオンか / download: Homebrew での用意（Homebrew で入れていない・まだ何も用意していないときは null）
 export type AppUpdateInfo = {
   current: string;
   latest: string | null;
@@ -24,8 +24,9 @@ export type AppUpdateInfo = {
   download: HomebrewUpdate | null;
 };
 
-export function appUpdateInfo(current: string, update: AppUpdate | null, checkEnabled: boolean, install: AppInstall): AppUpdateInfo {
-  return { current, latest: update?.latest ?? null, checkEnabled, install, download: update?.available ? (update.homebrew ?? null) : null };
+// download: HomebrewUpdater の今の様子。新しいバージョンの確認（update）を止めていても、ダウンロード済みのものは入れられるので、そのまま見る
+export function appUpdateInfo(current: string, update: AppUpdate | null, checkEnabled: boolean, install: AppInstall, download: HomebrewUpdate | null): AppUpdateInfo {
+  return { current, latest: update?.latest ?? null, checkEnabled, install, download };
 }
 
 // 起動し直したあとに、呼んだセッションへ送る知らせの中身。from: 終える前のバージョン / to: 入れ替えるはずのバージョン（入れ替えないなら null）
@@ -69,8 +70,20 @@ export class AppRestart {
     if (!to && onlyIfUpdate) return { restarting: false, reason: `${noUpdateReason(info)} tanacode was not restarted.`, noUpdate: true, info };
     this.scheduled = true;
     notify({ from: info.current, to });
-    setTimeout(() => this.deps.quit(to !== null), this.deps.delayMs ?? RESTART_DELAY_MS);
+    setTimeout(() => {
+      try {
+        this.deps.quit(to !== null);
+      } catch {
+        // 終えられなかった。もう一度頼めるように戻す（積んだ知らせは、次に起動し直したときに送る）
+        this.cancel();
+      }
+    }, this.deps.delayMs ?? RESTART_DELAY_MS);
     return { restarting: true, to, info };
+  }
+
+  // 終えるのが取りやめになった（画面が閉じるのを拒んだ・終えられなかった）。もう一度頼めるように戻す
+  cancel(): void {
+    this.scheduled = false;
   }
 }
 
@@ -107,9 +120,13 @@ export function restartResultText(outcome: RestartOutcome): string {
   return `${head} ${AFTER_RESTART}`;
 }
 
-// 起動し直したあとに、呼んだセッションへ送る知らせ。now: 起動し直したアプリのバージョン
-export function restartNoticeText(notice: RestartNotice, now: string): string {
+// 起動し直したあとに、呼んだセッションへ送る知らせ。now: 起動し直したアプリのバージョン /
+// upgradeRan: 前のアプリが終わったあとに、入れ替え（brew upgrade）を試した（結果のファイルがあった）
+export function restartNoticeText(notice: RestartNotice, now: string, upgradeRan: boolean): string {
   if (compareVersions(now, notice.from) !== 0) return `tanacode has restarted, updated from v${notice.from} to v${now}. Tell the user in one line.`;
+  // 頼まれたあと、終えるまでの間に用意が無くなった・入れ替えのシェルを起動できなかったので、入れ替えずに起動し直した
+  if (notice.to && !upgradeRan)
+    return `tanacode has restarted without installing v${notice.to} (the downloaded update could not be installed when it quit), so it is still v${now}. Check with get_app_update and try again later if the user still wants it. Tell the user in one line.`;
   if (notice.to)
     return `tanacode has restarted, but the update to v${notice.to} failed, so it is still v${now}. tanacode shows the user the reason on the Mac (homebrew-update.log in its data folder). Tell the user in one line.`;
   return `tanacode has restarted (v${now}). Tell the user in one line.`;

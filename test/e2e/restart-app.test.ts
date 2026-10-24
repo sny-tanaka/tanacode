@@ -52,8 +52,12 @@ describe('Claude が頼む tanacode の再起動', () => {
     expect(before).toHaveLength(1);
     await app.choose(card, /^許可する/);
     await app.relaunchAfterExit(async () => {
-      // 結果は終える前に Claude に届いている。知らせは、終える前のアプリからは送らない
-      expect(app.api.toolResults.some((r) => r.startsWith('tanacode is restarting (v'))).toBe(true);
+      // 結果は、終える前に中継へ返してある。作り物の API に届くのは、閉じたあとも動いている Claude Code が次の問い合わせをしたときなので、待つ。
+      // アプリが返事より先に終わっていたら、中継の返す結果は「つながりが切れた」になる（それでも待つのをやめ、どちらだったかを見る）
+      const result = () => app.api.toolResults.find((r) => r.startsWith('tanacode is restarting (v') || r.includes('The connection to tanacode was lost'));
+      await app.waitUntil('restart_app の結果が作り物の API に届く', () => result() !== undefined);
+      expect(result()).toMatch(/^tanacode is restarting \(v/);
+      // 知らせは、終える前のアプリからは送らない
       expect(app.api.lastPrompts.some((p) => p.includes('tanacode has restarted'))).toBe(false);
     });
     const row = app.byText('.session-list .session-row', PROMPT);

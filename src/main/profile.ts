@@ -76,7 +76,8 @@ export type ProfileOptions = {
   // セッションの一覧が変わったとき（ほかのプロファイルの画面に「通知あり」を出し直す）
   onSessionsChanged?: () => void;
   // Claude が頼む tanacode の更新と再起動（アプリ全体で 1 つ。app-restart.ts）。無ければ、ツールは起動が終わっていないと答える
-  app?: { updateInfo: () => Promise<AppUpdateInfo>; restart: AppRestart };
+  // upgradeRan: 前のアプリが終わったあとに、Homebrew での入れ替えを試したか（起動したときに結果のファイルがあった）
+  app?: { updateInfo: () => Promise<AppUpdateInfo>; restart: AppRestart; upgradeRan: () => boolean };
 };
 
 // プロファイル（Claude Code のアカウントごとの環境）が持つもの。セッションの一覧と Claude Code（pty ホスト）・
@@ -383,7 +384,7 @@ export class Profile {
       enabled: () => true,
       compose: (_target, items) => {
         const notice = items.get('restart');
-        return notice ? sessionEventText([], restartNoticeText(notice, app.getVersion())) : null;
+        return notice ? sessionEventText([], restartNoticeText(notice, app.getVersion(), this.options.app?.upgradeRan() ?? false)) : null;
       },
       holds: () => restart?.pending() ?? false,
       // PROTOCOL が変わって、Claude Code が止まってから --resume で起動し直すときも、手が空いたら送る

@@ -26,7 +26,7 @@ import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } fro
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
 import type { AppUpdate } from '@shared/app-update';
-import { CASK, HomebrewUpdater } from './homebrew-update';
+import { CASK, HomebrewUpdater, upgradeOrRelaunch } from './homebrew-update';
 import { AppRestart, appUpdateInfo, type AppUpdateInfo } from './app-restart';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -314,6 +314,15 @@ function loadApp(target: Pick<WebContents, 'loadURL' | 'loadFile'>): void {
 // アプリの API（preload）や Node を渡さず、プロファイルのセッション（Cookie）を使わせる
 function setupAppContents(contents: WebContents, id: string): void {
   contentsProfile.set(contents, id);
+  // 終えるときに、画面が閉じるのを拒んだ（beforeunload）。終了は取りやめになるので、決めた終わり方を戻す
+  // （次の終了で確認を出す・restart_app をもう一度頼めるようにする・あとのふつうの終了で起動し直さない）
+  contents.on('will-prevent-unload', () => {
+    if (!quitDecided) return;
+    quitDecided = false;
+    relaunchAfterUpdate = false;
+    relaunchOnQuit = false;
+    appRestart.cancel();
+  });
   contents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -537,7 +546,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     preview: session.fromPartition(previewPartition(info.id)),
     remoteControl,
     onSessionsChanged: () => broadcastProfiles(),
-    app: { updateInfo: freshUpdateInfo, restart: appRestart },
+    app: { updateInfo: freshUpdateInfo, restart: appRestart, upgradeRan: () => upgradeRan },
   });
   // 起動の途中で終われと言われても、作ったものは片付けられるように、先に覚えておく
   opened.set(info.id, p);
@@ -1114,18 +1123,23 @@ const appRestart = new AppRestart({
   info: currentUpdateInfo,
   busy: () => confirmingQuit || quitDecided,
   quit: (update) => {
-    // 入れ替えるときも relaunchOnQuit を立てておく（終えるまでに入れ替えられなくなっても、起動し直しはする）
+    // 入れ替えられなかったとき（終えるまでに用意が無くなった・入れ替えのシェルを起動できない）は、before-quit の upgradeOrRelaunch が、
+    // 入れ替えずに起動し直す
     if (process.env.TANACODE_E2E_NO_RELAUNCH !== '1') {
-      relaunchOnQuit = true;
       if (update) relaunchAfterUpdate = true;
+      else relaunchOnQuit = true;
     }
     void quit(false);
   },
 });
 
+// 前のアプリが終わったあとに、Homebrew での入れ替えを試したか。restart_app で起動し直したあとの知らせで、入れ替えに失敗したのか、
+// 入れ替えずに起動し直したのか（終えるまでに用意が無くなった・シェルを起動できなかった）を分ける
+let upgradeRan = false;
+
 function currentUpdateInfo(): AppUpdateInfo {
   const install = !app.isPackaged ? 'dev' : homebrew ? 'homebrew' : 'other';
-  return appUpdateInfo(app.getVersion(), withHomebrew(appUpdates?.get() ?? null), settings.updateCheckEnabled(), install);
+  return appUpdateInfo(app.getVersion(), appUpdates?.get() ?? null, settings.updateCheckEnabled(), install, homebrew?.get() ?? null);
 }
 
 // 確かめ直してから返す（1 時間ごとの確認を待たない。確かめるのを止めていれば、問い合わせない）
@@ -1459,6 +1473,8 @@ app.whenReady().then(async () => {
   applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
   remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
+  // 前のアプリが終わったあとに、Homebrew での入れ替えを試したか（結果のファイルは reportUpdateResult が読んで消すので、先に見ておく）
+  upgradeRan = existsSync(updateResultPath());
   // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く。開けなければ、アプリは続けられない
   try {
     await openProfile(registry.list()[0]!);
@@ -1540,8 +1556,14 @@ app.on('before-quit', (event) => {
   claudeCompat?.stop();
   // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
   // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
-  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchOnQuit });
-  else if (relaunchOnQuit) app.relaunch();
+  // 入れ替えのシェルを起動できなければ、入れ替えずに起動し直す（「再起動して更新」・Claude の restart_app で、終わったままにしない）
+  upgradeOrRelaunch(
+    homebrew,
+    updatesOnQuit(),
+    { pid: process.pid, log: updateLogPath(), result: updateResultPath() },
+    relaunchAfterUpdate || relaunchOnQuit,
+    () => app.relaunch(),
+  );
   homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   for (const p of profiles()) p.close();
