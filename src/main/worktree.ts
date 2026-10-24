@@ -745,7 +745,8 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
 // worktree-guard（worktree-guard-check.ts）: Claude が打った git branch -D で、消して失うものが無いか。worktree の片付けと同じく、
 // 手元にしか無いコミット（PR のコミット・update-branch のあとの PR のコミット・リモート・ほかのブランチにあるもの、中身が
 // デフォルトブランチに入っているものは数えない）が無く、幹のブランチでも、ほかの worktree で取り出しているブランチでもないときだけ
-// true。手元に無いブランチは、git branch -D が失敗するだけなので true。removing: 同じコマンドで消す worktree（そこで取り出している
+// true。手元に無いブランチは、git branch -D が失敗するだけなので true（names は、refs/heads/<名前> としてそのまま読める名前だけを
+// 渡すこと。@{-1} などは、別のブランチを指す）。removing: 同じコマンドで消す worktree（そこで取り出している
 // ブランチは、取り出していないものとして数える）
 export async function branchesSafeToDelete(cwd: string, names: string[], removing: string[]): Promise<boolean> {
   const roles: BranchRole[] = [...new Set(names)].map((name) => ({ name, launched: false, current: false }));
@@ -755,12 +756,13 @@ export async function branchesSafeToDelete(cwd: string, names: string[], removin
 
 // worktree-guard: Claude が打った git worktree remove --force で、消して失うものが無いか。消すときの確かめ（removeWorktree）と同じく、
 // 未コミットの変更・未追跡のファイル・submodule の中に失われるもの（未コミットの変更・stash・手元にしか無いコミット）・どこからも
-// 辿れない detached HEAD のコミットが無いときだけ true。人が付けたロックがあれば false。登録の無い・もう無いフォルダは、
-// git worktree remove が何も消さずに失敗するか、登録を片付けるだけなので true
-export async function worktreeSafeToRemove(root: string, path: string): Promise<boolean> {
+// 辿れない detached HEAD のコミットが無いときだけ true。人が付けたロックがあれば false。--force が 2 つ（ロックも越えて消す）なら、
+// Claude Code のロック（動いている Claude がいる）でも false。登録の無い・もう無いフォルダも false（git は、パスの終わりが同じ
+// ほかの worktree を消すことがあるので、無いから消えないとは言い切れない）。forces: --force の数
+export async function worktreeSafeToRemove(root: string, path: string, forces = 1): Promise<boolean> {
   const listed = await findWorktree(root, path);
-  if (!listed || !existsSync(path)) return true;
-  if (listed.locked !== null && !CLAUDE_LOCK.test(listed.locked)) return false;
+  if (!listed || !existsSync(path)) return false;
+  if (listed.locked !== null && (forces >= 2 || !CLAUDE_LOCK.test(listed.locked))) return false;
   try {
     if ((await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none'])) !== '') return false;
     if ((await submodulesWithLeftovers(path)).length > 0) return false;

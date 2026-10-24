@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { GUARD_HOOK_ENV } from '@shared/chat';
 import { t } from '@shared/i18n';
 import { SUPPRESS_OUTPUT } from './hook-output';
+import { hostExecutable } from './pty-host-client';
 
 // Claude が worktree やブランチを消す操作の歯止め。アプリが起動する Claude Code に、--settings で Bash の PreToolUse のフックとして足す。
 // 次の 3 つは、権限モード（auto・bypassPermissions を含む）にかかわらず、Claude Code の許可の確認を出させる（permissionDecision: ask）。
@@ -14,9 +17,8 @@ import { SUPPRESS_OUTPUT } from './hook-output';
 //    限らないので、macOS に必ずある awk で読む。コマンドは ; && || | などで区切り、区切りごとに見る（$(...) やクォートの中も、
 //    区切りとしてざっと見る）。ここで何も無ければ、それで終わり
 // 2. awk が確認を出させると決めたときだけ、tanacode 本体を Node として、確かめの入り口（worktree-guard-hook.js）を動かす。シェルの
-//    文法で読み直し（文字列の中に出てくるだけのものは除く）、消して失うものが無いかを git で確かめる（worktree-guard-check.ts）。
-//    pass と答えたときだけ、確認を出させない。入り口が無い（環境変数が無い。前のアプリが起動したまま引き継いだ Claude Code など）・
-//    答えが pass でないときは、awk の決めたとおり確認を出させる
+//    文法で読み直し、すべてが許す形でできていて、消す操作に失うものが無いと git で確かめられたときだけ pass と答える
+//    （worktree-guard-check.ts）。pass と答えたときだけ、確認を出させない。それ以外は、awk の決めたとおり確認を出させる
 // reason は確認の理由（Claude Code の許可の確認に出る）。awk の文字列と JSON とシェルの単一引用符に埋め込むので、' " \ を含めない
 const program = (reason: string) => String.raw`
 function unq(v) { sub(/^"[a-z_]*"[[:space:]]*:[[:space:]]*"/, "", v); sub(/"$/, "", v); return v }
@@ -71,26 +73,27 @@ END {
 }
 `;
 
-// 確かめの入り口を動かす実行ファイル（tanacode 本体の Helper を Node として）と、入り口のスクリプト（worktree-guard-hook.js）。
-// フックは Claude Code の環境で動くので、起動する Claude Code の環境変数で渡す
-export const GUARD_COMMAND_ENV = 'TANACODE_WORKTREE_GUARD_COMMAND';
-export const GUARD_SCRIPT_ENV = 'TANACODE_WORKTREE_GUARD_SCRIPT';
+// 確かめの入り口を動かす実行ファイル（tanacode 本体の Helper を Node として）と、入り口のスクリプト（worktree-guard-hook.js）
 export type WorktreeGuardLaunch = { command: string; script: string };
 
-// 起動する Claude Code の環境に足す、フックが使う環境変数
-export function worktreeGuardEnv(launch: WorktreeGuardLaunch): Record<string, string> {
-  return { [GUARD_COMMAND_ENV]: launch.command, [GUARD_SCRIPT_ENV]: launch.script };
+// アプリのビルドでの入り口（main の index.js の隣）
+function defaultLaunch(): WorktreeGuardLaunch {
+  return { command: hostExecutable(), script: join(__dirname, 'worktree-guard-hook.js') };
 }
 
 // フックのコマンド。理由は、Claude Code を起動するときの言語で書く。目印の環境変数（GUARD_HOOK_ENV）は、チャットのフックの一覧に出さないためのもの。
-// 標準入力は awk と確かめの入り口の両方に渡すので、先に読んでおく
-export function worktreeGuardCommand(): string {
+// 標準入力は awk と確かめの入り口の両方に渡すので、先に読んでおく。
+// 入り口の場所は、コマンドの文字列に直に書く（環境変数で渡すと、Claude Code の設定の env で差し替えられる）。Node として動かすので、
+// Node の動きを変える環境変数（NODE_OPTIONS など）は消して動かす。入り口が無い・場所を単一引用符で囲めないときは、確かめずに
+// awk の決めたとおりにする
+export function worktreeGuardCommand(launch: WorktreeGuardLaunch = defaultLaunch()): string {
   const awk = `awk '${program(t('main.hooks.worktreeGuard')).trim()}'`;
-  const verify = `ELECTRON_RUN_AS_NODE=1 "$${GUARD_COMMAND_ENV}" "$${GUARD_SCRIPT_ENV}" 2>/dev/null`;
+  const usable = existsSync(launch.script) && ![launch.command, launch.script].some((p) => p.includes("'"));
+  const verify = `/usr/bin/env -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE ELECTRON_RUN_AS_NODE=1 '${launch.command}' '${launch.script}' 2>/dev/null`;
   return [
     `${GUARD_HOOK_ENV}=1 i=$(cat)`,
     `o=$(printf '%s' "$i" | ${awk})`,
-    `case $o in *'"ask"'*) if [ -n "$${GUARD_SCRIPT_ENV}" ] && [ "$(printf '%s' "$i" | ${verify})" = pass ]; then o='${SUPPRESS_OUTPUT}'; fi;; esac`,
+    ...(usable ? [`case $o in *'"ask"'*) if [ "$(printf '%s' "$i" | ${verify})" = pass ]; then o='${SUPPRESS_OUTPUT}'; fi;; esac`] : []),
     `printf '%s\\n' "$o"`,
   ].join('; ');
 }

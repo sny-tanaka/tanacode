@@ -958,9 +958,10 @@ tanacode が人の代わりに Claude に送る文のうち、次の 3 つは、
 - tanacode は、起動する Claude Code に Bash の PreToolUse の hooks を 1 つ足します。`git worktree remove --force`・`git branch -D`（`--delete --force` も）・worktree の `rm -rf`（`.claude/worktrees` を指すもの。worktree の中では `.`・`..`・`*` も）のときだけ、権限モードにかかわらず許可の確認を出させます。止めはしないので、許可すればそのまま動きます。この hooks はチャットには出しません。
   - `git branch -D`: 消すブランチのコミットが、すべてほかにも残っているとき（PR に入っている。スカッシュマージしたもの・マージのあとにリモートのブランチを消したものも。origin のブランチやほかのブランチにある。中身がデフォルトブランチに入っている）は、確認を出させません。worktree を削除するときに、ブランチを消すかどうかを決めるのと同じ決め方です。main・develop などの幹のブランチと、ほかの worktree で使っているブランチは、今までどおり確認を出させます。
   - `git worktree remove --force`: tanacode が作った worktree（`.claude/worktrees/` の下）で、未コミットの変更・未追跡のファイル・submodule の中の変更・どのブランチにも無いコミットが無ければ、確認を出させません。
-  - `&&` などでつないだコマンドは、消す操作のすべてで失うものが無いと確かめられたときだけ、確認を出させません。名前を変数で渡す・`xargs` で渡すなど、確かめられないものは確認を出させます。
+  - 確認を出させないのは、コマンドのすべてを読めて、tanacode が知っている形（`echo`・`grep`・読むだけの `git`・`gh pr view` など）だけでできているときです。知らないコマンド（`python3 -c`・`xargs`・`trap` など）や、名前を変数・中括弧で渡すもの、`sh` に標準入力で渡すものが 1 つでもあれば、今までどおり確認を出させます。
+  - `&&` などでつないだコマンドは、消す操作のすべてで失うものが無いと確かめられたときだけ、確認を出させません。消す操作より前に何かを変えるもの（`gh pr merge`・`git pull`・`git switch`・ファイルへの書き込みなど）があれば、確認を出させます（確かめたあとで、状態が変わるため）。マージと片付けは、`gh pr merge 12 --squash` と `git branch -D fix/xxx` のように、別のコマンドに分けると確認が出ません。
   - 確認を出させないときも、許可まではしません。権限モードと許可の設定に従って、ふだんどおりに動きます（manual なら、ふだんの許可の確認が出ます）。
-  - 文字列の中に書いただけのもの（`git commit -m "…git branch -D…"` など）と、パスの途中に worktrees という文字が入るだけのフォルダの `rm -rf` では、確認を出させません。
+  - 文字列の中に書いただけのもの（`git commit -m "…git branch -D…"`・`echo '…' > note.txt` など）と、パスの途中に worktrees という文字が入るだけのフォルダの `rm -rf` では、確認を出させません。
 - `TANACODE.md` を Claude に渡す SessionStart の hooks も足します（[TANACODE.md と TANACODE_PARENT.md](#tanacodemd-と-tanacode_parentmd)）。これもチャットには出しません。あなたの SessionStart の hooks が渡した文は、今までどおり出します。
 
 ## エディタ

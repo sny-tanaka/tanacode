@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -5,35 +6,42 @@ import { git } from './git';
 import { branchesSafeToDelete, WORKTREES_DIR, worktreeSafeToRemove } from './worktree';
 
 // worktree-guard（worktree-guard.ts）の awk が「確認を出させる」と決めたコマンドを、もう一度読み直して確かめる。
-// awk はクォートや文字列の中も区切りとしてざっと見るので、文字列の中に「git worktree remove」が入っているだけのものや、パスに
-// worktrees を含むだけの rm -rf でも確認を出させてしまう。ここでは、シェルの文法でコマンドを読み、本当に消すものだけを取り出して、
-// 消して失うものが無いかを git で確かめる。
-// - git branch -D（--delete --force も）: 消すブランチに、手元にしか無いコミットが無い（worktree の片付けと同じ判定。worktree.ts の
-//   branchesSafeToDelete）
-// - git worktree remove --force: tanacode が作った worktree（.claude/worktrees/ の下）で、消して失うものが無い（worktreeSafeToRemove）
-// - worktree の rm -rf: 今までどおり確かめずに確認を出させる（パスの区切りの 1 つが worktrees のものだけ）
-// どれか 1 つでも確かめられなければ（変数・コマンド置換で名前が決まる、xargs で渡す、cd の先が分からないなど）、確認を出させる。
-// 確かめて失うものが無ければ 'pass'（フックは何も決めず、Claude Code のふだんの許可の決まりに任せる。allow は返さない。
-// コマンドのほかの部分の確認まで飛ばしてしまうため）
+// awk はクォートや文字列の中も区切りとしてざっと見るので、文字列の中に「git branch -D」が入っているだけのものや、パスに
+// worktrees を含むだけの rm -rf でも確認を出させてしまう。ここでは、シェルの文法でコマンドを読み、
+// - すべてを読めて（読めない書き方・変数で決まるコマンドが無い）
+// - どのコマンドも許す形（下の READONLY・git と gh の決まったサブコマンド・worktree でない rm など）で
+// - 消す操作（git branch -D・git worktree remove --force）より前に、読むだけと言い切れないもの（書き込みのリダイレクト・git の書き換え
+//   など）が無く（確かめたあとで、同じコマンドのほかの部分が状態を変えないように）
+// - 消す操作のどれもが、消して失うものが無いと git で確かめられた
+// ときだけ 'pass' と答える。どれか 1 つでも外れれば 'ask'（知らないものは ask。歯止めなので、確認が出なくなる穴を作らない側に倒す）。
+// - git branch -D（--delete --force も）: 手元にしか無いコミットが無い（worktree の片付けと同じ判定。worktree.ts の branchesSafeToDelete）
+// - git worktree remove --force: tanacode が作った worktree（.claude/worktrees/ の下）で、失うものが無い（worktreeSafeToRemove）
+// 'pass' でも、フックは何も決めない（Claude Code のふだんの許可の決まりに任せる。allow は返さない。コマンドのほかの部分の確認まで
+// 飛ばしてしまうため）
 
 export type GuardVerdict = 'pass' | 'ask';
 
 // 確かめを待つ上限（ミリ秒）。過ぎたら ask。gh の問い合わせ（github.ts。10 秒で打ち切る）を待てる長さにする
 export const GUARD_DEADLINE_MS = 20_000;
 
-// 単語。text: クォートを外した文字（変数などは書いたまま）/ literal: 変数・コマンド置換・glob の無い、書いたとおりの文字か
-type Word = { text: string; literal: boolean };
-// 単純なコマンド。heredoc: ヒアドキュメントの中身
-type Simple = { words: Word[]; heredoc: Word | null };
+// 単語。text: クォートを外した文字（変数などは書いたまま）/ literal: 変数・コマンド置換・グロブ・中括弧の無い、書いたとおりの文字か
+// quoted: クォートやエスケープを使ったか
+type Word = { text: string; literal: boolean; quoted: boolean };
+// リダイレクト。out: 書き込み / dup: ファイル記述子の複製（2>&1 など。先は target）/ target: 先（ヒアストリングは null）
+type Redirect = { out: boolean; dup: boolean; target: Word | null };
+// 単純なコマンド。before・after: 前と後ろの区切り（'' は並びのはじめ・終わり、';'・'\n'・'&&'・'||'・'|'・'&'）
+type Simple = { words: Word[]; redirects: Redirect[]; before: string; after: string };
 // コマンドの並び。sub: サブシェル・コマンド置換の中の並び（中の cd は外に効かない）
 type Item = { kind: 'cmd'; cmd: Simple } | { kind: 'sub'; items: Item[] };
 
 class ParseError extends Error {}
+// 許す形でないものを見つけた
+class Ask extends Error {}
 
-// シェルのコマンドの文字列を、コマンドの並びにする。読めない（クォートが閉じていない・括弧が合わないなど）ときは ParseError
+// シェルのコマンドの文字列を、コマンドの並びにする。読めない（クォートが閉じていない・括弧が合わない・関数の定義・算術展開・
+// 中にコマンド置換のある ${…} など）ときは ParseError
 export function parseCommand(source: string): Item[] {
-  const parser = new Parser(source);
-  return parser.list(false);
+  return new Parser(source).list(false);
 }
 
 class Parser {
@@ -44,31 +52,43 @@ class Parser {
   list(stop: boolean): Item[] {
     const s = this.s;
     const items: Item[] = [];
-    let cur: Simple = { words: [], heredoc: null };
+    let op = '';
+    let cur: Simple = { words: [], redirects: [], before: op, after: '' };
     let word: Word | null = null;
-    // 次の単語がリダイレクトの先（コマンドの引数ではない）
-    let redirect = false;
+    // 先を待っているリダイレクト（次の単語が先。引数ではない）
+    let redirect: Omit<Redirect, 'target'> | null = null;
     // 読み終えていないヒアドキュメント（次の改行のあとに中身がある）
-    let pending: { delim: string; strip: boolean; quoted: boolean; cmd: Simple }[] = [];
+    let pending: { delim: string; strip: boolean; quoted: boolean }[] = [];
 
-    const add = (text: string, literal: boolean) => {
-      word ??= { text: '', literal: true };
+    const add = (text: string, literal: boolean, quoted = false) => {
+      word ??= { text: '', literal: true, quoted: false };
       word.text += text;
       if (!literal) word.literal = false;
+      if (quoted) word.quoted = true;
     };
     const endWord = () => {
-      if (word && !redirect) cur.words.push(word);
-      else if (word) redirect = false;
+      const w = word as Word | null;
       word = null;
+      if (!w) return;
+      // { } [ [[ ]] だけの単語は、文法の言葉・test のコマンド（中括弧の展開・グロブではない）
+      if (!w.quoted && ['{', '}', '[', '[[', ']]'].includes(w.text)) w.literal = true;
+      if (redirect) {
+        cur.redirects.push({ ...redirect, target: w });
+        redirect = null;
+      } else cur.words.push(w);
     };
-    const endCmd = () => {
+    const endCmd = (next: string) => {
       endWord();
-      if (cur.words.length > 0) items.push({ kind: 'cmd', cmd: cur });
-      cur = { words: [], heredoc: null };
+      if (redirect) throw new ParseError('redirect without target');
+      cur.after = next;
+      if (cur.words.length > 0 || cur.redirects.length > 0) items.push({ kind: 'cmd', cmd: cur });
+      op = next;
+      cur = { words: [], redirects: [], before: op, after: '' };
     };
 
     while (this.i < s.length) {
       const c = s[this.i];
+      const two = s.slice(this.i, this.i + 2);
       if (word === null && c === '#') {
         while (this.i < s.length && s[this.i] !== '\n') this.i++;
         continue;
@@ -77,60 +97,65 @@ class Parser {
         endWord();
         this.i++;
       } else if (c === '\n') {
-        endCmd();
+        endCmd('\n');
         this.i++;
-        for (const doc of pending) doc.cmd.heredoc = this.heredoc(doc.delim, doc.strip, doc.quoted, items);
+        for (const doc of pending) this.heredoc(doc.delim, doc.strip, doc.quoted, items);
         pending = [];
-      } else if (c === '&' && s[this.i + 1] === '>') {
+      } else if (two === '&>') {
         endWord();
-        redirect = true;
+        redirect = { out: true, dup: false };
         this.i += s[this.i + 2] === '>' ? 3 : 2;
+      } else if (two === '&&' || two === '||' || two === ';;' || two === '|&') {
+        if (two === ';;') throw new ParseError('case');
+        endCmd(two === '|&' ? '|' : two);
+        this.i += 2;
       } else if (c === ';' || c === '&' || c === '|') {
-        endCmd();
+        endCmd(c);
         this.i++;
       } else if (c === '(') {
-        endCmd();
+        // 関数の定義（f() …）や、単語の途中の ( は読まない
+        if (word !== null || cur.words.length > 0) throw new ParseError('function definition');
         this.i++;
         items.push({ kind: 'sub', items: this.list(true) });
       } else if (c === ')') {
         if (!stop) throw new ParseError('unbalanced )');
-        endCmd();
+        endCmd('');
         this.i++;
         return items;
-      } else if (c === '<' && s[this.i + 1] === '<' && s[this.i + 2] === '<') {
+      } else if (s.startsWith('<<<', this.i)) {
         // ヒアストリング（標準入力に渡す文字。引数ではない）
         endWord();
-        redirect = true;
+        redirect = { out: false, dup: false };
         this.i += 3;
-      } else if (c === '<' && s[this.i + 1] === '<') {
+      } else if (two === '<<') {
         endWord();
         this.i += 2;
         const strip = s[this.i] === '-';
         if (strip) this.i++;
         while (s[this.i] === ' ' || s[this.i] === '\t') this.i++;
         const delim = this.delimiter();
-        pending.push({ ...delim, strip, cmd: cur });
-      } else if ((c === '<' || c === '>') && s[this.i + 1] === '(') {
+        cur.redirects.push({ out: false, dup: false, target: null });
+        pending.push({ ...delim, strip });
+      } else if (two === '<(' || two === '>(') {
         // プロセス置換
         endWord();
         this.i += 2;
         items.push({ kind: 'sub', items: this.list(true) });
       } else if (c === '<' || c === '>') {
-        // 2>&1 の 2 のような、ファイル記述子の番号は引数ではない
-        // （add が word を書き換えるので、TypeScript には null に見える）
+        // 2>&1 の 2 のような、ファイル記述子の番号は引数ではない（add が word を書き換えるので、TypeScript には null に見える）
         const fd = word as Word | null;
-        if (fd && fd.literal && /^\d+$/.test(fd.text)) word = null;
+        if (fd && fd.literal && !fd.quoted && /^\d+$/.test(fd.text)) word = null;
         endWord();
-        redirect = true;
-        this.i++;
-        while ('<>&|'.includes(s[this.i] ?? 'x')) this.i++;
+        let ops = '';
+        while ('<>&|'.includes(s[this.i] ?? 'x')) ops += s[this.i++];
+        redirect = { out: ops.includes('>'), dup: ops.endsWith('&') };
       } else if (c === "'") {
         const end = s.indexOf("'", this.i + 1);
         if (end < 0) throw new ParseError('unterminated quote');
-        add(s.slice(this.i + 1, end), true);
+        add(s.slice(this.i + 1, end), true, true);
         this.i = end + 1;
       } else if (c === '"') {
-        add('', true);
+        add('', true, true);
         this.i++;
         for (;;) {
           if (this.i >= s.length) throw new ParseError('unterminated quote');
@@ -139,7 +164,7 @@ class Parser {
           if (d === '\\') {
             const next = s[this.i + 1] ?? '';
             if (next === '\n') this.i += 2;
-            else if ('$`"\\'.includes(next) && next !== '') {
+            else if (next !== '' && '$`"\\'.includes(next)) {
               add(next, true);
               this.i += 2;
             } else {
@@ -155,19 +180,20 @@ class Parser {
         }
         this.i++;
       } else if (c === '\\') {
-        if (s[this.i + 1] !== '\n') add(s[this.i + 1] ?? '', true);
+        if (s[this.i + 1] !== '\n') add(s[this.i + 1] ?? '', true, true);
         this.i += 2;
       } else if (c === '$') {
         this.dollar(add, items);
       } else if (c === '`') {
         this.backtick(add, items);
       } else {
-        add(c, !'*?['.includes(c));
+        add(c, !'*?[]{}'.includes(c));
         this.i++;
       }
     }
     if (stop) throw new ParseError('unbalanced (');
-    endCmd();
+    if (pending.length > 0) throw new ParseError('unterminated heredoc');
+    endCmd('');
     return items;
   }
 
@@ -176,12 +202,16 @@ class Parser {
     const s = this.s;
     const next = s[this.i + 1] ?? '';
     if (next === '(') {
+      if (s[this.i + 2] === '(') throw new ParseError('arithmetic');
       this.i += 2;
       items.push({ kind: 'sub', items: this.list(true) });
       add('$(…)', false);
     } else if (next === '{') {
       const end = s.indexOf('}', this.i + 2);
       if (end < 0) throw new ParseError('unterminated ${');
+      const inner = s.slice(this.i + 2, end);
+      // 中にコマンド置換・入れ子の展開があるもの（${x:-$(…)} など）は読まない
+      if (/[$`{]/.test(inner)) throw new ParseError('expansion in ${}');
       add(s.slice(this.i, end + 1), false);
       this.i = end + 1;
     } else if (/[A-Za-z0-9_@*#?$!-]/.test(next)) {
@@ -190,7 +220,8 @@ class Parser {
       add(s.slice(this.i, end), false);
       this.i = end;
     } else {
-      add('$', true);
+      // $'…' $"…" も、書いたとおりの文字ではない
+      add('$', next !== "'" && next !== '"');
       this.i++;
     }
   }
@@ -228,343 +259,435 @@ class Parser {
         this.i++;
       }
     }
+    if (delim === '') throw new ParseError('heredoc without delimiter');
     return { delim, quoted };
   }
 
-  // ヒアドキュメントの中身を読む。展開するもの（印をクォートしていない）は、中のコマンド置換も items に足す
-  private heredoc(delim: string, strip: boolean, quoted: boolean, items: Item[]): Word {
+  // ヒアドキュメントの中身を読み飛ばす（コマンドに渡す文字。シェルに渡すものは、-c の無いシェルとして ask になる）。
+  // 展開するもの（印をクォートしていない）は、中のコマンド置換を items に足す
+  private heredoc(delim: string, strip: boolean, quoted: boolean, items: Item[]): void {
     const s = this.s;
     const lines: string[] = [];
+    let closed = false;
     while (this.i < s.length) {
       const nl = s.indexOf('\n', this.i);
       const line = s.slice(this.i, nl < 0 ? s.length : nl);
       this.i = nl < 0 ? s.length : nl + 1;
-      if ((strip ? line.replace(/^\t+/, '') : line) === delim) break;
+      if ((strip ? line.replace(/^\t+/, '') : line) === delim) {
+        closed = true;
+        break;
+      }
       lines.push(line);
     }
+    if (!closed) throw new ParseError('unterminated heredoc');
+    if (quoted) return;
     const text = lines.join('\n');
-    if (quoted) return { text, literal: true };
     const body = new Parser(text);
-    let literal = true;
-    const add = (_: string, l: boolean) => {
-      if (!l) literal = false;
-    };
+    const ignore = () => {};
     while (body.i < text.length) {
       const c = text[body.i];
       if (c === '\\') body.i += 2;
-      else if (c === '$') body.dollar(add, items);
-      else if (c === '`') body.backtick(add, items);
+      else if (c === '$') body.dollar(ignore, items);
+      else if (c === '`') body.backtick(ignore, items);
       else body.i++;
     }
-    return { text, literal };
   }
 }
 
-// 確かめるもの。cwd: そのコマンドを動かすフォルダ（cd の先が分からなければ null）/ extra: xargs・find -exec などで、
-// 書いていない引数が足される
-type Action =
-  | { kind: 'branch'; cwd: string | null; names: Word[]; extra: boolean }
-  | { kind: 'worktree'; cwd: string | null; paths: Word[]; extra: boolean }
-  | { kind: 'ask' };
+// 消す操作。cwd: そのコマンドを動かすフォルダ
+type Delete = { kind: 'branch'; cwd: string; names: string[] } | { kind: 'worktree'; cwd: string; path: string; forces: number };
+// 読んでいる間の状態。cwd: 今のフォルダ（cd の先が分からなければ null）/ mutated: 読むだけと言い切れないものがあった
+type State = { cwd: string | null; mutated: boolean; deletes: Delete[] };
 
-// awk と同じく、消す操作に見える文字があるか（中を読めない文字列に使う）
-const RISKY_TEXT = /\bgit\b[\s\S]*\b(worktree|branch)\b|\brm\b[\s\S]*worktrees/;
-// 文法の言葉。コマンドの前に付くものは飛ばす
-const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}']);
-// 繰り返し・分岐のはじまり。中のコマンドは ; や改行のあとに別に並ぶので、この行は見ない
-const COMPOUND = new Set(['for', 'select', 'case', 'function']);
-// 引数を、別のところでコマンドとして動かすもの。中を読まずに、消す操作に見える文字があれば確認を出させる
-const RUNNERS = new Set(['ssh', 'watch', 'su', 'script', 'parallel', 'tmux', 'screen', 'chroot', 'flock', 'entr', 'osascript', 'expect']);
+// 読むだけのコマンド（書き込みのリダイレクトが無ければ、何も変えない。コマンドを動かす機能の無いもの）
+const READONLY = new Set([
+  'echo', 'printf', 'true', 'false', ':', 'test', '[', '[[', 'pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
+  'sort', 'uniq', 'jq', 'date', 'sleep', 'which', 'basename', 'dirname', 'realpath', 'diff', 'cut', 'tr', 'exit',
+]);
+// 文法の言葉。コマンドの前に付くものは飛ばす（for・case・function・coproc などは知らないものとして ask）
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}', ']]']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
+// コマンドの場所として受け付けるフォルダ（./git のような、そのフォルダのスクリプトは知らないものとして ask）
+const BIN_DIRS = new Set(['/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin']);
+// 代入すると、git・gh・シェルの動きが変わる変数
+const PROTECTED_VARS = /^(GIT_.*|GH_.*|PATH|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|ZDOTDIR|IFS|CDPATH|PWD|OLDPWD|SHELLOPTS|BASHOPTS)$/;
+// 読むだけの git のサブコマンド
+const GIT_READONLY = new Set([
+  'status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'ls-remote', 'for-each-ref', 'merge-base', 'rev-list', 'cat-file', 'show-ref',
+  'describe', 'shortlog', 'blame', 'grep', 'whatchanged', 'help', 'version',
+]);
+// 書き換えるが、ブランチや worktree を消さず、コマンドを動かす機能も無い git のサブコマンド（消す操作のあとにだけ許す）
+const GIT_MUTATING = new Set([
+  'pull', 'push', 'fetch', 'switch', 'checkout', 'commit', 'add', 'merge', 'restore', 'cherry-pick', 'revert', 'tag', 'reset', 'clean',
+  'gc', 'prune', 'mv', 'rm', 'apply', 'am', 'update-ref', 'notes',
+]);
+// git のサブコマンドの前に付けてよいオプション（-c・--git-dir・--work-tree・--exec-path などは、別のものを動かせるので ask）
+const GIT_GLOBAL = new Set(['--no-pager', '-P', '-p', '--paginate', '--no-optional-locks', '--literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs', '--no-replace-objects']);
+// gh のサブコマンド（読むだけのもの: 動作 → 許す）。ほかの知っているものは書き換え（消す操作のあとにだけ許す）。知らないもの（別名・拡張）は ask
+const GH_READONLY: Record<string, string[]> = {
+  pr: ['view', 'list', 'status', 'checks', 'diff'],
+  issue: ['view', 'list', 'status'],
+  run: ['view', 'list', 'watch'],
+  repo: ['view'],
+  release: ['view', 'list'],
+  workflow: ['view', 'list'],
+  auth: ['status'],
+};
+const GH_KNOWN = new Set([...Object.keys(GH_READONLY), 'api', 'label', 'gist', 'search']);
+// git branch -D で読む名前。refs/heads/<名前> として読めて、git branch -D がそれを消すと言い切れるものだけ（@{-1}・- などは読まない）
+const BRANCH_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/+-]+$/;
 
-// コマンドの並びから、確かめるものを取り出す
-export function guardActions(command: string, cwd: string): Action[] {
-  const out: Action[] = [];
-  try {
-    collect(parseCommand(command), cwd, out);
-  } catch {
-    return [{ kind: 'ask' }];
-  }
-  return out;
-}
-
-function collect(items: Item[], start: string | null, out: Action[]): void {
-  let cwd = start;
-  for (const item of items) {
-    if (item.kind === 'sub') collect(item.items, cwd, out);
-    else cwd = simple(item.cmd.words, item.cmd.heredoc, cwd, out, false);
-  }
-}
-
-const isFlag = (w: Word | undefined) => !!w && w.literal && w.text.startsWith('-') && w.text !== '-';
 const tilde = (text: string) => (text === '~' ? homedir() : text.startsWith('~/') ? join(homedir(), text.slice(2)) : text);
+const isFlag = (w: Word | undefined): boolean => !!w && w.literal && w.text.startsWith('-') && w.text !== '-';
+const ask = (): never => {
+  throw new Ask();
+};
 
-// 単純なコマンドを 1 つ見る。返すのは、そのあとのコマンドを動かすフォルダ（cd）
-function simple(all: Word[], heredoc: Word | null, cwd: string | null, out: Action[], extraArgs: boolean): string | null {
-  const words = [...all];
-  let extra = extraArgs;
-  let dir = cwd;
-  const skipFlags = (withValue: string[] = []) => {
-    while (isFlag(words[0])) {
-      const flag = words.shift()!.text;
-      if (flag === '--') break;
-      if (withValue.includes(flag)) words.shift();
-    }
-  };
+// cwd から見た path。cwd が分からず、path が相対なら null
+function resolveFrom(cwd: string | null, text: string): string | null {
+  const path = tilde(text);
+  if (isAbsolute(path)) return resolve(path);
+  return cwd === null ? null : resolve(cwd, path);
+}
+
+// コマンドの並びを読み、消す操作を取り出す。許す形でないものがあれば null
+export function guardDeletes(command: string, cwd: string): Delete[] | null {
+  const state: State = { cwd, mutated: false, deletes: [] };
+  try {
+    walk(parseCommand(command), state);
+  } catch {
+    return null;
+  }
+  return state.deletes;
+}
+
+function walk(items: Item[], state: State): void {
+  for (const item of items) {
+    if (item.kind === 'sub') {
+      const saved = state.cwd;
+      walk(item.items, state);
+      state.cwd = saved;
+    } else simple(item.cmd, state);
+  }
+}
+
+function mutate(state: State): void {
+  state.mutated = true;
+}
+
+function addDelete(state: State, del: Delete): void {
+  // 確かめたあとで、同じコマンドの前の部分が状態を変えているかもしれない
+  if (state.mutated) ask();
+  state.deletes.push(del);
+}
+
+// 単純なコマンドを 1 つ見る
+function simple(cmd: Simple, state: State): void {
+  // 書き込みのリダイレクト。/dev/null とファイル記述子の複製のほかは、書き換えとして数える（worktree の中・グロブ・変数の先は ask）
+  let writes = false;
+  for (const r of cmd.redirects) {
+    if (!r.out || !r.target) continue;
+    const { target } = r;
+    if (r.dup && target.literal && /^(\d+|-)$/.test(target.text)) continue;
+    if (target.literal && target.text === '/dev/null') continue;
+    if (!target.literal) ask();
+    const path = resolveFrom(state.cwd, target.text);
+    if (path === null || inWorktrees(path) || target.text.split('/').includes('worktrees')) ask();
+    writes = true;
+  }
+  const words = [...cmd.words];
   for (;;) {
     const first = words[0];
-    if (!first) return cwd;
-    if (first.literal && KEYWORDS.has(first.text)) {
+    if (!first) break;
+    const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(first.text);
+    if (assignment && !first.quoted) {
+      if (PROTECTED_VARS.test(assignment[1])) ask();
       words.shift();
       continue;
     }
-    if (first.literal && COMPOUND.has(first.text)) return cwd;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first.text)) {
+    if (first.literal && !first.quoted && KEYWORDS.has(first.text)) {
       words.shift();
       continue;
     }
-    // 変数で決まるコマンドは読めない
-    if (!first.literal) {
-      if (RISKY_TEXT.test(words.map((w) => w.text).join(' '))) out.push({ kind: 'ask' });
-      return cwd;
-    }
+    if (!first.literal) ask();
+    const dir = dirname(first.text);
+    if (first.text.includes('/') && !BIN_DIRS.has(dir)) ask();
     const name = basename(first.text);
     words.shift();
-    switch (name) {
-      case 'cd':
-      case 'pushd': {
-        while (isFlag(words[0])) words.shift();
-        const target = words[0];
-        if (!target) return homedir();
-        return target.literal && target.text !== '-' && cwd !== null ? resolve(cwd, tilde(target.text)) : null;
-      }
-      case 'sudo':
-      case 'doas':
-        skipFlags(['-u', '-g', '-U', '-C', '-D', '-h', '-p', '-r', '-t', '-R', '-T']);
-        continue;
-      case 'env':
-        while (words[0]) {
-          const t = words[0].text;
-          if (['-u', '--unset'].includes(t)) words.splice(0, 2);
-          else if (['-C', '--chdir'].includes(t)) {
-            words.splice(0, 2);
-            dir = null;
-          } else if (t.startsWith('-S') || t.startsWith('--split-string')) {
-            if (RISKY_TEXT.test(words.map((w) => w.text).join(' '))) out.push({ kind: 'ask' });
-            return cwd;
-          } else if (isFlag(words[0]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) words.shift();
-          else break;
-        }
-        continue;
-      case 'command':
-      case 'builtin':
-      case 'exec':
-      case 'nohup':
-      case 'stdbuf':
-      case 'unbuffer':
-      case 'time':
-        skipFlags();
-        continue;
-      case 'nice':
-        skipFlags(['-n']);
-        continue;
-      case 'caffeinate':
-        skipFlags(['-t', '-w']);
-        continue;
-      case 'timeout':
-      case 'gtimeout':
-        skipFlags(['-s', '-k', '--signal', '--kill-after']);
-        words.shift();
-        continue;
-      case 'xargs':
-        skipFlags(['-I', '-J', '-L', '-n', '-P', '-s', '-E', '-d', '-a', '-R', '-S']);
-        extra = true;
-        continue;
-      case 'eval': {
-        const text = words.map((w) => w.text).join(' ');
-        if (words.every((w) => w.literal)) collect(parseCommand(text), dir, out);
-        else if (RISKY_TEXT.test(text)) out.push({ kind: 'ask' });
-        return cwd;
-      }
-      case 'find': {
-        const roots = words.slice(0, Math.max(0, words.findIndex((w) => w.text.startsWith('-')))).map((w) => w.text);
-        for (let i = 0; i < words.length; i++) {
-          if (!['-exec', '-execdir', '-ok', '-okdir'].includes(words[i].text)) continue;
-          let end = i + 1;
-          while (end < words.length && words[end].text !== ';' && words[end].text !== '+') end++;
-          const inner = words.slice(i + 1, end);
-          const found: Action[] = [];
-          simple(inner, null, dir, found, true);
-          out.push(...found);
-          if (inner[0] && basename(inner[0].text) === 'rm' && roots.some(hasWorktreesSegment)) out.push({ kind: 'ask' });
-          i = end;
-        }
-        return cwd;
-      }
-      case 'git':
-        gitCommand(words, dir, out, extra);
-        return cwd;
-      case 'rm':
-        rmCommand(words, dir, out);
-        return cwd;
-      default:
-        if (SHELLS.has(name)) {
-          const c = words.findIndex((w) => w.literal && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w.text));
-          const script = c < 0 ? null : words.slice(c + 1).find((w) => !w.text.startsWith('-') && !w.text.startsWith('+'));
-          if (script) {
-            if (script.literal) collect(parseCommand(script.text), dir, out);
-            else if (RISKY_TEXT.test(script.text)) out.push({ kind: 'ask' });
-          } else if (c < 0 && heredoc) collect(parseCommand(heredoc.text), dir, out);
-          return cwd;
-        }
-        if (RUNNERS.has(name) && RISKY_TEXT.test(words.map((w) => w.text).join(' '))) out.push({ kind: 'ask' });
-        return cwd;
+    if (name === 'nohup' || name === 'exec' || name === 'builtin') {
+      if (isFlag(words[0])) ask();
+      continue;
     }
+    if (name === 'command') {
+      if (words[0]?.text === '-v' || words[0]?.text === '-V') break;
+      if (isFlag(words[0])) ask();
+      continue;
+    }
+    if (name === 'time') {
+      if (words[0]?.text === '-p') words.shift();
+      continue;
+    }
+    if (name === 'env') {
+      while (words[0] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0].text)) {
+        if (PROTECTED_VARS.test(words[0].text.split('=')[0])) ask();
+        words.shift();
+      }
+      if (isFlag(words[0])) ask();
+      continue;
+    }
+    if (name === 'cd' || name === 'pushd' || name === 'popd') changeDir(name, words, cmd, state);
+    else if (name === 'eval') {
+      if (!words.every((w) => w.literal)) ask();
+      walk(parseCommand(words.map((w) => w.text).join(' ')), state);
+    } else if (SHELLS.has(name)) shellCommand(words, state);
+    else if (name === 'git') gitCommand(words, state);
+    else if (name === 'gh') ghCommand(words, state);
+    else if (name === 'rm') rmCommand(words, state);
+    else if (READONLY.has(name)) {
+      // sort -o は書き込む
+      if (name === 'sort' && words.some((w) => w.text === '-o' || w.text.startsWith('--o'))) mutate(state);
+    } else ask();
+    break;
   }
+  if (writes) mutate(state);
 }
 
-function gitCommand(args: Word[], cwd: string | null, out: Action[], extra: boolean): void {
-  let dir = cwd;
+// cd・pushd・popd。続けて動く（; && 改行で区切った）ものだけを追う。パイプ・裏で動かすもの・|| のあとの cd は外に効くか
+// 分からないので、フォルダを分からないものにする
+function changeDir(name: string, words: Word[], cmd: Simple, state: State): void {
+  const sequential = ['', ';', '\n', '&&'].includes(cmd.before) && !['|', '&'].includes(cmd.after);
+  if (name === 'popd' || !sequential) {
+    state.cwd = null;
+    return;
+  }
+  while (words[0]?.literal && (words[0].text === '-P' || words[0].text === '-L')) words.shift();
+  const target = words[0];
+  if (!target) state.cwd = homedir();
+  else if (!target.literal || isFlag(target) || target.text === '-') state.cwd = null;
+  else state.cwd = resolveFrom(state.cwd, target.text);
+}
+
+// sh -c '…' などは、中のコマンドを読む（中の cd は外に効かない）。-c の無いもの（標準入力・ヒアドキュメント・ファイルを読む）は ask
+function shellCommand(words: Word[], state: State): void {
   let i = 0;
-  // git のサブコマンドの前のオプション
-  while (i < args.length) {
-    const a = args[i];
-    if (!a.literal) {
-      dir = null;
-      i++;
-    } else if (a.text === '-C') {
+  let command = false;
+  while (words[i]?.literal && /^[-+][a-zA-Z]+$/.test(words[i].text)) {
+    if (words[i].text.startsWith('-') && words[i].text.includes('c')) command = true;
+    i++;
+  }
+  const script = words[i];
+  if (!command || !script || !script.literal) ask();
+  const saved = state.cwd;
+  walk(parseCommand(script.text), state);
+  state.cwd = saved;
+}
+
+// 長いオプションの名前。git は、ほかと見分けられる省略形も受け付ける（--del は --delete）。names のうち、given で始まるもの
+function longOption(given: string, names: string[]): string[] {
+  const name = given.slice(2).split('=')[0];
+  if (names.includes(name)) return [name];
+  return names.filter((n) => n.startsWith(name));
+}
+
+function gitCommand(args: Word[], state: State): void {
+  let dir = state.cwd;
+  let i = 0;
+  while (i < args.length && isFlag(args[i])) {
+    const a = args[i].text;
+    if (a === '-C') {
       const next = args[i + 1];
-      dir = next?.literal && dir !== null ? resolve(dir, tilde(next.text)) : null;
+      if (!next?.literal) ask();
+      dir = resolveFrom(dir, next.text);
       i += 2;
-    } else if (['--git-dir', '--work-tree', '--namespace'].includes(a.text)) {
-      dir = null;
-      i += 2;
-    } else if (/^--(git-dir|work-tree|namespace)=/.test(a.text)) {
-      dir = null;
-      i++;
-    } else if (a.text === '-c' || a.text === '--config-env') i += 2;
-    else if (a.text.startsWith('-')) i++;
-    else break;
+    } else if (GIT_GLOBAL.has(a)) i++;
+    else ask();
   }
   const sub = args[i];
-  const rest = args.slice(i + 1);
   if (!sub) return;
-  if (!sub.literal) {
-    if (rest.length > 0) out.push({ kind: 'ask' });
-    return;
-  }
-  if (sub.text === 'branch') {
-    let del = false;
-    let force = false;
-    let strong = false;
-    let remote = false;
-    let ended = false;
-    const names: Word[] = [];
-    for (const w of rest) {
-      if (!ended && w.literal && w.text === '--') ended = true;
-      else if (!ended && isFlag(w)) {
-        if (w.text === '--delete') del = true;
-        else if (w.text === '--force') force = true;
-        else if (w.text === '--remotes') remote = true;
-        else if (!w.text.startsWith('--')) {
-          if (w.text.includes('D')) strong = true;
-          if (w.text.includes('d')) del = true;
-          if (w.text.includes('f')) force = true;
-          if (w.text.includes('r')) remote = true;
-        }
-      } else names.push(w);
-    }
-    if (!strong && !(del && force)) return;
-    // リモート追跡のブランチ（-r）は確かめない
-    out.push(remote ? { kind: 'ask' } : { kind: 'branch', cwd: dir, names, extra });
-    return;
-  }
-  if (sub.text === 'worktree' && rest[0]?.literal && rest[0].text === 'remove') {
-    let force = false;
-    let ended = false;
-    const paths: Word[] = [];
-    for (const w of rest.slice(1)) {
-      if (!ended && w.literal && w.text === '--') ended = true;
-      else if (!ended && isFlag(w)) {
-        if (w.text === '--force' || /^-[a-zA-Z]*f/.test(w.text)) force = true;
-      } else paths.push(w);
-    }
-    // --force の無いものは、git が、変更の残る worktree を消さない
-    if (force) out.push({ kind: 'worktree', cwd: dir, paths, extra });
-  }
+  if (!sub.literal) ask();
+  const rest = args.slice(i + 1);
+  // ファイルに書き出すオプション
+  const output = rest.some((w) => w.text.startsWith('--output'));
+  if (sub.text === 'branch') branchCommand(rest, dir, state);
+  else if (sub.text === 'worktree') {
+    const action = rest[0]?.text;
+    if (action === 'list') return;
+    if (action === 'remove') worktreeRemove(rest.slice(1), dir, state);
+    else if (['prune', 'add', 'move', 'lock', 'unlock', 'repair'].includes(action ?? '')) mutate(state);
+    else ask();
+  } else if (GIT_READONLY.has(sub.text)) {
+    if (output) mutate(state);
+  } else if (sub.text === 'reflog') {
+    if (['expire', 'delete', 'drop'].includes(rest[0]?.text ?? '')) mutate(state);
+  } else if (sub.text === 'stash') {
+    if (!['list', 'show'].includes(rest[0]?.text ?? '')) mutate(state);
+  } else if (sub.text === 'remote') {
+    const action = rest[0]?.text ?? '';
+    if (!['', '-v', '--verbose', 'show', 'get-url'].includes(action)) mutate(state);
+  } else if (sub.text === 'config') {
+    if (!rest.some((w) => ['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--list', '-l'].includes(w.text))) mutate(state);
+  } else if (sub.text === 'symbolic-ref') {
+    if (rest.filter((w) => !isFlag(w)).length > 1 || rest.some((w) => w.text === '-d' || w.text.startsWith('--d'))) mutate(state);
+  } else if (GIT_MUTATING.has(sub.text)) mutate(state);
+  else ask();
 }
 
-function hasWorktreesSegment(text: string): boolean {
-  return text.split('/').includes('worktrees');
-}
+// git branch の長いオプション
+const BRANCH_LONG = [
+  'delete', 'force', 'remotes', 'all', 'list', 'merged', 'no-merged', 'contains', 'no-contains', 'points-at', 'format', 'sort', 'show-current',
+  'verbose', 'quiet', 'color', 'no-color', 'column', 'no-column', 'abbrev', 'no-abbrev', 'ignore-case', 'omit-empty', 'track', 'no-track',
+  'set-upstream-to', 'unset-upstream', 'edit-description', 'move', 'copy', 'create-reflog', 'recurse-submodules',
+];
+// 一覧を出すだけの git branch のオプション（値を取るものも、--format=… の形）
+const BRANCH_LIST_LONG = new Set(['all', 'list', 'merged', 'no-merged', 'contains', 'no-contains', 'points-at', 'format', 'sort', 'show-current', 'verbose', 'quiet', 'color', 'no-color', 'column', 'no-column', 'abbrev', 'no-abbrev', 'ignore-case', 'omit-empty', 'remotes']);
 
-// worktree の rm -rf（パスの区切りの 1 つが worktrees のもの。worktree の中では . や .. や * も）は、確かめずに確認を出させる
-function rmCommand(args: Word[], cwd: string | null, out: Action[]): void {
-  let recursive = false;
+function branchCommand(rest: Word[], dir: string | null, state: State): void {
+  let del = false;
   let force = false;
+  let strong = false;
+  let remote = false;
+  // 消すのでも一覧を出すのでもないオプション
+  let other = false;
+  // 一覧を出すオプションのほかのオプション（消すときに付いていれば ask）
+  let extra = false;
+  let listing = false;
   let ended = false;
-  const targets: Word[] = [];
-  for (const w of args) {
+  const names: Word[] = [];
+  for (const w of rest) {
     if (!ended && w.literal && w.text === '--') ended = true;
     else if (!ended && isFlag(w)) {
-      if (w.text === '--recursive') recursive = true;
-      else if (w.text === '--force') force = true;
-      else if (!w.text.startsWith('--')) {
-        if (/[rR]/.test(w.text)) recursive = true;
-        if (w.text.includes('f')) force = true;
+      if (w.text.startsWith('--')) {
+        const name = w.text.slice(2).split('=')[0];
+        // --d・--f で始まるものは、--delete・--force とみなす（省略形）
+        if (name !== '' && 'delete'.startsWith(name)) del = true;
+        else if (name !== '' && 'force'.startsWith(name)) force = true;
+        else {
+          const found = longOption(w.text, BRANCH_LONG);
+          if (found.length !== 1) other = true;
+          else if (found[0] === 'remotes') remote = true;
+          else if (BRANCH_LIST_LONG.has(found[0])) {
+            if (found[0] === 'list') listing = true;
+            if (!['quiet', 'verbose'].includes(found[0])) extra = true;
+          } else other = true;
+        }
+      } else {
+        for (const c of w.text.slice(1)) {
+          if (c === 'D') strong = true;
+          else if (c === 'd') del = true;
+          else if (c === 'f') force = true;
+          else if (c === 'r') remote = true;
+          else if (c === 'l') listing = true;
+          else if (c === 'a' || c === 'v') extra = c === 'a' || extra;
+          else if (c !== 'q') other = true;
+        }
       }
-    } else targets.push(w);
+    } else names.push(w);
   }
-  if (!recursive || !force) return;
-  // cd の先が分からなければ、worktree の中にいるかもしれないとみなす
-  const inWorktree = cwd === null || cwd.includes('/.claude/worktrees/');
-  for (const { text } of targets) {
-    if (hasWorktreesSegment(text)) return void out.push({ kind: 'ask' });
-    if (inWorktree && (/^\.\.?\/?$/.test(text) || text.startsWith('../') || /^(\.\/)?\*$/.test(text) || text === cwd)) return void out.push({ kind: 'ask' });
+  if (strong || (del && force)) {
+    // リモート追跡のブランチ（-r）・ほかのオプションの付いたもの・名前の読めないものは確かめない
+    if (remote || other || extra || names.length === 0 || dir === null) ask();
+    if (!names.every((w) => w.literal && BRANCH_NAME.test(w.text))) ask();
+    addDelete(state, { kind: 'branch', cwd: dir!, names: names.map((w) => w.text) });
+  } else if (del || other || (names.length > 0 && !listing)) {
+    // git branch -d・名前を変える・作るなど
+    mutate(state);
   }
+}
+
+function worktreeRemove(rest: Word[], dir: string | null, state: State): void {
+  let forces = 0;
+  let ended = false;
+  const paths: Word[] = [];
+  for (const w of rest) {
+    if (!ended && w.literal && w.text === '--') ended = true;
+    else if (!ended && isFlag(w)) {
+      if (w.text.startsWith('--')) {
+        const name = w.text.slice(2);
+        if (name === '' || !'force'.startsWith(name)) ask();
+        forces++;
+      } else if (/^-f+$/.test(w.text)) forces += w.text.length - 1;
+      else ask();
+    } else paths.push(w);
+  }
+  // --force の無いものは、git が、変更の残る worktree を消さない
+  if (forces === 0) return mutate(state);
+  if (paths.length !== 1 || !paths[0].literal || dir === null) ask();
+  addDelete(state, { kind: 'worktree', cwd: dir!, path: resolveFrom(dir, paths[0].text)!, forces });
+}
+
+function ghCommand(args: Word[], state: State): void {
+  const sub = args[0];
+  if (!sub?.literal || isFlag(sub) || !GH_KNOWN.has(sub.text)) ask();
+  const action = args[1];
+  if (!(action?.literal && GH_READONLY[sub!.text]?.includes(action.text))) mutate(state);
+}
+
+// rm。消す先のすべてが、worktree になりえないと言い切れるときだけ許す（書き換えとして数える）。
+// グロブ・中括弧・変数を含むもの、区切りの 1 つが worktrees のもの、.claude/worktrees の中や、それを含むフォルダ、
+// worktree の中での . や .. は ask
+function rmCommand(args: Word[], state: State): void {
+  let ended = false;
+  for (const w of args) {
+    if (!ended && w.literal && w.text === '--') {
+      ended = true;
+      continue;
+    }
+    if (!ended && isFlag(w)) continue;
+    if (!w.literal) ask();
+    const text = w.text;
+    if (tilde(text).split('/').includes('worktrees')) ask();
+    const path = resolveFrom(state.cwd, text);
+    if (path === null || inWorktrees(path) || holdsWorktrees(path)) ask();
+    if (state.cwd !== null && inWorktrees(state.cwd + '/') && (/^\.\.?\/?$/.test(text) || text.startsWith('../') || path === state.cwd)) ask();
+  }
+  mutate(state);
+}
+
+// .claude/worktrees の中か
+function inWorktrees(path: string): boolean {
+  return path.includes('/.claude/worktrees/') || path.endsWith('/.claude/worktrees');
+}
+
+// 消すと、中の .claude/worktrees も消えるフォルダか
+function holdsWorktrees(path: string): boolean {
+  return existsSync(join(path, WORKTREES_DIR)) || (basename(path) === '.claude' && existsSync(join(path, 'worktrees')));
 }
 
 // リポジトリの、共通の git のフォルダ（worktree どうしで同じ）。リポジトリでなければ null
 async function commonDir(cwd: string): Promise<string | null> {
   const out = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).catch(() => null);
-  if (!out?.trim()) return null;
-  return realpath(out.trim()).catch(() => null);
+  return out?.trim() || null;
 }
 
 // 確かめる。cwd: フックの入力の cwd（Claude Code の今のフォルダ）
 export async function verifyCommand(command: string, cwd: string): Promise<GuardVerdict> {
-  const actions = guardActions(command, cwd);
-  const deletes: Exclude<Action, { kind: 'ask' }>[] = [];
-  for (const a of actions) {
-    if (a.kind === 'ask') return 'ask';
-    if (a.extra || a.cwd === null) return 'ask';
-    const words = a.kind === 'branch' ? a.names : a.paths;
-    if (!words.every((w) => w.literal)) return 'ask';
-    deletes.push(a);
-  }
-  if (deletes.length === 0) return 'pass';
+  const deletes = guardDeletes(command, cwd);
+  if (deletes === null) return 'ask';
   // リポジトリごとに、消すブランチと消す worktree をまとめて確かめる（一緒に消すブランチどうしで、互いのコミットを持つときに、
   // 両方を消してよいとしないように。一緒に消す worktree で取り出しているブランチは、取り出していないものとして数える）
-  const repos = new Map<string, { cwd: string; root: string; branches: string[]; worktrees: string[] }>();
-  for (const a of deletes) {
-    const common = await commonDir(a.cwd!);
+  const repos = new Map<string, { cwd: string; root: string; branches: string[]; worktrees: { path: string; forces: number }[] }>();
+  for (const d of deletes) {
+    const common = await commonDir(d.cwd);
     if (!common || basename(common) !== '.git') return 'ask';
     let repo = repos.get(common);
-    if (!repo) repos.set(common, (repo = { cwd: a.cwd!, root: dirname(common), branches: [], worktrees: [] }));
-    if (a.kind === 'branch') repo.branches.push(...a.names.map((w) => w.text));
-    else repo.worktrees.push(...a.paths.map((w) => resolve(a.cwd!, tilde(w.text))));
+    if (!repo) repos.set(common, (repo = { cwd: d.cwd, root: dirname(common), branches: [], worktrees: [] }));
+    if (d.kind === 'branch') repo.branches.push(...d.names);
+    else repo.worktrees.push({ path: d.path, forces: d.forces });
   }
   for (const repo of repos.values()) {
-    for (const path of repo.worktrees) if (!(await insideWorktrees(repo.root, path)) || !(await worktreeSafeToRemove(repo.root, path))) return 'ask';
-    if (repo.branches.length > 0 && !(await branchesSafeToDelete(repo.cwd, repo.branches, repo.worktrees))) return 'ask';
+    for (const w of repo.worktrees) {
+      if (!(await insideWorktrees(repo.root, w.path)) || !(await worktreeSafeToRemove(repo.root, w.path, w.forces))) return 'ask';
+    }
+    const removing = repo.worktrees.map((w) => w.path);
+    if (repo.branches.length > 0 && !(await branchesSafeToDelete(repo.cwd, repo.branches, removing))) return 'ask';
   }
   return 'pass';
 }
 
 // tanacode が作る worktree の場所（<リポジトリ>/.claude/worktrees/<名前>）か
 async function insideWorktrees(root: string, path: string): Promise<boolean> {
-  const [base, target] = await Promise.all([realpath(join(root, WORKTREES_DIR)).catch(() => null), realpath(path).catch(() => resolve(path))]);
-  if (!base) return false;
+  const [base, target] = await Promise.all([realpath(join(root, WORKTREES_DIR)).catch(() => null), realpath(path).catch(() => null)]);
+  if (!base || !target) return false;
   const rel = relative(base, target);
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) && !rel.includes('/');
 }

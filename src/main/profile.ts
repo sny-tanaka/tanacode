@@ -257,8 +257,6 @@ export class Profile {
       () => this.terminalLaunch(),
       // TANACODE.md を渡すフック。メニューで切り替えず、いつも足す（ファイルが無ければ何も渡さない）
       () => ({ command: hostExecutable(), script: join(__dirname, 'instructions-hook.js') }),
-      // worktree やブランチを消す操作の確認のフックが、失うものが無いかを確かめる入り口。いつも足す
-      () => ({ command: hostExecutable(), script: join(__dirname, 'worktree-guard-hook.js') }),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。

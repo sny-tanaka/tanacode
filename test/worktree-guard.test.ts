@@ -7,7 +7,7 @@ import { setLanguage, t } from '@shared/i18n';
 import { toChatEvents, type TranscriptEntry } from '../src/shared/chat';
 import { SUPPRESS_OUTPUT } from '../src/main/hook-output';
 import { ownSettings } from '../src/main/statusline';
-import { worktreeGuardCommand, worktreeGuardEnv } from '../src/main/worktree-guard';
+import { worktreeGuardCommand } from '../src/main/worktree-guard';
 import { buildRelay } from './cli/browser-relay-build';
 
 // Claude が worktree やブランチを消す操作の歯止め（アプリが --settings で足す、Bash の PreToolUse のフック）。
@@ -78,13 +78,14 @@ describe('確かめの入り口があるとき', () => {
     git(cwd, 'add', file);
     git(cwd, 'commit', '-qm', file);
   };
-  const verified = (command: string, cwd = repo) =>
-    execFileSync('sh', ['-c', worktreeGuardCommand()], {
+  const verified = (command: string, cwd = repo, launch = { command: process.execPath, script }) =>
+    execFileSync('sh', ['-c', worktreeGuardCommand(launch)], {
       input: JSON.stringify({ session_id: 'x', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command, description: 'd' } }),
       encoding: 'utf8',
       env: {
         ...process.env,
-        ...worktreeGuardEnv({ command: process.execPath, script }),
+        // Node の動きを変える環境変数は、入り口には渡さない（渡れば、読み込めないファイルで node が落ちて ask になる）
+        NODE_OPTIONS: '--require /nonexistent/x.js',
         PATH: [process.env.TANACODE_AWK, join(dir, 'bin'), process.env.PATH].filter(Boolean).join(':'),
       },
     });
@@ -115,11 +116,21 @@ describe('確かめの入り口があるとき', () => {
   it('worktree でないものの rm -rf・文字列の中に出てくるだけのものは、確認を出させない', () => {
     for (const command of [
       'rm -rf ~/.claude-personal/projects/-Users-me-work-tanacode--claude-worktrees-tc-1024-abcd',
-      "perl -0pi -e 's/git worktree remove --force x/y/' GUIDE.md",
+      "echo 'git worktree remove --force x' > note.txt",
       'git commit -m "あとで git branch -D foo する"',
     ]) {
       expect({ command, out: verified(command) }).toEqual({ command, out: NOTHING });
     }
+  });
+
+  it('許す形でないもの（コマンドを動かせる知らないコマンド）は、文字列の中でも確認を出させる', () => {
+    expect(verified("perl -0pi -e 's/git worktree remove --force x/y/' GUIDE.md")).toContain('"ask"');
+  });
+
+  it('入り口が無い・場所を単一引用符で囲めないときは、確かめずに確認を出させる', () => {
+    const b3 = 'rm -rf ~/.claude-personal/projects/-Users-me-work-tanacode--claude-worktrees-tc-1024-abcd';
+    expect(verified(b3, repo, { command: process.execPath, script: join(dir, 'none.js') })).toContain('"ask"');
+    expect(verified(b3, repo, { command: "/x/it's/node", script })).toContain('"ask"');
   });
 
   it('origin の同じ名前のブランチと同じブランチの git branch -D は、確認を出させない', () => {
@@ -127,7 +138,7 @@ describe('確かめの入り口があるとき', () => {
     commit(repo, 'b.txt');
     git(repo, 'push', '-q', '-u', 'origin', 'release/v2.0.0');
     git(repo, 'switch', '-q', 'main');
-    expect(verified('git pull && git branch -D release/v2.0.0')).toBe(NOTHING);
+    expect(verified('git status && git branch -D release/v2.0.0')).toBe(NOTHING);
   });
 
   it('手元にしか無いコミットのあるブランチの git branch -D は、今までどおり確認を出させる', () => {
