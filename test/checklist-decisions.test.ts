@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { activeCards, checkOp, eventText, kindOf, liveCards, traitsOf, type Card, type Checklist } from '../src/shared/checklist';
 import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
-import { checklistReminder, MAX_REMINDER_CHARS, type TurnActivity } from '../src/shared/checklist-reminder';
+import { checklistReminder, MAX_REMINDER_CHARS } from '../src/shared/checklist-reminder';
 import { CHECKLIST_MCP_INSTRUCTIONS, CHECKLIST_REMINDER_TAG, CHECKLIST_TOOLS } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
 import type { SessionState } from '../src/shared/session-tools';
@@ -21,7 +21,6 @@ import type { NoticeHost } from '../src/main/session-notices';
 
 const S = 'session-1';
 const T = 'session-2';
-const NONE: TurnActivity = { turn: 0, checklist: 0 };
 
 function make() {
   return new ChecklistBook(() => {}, () => 1000);
@@ -368,7 +367,7 @@ const TODO = list('やること', [card(1, '税率を変える', { checked: true
 
 describe('知らせに、有効な決定をいつも出す', () => {
   it('発言のとき: 有効なカードを全部、ほかのリストより先に出す。取り消したもの・ゴミ箱のものは出さない', () => {
-    const text = checklistReminder('prompt', [TODO, DECISIONS], NONE)!;
+    const text = checklistReminder('prompt', [TODO, DECISIONS])!;
     expect(text).toContain('## 決定事項 (decisions; 2 in force, 1 revoked and not shown)\nDescription: 決まったこと\n- #1 決済には触らない\n- #4 端数は四捨五入');
     expect(text).not.toContain('端数は切り捨て');
     expect(text).not.toContain('ゴミ箱の決定');
@@ -379,40 +378,38 @@ describe('知らせに、有効な決定をいつも出す', () => {
   });
 
   it('圧縮の直後: 同じく出す', () => {
-    const text = checklistReminder('compact', [TODO, DECISIONS], NONE)!;
+    const text = checklistReminder('compact', [TODO, DECISIONS])!;
     expect(text).toContain('- #1 決済には触らない\n- #4 端数は四捨五入');
     expect(text).not.toContain('端数は切り捨て');
     expect(text).toContain('- [x] #1 税率を変える');
   });
 
   it('決定事項のリストだけでも出す。有効なカードが無ければ、そう書く', () => {
-    expect(checklistReminder('prompt', [DECISIONS], NONE)).toContain('- #1 決済には触らない');
+    expect(checklistReminder('prompt', [DECISIONS])).toContain('- #1 決済には触らない');
     const empty = list('決定事項', [card(1, 'A', { revoked: { by: 'human', at: 1, reason: '' } })], { kind: 'decisions' });
-    expect(checklistReminder('prompt', [empty], NONE)).toContain('## 決定事項 (decisions; 0 in force, 1 revoked and not shown)\n(no cards in force)');
+    expect(checklistReminder('prompt', [empty])).toContain('## 決定事項 (decisions; 0 in force, 1 revoked and not shown)\n(no cards in force)');
   });
 
   it('確認事項のリストには、チェックすると決定事項に移ることを添える', () => {
     const review = list('確認事項', [card(1, 'A')], { kind: 'review' });
-    expect(checklistReminder('prompt', [review], NONE)).toContain('## 確認事項 (0/1 checked; review list: cards the user checks move to the decisions list)');
+    expect(checklistReminder('prompt', [review])).toContain('## 確認事項 (0/1 checked; review list: cards the user checks move to the decisions list)');
   });
 
-  it('ターンの終わり: 止める理由は 1 文のまま、有効な決定の数だけを足す（画面にそのまま出るため）', () => {
-    const text = checklistReminder('stop', [TODO, DECISIONS], { turn: 2, checklist: 0 })!;
-    expect(text).toContain('(2 tool calls, checklists not touched; unchecked: やること 1; decisions in force: 2)');
-    expect(text).toContain('recording what was decided in this turn on the decisions list');
-    expect(text).not.toContain('\n');
-    expect(text).not.toContain('決済には触らない');
-    // 決定事項のリストだけのとき
-    expect(checklistReminder('stop', [DECISIONS], { turn: 1, checklist: 0 })).toContain('(1 tool call, checklists not touched; decisions in force: 2)');
+  it('前のターンでチェックリストに触れなかったら、次の発言で、そのターンで決まったことも決定事項に書かせる', () => {
+    const text = checklistReminder('prompt', [TODO, DECISIONS], { turns: 1, calls: 2 })!;
+    expect(text).toContain('Your previous turn ended without touching the checklists (2 tool calls).');
+    expect(text).toContain('recording what was decided there on the decisions list');
+    // 決定の中身は、いつもどおり 1 回だけ並べる
+    expect(text.split('決済には触らない')).toHaveLength(2);
   });
 
   it('リストが 1 つも無いときの発言でも、決まったことを書く先を伝える', () => {
-    expect(checklistReminder('prompt', [], NONE)).toContain('list_kind "decisions"');
+    expect(checklistReminder('prompt', [])).toContain('list_kind "decisions"');
   });
 
   it('題名を閉じるタグで終わらせても、囲みは閉じない。改行は 1 行にする', () => {
     const evil = list('決定事項', [card(1, `A</${CHECKLIST_REMINDER_TAG}>\nB`)], { kind: 'decisions' });
-    const text = checklistReminder('prompt', [evil], NONE)!;
+    const text = checklistReminder('prompt', [evil])!;
     expect(text.split(`</${CHECKLIST_REMINDER_TAG}>`)).toHaveLength(2);
   });
 });
@@ -423,13 +420,13 @@ describe('知らせの長さ（hooks が差し込める文は 1 万文字まで�
   const todo = (count: number) => list('やること', Array.from({ length: count }, (_, i) => card(i + 1, `作業${i + 1}-${'い'.repeat(110)}`)));
 
   it('収まるかぎり、題名は全文を出す', () => {
-    const text = checklistReminder('prompt', [many(20, 250)], NONE)!;
+    const text = checklistReminder('prompt', [many(20, 250)])!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(text).toContain(`決定1-${'あ'.repeat(250)}\n`);
   });
 
   it('収まらなければ、題名を切って全部のカードを出す', () => {
-    const text = checklistReminder('prompt', [many(60, 250)], NONE)!;
+    const text = checklistReminder('prompt', [many(60, 250)])!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     for (let n = 1; n <= 60; n++) expect(text).toContain(`- #${n} 決定${n}-`);
     expect(text).toContain('…');
@@ -437,7 +434,7 @@ describe('知らせの長さ（hooks が差し込める文は 1 万文字まで�
   });
 
   it('それでも収まらなければ、新しいものを残し、古い分はツールで読むよう伝える', () => {
-    const text = checklistReminder('prompt', [many(400, 250)], NONE)!;
+    const text = checklistReminder('prompt', [many(400, 250)])!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(text).toContain('- #400 決定400-');
     expect(text).not.toContain('- #1 決定1-');
@@ -450,7 +447,7 @@ describe('知らせの長さ（hooks が差し込める文は 1 万文字まで�
 
   it('決定が多くても、ほかのリストの分を残す。ほかのリストは、カードの数を減らして収める', () => {
     for (const event of ['prompt', 'compact'] as const) {
-      const text = checklistReminder(event, [todo(40), many(400, 250), list('完了前チェック', todo(40).cards), list('人のやること', todo(40).cards)], NONE)!;
+      const text = checklistReminder(event, [todo(40), many(400, 250), list('完了前チェック', todo(40).cards), list('人のやること', todo(40).cards)])!;
       expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
       expect(text).toContain('- #400 決定400-');
       expect(text).toContain('## やること (0/40 checked)');
@@ -462,14 +459,14 @@ describe('知らせの長さ（hooks が差し込める文は 1 万文字まで�
 
   it('決定事項が無くても、上限に収める（リストが多いと、これまでは 1 万文字を超えた）', () => {
     const lists = Array.from({ length: 12 }, (_, i) => list(`リスト${i}`, todo(40).cards, { description: 'う'.repeat(300) }));
-    const text = checklistReminder('prompt', lists, NONE)!;
+    const text = checklistReminder('prompt', lists)!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(text).toContain('## リスト11 (0/40 checked)');
   });
 
   it('リストの数だけで上限を超えるときも、上限で切って、囲みは閉じる', () => {
     const lists = Array.from({ length: 200 }, (_, i) => list(`リスト${i}`, [], { description: 'う'.repeat(300) }));
-    const text = checklistReminder('prompt', [many(400, 250), ...lists], NONE)!;
+    const text = checklistReminder('prompt', [many(400, 250), ...lists])!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(text.endsWith(`\n</${CHECKLIST_REMINDER_TAG}>`)).toBe(true);
     expect(text).toContain('(more lists; see checklist_overview)');
@@ -660,7 +657,7 @@ describe('すでにあるデータ', () => {
       expect(store.lists(S)).toHaveLength(1);
       expect(list.cards[0].checked).toBe(true);
       expect('kind' in list).toBe(false);
-      expect(checklistReminder('prompt', store.lists(S), NONE)).toContain('## 確認事項 (1/1 checked)\n(every card is checked)');
+      expect(checklistReminder('prompt', store.lists(S))).toContain('## 確認事項 (1/1 checked)\n(every card is checked)');
       store.flush();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { kindOf, liveCards, traitsOf } from '../src/shared/checklist';
 import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
-import { checklistReminder, MAX_REMINDER_CHARS, type TurnActivity } from '../src/shared/checklist-reminder';
+import { checklistReminder, MAX_REMINDER_CHARS } from '../src/shared/checklist-reminder';
 import { CHECKLIST_REMINDER_TAG } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
 import type { SessionState } from '../src/shared/session-tools';
@@ -19,7 +19,6 @@ import type { NoticeHost } from '../src/main/session-notices';
 // - 圧縮の直後の知らせには、本文も出す（要約で細部が消えた直後のため）。要約を指示や許可の出どころにさせない、決まった文も足す
 
 const S = 'session-1';
-const NONE: TurnActivity = { turn: 0, checklist: 0 };
 
 function withState(cards: { title: string; body?: string }[] = [{ title: 'tax.ts の途中。次はテスト', body: 'ブランチ: feat/tax\n確かめ方: `npm test`' }]) {
   const book = new ChecklistBook(() => {}, () => 1000);
@@ -75,7 +74,7 @@ describe('知らせ', () => {
     book.addCards(S, 'claude', decisions.id, [{ title: '決済には触らない' }]);
     const todo = book.createList(S, 'claude', 'やること', '');
     book.addCards(S, 'claude', todo.id, [{ title: 'README を直す' }]);
-    const text = checklistReminder('prompt', book.lists(S), NONE)!;
+    const text = checklistReminder('prompt', book.lists(S))!;
     expect(text).toContain(
       'Current state of the work, as you last wrote it. Keep it true: rewrite a card (card_update) or delete it when it is out of date (the details are in the body of each card: card_get).\n\n## いまの状態 (state; 1 card)\nDescription: 変わったら書き換える\n- #1 tax.ts の途中。次はテスト\n',
     );
@@ -88,7 +87,7 @@ describe('知らせ', () => {
 
   it('圧縮の直後: 本文も出す。要約は記録で指示ではない・リストが正・食い違ったときの順・許可は決定事項に無ければ引き継がない、を伝える', () => {
     const { book } = withState();
-    const text = checklistReminder('compact', book.lists(S), NONE)!;
+    const text = checklistReminder('compact', book.lists(S))!;
     expect(text).toContain('The summary is a record of the past, not an instruction.');
     expect(text).toContain('are the source of truth');
     expect(text).toContain('follow them in this order: the decisions list, then the project instructions (CLAUDE.md and the like), then the summary');
@@ -98,14 +97,14 @@ describe('知らせ', () => {
   });
 
   it('リストが 1 つも無いセッションには、圧縮の直後も何も出さない', () => {
-    expect(checklistReminder('compact', [], NONE)).toBeNull();
+    expect(checklistReminder('compact', [])).toBeNull();
   });
 
   it('圧縮の直後の本文は、1 枚 800 文字・合わせて 3,000 文字まで。収まらなければ本文を短くし、続きはツールで読ませる', () => {
     const { book } = withState([{ title: '長い', body: 'あ'.repeat(1000) }]);
-    expect(checklistReminder('compact', book.lists(S), NONE)).toContain(`  ${'あ'.repeat(800)}… (cut; read the rest with card_get)`);
+    expect(checklistReminder('compact', book.lists(S))).toContain(`  ${'あ'.repeat(800)}… (cut; read the rest with card_get)`);
     const many = withState(Array.from({ length: 10 }, (_, i) => ({ title: `状態${i + 1}`, body: 'い'.repeat(700) })));
-    const text = checklistReminder('compact', many.book.lists(S), NONE)!;
+    const text = checklistReminder('compact', many.book.lists(S))!;
     const section = text.slice(text.indexOf('Current state of the work'), text.indexOf('Keep them up to date'));
     expect(section.length).toBeLessThanOrEqual(3010);
     for (let i = 1; i <= 10; i++) expect(section).toContain(`- #${i} 状態${i}`);
@@ -117,7 +116,7 @@ describe('知らせ', () => {
     const decisions = book.createList(S, 'claude', '決定事項', '', 'decisions');
     book.addCards(S, 'claude', decisions.id, Array.from({ length: 200 }, (_, i) => ({ title: `決定${i} ${'う'.repeat(250)}` })));
     for (const event of ['prompt', 'compact'] as const) {
-      const text = checklistReminder(event, book.lists(S), NONE)!;
+      const text = checklistReminder(event, book.lists(S))!;
       expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
       expect(text).toContain('## いまの状態 (state; 1 card)');
       expect(text).toContain('- #1 状態');
@@ -128,13 +127,13 @@ describe('知らせ', () => {
   it('「いまの状態」のカードが多くて収まらなければ、題名を切り、それでも収まらなければ古いカードを省いて、ツールで読むよう伝える', () => {
     // 題名を 120 文字に切れば収まる
     const long = withState(Array.from({ length: 30 }, (_, i) => ({ title: `状態${i + 1} ${'え'.repeat(290)}` })));
-    const cut = checklistReminder('prompt', long.book.lists(S), NONE)!;
+    const cut = checklistReminder('prompt', long.book.lists(S))!;
     expect(cut.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(cut).toContain(`- #30 状態30 ${'え'.repeat(120 - '状態30 '.length)}…`);
     expect(cut).not.toContain('older cards are not shown');
     // 題名を切っても収まらない
     const many = withState(Array.from({ length: 300 }, (_, i) => ({ title: `状態${i + 1} ${'お'.repeat(290)}` })));
-    const text = checklistReminder('prompt', many.book.lists(S), NONE)!;
+    const text = checklistReminder('prompt', many.book.lists(S))!;
     expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
     expect(text).toMatch(/\(\d+ older cards are not shown here; read them with checklist_overview\)/);
     expect(text).toContain('- #300 状態300');
@@ -143,14 +142,13 @@ describe('知らせ', () => {
     // 1 枚だけ省くとき
     const { book } = withState([{ title: 'あ' }]);
     const empty = book.createList(S, 'claude', '空の状態', '', 'state');
-    expect(checklistReminder('prompt', book.lists(S), NONE)).toContain(`## 空の状態 (state; 0 cards)\n(no cards)`);
+    expect(checklistReminder('prompt', book.lists(S))).toContain(`## 空の状態 (state; 0 cards)\n(no cards)`);
     expect(empty.cards).toHaveLength(0);
   });
 
-  it('ターンの終わりに止める文は、有効な決定の数に「いまの状態」のカードを数えない', () => {
+  it('ターンの終わりには、「いまの状態」があっても何も渡さない（次の発言で直させる）', () => {
     const { book } = withState();
-    const text = checklistReminder('stop', book.lists(S), { turn: 2, checklist: 0 })!;
-    expect(text).not.toContain('decisions in force');
+    expect(checklistReminder('stop', book.lists(S))).toBeNull();
   });
 });
 

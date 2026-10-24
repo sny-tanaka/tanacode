@@ -20,7 +20,7 @@ import {
   type ChecklistOp,
   type ListKind,
 } from '@shared/checklist';
-import { checklistReminder, type ReminderEvent, type TurnActivity } from '@shared/checklist-reminder';
+import { checklistReminder, missedTurn, type MissedTurns, type ReminderEvent, type TurnActivity } from '@shared/checklist-reminder';
 import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
@@ -70,6 +70,9 @@ export class ChecklistControl {
   // ターンの終わりのフックが読んだ会話ログが、最後の応答までそろっていなかったときに使う（reminder）
   private readonly usedAt = new Map<string, number>();
   private readonly promptedAt = new Map<string, number>();
+  // セッションごとの、チェックリストを直させそこねたターン（ターンの終わりのフックで数える。missedTurn）。次の発言の知らせで直させて、消す。
+  // アプリを終えると消える（そのときは、前のターンの分を頼まないだけ）
+  private readonly missed = new Map<string, MissedTurns>();
   // 保存しないことを結果に添えた、呼んだセッションと対象のセッションの組（\0 でつなぐ）。Claude が呼ぶたびに人へ伝え直さないよう、
   // 組ごとに最初の 1 回だけ添える（画面のチェックリストにも「保存できません」が出ている）
   private readonly unsavedNoted = new Set<string>();
@@ -146,6 +149,8 @@ export class ChecklistControl {
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return textResult('This session is not in tanacode.', true);
     this.usedAt.set(caller.id, Date.now());
+    // チェックリストに触れたら、前のターンの分も直したものとする（そのターンの終わりのフックは、触れたターンをアプリに聞かずに通すため）
+    this.missed.delete(caller.id);
     let result: ToolResult;
     try {
       result = textResult(this.runFor(caller, name, args));
@@ -199,8 +204,17 @@ export class ChecklistControl {
       const used = this.usedAt.get(caller.id);
       if (used !== undefined && used >= counts.since) checklist++;
     }
-    const activity = { turn, checklist };
-    return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
+    if (event === 'stop') {
+      // ターンの終わりには何も渡さない（続きを始めさせると、Remote Control で最後の応答が目印になる）。数えておいて、次の発言の知らせで直させる
+      if (missedTurn({ turn, checklist }, !!caller.parentId)) {
+        const missed = this.missed.get(caller.id) ?? { turns: 0, calls: 0 };
+        this.missed.set(caller.id, { turns: missed.turns + 1, calls: missed.calls + turn });
+      }
+      return '';
+    }
+    const missed = event === 'prompt' ? (this.missed.get(caller.id) ?? null) : null;
+    if (event === 'prompt') this.missed.delete(caller.id);
+    return checklistReminder(event, this.deps.store.lists(caller.id), missed) ?? '';
   }
 
   // 対象のセッション（session_id）を決めてから実行する。ほかのセッションのものは、結果と断る文の頭にセッションを書く

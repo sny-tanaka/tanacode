@@ -15,8 +15,8 @@ export const CHECKLIST_EVENT_TAG = 'tanacode-checklist-event';
 // アプリが足すフックが、今のチェックリストを Claude に渡すときの囲み（checklist-reminder.ts）
 export const CHECKLIST_REMINDER_TAG = 'tanacode-checklist-reminder';
 
-// ターンの終わりに知らせを受けた Claude が、直すものが無かったときに返す目印。チャットには出さない（chat.ts）。
-// 何も書かずに終えるよう頼んでも「チェックリストの変更はありません。」のような 1 行を書く（実測）ので、決まった文字を書かせて隠す
+// 前のバージョンのアプリが、ターンの終わりを止めたときに、直すものが無ければ Claude に返させていた目印（今は頼まない。checklist-reminder.ts の missedTurn）。
+// その頃の会話を開いたときのために、チャットには出さないまま残す（chat.ts・stream/partial.ts）
 export const CHECKLIST_UNCHANGED_MARK = '<tanacode-checklist-unchanged/>';
 
 type Schema = Record<string, unknown>;
@@ -285,8 +285,8 @@ export const CHECKLIST_MCP_INSTRUCTIONS = [
   '- Write judgments, questions and reports about a card in its thread with card_reply, not in the main chat. The user reads the threads when convenient and approves (checks) or corrects.',
   `- A message wrapped in <${CHECKLIST_EVENT_TAG}> is a notice that the user replied in the thread of a card, or that cards arrived from another session. Check it with card_get, act on it and reply with card_reply.`,
   '- The end of each tool result lists what the user changed since your previous call. Check whether your instructions changed.',
-  `- Text wrapped in <${CHECKLIST_REMINDER_TAG}> is added by tanacode itself, not by the user: when the user sends a message, when you are about to end a turn in which you used tools without touching the checklists, and after compaction. It shows the current state of the checklists. Follow it, and keep the lists true to the conversation: when the user changes the plan or corrects a decision recorded on a card, update the card as well as your reply.`,
-  `- At the end of a turn (and whenever a <${CHECKLIST_REMINDER_TAG}> stops you before you end one), make the lists true to the conversation: check the cards you finished; add the work that is left, including what you found in this turn (follow-ups, things to look into, things to confirm), even if the turn was only an investigation; if your reply asks the user to do something only they can do, add it to a list for the user so that it is not left only in the chat; record judgment calls on a list for review; record what was decided in this turn on the decisions list, if you have not yet. When a reminder stopped you, do not repeat your previous reply: after updating, end with one short line on what you changed, or, if nothing needed to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else (tanacode hides that reply from the user). Never write that mark otherwise.`,
+  `- Text wrapped in <${CHECKLIST_REMINDER_TAG}> is added by tanacode itself, not by the user: when the user sends a message and after compaction. It shows the current state of the checklists. Follow it, and keep the lists true to the conversation: when the user changes the plan or corrects a decision recorded on a card, update the card as well as your reply.`,
+  `- At the end of a turn, before your final reply, make the lists true to the conversation: check the cards you finished; add the work that is left, including what you found in this turn (follow-ups, things to look into, things to confirm), even if the turn was only an investigation; if your reply asks the user to do something only they can do, add it to a list for the user so that it is not left only in the chat; record judgment calls on a list for review; record what was decided in this turn on the decisions list, if you have not yet. When a <${CHECKLIST_REMINDER_TAG}> says that your previous turn ended without touching the checklists, do this for that turn first.`,
   "- You can read the checklists of other visible sessions, and in a parent, edit your children's; a child relies on its lists, so tell it with send_message when you change its plan.",
   '- Subagents you start (Agent tool) can use these tools on the same lists, but they do not get those reminders and do not know the plan. Keeping the lists up to date after a subagent returns is your job.',
   "- For the plan of a task, use these checklists rather than Claude Code's own to-dos (TaskCreate, TodoWrite): the user can see and edit them, and they survive compaction. Claude Code's to-dos are fine for short-lived sub-steps that only you need.",
