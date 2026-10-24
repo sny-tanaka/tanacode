@@ -163,8 +163,8 @@ export const ClaudePane = memo(function ClaudePane({
   const [pastes, setPastes] = useState<string[]>([]);
   // 作業の書き出しの確認を出している
   const [exporting, setExporting] = useState(false);
-  // 狭いときの「…」のメニュー（開いている位置）
-  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  // 狭いときの「…」のメニュー（開いている位置と、開いたボタン）
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
   const listRef = useRef<HTMLDivElement>(null);
@@ -809,16 +809,25 @@ export const ClaudePane = memo(function ClaudePane({
           aria-haspopup="menu"
           aria-expanded={moreMenu !== null}
           onClick={(e) => {
+            // 開いているときは、閉じるだけ
+            if (moreMenu) return setMoreMenu(null);
             const rect = e.currentTarget.getBoundingClientRect();
-            setMoreMenu({ x: rect.left, y: rect.bottom + 4 });
+            setMoreMenu({ x: rect.left, y: rect.bottom + 4, anchor: e.currentTarget });
           }}
         />
         {moreMenu && (
           <ContextMenu
             x={moreMenu.x}
             y={moreMenu.y}
-            items={extras.map((extra) => ({ label: extra.button.label, disabled: extra.button.disabled, onSelect: extra.button.onClick }))}
+            // 押せない項目には、ヘッダーのボタンのツールチップと同じ文（押せないわけ）を添える
+            items={extras.map((extra) => ({
+              label: extra.button.label,
+              disabled: extra.button.disabled,
+              tip: extra.button.disabled ? extra.button.tip : undefined,
+              onSelect: extra.button.onClick,
+            }))}
             onClose={closeMoreMenu}
+            anchor={moreMenu.anchor}
           />
         )}
         {!session.archived && (

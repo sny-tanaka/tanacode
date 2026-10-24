@@ -7015,7 +7015,8 @@ body.resizing-rows webview {
 /* アイコンだけのボタンの名前（TooltipLayer。ボタンに data-tip を付けると、ホバーで出る） */
 .tooltip {
   position: fixed;
-  z-index: 1000;
+  /* 右クリックのメニュー（.context-menu）の項目のツールチップも、メニューに隠れないよう、それより手前に出す */
+  z-index: 1001;
   max-width: 320px;
   padding: 4px 8px;
   border: 1px solid var(--border-strong);
