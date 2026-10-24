@@ -790,6 +790,17 @@ describe('ツールの実行（SessionsControl）', () => {
     host.set(CHILD, 'question');
     expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' }))).toContain('answer_question');
     expect(host.submitted).toHaveLength(3);
+    // 起動中・止まっている子には、next_step を効かせない（最初の指示を追い越さないよう、ターンの終わりに届く送り方で渡す）
+    for (const state of ['starting', 'exited'] as const) {
+      host.set(CHILD, state);
+      await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' });
+    }
+    expect(host.submitted).toHaveLength(5);
+    expect(host.nextSteps).toEqual([CHILD]);
+    // 手の空いた子には効かせる（差は出ないが、渡すまでに作業を始めていれば、そのターンに差し込まれる）
+    host.set(CHILD, 'idle');
+    await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' });
+    expect(host.nextSteps).toEqual([CHILD, CHILD]);
   });
 
   it('send_message: 自分の子にだけ。質問・許可の確認を待っている子には送らない。止まっている子は起動してから送る', async () => {

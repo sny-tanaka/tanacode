@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { PARENT_MESSAGE_TAG, sessionToolId } from '@shared/session-tools';
 import type { Block } from '../cli/mock-api';
@@ -8,8 +10,9 @@ import { E2EApp } from './app';
 // 既定（after_turn）なら、子のターンが終わってから、別のターンとして届く。
 // どちらでも、子のチャットでは「親からの指示」として 1 度だけ出て、順番待ちに残らない
 
-// 子が 1 つめのコマンドを実行している間に、親が指示を送る長さ
-const LONG_COMMAND_SECONDS = 6;
+// 子の 1 つめのコマンドは、印のファイルができるまで終わらない。親の send_message が結果（queued）を返したら、テストが印を書く
+// （時間で待たせると、CI が重いときに、親が送る前にコマンドが終わり、指示が 2 つめのコマンドのあとに入ってしまう）
+const RELEASE_FILE = 'send-next-step-release';
 
 describe.each([
   { deliver: 'next_step', mark: 'NEXT' },
@@ -24,6 +27,7 @@ describe.each([
   const CHILD_GOT = `${mark}: 指示を受け取りました`;
 
   let app: E2EApp;
+  const release = (): void => writeFileSync(join(app.work, `${RELEASE_FILE}-${mark}`), '');
   let child: string | null = null;
   // 子が 1 つめのコマンドを始めた（そのコマンドを返した）
   let longStarted = false;
@@ -45,7 +49,11 @@ describe.each([
         if (!child || !longStarted) return [{ type: 'tool_use', id: `toolu_list_${Date.now()}`, name: sessionToolId('list_sessions'), input: {} }];
         return [{ type: 'tool_use', id: 'toolu_send', name: sessionToolId('send_message'), input: { session_id: child, message: MESSAGE, deliver } }];
       }
-      if (result.includes('queued')) return [{ type: 'text', text: PARENT_SENT }];
+      if (result.includes('queued')) {
+        // 指示を子の Claude Code に渡し終えてから、子の 1 つめのコマンドを終わらせる
+        release();
+        return [{ type: 'text', text: PARENT_SENT }];
+      }
       return null;
     }
     // --- 子 ---
@@ -65,7 +73,7 @@ describe.each([
     }
     if (results.length === 0 && prompt.includes(CHILD)) {
       longStarted = true;
-      return [{ type: 'tool_use', id: 'toolu_one', name: 'Bash', input: { command: `sleep ${LONG_COMMAND_SECONDS} && echo ${mark}-one`, description: '1 つめのコマンド' } }];
+      return [{ type: 'tool_use', id: 'toolu_one', name: 'Bash', input: { command: `while [ ! -f ${RELEASE_FILE}-${mark} ]; do sleep 0.1; done; echo ${mark}-one`, description: '1 つめのコマンド' } }];
     }
     return null;
   };
@@ -80,6 +88,8 @@ describe.each([
   });
 
   afterAll(async () => {
+    // 落ちたときも、子のコマンドを待たせたままにしない
+    if (app) release();
     await app?.close();
   });
 

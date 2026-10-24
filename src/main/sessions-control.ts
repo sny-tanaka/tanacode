@@ -575,9 +575,10 @@ export class SessionsControl {
     const message = stringArg(args.message);
     if (!message) throw new ToolError('message (the instruction to send) is empty.');
     if (args.deliver !== undefined && args.deliver !== 'after_turn' && args.deliver !== 'next_step') throw new ToolError('Pass deliver as "after_turn" or "next_step".');
-    // next_step: 作業中の子の今のターンの、次のツールの切れ目に差し込む（priority を付けずに渡す。人がチャットに打った発言と同じ）
-    const nextStep = args.deliver === 'next_step';
     const state = host.stateOf(child.id);
+    // next_step: 作業中の子の今のターンの、次のツールの切れ目に差し込む（priority を付けずに渡す。人がチャットに打った発言と同じ）。
+    // 起動中・止まっている子では得が無く、最初の指示（priority: later）を追い越すおそれがあるので、効かせない
+    const nextStep = args.deliver === 'next_step' && (state === 'working' || state === 'idle' || state === 'background');
     const who = `"${nameOf(child)}"`;
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
     if (state === 'question') {
@@ -608,7 +609,7 @@ export class SessionsControl {
     // （親の指示で、子の進めている作業を途中で変えさせない）。next_step は priority を付けずに渡し、次のツールの切れ目に差し込まれる
     if (state === 'exited') await host.open(child.id);
     // 送る前にアプリを終えても、次のアプリが子を引き継いだら（止まっている子は、次に起動したら）送る（keep）
-    // 送れなかったこと（子の手が空かない・人がターミナルモードに切り替えたなど）は、理由を添えて親に知らせる（親は、送られるものとして待っている）
+    // 送れなかったこと（子の起動が終わらない・人がターミナルモードに切り替えたなど）は、理由を添えて親に知らせる（親は、送られるものとして待っている）
     void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS, { keep: true, nextStep }).catch((error: unknown) => {
       console.error('子セッションに指示を送れませんでした', error);
       // 終えた子・一覧から消えた子には、もう送れないので知らせない

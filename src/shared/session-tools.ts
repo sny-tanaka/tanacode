@@ -174,7 +174,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
           type: 'string',
           enum: ['after_turn', 'next_step'],
           description:
-            'When it reaches a working child. after_turn (default): after the current work finishes. next_step: at the next break between tool calls (after a long tool call such as a build ends; when the current work finishes if no more tool calls come)',
+            'When it reaches a working child. after_turn (default): after the current work finishes. next_step: at the next break between tool calls (after a long tool call such as a build ends; when the current work finishes if no more tool calls come). Has no effect on a child that is starting up or stopped.',
         },
       },
       required: ['session_id', 'message'],

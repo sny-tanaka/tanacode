@@ -205,6 +205,18 @@ describe('submit', () => {
     expect(app.manager.queuedMessages(id)).toEqual([{ parent: parent.id, text: 'ターンの終わりに', held: false, shown: true }]);
   });
 
+  it('nextStep でも、送る時にターンが開いていなければ priority: later で送る（順番待ちの最初の指示を追い越さない）', async () => {
+    const parent = app.create();
+    const { id, pipe } = app.create({ mode: 'manual' }, parent.id);
+    const sending = Promise.all([
+      app.manager.submitWhenReady(id, { parent: parent.id, body: '最初の指示', setupNote: true }, 1000, { keep: true }),
+      app.manager.submitWhenReady(id, parentMessageText(parent.id, '続きの指示'), 1000, { keep: true, nextStep: true }),
+    ]);
+    await app.ready(id);
+    await sending;
+    expect(pipe.prompts.map((p) => p.priority)).toEqual(['later', 'later']);
+  });
+
   it('人が書いた予約の送信（時刻になると、手が空くのを待たずに priority: later で渡す）は、作業中なら順番待ちに出す。Claude の予約は出さない', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
