@@ -3,7 +3,7 @@ import { normalizeHostPattern } from '@shared/browser-tools';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { BrowserHostsDialog } from './BrowserHostsDialog';
 
-// アプリ内ブラウザで Claude に許す先（メニューの「アプリ内ブラウザで Claude に許す先…」から開く）。
+// アプリ内ブラウザで Claude に許す先（メニューの「MCP → アプリ内ブラウザで Claude に許す先…」から開く）。
 // 追加・削除は、ストーリーの中の一覧に反映される（main の代わりに返事を決めている）
 
 const noop = () => {};

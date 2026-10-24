@@ -369,7 +369,7 @@ describe('使えないとき', () => {
     expect(auto.preCompact(ID)).toBe('');
   });
 
-  it('「Claude にチェックリストを扱わせる」がオフ・チェックリストの MCP が無いセッションでは、始めない・止めない', () => {
+  it('「MCP → チェックリスト」がオフ・チェックリストの MCP が無いセッションでは、始めない・止めない', () => {
     unavailable = 'checklist-off';
     turn(95);
     expect(started).toEqual([]);

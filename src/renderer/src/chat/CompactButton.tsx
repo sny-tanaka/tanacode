@@ -16,6 +16,9 @@ const UNAVAILABLE_TEXT = {
   'no-checklist': 'chat.pane.compactUnavailable.noChecklist',
 } as const satisfies Record<CompactUnavailable, string>;
 
+// 使えない理由。メニューの項目の名前は、メニューと同じ文言（main.menu.*）を差し込む
+const unavailableText = (unavailable: CompactUnavailable) => t(UNAVAILABLE_TEXT[unavailable], { mcp: t('main.menu.mcp'), item: t('main.menu.checklistControl') });
+
 const FAILURE_TEXT = {
   interrupted: 'chat.pane.compactFailure.interrupted',
   prompted: 'chat.pane.compactFailure.prompted',
@@ -51,7 +54,7 @@ export function useCompactStatus(sessionId: string | null): CompactStatus {
 // チャットのヘッダーの「最適化圧縮」。1 つの枠に、今すぐ始めるボタン（左のアイコン）と、自動で始めるかのスイッチ（右）をまとめる。
 // - ボタン: 押すと、Claude が続きに要ることをチェックリストに書き、アプリが会話を消して、チェックリストから再開させる
 // - スイッチ: コンテキストが設定の大きさを超えたら、最適化圧縮を自動で始めるか（セッションごと）
-// 使えないとき（「Claude にチェックリストを扱わせる」がオフなど）は、どちらも押せず、同じ理由を出す。
+// 使えないとき（「MCP → チェックリスト」がオフなど）は、どちらも押せず、同じ理由を出す。
 // canStart: 始められる（待機中で、確認の画面が出ていない）/ status: main から届く状態（段階・取りやめた理由・始める大きさ・使えない理由）/
 // auto: このセッションで「自動」がオンか
 export function CompactButton({
@@ -73,7 +76,7 @@ export function CompactButton({
   useEffect(() => {
     if (!failure) setDismissed(null);
   }, [failure]);
-  const tip = phase ? t(PHASE_TEXT[phase]) : unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.optimizedCompactTip');
+  const tip = phase ? t(PHASE_TEXT[phase]) : unavailable ? unavailableText(unavailable) : t('chat.pane.optimizedCompactTip');
   const shownFailure = !phase && failure && failure !== dismissed ? failure : null;
   const autoOn = auto && !unavailable;
 
@@ -103,7 +106,7 @@ export function CompactButton({
           name={t('chat.pane.autoCompactName')}
           on={autoOn}
           disabled={!!unavailable}
-          title={unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.autoCompactTip', { percent: autoPercent })}
+          title={unavailable ? unavailableText(unavailable) : t('chat.pane.autoCompactTip', { percent: autoPercent })}
           onChange={onAutoChange}
         />
       </div>

@@ -144,7 +144,7 @@ describe('読む', () => {
     expect(textOf(await control.handle(ME, 'read_terminal', { id: 'shell-999' }))).toContain('No terminal shell-999');
     expect(textOf(await control.handle('44444444-0000-4000-8000-000000000004', 'list_terminals', {}))).toBe('This session is not in tanacode.');
     enabled = false;
-    expect(textOf(await control.handle(ME, 'list_terminals', {}))).toBe('The user has turned off "Claude にターミナルを使わせる" in the tanacode menu.');
+    expect(textOf(await control.handle(ME, 'list_terminals', {}))).toBe('The user has turned off "ターミナル" under tanacode > MCP.');
   });
 });
 
