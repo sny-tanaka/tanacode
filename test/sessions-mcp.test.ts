@@ -91,7 +91,7 @@ describe('中継と起動の引数', () => {
     const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string>; timeout?: number }> };
     expect(Object.keys(config.mcpServers)).toEqual(['tanacode-browser', 'tanacode-sessions']);
     expect(config.mcpServers['tanacode-sessions'].env).toMatchObject({ TANACODE_SESSIONS_SOCKET: '/u/x.sock', TANACODE_SESSIONS_SESSION: 's1' });
-    // 子を待つ（最大 10 分）ので、Claude Code がツールの呼び出しを待つ上限を、サーバーごとに長くする
+    // 時間のかかるツール（end_session の worktree の削除など）があるので、Claude Code がツールの呼び出しを待つ上限を、サーバーごとに長くする
     expect(config.mcpServers['tanacode-sessions'].timeout).toBeGreaterThan(600_000);
     expect(config.mcpServers['tanacode-browser'].timeout).toBeUndefined();
     expect(args[args.indexOf('--allowedTools') + 1].split(',')).toEqual([...allowedBrowserToolIds(), ...allowedSessionToolIds()]);
@@ -435,6 +435,9 @@ class FakeHost implements SessionsHost {
   // チャットとターミナルモードを切り替えている途中のセッション
   switching = new Set<string>();
   switchingTerminal = (id: string) => this.switching.has(id);
+  // まだ会話に入っていない、送る発言（試験で入れる）
+  queued = new Map<string, { parent: string | null; text: string; held: boolean; shown: boolean }[]>();
+  queuedMessages = (id: string) => this.queued.get(id) ?? [];
   // 止めるターンが開いていないセッション（ターンの合間。中断は送るが、止めるものが無い）
   betweenTurns = new Set<string>();
   interrupt = (id: string) => {
@@ -1702,6 +1705,83 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.stateOf(CHILD)).toBe(state);
     });
 
+    // 起動中の時間は、差し替えた時計で数える（実際の時間に頼らない）
+    const clocked = () => {
+      let now = 1_000_000;
+      const clock = { advance: (ms: number) => void (now += ms) };
+      const control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, now: () => now });
+      return { control, clock };
+    };
+
+    it('起動中の子は、起動中になってから 5 分が過ぎるまで断り、過ぎたら止めて片付ける（worktree を残すときも、準備のシェルを止める）', async () => {
+      const { control: stuck, clock } = clocked();
+      host.set(CHILD, 'starting');
+      host.leftovers = leftovers();
+      clock.advance(90_000);
+      const early = await stuck.handle(PARENT, 'end_session', { session_id: CHILD });
+      expect(early.isError).toBe(true);
+      expect(textOf(early)).toContain('is still starting up (starting for 2 minutes so far)');
+      expect(textOf(early)).toContain('If it is still starting 4 minutes from now (its start is stuck), end_session ends it.');
+      expect(host.archives).toEqual([]);
+      // stop_session は止めるものが無いので、end_session を勧める
+      expect(jsonOf<{ note: string }>(await stuck.handle(PARENT, 'stop_session', { session_id: CHILD })).note).toContain('end it with end_session');
+      clock.advance(210_000);
+      const ended = jsonOf<{ archived: boolean; note: string }>(await stuck.handle(PARENT, 'end_session', { session_id: CHILD, remove_worktree: false }));
+      expect(ended.archived).toBe(true);
+      expect(ended.note).toContain('its start seemed stuck');
+      expect(ended.note).toContain('anything tanacode was running to set it up');
+      expect(host.archives).toEqual([{ id: CHILD, options: { removeWorktree: false, stopSetup: true } }]);
+      stuck.dispose();
+    });
+
+    it('worktree の依存の install の間は、ふつうの install を止めないよう、最初の指示を待つ上限（30 分）まで断る', async () => {
+      const { control: stuck, clock } = clocked();
+      host.sessions.find((s) => s.id === CHILD)!.worktree!.preparing = 'installing';
+      host.set(CHILD, 'starting');
+      clock.advance(10 * 60_000);
+      const result = await stuck.handle(PARENT, 'end_session', { session_id: CHILD });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('is still installing the dependencies of its worktree (starting for 10 minutes so far)');
+      expect(textOf(result)).toContain('20 minutes from now');
+      clock.advance(20 * 60_000);
+      expect(jsonOf(await stuck.handle(PARENT, 'end_session', { session_id: CHILD }))).toMatchObject({ archived: true });
+      stuck.dispose();
+    });
+
+    it('起動中の時間は、起動中になるたびに数え直す（一度手が空いた子が、また起動中になったとき）', async () => {
+      const { control: stuck, clock } = clocked();
+      host.set(CHILD, 'starting');
+      clock.advance(6 * 60_000);
+      host.set(CHILD, 'idle');
+      host.set(CHILD, 'starting');
+      expect((await stuck.handle(PARENT, 'end_session', { session_id: CHILD })).isError).toBe(true);
+      expect(host.archives).toEqual([]);
+      stuck.dispose();
+    });
+
+    it('終えるときは、先に溜まっていたその子の知らせ（預かった指示・最初の指示を送れなかった知らせも）を取り下げる', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { control: quiet } = clocked();
+      // 親が作業中なので、知らせは溜まったまま
+      host.set(PARENT, 'working');
+      host.set(CHILD, 'working');
+      const submit = host.submitWhenReady;
+      host.submitWhenReady = async (id: string, text: WaitingText) => {
+        if (id === CHILD) throw new SendError('busy');
+        return submit(id, text);
+      };
+      await quiet.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' });
+      await new Promise((r) => setTimeout(r, 30));
+      host.submitWhenReady = submit;
+      host.set(CHILD, 'idle');
+      expect(jsonOf(await quiet.handle(PARENT, 'end_session', { session_id: CHILD }))).toMatchObject({ archived: true });
+      host.set(PARENT, 'idle');
+      await new Promise((r) => setTimeout(r, 60));
+      expect(host.submitted).toEqual([]);
+      quiet.dispose();
+      errors.mockRestore();
+    });
+
     it('残っているものを調べている間に子が動き出したら、終えない', async () => {
       host.set(CHILD, 'idle');
       host.worktreeLeftovers = async () => {
@@ -1796,6 +1876,115 @@ describe('ツールの実行（SessionsControl）', () => {
   it('wait_sessions: 時間が過ぎたら、そのときの状態を返す', async () => {
     const result = jsonOf<{ timed_out: boolean }>(await control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], timeout_seconds: 1 }));
     expect(result.timed_out).toBe(true);
+  });
+
+  it('wait_sessions: 待っている間は人の発言が届かないので、既定は 30 秒、長く指定しても 60 秒で返す（説明も同じ）', async () => {
+    const tool = SESSIONS_MCP.tools.find((tool) => tool.name === 'wait_sessions')!;
+    const timeout = (tool.inputSchema as unknown as { properties: { timeout_seconds: { maximum: number; description: string } } }).properties.timeout_seconds;
+    expect(timeout.maximum).toBe(60);
+    expect(timeout.description).toContain('default 30');
+    expect(tool.description).toContain('30 seconds by default, at most 60');
+    // start_session の説明は、wait_sessions で結果を待てとは書かない（同期的に待つなと書いているので）
+    expect(SESSIONS_MCP.tools.find((tool) => tool.name === 'start_session')!.description).not.toContain("wait for a child's result with wait_sessions");
+    vi.useFakeTimers();
+    try {
+      const returned = async (args: Record<string, unknown>, ms: number) => {
+        let done = false;
+        const waiting = control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], ...args }).then((r) => ((done = true), r));
+        await vi.advanceTimersByTimeAsync(ms - 1000);
+        const early = done;
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(jsonOf<{ timed_out: boolean }>(await waiting).timed_out).toBe(true);
+        return !early;
+      };
+      expect(await returned({}, 30_000)).toBe(true);
+      expect(await returned({ timeout_seconds: 600 }, 60_000)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('get_session・read_session: 長い最後の応答', () => {
+    const long = `はじめ${'あ'.repeat(10_000)}肝心な結論${'い'.repeat(10_000)}おわり`;
+    beforeEach(() => {
+      host.set(CHILD, 'idle');
+      host.events.set(CHILD, [
+        { type: 'user', id: '1', text: '調べて', parent: PARENT },
+        { type: 'assistant-text', id: '2', text: long },
+      ]);
+    });
+    type Status = { last_response: string; last_response_truncated?: { total_chars: number; shown_chars: number } };
+
+    it('get_session: 既定では 4000 文字で真ん中を切り、切ったことと全文の長さを返す。max_response_chars で全文を読める', async () => {
+      const clipped = jsonOf<Status>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      expect(clipped.last_response).not.toContain('肝心な結論');
+      expect(clipped.last_response).toContain('characters omitted');
+      expect(clipped.last_response_truncated).toEqual({ total_chars: long.length, shown_chars: 4000 });
+      const full = jsonOf<Status>(await control.handle(PARENT, 'get_session', { session_id: CHILD, max_response_chars: 50_000 }));
+      expect(full.last_response).toBe(long);
+      expect(full).not.toHaveProperty('last_response_truncated');
+      // 上限より大きい値は上限に、既定より小さい値は既定にする
+      const capped = jsonOf<Status>(await control.handle(PARENT, 'get_session', { session_id: CHILD, max_response_chars: 10 }));
+      expect(capped.last_response_truncated?.shown_chars).toBe(4000);
+    });
+
+    it('get_session: 結果の全体は 60,000 文字に収める（応答を短くし、切ったことを返す）', async () => {
+      const huge = 'う'.repeat(70_000);
+      host.events.set(CHILD, [
+        { type: 'user', id: '1', text: '調べて', parent: PARENT },
+        { type: 'assistant-text', id: '2', text: huge },
+      ]);
+      const result = await control.handle(PARENT, 'get_session', { session_id: CHILD, max_response_chars: 50_000 });
+      expect(textOf(result).length).toBeLessThanOrEqual(60_000);
+      const status = jsonOf<Status>(result);
+      expect(status.last_response_truncated?.total_chars).toBe(70_000);
+      expect(status.last_response_truncated!.shown_chars).toBeLessThanOrEqual(50_000);
+      expect(status.last_response_truncated!.shown_chars).toBeGreaterThan(40_000);
+    });
+
+    it('read_session: 最後の応答を切ったら、全文の読み方を添える。max_response_chars で全文を読める', async () => {
+      const clipped = textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD }));
+      expect(clipped).not.toContain('肝心な結論');
+      expect(clipped).toContain(`This response is ${long.length} characters long and was cut in the middle`);
+      expect(clipped).toContain(`max_response_chars: ${long.length}`);
+      const full = textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD, turns: 1, max_response_chars: 50_000 }));
+      expect(full).toContain(long);
+      expect(full).not.toContain('was cut in the middle');
+    });
+  });
+
+  it('get_session: まだ子に届いていない指示を、だれのものか・預かり中か順番待ちかと、冒頭だけ返す（無ければ出さない）', async () => {
+    host.set(CHILD, 'working');
+    expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).not.toHaveProperty('queued_messages');
+    host.queued.set(CHILD, [
+      { parent: PARENT, text: 'テストも直して', held: false, shown: true },
+      { parent: null, text: '人の指示', held: false, shown: true },
+      { parent: PARENT, text: `続けて${'x'.repeat(500)}`, held: true, shown: true },
+      { parent: SIBLING, text: '兄弟から', held: true, shown: true },
+      { parent: null, text: '<tanacode-wakeup>見に行く</tanacode-wakeup>', held: true, shown: false },
+    ]);
+    const status = jsonOf<{ queued_messages: { from: string; state: string; text: string }[] }>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+    expect(status.queued_messages.map((m) => [m.from, m.state])).toEqual([
+      ['you', 'queued'],
+      ['human', 'queued'],
+      ['you', 'held'],
+      ['session', 'held'],
+      ['tanacode', 'held'],
+    ]);
+    expect(status.queued_messages[0].text).toBe('テストも直して');
+    expect(status.queued_messages[2].text).toBe(`続けて${'x'.repeat(197)}…`);
+    // wait_sessions で返す子の状態にも入る
+    host.set(CHILD, 'idle');
+    expect(jsonOf<{ sessions: { queued_messages?: unknown[] }[] }>(await control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD] })).sessions[0].queued_messages).toHaveLength(5);
+  });
+
+  it('send_message: 預かったときは、届くまで get_session の queued_messages に出ることと、送れなければ知らせが来ることを返す', async () => {
+    host.set(CHILD, 'working');
+    expect(jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' })).note).toContain('queued_messages');
+    host.set(CHILD, 'starting');
+    const note = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' })).note;
+    expect(note).toContain('starting up');
+    expect(note).toContain('a notice tells you why');
   });
 
   it('wait_sessions: バックグラウンドのタスクの完了待ちの子は、ターンが終わっているので手が空いたとみなす', async () => {
@@ -1902,8 +2091,59 @@ describe('ツールの実行（SessionsControl）', () => {
       jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true }));
       await settle();
       expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
-      expect(host.submitted[0].text).toContain('最初の指示を送れませんでした');
+      // 親が送り直せるよう、指示の文も添える
+      expect(host.submitted[0].text).toContain('最初の指示「x」を送れませんでした');
       expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: ['88888888-0000-4000-8000-000000000008'] });
+      errors.mockRestore();
+    });
+
+    it('send_message で預かった指示を送れなかったら（子の手が空かない・ターミナルモードになった）、指示の冒頭と理由を添えて親に知らせる', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const submit = host.submitWhenReady;
+      let refuse: (() => void) | null = null;
+      host.submitWhenReady = async (id: string, text: WaitingText) => {
+        if (id === CHILD) return new Promise<void>((_resolve, reject) => (refuse = () => reject(new SendError('terminalMode'))));
+        return submit(id, text);
+      };
+      host.set(CHILD, 'working');
+      expect(jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'テストも\n直してください' })).note).toContain('queued');
+      // 親が状態を読んだあとでも、送れなかったことは子の状態からは分からないので知らせる
+      await control.handle(PARENT, 'get_session', { session_id: CHILD });
+      refuse!();
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+      expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: [CHILD] });
+      expect(host.submitted[0].text).toContain('預けていた指示「テストも 直してください」を送れませんでした');
+      expect(host.submitted[0].text).toContain(t('main.send.terminalMode'));
+      expect(errors).toHaveBeenCalledWith('子セッションに指示を送れませんでした', expect.any(SendError));
+      errors.mockRestore();
+    });
+
+    it('親が end_session で終えた子への、預かっていた指示（起動中の子への最初の指示など）が送れなくなっても、知らせない', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const stuck = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, stuckStartingMs: 0 });
+      const submit = host.submitWhenReady;
+      const refusals: (() => void)[] = [];
+      host.submitWhenReady = async (id: string, text: WaitingText) => {
+        if (id !== PARENT) return new Promise<void>((_resolve, reject) => void refusals.push(() => reject(new SendError('exited'))));
+        return submit(id, text);
+      };
+      const started = jsonOf<{ session_id: string }>(await stuck.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }));
+      await stuck.handle(PARENT, 'send_message', { session_id: started.session_id, message: '続けて' });
+      expect(jsonOf(await stuck.handle(PARENT, 'end_session', { session_id: started.session_id }))).toMatchObject({ archived: true });
+      for (const refuse of refusals) refuse();
+      await settle();
+      expect(refusals).toHaveLength(2);
+      expect(host.submitted).toEqual([]);
+      // 人がアーカイブから戻した子への指示を送れなかったときは、また知らせる
+      host.sessions.find((s) => s.id === started.session_id)!.archived = false;
+      host.set(started.session_id, 'working');
+      await stuck.handle(PARENT, 'send_message', { session_id: started.session_id, message: '戻したあとの指示' });
+      refusals.at(-1)!();
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+      expect(host.submitted[0].text).toContain('戻したあとの指示');
+      stuck.dispose();
       errors.mockRestore();
     });
 
@@ -3194,11 +3434,11 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toEqual({
         session_id: CHILD,
         state: 'working',
-        note: 'The child is working, so the instruction will be sent as soon as it finishes its current work (queued).',
+        note: expect.stringMatching(/^The child is working, so the instruction will be sent as soon as it finishes its current work \(queued\)\. Until the child receives it, get_session shows it in queued_messages/),
       });
       expect(host.opened).toEqual([]);
       host.set(CHILD, 'exited');
-      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' })).note).toBe('Restarted the child. The instruction will be sent as soon as it has started.');
+      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' })).note).toMatch(/^Restarted the child. The instruction will be sent as soon as it has started. Until/);
       expect(host.opened).toEqual([CHILD]);
     });
 

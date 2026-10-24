@@ -513,6 +513,8 @@
       "scheduledByUser": "人が予約したメッセージ",
       "scheduledLate": "時刻を過ぎていました。そのときアプリが動いていなかったなど",
       "childFirstPromptFailed": "子セッション「{name}」（{id}）に、最初の指示を送れませんでした（{reason}）。get_session で確かめて、send_message で送り直してください。",
+      "childFirstPromptFailedWith": "子セッション「{name}」（{id}）に、最初の指示「{message}」を送れませんでした（{reason}）。子はこの指示を受け取っていません。get_session で確かめて、send_message で送り直してください。",
+      "childMessageFailed": "子セッション「{name}」（{id}）に、預けていた指示「{message}」を送れませんでした（{reason}）。子はこの指示を受け取っていません。get_session で確かめて、必要なら send_message で送り直してください。",
       "setupNote": "（tanacode からの注記: この worktree の準備で、{problems}。依存のパッケージが足りないかもしれません。）",
       "setupNotCopied": "{dir} の node_modules を複製できず、入れてもいません",
       "checkSessions": "get_session で確かめてください。",

@@ -518,6 +518,8 @@
       "scheduledByUser": "the message the user scheduled",
       "scheduledLate": "the time had passed, for example because tanacode was not running then",
       "childFirstPromptFailed": "Couldn't send the first instruction to child session “{name}” ({id}) ({reason}). Check it with get_session, and send it again with send_message.",
+      "childFirstPromptFailedWith": "Couldn't send the first instruction “{message}” to child session “{name}” ({id}) ({reason}). The child has not received it. Check it with get_session, and send it again with send_message.",
+      "childMessageFailed": "Couldn't send the queued instruction “{message}” to child session “{name}” ({id}) ({reason}). The child has not received it. Check it with get_session, and send it again with send_message if needed.",
       "setupNote": "(Note from tanacode: while setting up this worktree, {problems}. Some dependencies may be missing.)",
       "setupNotCopied": "node_modules in {dir} could not be copied and was not installed",
       "checkSessions": "Check it with get_session.",

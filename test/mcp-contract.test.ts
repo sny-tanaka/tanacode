@@ -217,6 +217,7 @@ function fakeHost(cwd: string): SessionsHost {
     open: async () => {},
     submitWhenReady: async () => {},
     switchingTerminal: () => false,
+    queuedMessages: () => [],
     worktreeSetup: () => null,
     interrupt: () => true,
     unseenTurnPrompt: () => null,

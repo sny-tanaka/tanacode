@@ -342,7 +342,8 @@ export type WorktreePr =
   | { state: 'unknown' };
 
 // アーカイブ・一覧からの削除のときの指定。removeWorktree: worktree のセッションなら、worktree も消す
-export type ArchiveOptions = { removeWorktree: boolean };
+// stopSetup: worktree を残すときも、そのセッションのために動かしているシェル（worktree の依存の install など）を止める（起動中の子を end_session で終えるとき）
+export type ArchiveOptions = { removeWorktree: boolean; stopSetup?: boolean };
 // worktree を消した結果。backupRef: 未コミットの変更の控え（無ければ null）/ branchKept: 手元にしか無いコミットがあり、ブランチを残した
 export type WorktreeRemoval = { backupRef: string | null; branch: string; branchKept: boolean };
 
