@@ -182,6 +182,29 @@ describe('submit', () => {
     expect(queue(id)).toEqual([{ id: uuid, text: 'テストも直して', pastes: [], images: 0, state: 'queued', parent: parent.id }]);
   });
 
+  it('親の指示を nextStep で渡すと priority を付けず（次のツールの切れ目に差し込まれる）、既定は priority: later で渡す', async () => {
+    const parent = app.create();
+    const { id, pipe } = app.create({ mode: 'manual' }, parent.id);
+    await app.ready(id);
+    app.say(id, line.user('はじめ'), line.text('考えています'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    await app.manager.submitWhenReady(id, parentMessageText(parent.id, 'ターンの終わりに'), 1000, { keep: true });
+    await app.manager.submitWhenReady(id, parentMessageText(parent.id, '途中で直して'), 1000, { keep: true, nextStep: true });
+    expect(pipe.prompts[0]).toMatchObject({ priority: 'later' });
+    expect(pipe.prompts[1]).not.toHaveProperty('priority');
+    // 差し込まれると、会話ログに attachment の queued_command（source_uuid は送った uuid）として 1 度だけ書かれる（実測 2.1.301）。
+    // 子のチャットでは、囲みを外した本文が親からの指示として 1 つだけ出て、送信中・順番待ちから外れる
+    const uuid = pipe.prompts[1].uuid;
+    pipe.emit(stream.lifecycle(uuid, 'queued'));
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    const prompt = [{ type: 'text', text: parentMessageText(parent.id, '途中で直して') }];
+    app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt, commandMode: 'prompt', source_uuid: uuid } });
+    await app.waitFor('会話に出た', () => queue(id).length === 1);
+    expect(queue(id)[0].text).toBe('ターンの終わりに');
+    expect(app.events(id).filter((e) => e.type === 'user' && e.text === '途中で直して')).toEqual([expect.objectContaining({ id: uuid, parent: parent.id })]);
+    expect(app.manager.queuedMessages(id)).toEqual([{ parent: parent.id, text: 'ターンの終わりに', held: false, shown: true }]);
+  });
+
   it('人が書いた予約の送信（時刻になると、手が空くのを待たずに priority: later で渡す）は、作業中なら順番待ちに出す。Claude の予約は出さない', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

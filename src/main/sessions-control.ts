@@ -83,9 +83,10 @@ export type SessionsHost = {
   // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
   configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
-  // 手が空いたら送る（待ち始めた順に）。子への最初の指示（{ parent, body, setupNote }）は、送る直前に worktree の準備の結果を添える。
-  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら送り直す
-  submitWhenReady(id: string, text: WaitingText, timeoutMs: number, options?: { keep?: boolean }): Promise<void>;
+  // 起動が終わったら送る（待ち始めた順に）。子への最初の指示（{ parent, body, setupNote }）は、送る直前に worktree の準備の結果を添える。
+  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら送り直す /
+  // nextStep: 作業中なら、ターンの終わりを待たずに、次のツールの切れ目に差し込む（省くと、ターンが終わってから届く）
+  submitWhenReady(id: string, text: WaitingText, timeoutMs: number, options?: { keep?: boolean; nextStep?: boolean }): Promise<void>;
   // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
   switchingTerminal(id: string): boolean;
   // まだ会話に入っていない、送る発言（送った順）。held: アプリが預かっている（まだ Claude Code に渡していない）/ parent: 親の指示なら親の ID /
@@ -198,7 +199,10 @@ const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try 
 const MAX_FAILED_MESSAGE_CHARS = 300;
 // send_message で預かった指示の、届くまでの確かめ方と、送れなかったとき
 const QUEUED_NOTE =
-  'Until the child receives it, get_session shows it in queued_messages, so do not send it again. If it cannot be sent (for example, the child does not become free in time or the user switches it to terminal mode), a notice tells you why.';
+  'Until it reaches the conversation of the child, get_session shows it in queued_messages, so do not send it again. If it cannot be sent (for example, the child does not finish starting up in time or the user switches it to terminal mode), a notice tells you why.';
+// send_message の deliver が next_step のときの、作業中の子に届く時
+const NEXT_STEP_NOTE =
+  'It arrives at the next break between tool calls in the current work of the child, without waiting for that work to finish. If a long tool call (a build, for example) is running, it arrives when that call ends; if the child makes no more tool calls, it arrives when the current work finishes.';
 // list_sessions で返す、セッションを始められるフォルダの数の上限
 const MAX_START_FOLDERS = 30;
 
@@ -570,6 +574,9 @@ export class SessionsControl {
     const child = this.resolve(caller, args.session_id, true);
     const message = stringArg(args.message);
     if (!message) throw new ToolError('message (the instruction to send) is empty.');
+    if (args.deliver !== undefined && args.deliver !== 'after_turn' && args.deliver !== 'next_step') throw new ToolError('Pass deliver as "after_turn" or "next_step".');
+    // next_step: 作業中の子の今のターンの、次のツールの切れ目に差し込む（priority を付けずに渡す。人がチャットに打った発言と同じ）
+    const nextStep = args.deliver === 'next_step';
     const state = host.stateOf(child.id);
     const who = `"${nameOf(child)}"`;
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
@@ -591,17 +598,18 @@ export class SessionsControl {
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ。送れなかった理由は、画面の言語の文でなく英語で返す
     if (state === 'idle' || state === 'background') {
-      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS).catch((error: unknown) => {
+      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS, { nextStep }).catch((error: unknown) => {
         throw error instanceof SendError ? new ToolError(`${who}: the message was not sent because ${SEND_FAILURE[error.reason]}. Check it with get_session, and send it again if needed.`) : error;
       });
       return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Sent.' });
     }
-    // 作業中・起動中・止まっている子は、手が空くまでアプリが預かってから打つ（作業中に打つと、そのあいだに出た許可の確認で、
-    // Enter や数字が選択になってしまうことがあるため）。待たずに返す
+    // 作業中・起動中・止まっている子にも、待たずに返す。起動中・止まっている子には、起動が終わるまでアプリが預かってから渡す。
+    // 作業中の子には、すぐ渡す。既定（after_turn）は priority: later で渡し、Claude Code が今のターンの終わりまで順番待ちにする
+    // （親の指示で、子の進めている作業を途中で変えさせない）。next_step は priority を付けずに渡し、次のツールの切れ目に差し込まれる
     if (state === 'exited') await host.open(child.id);
     // 送る前にアプリを終えても、次のアプリが子を引き継いだら（止まっている子は、次に起動したら）送る（keep）
     // 送れなかったこと（子の手が空かない・人がターミナルモードに切り替えたなど）は、理由を添えて親に知らせる（親は、送られるものとして待っている）
-    void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS, { keep: true }).catch((error: unknown) => {
+    void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS, { keep: true, nextStep }).catch((error: unknown) => {
       console.error('子セッションに指示を送れませんでした', error);
       // 終えた子・一覧から消えた子には、もう送れないので知らせない
       if (this.ended.has(child.id) || !this.summary(child.id)) return;
@@ -616,7 +624,9 @@ export class SessionsControl {
           ? `Restarted the child. The instruction will be sent as soon as it has started. ${QUEUED_NOTE}`
           : state === 'starting'
             ? `The child is starting up, so the instruction will be sent as soon as it has started (queued). ${QUEUED_NOTE}`
-            : `The child is working, so the instruction will be sent as soon as it finishes its current work (queued). ${QUEUED_NOTE}`,
+            : nextStep
+              ? `The child is working, so the instruction was queued. ${NEXT_STEP_NOTE} ${QUEUED_NOTE}`
+              : `The child is working, so the instruction will arrive as soon as it finishes its current work (queued). ${QUEUED_NOTE}`,
     });
   }
 

@@ -429,8 +429,11 @@ class FakeHost implements SessionsHost {
   };
   // 送った文（子への最初の指示は、SessionManager と同じく、worktree の準備の結果を添えて囲みに入れる）と、アプリを終えても残す送信（keep）
   kept: string[] = [];
-  submitWhenReady = async (id: string, text: WaitingText, _timeoutMs?: number, options: { keep?: boolean } = {}) => {
+  // 次のツールの切れ目に差し込む送信（nextStep。send_message の deliver: next_step）
+  nextSteps: string[] = [];
+  submitWhenReady = async (id: string, text: WaitingText, _timeoutMs?: number, options: { keep?: boolean; nextStep?: boolean } = {}) => {
     if (options.keep) this.kept.push(id);
+    if (options.nextStep) this.nextSteps.push(id);
     this.submitted.push({ id, text: typeof text === 'string' ? text : parentMessageText(text.parent, withSetupNote(text.body, this.worktreeSetup(id))) });
   };
   // worktree の準備でうまくいかなかったこと
@@ -764,6 +767,29 @@ describe('ツールの実行（SessionsControl）', () => {
     const sent = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
     expect(sent.note).toContain('queued');
     expect(host.submitted).toEqual([{ id: CHILD, text: parentMessageText(PARENT, '続けて') }]);
+  });
+
+  it('send_message: deliver が next_step なら、作業中の子の次のツールの切れ目に届くよう渡す（既定はターンの終わり）', async () => {
+    host.set(CHILD, 'working');
+    const later = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
+    expect(later.note).toContain('as soon as it finishes its current work');
+    expect(host.nextSteps).toEqual([]);
+    const next = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '待って', deliver: 'next_step' }));
+    expect(next.note).toContain('next break between tool calls');
+    expect(next.note).toContain('long tool call');
+    expect(next.note).toContain('queued_messages');
+    expect(host.nextSteps).toEqual([CHILD]);
+    expect(host.submitted.at(-1)).toEqual({ id: CHILD, text: parentMessageText(PARENT, '待って') });
+    // after_turn も受ける。ほかの値は断る
+    await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'あとで', deliver: 'after_turn' });
+    expect(host.nextSteps).toEqual([CHILD]);
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'now' }))).toBe('Pass deliver as "after_turn" or "next_step".');
+    // 許可の確認・質問を待っている子には、next_step でも送らない
+    host.set(CHILD, 'permission');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' }))).toContain('answer_permission');
+    host.set(CHILD, 'question');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', deliver: 'next_step' }))).toContain('answer_question');
+    expect(host.submitted).toHaveLength(3);
   });
 
   it('send_message: 自分の子にだけ。質問・許可の確認を待っている子には送らない。止まっている子は起動してから送る', async () => {
@@ -3486,7 +3512,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toEqual({
         session_id: CHILD,
         state: 'working',
-        note: expect.stringMatching(/^The child is working, so the instruction will be sent as soon as it finishes its current work \(queued\)\. Until the child receives it, get_session shows it in queued_messages/),
+        note: expect.stringMatching(/^The child is working, so the instruction will arrive as soon as it finishes its current work \(queued\)\. Until it reaches the conversation of the child, get_session shows it in queued_messages/),
       });
       expect(host.opened).toEqual([]);
       host.set(CHILD, 'exited');

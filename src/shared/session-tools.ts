@@ -164,10 +164,19 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     // 子への指示は人の確認なしに送る（親が人の手を借りずに子を回すため）。子のツールの実行の許可は人だけが答えるので、権限は広がらない
     kind: 'instruct',
     description:
-      'Sends an instruction to a child session. If the child is working or starting up, it is sent after the current work finishes or the start completes (returns without waiting; the instruction is queued: get_session shows it in queued_messages until the child receives it, and if it cannot be sent, a notice tells you why). If the child is waiting for an answer to a question, use answer_question instead; if it is waiting on a permission prompt, use answer_permission.',
+      'Sends an instruction to a child session. If the child is starting up, it is sent once the start completes. If the child is working, by default (deliver "after_turn") it arrives after the current work finishes; with deliver "next_step" it arrives at the next break between tool calls in the current work (if a long tool call such as a build is running, it waits for that call to end), so use next_step for a correction that should reach the child before it goes further. Returns without waiting; the instruction is queued: get_session shows it in queued_messages until it reaches the conversation of the child, and if it cannot be sent, a notice tells you why. If the child is waiting for an answer to a question, use answer_question instead; if it is waiting on a permission prompt, use answer_permission.',
     inputSchema: {
       type: 'object',
-      properties: { session_id: sessionId, message: { type: 'string', description: 'The instruction to send' } },
+      properties: {
+        session_id: sessionId,
+        message: { type: 'string', description: 'The instruction to send' },
+        deliver: {
+          type: 'string',
+          enum: ['after_turn', 'next_step'],
+          description:
+            'When it reaches a working child. after_turn (default): after the current work finishes. next_step: at the next break between tool calls (after a long tool call such as a build ends; when the current work finishes if no more tool calls come)',
+        },
+      },
       required: ['session_id', 'message'],
       additionalProperties: false,
     },

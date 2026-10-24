@@ -2223,16 +2223,25 @@ export class SessionManager {
 
   // 起動が終わる（入力を受け付けられる）のを待ってから、ターンが終わってから届く発言（priority: later）として送る
   // （子セッションへの指示・親への知らせ・予約）。作業中に送っても、作業中のターンには入らない（Claude Code が順番待ちにする。実測）。
+  // nextStep: priority を付けずに送る（親の send_message の next_step）。作業中なら、人がチャットに打った発言と同じく、
+  // 今のターンの次のツールの切れ目に差し込まれる（attachment の queued_command。実測 2.1.301）。
   // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する。
   // 待っている送信がいくつもあるときは、待ち始めた順に送る（先のものが送り終えるまで、あとのものは送らない。見直しの間合いで、
   // あとから待ち始めたもの（起動の途中の子に親が送った指示）が、先のもの（その子への最初の指示）を追い越さないように）。
   // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し）/
-  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す（親の指示。closeAll・start）
+  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら（引き継いだときも）送り直す（親の指示。closeAll・start）。
+  // 送り直すときは手が空いているので、nextStep は残さない（priority: later で送る）
   async submitWhenReady(
     id: string,
     text: WaitingText,
     timeoutMs: number,
-    { attachments = [], pastes = [], signal, keep = false }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal; keep?: boolean } = {},
+    {
+      attachments = [],
+      pastes = [],
+      signal,
+      keep = false,
+      nextStep = false,
+    }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal; keep?: boolean; nextStep?: boolean } = {},
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     let process = rt?.process ?? null;
@@ -2262,7 +2271,7 @@ export class SessionManager {
         if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
-      await this.submit(id, this.waitingText(id, text), attachments, pastes, 'later');
+      await this.submit(id, this.waitingText(id, text), attachments, pastes, nextStep ? undefined : 'later');
     } finally {
       const at = rt.waiting.indexOf(waiting);
       if (at !== -1) rt.waiting.splice(at, 1);
