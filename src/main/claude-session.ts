@@ -405,7 +405,7 @@ export const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
 
 // Claude Code が Remote Control のために作る、ターンの途中とターンの終わりの要約（スマホ・claude.ai のセッションの一覧に出る一言）の
 // 作り方。0 にすると、モデルを呼ばずに応答の文などから作る。-p では、モデルで作るとき、作り終えるまで Stop フックと result を出さない
-// （チャットの作業中が、1 回 1.5〜5.5 秒延びた。チェックリストのフックがターンの終わりを止めると、止めるたびに作り直す。2.1.302 で実測）。
+// （チャットの作業中が、1 回 1.5〜5.5 秒延びた。Stop のフックがターンの終わりを止めると、止めるたびに作り直す。2.1.302 で実測。今のチェックリストのフックは止めない）。
 // TUI では裏で作るので待たない
 export const CLASSIFIER_SUMMARY_ENV = 'CLAUDE_CODE_CLASSIFIER_SUMMARY';
 

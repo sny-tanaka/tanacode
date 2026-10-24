@@ -364,7 +364,7 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
     const events: ChatEvent[] = [];
     blocks.forEach((block, i) => {
       if (block.type === 'text') {
-        // 空の文と、ターンの終わりの知らせに「直すものは無い」と答えた目印（Claude とアプリのあいだのやりとり）は出さない
+        // 空の文と、ターンの終わりの知らせに「直すものは無い」と答えた目印（前のバージョンのアプリと Claude のあいだのやりとり）は出さない
         if (block.text?.trim() && block.text.trim() !== CHECKLIST_UNCHANGED_MARK) events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text, at });
       } else if (block.type === 'thinking') {
         // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す。

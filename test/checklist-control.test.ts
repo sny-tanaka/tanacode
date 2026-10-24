@@ -545,6 +545,15 @@ describe('ほかのセッションのチェックリスト（session_id）', () 
 describe('チェックリストを使い続けさせるフックへの返事', () => {
   const CHILD = '66666666-0000-4000-8000-000000000006';
   const worked = { turn: 4, checklist: 0 };
+  // 次の発言の知らせに足された、前のターンの分を頼む文の頭（足されていなければ null）
+  const lateIn = (text: string) => /Your previous [^)]*\)/.exec(text)?.[0] ?? null;
+  const late = async (caller = ME, c = control) => lateIn(first(await c.handle(caller, 'hook:prompt', {})));
+  // ターンの終わりには、何も返さない（続きを始めさせない）。数えたかは、次の発言の知らせで見る
+  const stop = async (args: Record<string, unknown>, caller = ME, c = control) => {
+    expect(first(await c.handle(caller, 'hook:stop', args))).toBe('');
+    return late(caller, c);
+  };
+  const missed = (calls: number) => `Your previous turn ended without touching the checklists (${calls} ${calls === 1 ? 'tool call' : 'tool calls'})`;
 
   it('今のチェックリストから、Claude に渡す文を返す。人の書き換えは添えず、次のツールの結果に残す', async () => {
     await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
@@ -552,66 +561,134 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     const prompt = await call('hook:prompt', { turn: 0, checklist: 0 });
     expect(prompt.content).toHaveLength(1);
     expect(first(prompt)).toContain('- [ ] #1 税率を変える\n- [ ] #2 人が足したカード');
-    expect(first(await call('hook:stop', worked))).toContain('Before you end this turn (4 tool calls, checklists not touched; unchecked: やること 2)');
+    expect(lateIn(first(prompt))).toBeNull();
+    expect(first(await call('hook:stop', worked))).toBe('');
     expect(first(await call('hook:compact', {}))).toContain('The conversation was just compacted.');
     expect((await call('checklist_overview')).content[1]).toMatchObject({ text: expect.stringContaining('user changed the checklists') });
   });
 
-  it('渡すものが無いとき・数が数字でないときは、空を返す', async () => {
-    expect(first(await call('hook:compact', {}))).toBe('');
-    expect(first(await call('hook:stop', { turn: 9, checklist: 1 }))).toBe('');
-    expect(first(await call('hook:stop', { turn: '9', checklist: null }))).toBe('');
-    expect(first(await call('hook:stop', { turn: -3 }))).toBe('');
-    expect(first(await call('hook:stop', { turn: 5.9, checklist: 0 }))).toContain('Before you end this turn (5 tool calls,');
+  it('ツールを使ってチェックリストに触れなかったターンは、ターンの終わりには何も返さず、次の発言の知らせで 1 回だけ、その分も直させる', async () => {
+    await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
+    const text = first(await call('hook:stop', worked));
+    expect(text).toBe('');
+    const prompt = first(await call('hook:prompt', {}));
+    expect(lateIn(prompt)).toBe(missed(4));
+    // 今の状態も、いつもどおり渡す
+    expect(prompt).toContain('- [ ] #1 税率を変える');
+    // 渡したら消す
+    expect(await late()).toBeNull();
   });
 
-  it('会話ログがそろわなかったとき、このターンにチェックリストのツールを受けていれば止めない', async () => {
+  it('次の発言までに数えたターンが続けば、まとめて頼む。返事だけのターンは数えない', async () => {
+    // 発言を待たずに始まったターン（裏で動かしたタスクの完了通知 <task-notification> など）が続いた
+    await call('hook:stop', { turn: 2, checklist: 0 });
+    await call('hook:stop', { turn: 0, checklist: 0 });
+    await call('hook:stop', { turn: 3, checklist: 0 });
+    expect(await late()).toBe('Your previous 2 turns ended without touching the checklists (5 tool calls in all)');
+  });
+
+  it('数えたあとでチェックリストのツールを使ったら、前のターンの分も直したものとして頼まない', async () => {
+    await call('hook:stop', worked);
+    await call('checklist_overview');
+    expect(await late()).toBeNull();
+    // ほかのセッションの数えたものは、そのセッションのもの
+    await call('hook:stop', worked, PEER);
+    await call('checklist_overview');
+    expect(await late(PEER)).toBe(missed(4));
+  });
+
+  it('Claude Code の会話が変わったら（/clear のあとの新しい会話など）、前の会話で数えたターンは頼まずに消す', async () => {
+    await call('hook:stop', { ...worked, conversation: 'C1' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBeNull();
+    // 消してあるので、そのあとも頼まない
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBeNull();
+    // 同じ会話なら頼む
+    await call('hook:stop', { ...worked, conversation: 'C2' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C2' })))).toBe(missed(4));
+    // 前の会話のものに、新しい会話のターンを足さない
+    await call('hook:stop', { turn: 2, checklist: 0, conversation: 'C2' });
+    await call('hook:stop', { turn: 3, checklist: 0, conversation: 'C3' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C3' })))).toBe(missed(3));
+    // 数えないターンでも、会話が変わっていれば消す
+    await call('hook:stop', { ...worked, conversation: 'C3' });
+    await call('hook:stop', { turn: 0, checklist: 0, conversation: 'C4' });
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C4' })))).toBeNull();
+    // 会話の ID が分からないとき（ID を渡さない Claude Code）は、同じ会話とみなす
+    await call('hook:stop', worked);
+    expect(lateIn(first(await call('hook:prompt', { conversation: 'C5' })))).toBe(missed(4));
+  });
+
+  it('Claude Code の圧縮のあとの知らせでも頼んで消す（次の発言まで待つと、細部が要約で消えている）', async () => {
+    await call('hook:stop', worked);
+    const compact = first(await call('hook:compact', {}));
+    expect(compact).toContain('Your previous turn ended without touching the checklists (4 tool calls). Before anything else, bring them up to date for that turn, using the summary and what you still have');
+    expect(await late()).toBeNull();
+    // リストがあれば、いつもの圧縮のあとの知らせに足す
+    await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
+    await call('hook:stop', worked);
+    const withLists = first(await call('hook:compact', {}));
+    expect(withLists).toContain('The conversation was just compacted.');
+    expect(lateIn(withLists)).toBe(missed(4));
+    // 別の会話で数えたものは、圧縮のあとでも頼まない
+    await call('hook:stop', { ...worked, conversation: 'C1' });
+    expect(lateIn(first(await call('hook:compact', { conversation: 'C2' })))).toBeNull();
+  });
+
+  it('数えないとき・数が数字でないとき', async () => {
+    expect(first(await call('hook:compact', {}))).toBe('');
+    expect(await stop({ turn: 9, checklist: 1 })).toBeNull();
+    expect(await stop({ turn: '9', checklist: null })).toBeNull();
+    expect(await stop({ turn: -3 })).toBeNull();
+    expect(await stop({ turn: 5.9, checklist: 0 })).toBe(missed(5));
+  });
+
+  it('会話ログがそろわなかったとき、このターンにチェックリストのツールを受けていれば数えない', async () => {
     // 会話ログは遅れて書かれる。フックが待っても、最後に使ったツール（card_add）の行が見えなかった
     const since = Date.now() - 1000;
     await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
-    expect(first(await call('hook:stop', { ...worked, since, settled: false }))).toBe('');
-    // 次のターン（はじまりが、最後に受けたときよりあと）では、触れていないので止める
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() + 1000, settled: false }))).toContain('checklists not touched; unchecked: やること 1');
+    expect(await stop({ ...worked, since, settled: false })).toBeNull();
+    // 次のターン（はじまりが、最後に受けたときよりあと）では、触れていないので数える
+    expect(await stop({ ...worked, since: Date.now() + 1000, settled: false })).toBe(missed(4));
     // 会話ログがそろったときは、会話ログだけで決める（アプリは、本体とサブエージェントの呼び出しを見分けられない）
-    expect(first(await call('hook:stop', { ...worked, since, settled: true }))).toContain('checklists not touched');
+    expect(await stop({ ...worked, since, settled: true })).toBe(missed(4));
     // ターンのはじまりが分からないとき・ほかのセッションが使っただけのときは、触れたことにしない
-    expect(first(await call('hook:stop', { ...worked, since: null, settled: false }))).toContain('checklists not touched');
-    expect(first(await call('hook:stop', worked))).toContain('checklists not touched');
-    expect(first(await call('hook:stop', { ...worked, since, settled: false }, PEER))).toContain('checklists not touched; there are no lists yet');
+    expect(await stop({ ...worked, since: null, settled: false })).toBe(missed(4));
+    expect(await stop(worked)).toBe(missed(4));
+    expect(await stop({ ...worked, since, settled: false }, PEER)).toBe(missed(4));
   });
 
-  it('会話ログがそろわなかったとき、数えたのが前のターンなら止めない（このターンの行が、まだ 1 つも書かれていない）', async () => {
+  it('会話ログがそろわなかったとき、数えたのが前のターンなら数えない（このターンの行が、まだ 1 つも書かれていない）', async () => {
     // 人の発言のフックを受けた時刻より、数えたターンのはじまりがずっと前
     await call('hook:prompt', {});
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: false }))).toBe('');
-    // 発言の行の時刻と、フックが届く時刻の少しのずれ・知らせで始まったターン（発言のフックよりあと）は、このターンとして止める
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 1000, settled: false }))).toContain('checklists not touched');
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() + 60_000, settled: false }))).toContain('checklists not touched');
+    expect(await stop({ ...worked, since: Date.now() - 60_000, settled: false })).toBeNull();
+    // 発言の行の時刻と、フックが届く時刻の少しのずれ・知らせで始まったターン（発言のフックよりあと）は、このターンとして数える
+    expect(await stop({ ...worked, since: Date.now() - 1000, settled: false })).toBe(missed(4));
+    expect(await stop({ ...worked, since: Date.now() + 60_000, settled: false })).toBe(missed(4));
     // 会話ログがそろっていれば、作業の途中に人が発言していても（発言のフックのほうがあと）、会話ログで決める
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: true }))).toContain('checklists not touched');
+    expect(await stop({ ...worked, since: Date.now() - 60_000, settled: true })).toBe(missed(4));
     // 発言のフックを受けていないセッション（アプリを起動し直した）では、数えたとおりに決める
-    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: false }, PEER))).toContain('checklists not touched');
+    expect(await stop({ ...worked, since: Date.now() - 60_000, settled: false }, PEER)).toBe(missed(4));
   });
 
   it('会話ログがそろわなかったとき、チャット（stream-json）で受けた応答から数えたものがあれば、それで決める', async () => {
     let streamed: { turn: number; checklist: number } | null = { turn: 3, checklist: 0 };
     const c = new ChecklistControl({ store, host, enabled: () => true, notifyDelayMs: 10, turnTools: (id) => (id === ME ? streamed : null) });
-    const stop = async (args: Record<string, unknown>) => first(await c.handle(ME, 'hook:stop', args));
+    const at = (args: Record<string, unknown>) => stop(args, ME, c);
     try {
       await c.handle(ME, 'hook:prompt', {});
       // 会話ログには、このターンのツールがまだ 1 つも見えない（フックは 0 と数えた）。前のターンのものしか見えない
-      expect(await stop({ turn: 0, checklist: 0, since: null, settled: false })).toContain('Before you end this turn (3 tool calls, checklists not touched');
-      expect(await stop({ turn: 2, checklist: 1, since: Date.now() - 60_000, settled: false })).toContain('Before you end this turn (3 tool calls,');
+      expect(await at({ turn: 0, checklist: 0, since: null, settled: false })).toBe(missed(3));
+      expect(await at({ turn: 2, checklist: 1, since: Date.now() - 60_000, settled: false })).toBe(missed(3));
       // チャットで受けた応答では、チェックリストに触れた・ツールを使っていない
       streamed = { turn: 3, checklist: 1 };
-      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBe('');
+      expect(await at({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBeNull();
       streamed = { turn: 0, checklist: 0 };
-      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBe('');
+      expect(await at({ turn: 4, checklist: 0, since: Date.now(), settled: false })).toBeNull();
       // 会話ログがそろったときは、会話ログで決める
-      expect(await stop({ turn: 4, checklist: 0, since: Date.now(), settled: true })).toContain('Before you end this turn (4 tool calls,');
-      // チャットで受けていない（ターミナルモード）なら、これまでどおり。ツールが見えなければ止めない
+      expect(await at({ turn: 4, checklist: 0, since: Date.now(), settled: true })).toBe(missed(4));
+      // チャットで受けていない（ターミナルモード）なら、これまでどおり。ツールが見えなければ数えない
       streamed = null;
-      expect(await stop({ turn: 0, checklist: 0, since: null, settled: false })).toBe('');
+      expect(await at({ turn: 0, checklist: 0, since: null, settled: false })).toBeNull();
     } finally {
       c.dispose();
     }
@@ -635,9 +712,9 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     }
   });
 
-  it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
+  it('子セッションのターンは数えない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
     host.add(CHILD, { parentId: ME });
-    expect(first(await call('hook:stop', { turn: 9, checklist: 0 }, CHILD))).toBe('');
+    expect(await stop({ turn: 9, checklist: 0 }, CHILD)).toBeNull();
     expect(first(await call('hook:prompt', {}, CHILD))).toContain('This session has no checklists yet.');
     expect(first(await call('hook:prompt', {}, 'いないセッション'))).toBe('');
     const off = new ChecklistControl({ store, host, enabled: () => false });

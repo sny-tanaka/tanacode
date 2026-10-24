@@ -276,6 +276,14 @@ describe('フックの本体', () => {
     expect(calls).toEqual([{ session: 'S1', tool: 'hook:stop', args: { turn: 2, checklist: 0, since: Date.parse(at), settled: true } }]);
   });
 
+  it('Claude Code の会話の ID（session_id）があれば、どのフックでもアプリに渡す（/clear で会話が変わったのを、アプリが知るため）', async () => {
+    const transcript_path = transcript(prompt('依頼'), use('Bash'), result(), say('終わりました'));
+    await run({ hook_event_name: 'UserPromptSubmit', session_id: 'C1' });
+    await run({ hook_event_name: 'Stop', session_id: 'C1', transcript_path, last_assistant_message: '終わりました' });
+    await run({ hook_event_name: 'SessionStart', session_id: 'C1' });
+    expect(calls.map((c) => c.args.conversation)).toEqual(['C1', 'C1', 'C1']);
+  });
+
   it('最後の応答が会話ログに書かれないままなら、上限まで待ってから、そろわなかったことをアプリに伝える', async () => {
     // 最後の応答（とその前のツール）がまだ書かれていない。アプリは、自分が受けた呼び出しでも確かめる
     const transcript_path = transcript(prompt('依頼'), use('Edit'), result());

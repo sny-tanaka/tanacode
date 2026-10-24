@@ -1,6 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../../src/shared/checklist-tools';
 
 // Anthropic の Messages API のふりをするサーバー。ANTHROPIC_BASE_URL をここに向けると、
 // 本物の claude を API の料金なしで動かせる。返す応答は、決めておいた台本（Conversation）のとおり。
@@ -103,11 +102,6 @@ export class MockApi {
   // ツールの一覧が付いた呼び出し（本体の会話）ごとの、頼まれたモデルとエフォート（モデル・エフォートの切り替えが届いたかを確かめる）
   readonly calls: { model: string | undefined; effort: unknown }[] = [];
 
-  // チェックリストを使い続けさせるフックがターンの終わりを止めたとき（Stop hook feedback）の応答も、台本から返すか。
-  // ふだんは、本物のモデルが直すものの無いときにするのと同じく、決まった目印だけを返して、台本を進めない
-  // （チェックリストを足して動かす台本が、ターンの終わりごとに 1 つずつずれないように）。フックそのものを確かめるときだけ true にする
-  scriptChecklistStops = false;
-
   // 応答に付ける入力のトークン数（コンテキストの使用量として statusLine と会話ログに出る。上限は 20 万）。
   // 大きくすると、コンテキストが埋まってきたときの動き（自動の最適化圧縮）を確かめられる
   inputTokens = 100;
@@ -177,11 +171,7 @@ export class MockApi {
     const at = (c: Conversation) => first.lastIndexOf(c.match);
     const conversation =
       tools.length > 0 ? this.conversations.filter((c) => at(c) !== -1).sort((a, b) => at(b) - at(a))[0] : undefined;
-    // 目印だけの応答は、台本の応答に数えない
-    const scripted = (m: Message) => m.role === 'assistant' && (this.scriptChecklistStops || textOf(m).trim() !== CHECKLIST_UNCHANGED_MARK);
-    const index = messages.filter(scripted).length;
-    // 止めたあとの続き（Claude Code が、フックの文を最後の user の発言に入れて続ける。2.1.302 は「Stop hook additional context: 」を頭に付ける）
-    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`);
+    const index = messages.filter((m) => m.role === 'assistant').length;
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
     if (conversation) for (const t of tools) if (t.name && t.description !== undefined) this.descriptions.set(t.name, t.description);
     if (conversation) {
@@ -193,11 +183,9 @@ export class MockApi {
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const lastResults = Array.isArray(lastUser?.content) ? lastUser.content.filter((b) => b.type === 'tool_result').map((b) => resultText(b.content)) : [];
     const context = messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n');
-    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults, context) ?? null) : null;
+    const intercepted = tools.length > 0 ? (this.intercept?.(textOf(lastUser), lastResults, context) ?? null) : null;
     const blocks: Block[] = intercepted
       ? intercepted
-      : stopped
-      ? [{ type: 'text', text: CHECKLIST_UNCHANGED_MARK }]
       : conversation
       ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])
       : [{ type: 'text', text: plain?.text ?? 'テスト' }];
