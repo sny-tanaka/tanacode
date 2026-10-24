@@ -46,7 +46,9 @@ export function WorktreeCleanupDialog({ onClose }: { onClose: () => void }) {
     for (const w of left) await remove(w.id);
   };
   const deleteBackup = async (backup: WorktreeBackup) => {
-    if (!window.confirm(t('sessions.worktreeCleanup.confirmDeleteBackup', { ref: backup.ref }))) return;
+    // どのブランチにも無いコミット（detached HEAD で作った控えの親）も失われるときは、そう添える
+    const question = backup.strays ? 'sessions.worktreeCleanup.confirmDeleteBackupStray' : 'sessions.worktreeCleanup.confirmDeleteBackup';
+    if (!window.confirm(t(question, { ref: backup.ref }))) return;
     try {
       await window.tanacode.sessions.deleteBackup(backup.root, backup.ref);
     } catch (error) {

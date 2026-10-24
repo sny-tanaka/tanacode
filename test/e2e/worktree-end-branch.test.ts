@@ -96,8 +96,20 @@ describe('子が worktree の中で作ったブランチも、end_session で片
     );
     children = list.filter((s) => s.parentId && s.worktree).map((s) => s.id);
     expect(children).toHaveLength(2);
-    // 子の手が空くまで待つ（作業中の子は end_session が断る）
-    await app.byText('.session-list .session-row', 'マージされる子').waitFor();
+    // 子の手が空くまで待つ（作業中の子は end_session が断る。コミットのあとも、チェックリストの確かめでターンが続くことがある）
+    await vi.waitFor(
+      async () => {
+        const states = await app.page.evaluate(
+          (ids) =>
+            (window as unknown as { tanacode: { sessions: { list(): Promise<{ id: string; state: string | null }[]> } } }).tanacode.sessions
+              .list()
+              .then((list) => list.filter((s) => ids.includes(s.id)).map((s) => s.state)),
+          children,
+        );
+        expect(states).toEqual(['idle', 'idle']);
+      },
+      { timeout: 120_000, interval: 500 },
+    );
   });
 
   it('end_session で、マージ済みの PR のブランチと起動したときのブランチは消え、手元だけのコミットのあるブランチは残る', async () => {

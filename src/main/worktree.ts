@@ -138,18 +138,25 @@ export async function waitForWorktree(path: string, alive: () => boolean, timeou
 // saved: 消したときに残したもの。branch: worktree で使っていて、残したブランチ（子が git switch -c で作ったものなど。あればそれで作り直す）/
 // backupRef: 未コミットの変更の控え。作り直したブランチの先頭が、控えを作ったときのまま（控えの親）なら、控えの中身を作業フォルダに戻し
 // （ステージしていたものも、ステージしていない変更・未追跡のファイルとして戻る）、控えを外す。戻せなければ、控えは残す
+// 作り直すブランチを、元のフォルダやほかの worktree で取り出していれば（git は同じブランチを 2 か所で取り出さない）、そのブランチの
+// 先頭から、ブランチから外れた状態（detached HEAD）で作り直す（何度開いても戻せないままにならないように。作業の中身は見える）
 export type WorktreeSaved = { branch?: string | null; backupRef?: string | null };
-export type WorktreeRestored = { branch: string; backup: 'applied' | 'kept' | null };
+// branch: 取り出したブランチ（detached HEAD なら null）/ busy: 取り出したかったが、ほかで取り出していたブランチ（detached HEAD で作り直した）
+export type WorktreeRestored = { branch: string | null; busy: string | null; backup: 'applied' | 'kept' | null };
 export async function restoreWorktree(ref: WorktreeRef, path: string, saved: WorktreeSaved = {}): Promise<WorktreeRestored> {
   // フォルダを手で消したときは、git に残った登録を先に片付ける
   await git(ref.root, ['worktree', 'prune']).catch(() => '');
   const kept = saved.branch && (await branchExists(ref.root, saved.branch)) ? saved.branch : null;
-  const branch = kept ?? ref.branch;
-  if (kept || (await branchExists(ref.root, branch))) await userGit(ref.root, ['worktree', 'add', path, branch]);
-  else await userGit(ref.root, ['worktree', 'add', '-b', branch, path]);
-  if (!saved.backupRef) return { branch, backup: null };
-  return { branch, backup: (await applyBackup(ref.root, path, saved.backupRef)) ? 'applied' : 'kept' };
+  const wanted = kept ?? ref.branch;
+  const busy = (await branchesInUse(ref.root, null)).has(wanted) ? wanted : null;
+  if (busy) await userGit(ref.root, ['worktree', 'add', '--detach', path, `refs/heads/${busy}`]);
+  else if (kept || (await branchExists(ref.root, wanted))) await userGit(ref.root, ['worktree', 'add', path, wanted]);
+  else await userGit(ref.root, ['worktree', 'add', '-b', wanted, path]);
+  const branch = busy ? null : wanted;
+  if (!saved.backupRef) return { branch, busy, backup: null };
+  return { branch, busy, backup: (await applyBackup(ref.root, path, saved.backupRef)) ? 'applied' : 'kept' };
 }
+
 
 // 控えの中身を、作り直した worktree の作業フォルダに戻し、控えを外す。戻したら true
 async function applyBackup(root: string, path: string, backupRef: string): Promise<boolean> {
@@ -409,10 +416,14 @@ function branchRoles(ref: WorktreeRef, current: string | null): BranchRole[] {
   return roles;
 }
 
-// 消さないブランチ。デフォルトブランチと、main・develop などの幹の名前（子がそこへ切り替えただけのとき）
-async function trunkBranches(root: string): Promise<Set<string>> {
-  const base = await defaultBranch(root);
-  return new Set([...TRUNK_NAMES, ...(base ? [base] : [])]);
+// ブランチを確かめるときに使う、リポジトリのこと。base: デフォルトブランチ（分からなければ null）/ trunks: 消さないブランチ
+// （デフォルトブランチと、main・develop などの幹の名前。子がそこへ切り替えただけのとき）/ inUse: ほかの worktree で取り出しているブランチ
+type BranchContext = { base: string | null; trunks: Set<string>; inUse: Set<string> };
+
+// except: 取り出しているブランチを数えない worktree（消す前の確認では、これから消す worktree）
+async function branchContext(root: string, except: string | null): Promise<BranchContext> {
+  const [base, inUse] = await Promise.all([defaultBranch(root), branchesInUse(root, except)]);
+  return { base, trunks: new Set([...TRUNK_NAMES, ...(base ? [base] : [])]), inUse };
 }
 
 // ほかの worktree（except の場所のものは除く）で取り出しているブランチ。git は、取り出しているブランチを消さない
@@ -424,50 +435,62 @@ async function branchesInUse(root: string, except: string | null): Promise<Set<s
   return used;
 }
 
-// ブランチの状態と、消すときに残す理由。names: 一緒に消すかもしれないブランチ（手元にしか無いコミットを数えるときに、
-// ほかのブランチとして数えない。2 つともが互いのコミットを持つときに、両方を消してしまわないように）
-async function inspectBranch(
-  root: string,
-  role: BranchRole,
-  names: string[],
-  context: { trunks: Set<string>; inUse: Set<string> },
-): Promise<WorktreeBranch> {
-  // PR は GitHub に問い合わせるので、数えている間に調べておく
-  const lookup = pullRequestsOf(root, await pushedBranchName(root, role.name), true);
-  const exists = await branchExists(root, role.name);
-  const prs = await lookup;
-  const local: LocalOnly = exists ? await localOnlyCommits(root, role.name, prs, names) : { count: 0, contentIn: null, heads: [] };
-  let pr: WorktreePr = { state: prs ? 'none' : 'unknown' };
-  const found = prs && pickPullRequest(prs);
-  if (found) {
-    // PR のあとに、手元で足したコミット。PR のコミットが手元に 1 つも無ければ数えられない
-    const mine = new Set([found.headRefOid, ...(found.commits ?? []).map((c) => c.oid)]);
-    const known = local.heads.filter((oid) => mine.has(oid));
-    const after = !exists ? 0 : known.length > 0 ? await countCommits(root, [role.name, '--not', ...known]) : null;
-    const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
-    pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
-  }
-  const keep = !exists
-    ? null
-    : context.trunks.has(role.name)
-      ? 'trunk'
-      : context.inUse.has(role.name)
-        ? 'checkedOut'
-        : local.count === 0
-          ? null
-          : 'localOnly';
-  return { ...role, exists, unpushed: local.count ?? 0, contentIn: local.contentIn, pr, keep };
+// ブランチの先頭のコミット。無ければ null
+function branchOid(root: string, branch: string): Promise<string | null> {
+  return git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).then(
+    (out) => out.trim() || null,
+    () => null,
+  );
 }
+
+// 確かめたブランチ。oid: 確かめたときの先頭（消すときに、そのあとで動いていないかを見る）
+type InspectedBranch = WorktreeBranch & { oid: string | null };
+
+// worktree のブランチの状態と、消すときに残す理由。手元にしか無いコミットを数えるときは、一緒に消すかもしれないもう一方の
+// ブランチを、ほかのブランチとして数えない（2 つともが互いのコミットを持つときに、両方を消してしまわないように）
+async function inspectBranches(root: string, roles: BranchRole[], context: BranchContext): Promise<InspectedBranch[]> {
+  const names = roles.map((r) => r.name);
+  const oids = await Promise.all(roles.map((r) => branchOid(root, r.name)));
+  // 幹のブランチは残すと決まっているので、PR も、手元にしか無いコミットも調べない
+  const checked = roles.map((r) => !context.trunks.has(r.name));
+  // PR は GitHub に問い合わせる（gh pr list --head は 1 つのブランチしか受け付けないので、ブランチごとに並べて 1 回ずつ）
+  const lookups = await Promise.all(roles.map(async (r, i) => (checked[i] ? pullRequestsOf(root, await pushedBranchName(root, r.name), true) : null)));
+  // どちらのブランチの PR のコミットも GitHub にあるので、2 つの役で合わせて除く（worktree-<名前> でコミットしてから git switch -c
+  // した PR がスカッシュマージされたときの、worktree-<名前> だけのコミットも、その PR に入っている）
+  const heads = await localCommits(root, lookups.flatMap((prs) => (prs ?? []).flatMap(prCommits)));
+  return Promise.all(
+    roles.map(async (role, i): Promise<InspectedBranch> => {
+      const oid = oids[i];
+      const exists = oid !== null;
+      if (!checked[i]) return { ...role, oid, exists, unpushed: 0, contentIn: null, pr: { state: 'unknown' }, keep: exists ? 'trunk' : null };
+      const prs = lookups[i];
+      const local = exists ? await localOnlyCommits(root, role.name, heads, names, context.base) : { count: 0, contentIn: null };
+      let pr: WorktreePr = { state: prs ? 'none' : 'unknown' };
+      const found = prs && pickPullRequest(prs);
+      if (found) {
+        // PR のあとに、手元で足したコミット。PR のコミットが手元に 1 つも無ければ数えられない
+        const mine = new Set(prCommits(found));
+        const known = heads.filter((h) => mine.has(h));
+        const after = !exists ? 0 : known.length > 0 ? await countCommits(root, [role.name, '--not', ...known]) : null;
+        const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as const)[found.state];
+        pr = { state, number: found.number, base: found.baseRefName, url: found.url, after };
+      }
+      const keep = !exists ? null : context.inUse.has(role.name) ? 'checkedOut' : local.count === 0 ? null : 'localOnly';
+      return { ...role, oid, exists, unpushed: local.count ?? 0, contentIn: local.contentIn, pr, keep };
+    }),
+  );
+}
+
+// PR の head と、PR のコミット
+const prCommits = (pr: PullRequest) => [pr.headRefOid, ...(pr.commits ?? []).map((c) => c.oid)];
 
 // worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、ブランチから作った PR
 export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise<WorktreeLeftovers> {
   const exists = existsSync(path) && (await findWorktree(ref.root, path)) !== null;
   const current = exists ? await currentBranchOf(path) : null;
   const roles = branchRoles(ref, current);
-  const context = { trunks: await trunkBranches(ref.root), inUse: await branchesInUse(ref.root, exists ? path : null) };
-  const names = roles.map((r) => r.name);
-  // PR を GitHub に問い合わせるので、ブランチごとに並べて調べ、その間に数える
-  const inspecting = Promise.all(roles.map((role) => inspectBranch(ref.root, role, names, context)));
+  // PR を GitHub に問い合わせるので、調べている間に数える
+  const inspecting = branchContext(ref.root, exists ? path : null).then((context) => inspectBranches(ref.root, roles, context));
   let uncommitted = 0;
   let untracked = 0;
   if (exists) {
@@ -485,7 +508,7 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
   // 調べられなければ null（画面に、調べられなかったと出す）
   const submodules = exists ? await submodulesWithLeftovers(path).catch(() => null) : [];
   // 起動したときのブランチが手元に無ければ（子が名前を変えた・もう消した）、今のブランチがあるときは並べない
-  const branches = (await inspecting).filter((b) => b.exists || b.current || !current);
+  const branches = (await inspecting).filter((b) => b.exists || b.current || !current).map(({ oid: _, ...branch }) => branch);
   return { exists, uncommitted, untracked, submodules, branches };
 }
 
@@ -590,18 +613,15 @@ type LocalOnly = {
   count: number | null;
   // 手元にしか無いコミットはあるが、中身が入っているデフォルトブランチ（このときの count は 0）
   contentIn: string | null;
-  // PR の head と PR のコミットのうち、手元にあるコミット
-  heads: string[];
 };
 
 // branch の、手元にしか無いコミット。上流があれば上流に無いもの、無ければどのリモートにも、ほかのブランチにも無いもの
 // （元にしたブランチのコミットは数えない。together: 一緒に消すかもしれないブランチは、ほかのブランチとして数えない）。
-// PR の head と PR のコミットに入っているコミットは、マージのあとにリモートのブランチを消していても GitHub にあるので数えない
-// （PR のコミットも見るのは、update-branch で PR の head が手元より先に進み、head が手元に無いときのため）。
+// heads（PR の head と PR のコミットのうち、手元にあるもの）から辿れるコミットは、マージのあとにリモートのブランチを消していても
+// GitHub にあるので数えない（PR のコミットも見るのは、update-branch で PR の head が手元より先に進み、head が手元に無いときのため）。
 // それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、
-// 中身がデフォルトブランチに入っているかを比べ、入っていれば 0 とみなす
-async function localOnlyCommits(root: string, branch: string, prs: PullRequest[] | null, together: string[] = []): Promise<LocalOnly> {
-  const heads = prs ? await localCommits(root, prs.flatMap((p) => [p.headRefOid, ...(p.commits ?? []).map((c) => c.oid)])) : [];
+// 中身がデフォルトブランチ（base）に入っているかを比べ、入っていれば 0 とみなす
+async function localOnlyCommits(root: string, branch: string, heads: string[], together: string[], base: string | null): Promise<LocalOnly> {
   const tracked = await git(root, ['rev-parse', '--abbrev-ref', `${branch}@{u}`]).then(
     (out) => out.trim() || null,
     () => null,
@@ -613,12 +633,12 @@ async function localOnlyCommits(root: string, branch: string, prs: PullRequest[]
     root,
     upstream ? [branch, '--not', upstream, ...heads] : [branch, '--not', ...heads, '--remotes', ...excludes, '--branches'],
   );
-  if (!count) return { count, contentIn: null, heads };
-  const base = await defaultBranch(root);
+  if (!count) return { count, contentIn: null };
   const targets = base ? await defaultBranchRefs(root, base) : [];
-  if (targets.length > 0 && (await mergedInto(root, branch, targets))) return { count: 0, contentIn: base, heads };
-  return { count, contentIn: null, heads };
+  if (targets.length > 0 && (await mergedInto(root, branch, targets))) return { count: 0, contentIn: base };
+  return { count, contentIn: null };
 }
+
 
 // rev-list --count。数えられなければ null
 function countCommits(root: string, args: string[]): Promise<number | null> {
@@ -776,19 +796,21 @@ async function deleteBranches(ref: WorktreeRef, current: string | null): Promise
   const roles: BranchRole[] = [];
   for (const role of branchRoles(ref, current)) if (await branchExists(ref.root, role.name)) roles.push(role);
   if (roles.length === 0) return [];
-  const context = { trunks: await trunkBranches(ref.root), inUse: await branchesInUse(ref.root, null) };
-  const names = roles.map((r) => r.name);
   // 先にすべてを確かめてから消す。git branch -d（上流にマージ済みなら消える）は使わない。上流が一緒に消すブランチのとき
   // （git switch -c --track worktree-<名前> など）に、上流にしか無いコミットを、両方を消して失うため
-  const inspected = await Promise.all(roles.map((role) => inspectBranch(ref.root, role, names, context)));
+  const inspected = await inspectBranches(ref.root, roles, await branchContext(ref.root, null));
   const result: WorktreeRemovedBranch[] = [];
   for (const branch of inspected) {
+    // 確かめたときの先頭のままのときだけ消す（確かめている間に、コミットが足されていたら消さない）
     const deleted =
       !branch.keep &&
-      (await git(ref.root, ['branch', '-D', branch.name]).then(
+      !!branch.oid &&
+      (await git(ref.root, ['update-ref', '-d', `refs/heads/${branch.name}`, branch.oid]).then(
         () => true,
         () => false,
       ));
+    // git branch -D と同じく、ブランチの設定（上流など）も外す
+    if (deleted) await git(ref.root, ['config', '--remove-section', `branch.${branch.name}`]).catch(() => '');
     result.push({ name: branch.name, launched: branch.launched, current: branch.current, deleted, keep: branch.keep });
   }
   return result;
@@ -899,18 +921,27 @@ async function freeBackupRef(root: string, name: string): Promise<string> {
 
 const BACKUP_REFS = 'refs/tanacode/backup/';
 
-// root のリポジトリの、worktree を消す前の控え（新しい順）。date: 作った時刻（ミリ秒）/ subject: コミットのメッセージの 1 行目
-export async function listBackups(root: string): Promise<{ ref: string; date: number; subject: string }[]> {
+// root のリポジトリの、worktree を消す前の控え（新しい順）。date: 作った時刻（ミリ秒）/ subject: コミットのメッセージの 1 行目 /
+// strays: 控えの親が、どのブランチ・タグ・リモートからも辿れない（控えを消すと、そのコミットも失われる）。数えられなければ、ある側に倒す
+export async function listBackups(root: string): Promise<{ ref: string; date: number; subject: string; strays: boolean }[]> {
   const format = '%(refname)%00%(committerdate:unix)%00%(subject)';
   const out = await git(root, ['for-each-ref', '--sort=-committerdate', `--format=${format}`, BACKUP_REFS]).catch(() => '');
-  return out
+  const backups = out
     .split('\n')
     .filter(Boolean)
     .map((line) => {
       const [ref, date, subject] = line.split('\0');
       return { ref, date: Number(date) * 1000, subject: subject ?? '' };
     });
+  // 1 つずつ（git のプロセスを一度に立てすぎない）
+  const result = [];
+  for (const backup of backups) {
+    const left = await countCommits(root, [`${backup.ref}^`, '--not', '--branches', '--tags', '--remotes']);
+    result.push({ ...backup, strays: left !== 0 });
+  }
+  return result;
 }
+
 
 // 控えを消す。refs/tanacode/backup/ の下のものだけ
 export async function deleteBackup(root: string, ref: string): Promise<void> {

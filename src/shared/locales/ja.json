@@ -165,7 +165,9 @@
       "noName": "worktree の名前を決められませんでした",
       "locked": "worktree がロックされているため、消しませんでした",
       "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）",
-      "submoduleChanges": "submodule {paths}（{count} 個）の中に、消すと失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があるため、worktree を消しませんでした"
+      "submoduleChanges": "submodule {paths}（{count} 個）の中に、消すと失われるもの（未コミットの変更・未追跡のファイル・stash・プッシュしていないコミット）があるため、worktree を消しませんでした",
+      "restoredDetached": "ブランチ {branch} はほかの場所で取り出しているため、その先頭から、ブランチから外れた状態（detached HEAD）で作り直しました",
+      "usedBySession": "アーカイブしていないセッション「{title}」が、この worktree の中で動いているため、削除しませんでした"
     },
     "settingsFile": {
       "unusable": "設定ファイル「{name}」（{path}）を使えません: {reason}",
@@ -1138,7 +1140,7 @@
       "backupKept": "未コミットの変更と未追跡のファイルの控えを {ref} に残しました（git show {ref} で見られます）。",
       "branchKept": "ブランチ {branch} は残しました（{reason}）。",
       "worktreeRemoved": "worktree を削除しました。\n{notes}",
-      "branchesDeleted": "ブランチ {branches} を削除しました。"
+      "branchesDeleted": "ブランチ {count} 本（{branches}）を削除しました。"
     },
     "empty": {
       "composing": "左のチャット欄でフォルダを選び、最初の指示を送るとセッションが始まります",
@@ -1384,7 +1386,8 @@
       "backupShow": "中身は git show {ref} で見られます",
       "deleteBackup": "削除",
       "confirmDeleteBackup": "控え {ref} を削除しますか？\n中の未コミットの変更と未追跡のファイルは、元に戻せなくなります。",
-      "deleteBackupFailed": "控えを削除できませんでした: {error}"
+      "deleteBackupFailed": "控えを削除できませんでした: {error}",
+      "confirmDeleteBackupStray": "控え {ref} を削除しますか？\n中の未コミットの変更と未追跡のファイルと、どのブランチにも無いコミット（控えの親）は、元に戻せなくなります。"
     }
   },
   "account": {

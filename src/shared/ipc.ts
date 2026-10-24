@@ -374,7 +374,8 @@ export type WorktreeCleanup = {
   worktrees: { id: string; title: string; path: string; branch: string }[];
   backups: WorktreeBackup[];
 };
-export type WorktreeBackup = { root: string; ref: string; date: number; subject: string; session: { id: string; title: string } | null };
+// strays: 控えの親が、どのブランチ・タグ・リモートにも無いコミット（detached HEAD で作った控えなど。控えを消すと、そのコミットも失われる）
+export type WorktreeBackup = { root: string; ref: string; date: number; subject: string; strays: boolean; session: { id: string; title: string } | null };
 
 export type SearchOptions = { caseSensitive: boolean; regex: boolean };
 // matchStart / matchLength は text（行の一部を抜き出したもの）の中での位置

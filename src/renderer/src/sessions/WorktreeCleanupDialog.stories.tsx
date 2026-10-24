@@ -19,6 +19,7 @@ const FULL: WorktreeCleanup = {
       ref: 'refs/tanacode/backup/tc-1015-b8nj',
       date: Date.UTC(2026, 9, 15, 3, 12),
       subject: 'tanacode: worktree tc-1015-b8nj を消す前の控え',
+      strays: false,
       session: { id: 'c', title: '価格の表示を直す' },
     },
     {
@@ -26,6 +27,7 @@ const FULL: WorktreeCleanup = {
       ref: 'refs/tanacode/backup/tc-1002-k3x9-2',
       date: Date.UTC(2026, 9, 2, 8, 40),
       subject: 'tanacode: worktree tc-1002-k3x9 を消す前の控え',
+      strays: true,
       session: null,
     },
   ],

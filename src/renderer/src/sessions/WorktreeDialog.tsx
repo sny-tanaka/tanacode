@@ -180,7 +180,8 @@ function BranchStatus({ branch }: { branch: WorktreeBranch }) {
       {branch.unpushed > 0 && <p className="worktree-dialog-status warn">{t('sessions.worktreeDialog.unpushedCount', { count: branch.unpushed })}</p>}
       {/* 手元にしか無いコミットはあるが、中身はデフォルトブランチに入っている（手元でのスカッシュマージ・cherry-pick など） */}
       {branch.contentIn && <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.contentIn', { branch: branch.contentIn })}</p>}
-      <PrStatus pr={branch.pr} />
+      {/* 幹のブランチは残すと決まっているので、PR は調べていない */}
+      {branch.keep !== 'trunk' && <PrStatus pr={branch.pr} />}
     </li>
   );
 }

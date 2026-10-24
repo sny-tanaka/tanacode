@@ -264,6 +264,7 @@ describe('WorktreeCleanupDialog（worktree の片付け）', () => {
     root: '/work/repo',
     ref,
     date: Date.UTC(2026, 9, 1),
+    strays: false,
     subject: 'tanacode: worktree を消す前の控え',
     session: null,
     ...over,
@@ -331,6 +332,17 @@ describe('WorktreeCleanupDialog（worktree の片付け）', () => {
     await settle();
     expect(api.argsOf('sessions.deleteBackup')).toEqual([['/work/repo', 'refs/tanacode/backup/tc-x']]);
     expect(screen.queryByText('すべて削除')).toBeNull();
+  });
+
+  it('どのブランチにも無いコミットが親の控えは、そのコミットも失われることを添えて確かめる', async () => {
+    mockApi({ 'sessions.worktreeCleanup': () => Promise.resolve({ worktrees: [], backups: [backup('refs/tanacode/backup/tc-d', { strays: true })] }) }).install();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<WorktreeCleanupDialog onClose={vi.fn()} />);
+    await screen.findByText('refs/tanacode/backup/tc-d');
+    fireEvent.click(button('削除'));
+    expect(confirm).toHaveBeenCalledWith(
+      '控え refs/tanacode/backup/tc-d を削除しますか？\n中の未コミットの変更と未追跡のファイルと、どのブランチにも無いコミット（控えの親）は、元に戻せなくなります。',
+    );
   });
 });
 

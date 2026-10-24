@@ -20,7 +20,7 @@ export function removalNotes(removal: WorktreeRemoval | null): string[] {
   return [
     ...(removal.backupRef ? [t('app.session.backupKept', { ref: removal.backupRef })] : []),
     ...kept.map((b) => t('app.session.branchKept', { branch: b.name, reason: keepReason(b.keep) })),
-    ...(deleted.length > 0 ? [t('app.session.branchesDeleted', { branches: deleted.join(', ') })] : []),
+    ...(deleted.length > 0 ? [t('app.session.branchesDeleted', { branches: deleted.join(', '), count: deleted.length })] : []),
   ];
 }
 

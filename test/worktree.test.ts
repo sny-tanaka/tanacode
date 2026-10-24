@@ -1012,7 +1012,7 @@ describe('作り直し', () => {
       { name: plan.branch, launched: true, current: false, deleted: true, keep: null },
     ]);
     const backupRef = removal.backupRef!;
-    expect(await restoreWorktree(plan, plan.path, { branch: 'fix/x', backupRef })).toEqual({ branch: 'fix/x', backup: 'applied' });
+    expect(await restoreWorktree(plan, plan.path, { branch: 'fix/x', backupRef })).toEqual({ branch: 'fix/x', busy: null, backup: 'applied' });
     expect(git(plan.path, 'branch', '--show-current')).toBe('fix/x');
     expect(readFileSync(join(plan.path, 'a.txt'), 'utf8')).toBe('changed\n');
     expect(readFileSync(join(plan.path, 'staged.txt'), 'utf8')).toBe('staged\n');
@@ -1029,10 +1029,25 @@ describe('作り直し', () => {
     const { backupRef } = await removeWorktree(plan, plan.path);
     // 控えを作ったあとに、元のフォルダの main が進んだ（起動したときのブランチは消えているので、今の HEAD から作り直す）
     commitIn(repo, 'later.txt');
-    expect(await restoreWorktree(plan, plan.path, { branch: 'fix/gone', backupRef })).toEqual({ branch: plan.branch, backup: 'kept' });
+    expect(await restoreWorktree(plan, plan.path, { branch: 'fix/gone', backupRef })).toEqual({ branch: plan.branch, busy: null, backup: 'kept' });
     expect(git(plan.path, 'branch', '--show-current')).toBe(plan.branch);
     expect(existsSync(join(plan.path, 'new.txt'))).toBe(false);
     expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/tanacode/backup/')).toBe(backupRef);
+  });
+
+  it('作り直すブランチをほかの場所で取り出していれば、その先頭から detached HEAD で作り直し、控えも戻す', async () => {
+    const plan = await create();
+    git(plan.path, 'switch', '-q', '-c', 'fix/x');
+    commitIn(plan.path, 'b.txt');
+    writeFileSync(join(plan.path, 'new.txt'), 'new\n');
+    const { backupRef } = await removeWorktree(plan, plan.path);
+    // 消したあとに、元のフォルダで fix/x を取り出した
+    git(repo, 'switch', '-q', 'fix/x');
+    const restored = await restoreWorktree(plan, plan.path, { branch: 'fix/x', backupRef });
+    expect(restored).toEqual({ branch: null, busy: 'fix/x', backup: 'applied' });
+    expect(git(plan.path, 'branch', '--show-current')).toBe('');
+    expect(git(plan.path, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'fix/x'));
+    expect(readFileSync(join(plan.path, 'new.txt'), 'utf8')).toBe('new\n');
   });
 });
 
@@ -1087,6 +1102,37 @@ describe('worktree の中で作ったブランチ（git switch -c）', () => {
     expect((await removeWorktree(plan, plan.path)).branches.every((b) => b.deleted)).toBe(true);
   });
 
+  it('起動したときのブランチでコミットしてから git switch -c した PR がスカッシュマージされたら、起動したときのブランチだけのコミットも PR に入っているとみなす', async () => {
+    const plan = await create();
+    commitIn(plan.path, 'a1.txt');
+    const first = git(repo, 'rev-parse', plan.branch);
+    git(plan.path, 'switch', '-q', '-c', 'fix/x');
+    commitIn(plan.path, 'b.txt');
+    const head = git(repo, 'rev-parse', 'fix/x');
+    prs.mockImplementation(async (_root, branch) =>
+      branch === 'fix/x' ? [{ ...pull({ number: 9, state: 'MERGED', headRefOid: head }), commits: [{ oid: first }, { oid: head }] }] : [],
+    );
+    expect((await worktreeLeftovers(plan, plan.path)).branches.map((b) => [b.name, b.unpushed, b.keep])).toEqual([
+      ['fix/x', 0, null],
+      [plan.branch, 0, null],
+    ]);
+    expect((await removeWorktree(plan, plan.path)).branches.every((b) => b.deleted)).toBe(true);
+    expect(git(repo, 'branch', '--list', 'fix/x', plan.branch)).toBe('');
+  });
+
+  it('消すのは、確かめたときの先頭のままのブランチだけ。ブランチの設定（上流）も外す', async () => {
+    withOrigin();
+    const plan = await create();
+    git(plan.path, 'switch', '-q', '-c', 'fix/x');
+    commitIn(plan.path, 'b.txt');
+    git(plan.path, 'push', '-q', '-u', 'origin', 'fix/x');
+    expect((await removeWorktree(plan, plan.path)).branches.map((b) => [b.name, b.deleted])).toEqual([
+      ['fix/x', true],
+      [plan.branch, true],
+    ]);
+    expect(readFileSync(join(repo, '.git', 'config'), 'utf8')).not.toContain('[branch "fix/x"]');
+  });
+
   it('手元にしか無いコミットを 2 つのブランチが持っていれば、互いをほかのブランチとして数えず、どちらも残す', async () => {
     const plan = await create();
     commitIn(plan.path, 'b.txt');
@@ -1116,6 +1162,8 @@ describe('worktree の中で作ったブランチ（git switch -c）', () => {
       { name: plan.branch, launched: true, current: false, deleted: true, keep: null },
     ]);
     expect(git(repo, 'branch', '--list', 'develop')).toContain('develop');
+    // 残すと決まっている幹のブランチの PR は調べない
+    expect(prs).not.toHaveBeenCalledWith(repo, 'develop', true);
   });
 
   it('detached HEAD で、どのブランチにも無いコミットにいれば、控えに残す（控えの親がそのコミット）', async () => {
@@ -1128,6 +1176,8 @@ describe('worktree の中で作ったブランチ（git switch -c）', () => {
     expect(git(repo, 'rev-parse', `${removal.backupRef}^`)).toBe(stray);
     // 起動したときのブランチには、手元にしか無いコミットが無いので消す
     expect(removal.branches).toEqual([launched(plan, null, false)]);
+    // 控えを消すと、そのコミットも失われることが分かる
+    expect((await listBackups(repo)).map((b) => [b.ref, b.strays])).toEqual([[removal.backupRef, true]]);
   });
 });
 
@@ -1152,6 +1202,8 @@ describe('控えの一覧と削除', () => {
     const list = await listBackups(repo);
     expect(list.map((x) => x.ref)).toEqual([b, a]);
     expect(list[0].subject).toContain(second.name);
+    // 控えの親（main）はブランチから辿れる
+    expect(list[0].strays).toBe(false);
     expect(list[0].date).toBe(2000000000_000);
     await expect(deleteBackup(repo, 'refs/heads/main')).rejects.toThrow('not a backup');
     await expect(deleteBackup(repo, 'refs/tanacode/backup/../../heads/main')).rejects.toThrow('not a backup');
