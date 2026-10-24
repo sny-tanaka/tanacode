@@ -41,7 +41,7 @@ import { SessionNotices, type NoticeHost } from './session-notices';
 type Deps = {
   store: ChecklistStore;
   host: NoticeHost;
-  // メニューの「Claude にチェックリストを扱わせる」
+  // メニューの「MCP → チェックリスト」
   enabled: () => boolean;
   // 知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;
@@ -144,7 +144,7 @@ export class ChecklistControl {
     }
     if (!checklistTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
-      return textResult(`The user has turned off "${t('main.menu.checklistControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
+      return textResult(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.checklistControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
     }
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return textResult('This session is not in tanacode.', true);

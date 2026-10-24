@@ -304,8 +304,8 @@ describe('Claude Code に足す MCP サーバー', () => {
   it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
     await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
-    menuItem('Claude にチェックリストを扱わせる').checked = true;
-    menuItem('Claude にチェックリストを扱わせる').click?.(menuItem('Claude にチェックリストを扱わせる'));
+    menuItem('checklistControl').checked = true;
+    menuItem('checklistControl').click?.(menuItem('checklistControl'));
     expect(launch('checklistLaunch')).not.toBeNull();
   });
 
@@ -1195,35 +1195,34 @@ describe('プレビューの webview の移動先', () => {
 });
 
 describe('メニュー', () => {
-  const toggle = (label: string) => {
-    const item = menuItem(label);
+  const toggle = (id: string) => {
+    const item = menuItem(id);
     item.checked = !item.checked;
     item.click?.(item);
     return item;
   };
 
-  it('アプリのメニューに、設定の切り替えと、許す先・新規セッション・止めて終了を並べる', async () => {
+  // 並びは id（役割・区切り）で見る。文言は en.json・ja.json のもの
+  const shape = (items: MenuItem[]) => items.map((i) => i.id ?? i.role ?? i.type);
+
+  it('アプリのメニュー: 更新 ／ MCP ／ Claude の自動の動きと送る文 ／ 言語 の順に、区切って並べる', async () => {
     await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, sessionsStartConfirm: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
-    expect(appMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual([
+    expect(shape(appMenu.submenu!)).toEqual([
       'about',
       'separator',
-      '新しいバージョンが出たら通知する',
-      '終了するときに新しいバージョンを入れる（Homebrew）',
-      'Claude にアプリ内ブラウザを操作させる',
-      'Claude にほかのセッションを扱わせる',
-      'Claude がセッションを始める前に許可を求める',
-      'Claude にチェックリストを扱わせる',
-      'Claude にウォークスルーさせる',
-      'Claude にターミナルを使わせる',
-      '利用枠で止まったら、戻ったときに自動で再開する',
-      '自動で最適化圧縮する大きさ',
-      '離席モードで答えを待つ時間',
-      'アプリ内ブラウザで Claude に許す先…',
-      'Claude に送る文…',
+      'notifyUpdates',
+      'updateOnQuit',
       'separator',
-      '言語（Language）',
+      'mcp',
+      'separator',
+      'usageLimitResume',
+      'autoCompactPercent',
+      'awayWait',
+      'prompts',
+      'separator',
+      'language',
       'separator',
       'services',
       'separator',
@@ -1233,16 +1232,92 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, false, true, false, true, false]);
-    expect(fileMenu.label).toBe('ファイル');
-    expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
-    expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
+    // MCP の中は、MCP サーバーごとに区切る。切り替えの副題は、Claude Code の /mcp に出るサーバーの名前
+    const mcp = menuItem('mcp').submenu!;
+    expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'sessionsStartConfirm', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl']);
+    expect(mcp.filter((i) => i.sublabel).map((i) => [i.id, i.sublabel])).toEqual([
+      ['browserControl', 'tanacode-browser'],
+      ['sessionsControl', 'tanacode-sessions'],
+      ['checklistControl', 'tanacode-checklist'],
+      ['walkthroughControl', 'tanacode-walkthrough'],
+      ['terminalControl', 'tanacode-terminal'],
+    ]);
+    const checks = [...appMenu.submenu!, ...mcp].filter((i) => i.type === 'checkbox');
+    expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({
+      notifyUpdates: false,
+      updateOnQuit: true,
+      browserControl: true,
+      sessionsControl: false,
+      sessionsStartConfirm: false,
+      checklistControl: true,
+      walkthroughControl: false,
+      terminalControl: true,
+      usageLimitResume: false,
+    });
+    expect(fileMenu.id).toBe('file');
+    expect(shape(fileMenu.submenu!)).toEqual(['newSession', 'separator', 'close', 'separator', 'stopAndQuit']);
+    expect(menuItem('newSession').accelerator).toBe('CmdOrCtrl+N');
     expect(rest.map((i) => i.role)).toEqual(['editMenu', 'viewMenu', 'windowMenu']);
+  });
+
+  it('「自動で最適化圧縮する大きさ」「離席モードで答えを待つ時間」: 選んだものを設定に保存し、チェックを移す', async () => {
+    await boot();
+    const checked = (id: string) => menuItem(id).submenu!.filter((i) => i.checked).map((i) => i.id);
+    expect(checked('autoCompactPercent')).toEqual(['autoCompactPercent-80']);
+    expect(checked('awayWait')).toEqual(['awayWait-5']);
+    menuItem('autoCompactPercent-60').click?.({});
+    menuItem('awayWait-15').click?.({});
+    expect(savedSettings()).toMatchObject({ autoCompactPercent: 60, awayWaitMinutes: 15 });
+    expect(checked('autoCompactPercent')).toEqual(['autoCompactPercent-60']);
+    expect(checked('awayWait')).toEqual(['awayWait-15']);
+  });
+
+  it('メニューの項目の名前（日本語と英語）', async () => {
+    const labels = () => {
+      const appMenu = state.menu![0].submenu!;
+      return [...appMenu, ...menuItem('mcp').submenu!].filter((i) => i.id).map((i) => i.label);
+    };
+    await boot();
+    expect(labels()).toEqual([
+      '新しいバージョンが出たら通知する',
+      '終了するときに新しいバージョンを入れる（Homebrew）',
+      'MCP',
+      '利用枠で止まったら、戻ったときに自動で再開する',
+      '自動で最適化圧縮する大きさ',
+      '離席モードで答えを待つ時間',
+      'Claude に送る文…',
+      '言語（Language）',
+      'アプリ内ブラウザ',
+      'アプリ内ブラウザで許す先…',
+      'セッション',
+      'セッションを始める前に許可を求める',
+      'チェックリスト',
+      'ウォークスルー',
+      'ターミナル',
+    ]);
+    await boot({ settings: { language: 'en' } });
+    expect(labels()).toEqual([
+      'Notify When Updates Are Available',
+      'Install Updates on Quit (Homebrew)',
+      'MCP',
+      'Resume Automatically When the Usage Limit Resets',
+      'Auto Optimized Compact At',
+      'Away Mode Wait Time',
+      'Messages Sent to Claude…',
+      'Language',
+      'In-App Browser',
+      'Allowed Sites in the In-App Browser…',
+      'Sessions',
+      'Ask Before Starting a Session',
+      'Checklists',
+      'Walkthroughs',
+      'Terminal',
+    ]);
   });
 
   it('「言語」: 既定は「システムに合わせる」で、Mac の優先する言語に日本語があれば日本語。画面には起動の引数で渡す', async () => {
     await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'ja-JP']) });
-    const languages = menuItem('言語（Language）').submenu!;
+    const languages = menuItem('language').submenu!;
     expect(languages.map((i) => [i.label, i.type, i.checked])).toEqual([
       ['システムに合わせる', 'radio', true],
       ['日本語', 'radio', false],
@@ -1253,21 +1328,21 @@ describe('メニュー', () => {
 
   it('「言語」: Mac の優先する言語に日本語が無ければ、英語で出す（メニューも画面も）', async () => {
     await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'fr-FR']) });
-    expect(menuItem('Language').submenu!.map((i) => i.label)).toEqual(['System Default', '日本語', 'English']);
-    expect(menuItem('File').submenu![0].label).toBe('New Session');
+    expect(menuItem('language').submenu!.map((i) => i.label)).toEqual(['System Default', '日本語', 'English']);
+    expect(menuItem('file').submenu![0].label).toBe('New Session');
     expect(mainWindow().options.webPreferences).toMatchObject({ additionalArguments: ['--tanacode-language=en'] });
   });
 
   it('「言語」: 保存した言語で起動する（Mac の言語より優先）', async () => {
     await boot({ settings: { language: 'en' } });
-    expect(menuItem('Language').submenu!.find((i) => i.checked)?.label).toBe('English');
+    expect(menuItem('language').submenu!.find((i) => i.checked)?.label).toBe('English');
     expect(mainWindow().options.webPreferences).toMatchObject({ additionalArguments: ['--tanacode-language=en'] });
   });
 
   // 言語の項目を押す（Electron のラジオボタンと同じく、押すとチェックが移る）。聞いたダイアログが閉じるまで待つ
-  const chooseLanguage = async (label: string) => {
-    const languages = menuItem(label);
-    for (const item of state.menu![0].submenu!.find((i) => i.submenu?.includes(languages))!.submenu!) item.checked = item === languages;
+  const chooseLanguage = async (id: string) => {
+    const languages = menuItem(id);
+    for (const item of menuItem('language').submenu!) item.checked = item === languages;
     languages.click?.(languages);
     await new Promise((r) => setTimeout(r, 0));
   };
@@ -1275,7 +1350,7 @@ describe('メニュー', () => {
   it('「言語」: 選んだ言語を保存し、今の言語のまま動き続ける。言語が変わるなら、変えた先の言語で再起動するかを聞く（「あとで」なら何もしない）', async () => {
     await boot();
     state.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
-    await chooseLanguage('English');
+    await chooseLanguage('language-en');
     expect(savedSettings().language).toBe('en');
     const [, options] = state.dialog.showMessageBox.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(options).toEqual({
@@ -1290,9 +1365,9 @@ describe('メニュー', () => {
     expect(state.quit).not.toHaveBeenCalled();
     expect(state.relaunch).not.toHaveBeenCalled();
     // 動いている間は日本語のまま（メニューも）。チェックは選んだもの
-    expect(menuItem('言語（Language）').submenu!.find((i) => i.checked)?.label).toBe('English');
+    expect(menuItem('language').submenu!.find((i) => i.checked)?.label).toBe('English');
     // 今の言語（日本語）に戻すなら、保存するだけで聞かない
-    await chooseLanguage('日本語');
+    await chooseLanguage('language-ja');
     expect(savedSettings().language).toBe('ja');
     expect(state.dialog.showMessageBox).toHaveBeenCalledTimes(1);
   });
@@ -1300,7 +1375,7 @@ describe('メニュー', () => {
   it('「言語」: 「今すぐ再起動」なら、ふつうの終了の確認を通して終了し、終わったら起動し直す', async () => {
     await boot();
     state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    await chooseLanguage('English');
+    await chooseLanguage('language-en');
     await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
     expect(state.relaunch).not.toHaveBeenCalled();
     const event = fakeEvent();
@@ -1313,7 +1388,7 @@ describe('メニュー', () => {
     await boot();
     manager().liveSessions.mockReturnValue([{ id: 's1', title: 'メニューを直す', state: '作業中' }]);
     state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 }).mockResolvedValueOnce({ response: 2 });
-    await chooseLanguage('English');
+    await chooseLanguage('language-en');
     await vi.waitFor(() => expect(state.dialog.showMessageBox).toHaveBeenCalledTimes(2));
     await new Promise((r) => setTimeout(r, 0));
     expect(state.quit).not.toHaveBeenCalled();
@@ -1330,8 +1405,8 @@ describe('メニュー', () => {
     await boot();
     // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
     mkdirSync(join(state.userData, 'settings.json.tmp'));
-    await chooseLanguage('English');
-    expect(menuItem('言語（Language）').submenu!.map((i) => [i.label, i.checked])).toEqual([
+    await chooseLanguage('language-en');
+    expect(menuItem('language').submenu!.map((i) => [i.label, i.checked])).toEqual([
       ['システムに合わせる', true],
       ['日本語', false],
       ['English', false],
@@ -1345,51 +1420,52 @@ describe('メニュー', () => {
     const compat = the('ClaudeCompatMonitor');
     monitor.start.mockClear();
     compat.start.mockClear();
-    toggle('新しいバージョンが出たら通知する');
+    toggle('notifyUpdates');
     expect(monitor.stop).toHaveBeenCalledTimes(1);
     expect(compat.stop).toHaveBeenCalledTimes(1);
     expect(savedSettings().updateCheck).toBe(false);
-    toggle('新しいバージョンが出たら通知する');
+    toggle('notifyUpdates');
     expect(monitor.start).toHaveBeenCalledTimes(1);
     expect(compat.start).toHaveBeenCalledTimes(1);
     expect(savedSettings().updateCheck).toBe(true);
   });
 
-  it('「Claude にアプリ内ブラウザを操作させる」: オフにしたら、頼んでいる操作を取り下げ、許した外の先も捨てる', async () => {
+  it('「MCP → アプリ内ブラウザ」: オフにしたら、頼んでいる操作を取り下げ、許した外の先も捨てる', async () => {
     await boot();
-    toggle('Claude にアプリ内ブラウザを操作させる');
+    toggle('browserControl');
     expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
     expect(savedSettings().browserControl).toBe(false);
-    toggle('Claude にアプリ内ブラウザを操作させる');
+    toggle('browserControl');
     expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
     expect(savedSettings().browserControl).toBe(true);
   });
 
+  // 項目の id は、保存する設定の名前と同じ
   it.each([
-    ['終了するときに新しいバージョンを入れる（Homebrew）', 'updateOnQuit'],
-    ['Claude にほかのセッションを扱わせる', 'sessionsControl'],
-    ['Claude がセッションを始める前に許可を求める', 'sessionsStartConfirm'],
-    ['Claude にチェックリストを扱わせる', 'checklistControl'],
-    ['Claude にウォークスルーさせる', 'walkthroughControl'],
-    ['Claude にターミナルを使わせる', 'terminalControl'],
-    ['利用枠で止まったら、戻ったときに自動で再開する', 'usageLimitResume'],
-  ])('「%s」: 設定（%s）に保存する', async (label, key) => {
+    'updateOnQuit',
+    'sessionsControl',
+    'sessionsStartConfirm',
+    'checklistControl',
+    'walkthroughControl',
+    'terminalControl',
+    'usageLimitResume',
+  ])('「%s」: 同じ名前の設定に保存する', async (key) => {
     await boot();
-    toggle(label);
+    toggle(key);
     expect(savedSettings()[key]).toBe(false);
-    toggle(label);
+    toggle(key);
     expect(savedSettings()[key]).toBe(true);
   });
 
-  describe('「Claude がセッションを始める前に許可を求める」', () => {
+  describe('「MCP → セッションを始める前に許可を求める」', () => {
     const noAskFile = () => join(state.userData, 'sessions-start-no-ask');
 
     it('オフにしたら印のファイルを置き、オンにしたら消す（起動の確認のフックが、動いているセッションでも次の呼び出しから読む）', async () => {
       await boot();
       expect(existsSync(noAskFile())).toBe(false);
-      toggle('Claude がセッションを始める前に許可を求める');
+      toggle('sessionsStartConfirm');
       expect(existsSync(noAskFile())).toBe(true);
-      toggle('Claude がセッションを始める前に許可を求める');
+      toggle('sessionsStartConfirm');
       expect(existsSync(noAskFile())).toBe(false);
     });
 
@@ -1403,7 +1479,7 @@ describe('メニュー', () => {
     it('保存できなかったら、チェックも印のファイルも元に戻す（確認を省いたままにしない）', async () => {
       await boot();
       mkdirSync(join(state.userData, 'settings.json.tmp'));
-      const item = toggle('Claude がセッションを始める前に許可を求める');
+      const item = toggle('sessionsStartConfirm');
       expect(item.checked).toBe(true);
       expect(existsSync(noAskFile())).toBe(false);
     });
@@ -1412,52 +1488,52 @@ describe('メニュー', () => {
       await boot();
       // ファイルの場所に、中身のあるフォルダがあると置けない
       mkdirSync(join(noAskFile(), 'x'), { recursive: true });
-      const item = toggle('Claude がセッションを始める前に許可を求める');
+      const item = toggle('sessionsStartConfirm');
       expect(item.checked).toBe(true);
       // 設定は保存しない
       expect(existsSync(join(state.userData, 'settings.json'))).toBe(false);
-      expect(menuItem('Claude がセッションを始める前に許可を求める').checked).toBe(true);
+      expect(menuItem('sessionsStartConfirm').checked).toBe(true);
     });
   });
 
   it('「利用枠で止まったら、戻ったときに自動で再開する」をオフにしたら、待っている再開の予約を取り消す（オンにしたときは何もしない）', async () => {
     await boot();
-    toggle('利用枠で止まったら、戻ったときに自動で再開する');
+    toggle('usageLimitResume');
     expect(the('UsageLimitResume').cancelAll).toHaveBeenCalledTimes(1);
-    toggle('利用枠で止まったら、戻ったときに自動で再開する');
+    toggle('usageLimitResume');
     expect(the('UsageLimitResume').cancelAll).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    '新しいバージョンが出たら通知する',
-    '終了するときに新しいバージョンを入れる（Homebrew）',
-    'Claude にアプリ内ブラウザを操作させる',
-    'Claude にほかのセッションを扱わせる',
-    'Claude がセッションを始める前に許可を求める',
-    'Claude にチェックリストを扱わせる',
-    'Claude にウォークスルーさせる',
-    'Claude にターミナルを使わせる',
-    '利用枠で止まったら、戻ったときに自動で再開する',
-  ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (label) => {
+    'notifyUpdates',
+    'updateOnQuit',
+    'browserControl',
+    'sessionsControl',
+    'sessionsStartConfirm',
+    'checklistControl',
+    'walkthroughControl',
+    'terminalControl',
+    'usageLimitResume',
+  ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (id) => {
     await boot();
     // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
     mkdirSync(join(state.userData, 'settings.json.tmp'));
     const monitor = the('AppUpdateMonitor');
     monitor.start.mockClear();
-    const item = toggle(label);
+    const item = toggle(id);
     expect(item.checked).toBe(true);
     expect(monitor.start).not.toHaveBeenCalled();
     expect(monitor.stop).not.toHaveBeenCalled();
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「アプリ内ブラウザで Claude に許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「MCP → アプリ内ブラウザで許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
-    menuItem('アプリ内ブラウザで Claude に許す先…').click?.({});
+    menuItem('browserHosts').click?.({});
     expect(state.windows).toHaveLength(2);
-    menuItem('Claude に送る文…').click?.({});
-    menuItem('新規セッション').click?.({});
+    menuItem('prompts').click?.({});
+    menuItem('newSession').click?.({});
     expect(mainWindow().show).toHaveBeenCalledTimes(3);
     expect(mainWindow().webContents.sent).toEqual([
       [IpcChannel.BrowserHostsOpen, undefined],
@@ -1468,7 +1544,7 @@ describe('メニュー', () => {
 
   it('「Claude Code も止めて終了」: 確認を出さずに、Claude Code と pty ホストを止めてから終了する', async () => {
     await boot();
-    menuItem('Claude Code も止めて終了').click?.({});
+    menuItem('stopAndQuit').click?.({});
     await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
     expect(manager().closeAll.mock.calls).toEqual([[true]]);
     expect(state.ptyHost.shutdown).toHaveBeenCalledTimes(1);
@@ -1787,7 +1863,7 @@ describe('Homebrew での更新', () => {
   it('言語を変えて「今すぐ再起動」したときも、終了で入れ替えるなら、入れ替えたあとに起動し直す（先に起動しない）', async () => {
     await bootWith(updater());
     state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    const english = menuItem('English');
+    const english = menuItem('language-en');
     english.click?.(english);
     await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
     quitOnce();

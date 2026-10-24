@@ -50,18 +50,19 @@
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
       "updateOnQuit": "Install Updates on Quit (Homebrew)",
-      "browserControl": "Let Claude Control the In-App Browser",
-      "sessionsControl": "Let Claude Manage Other Sessions",
-      "sessionsStartConfirm": "Ask Before Claude Starts a Session",
-      "checklistControl": "Let Claude Manage Checklists",
-      "walkthroughControl": "Let Claude Give Walkthroughs",
-      "terminalControl": "Let Claude Use the Terminal",
+      "mcp": "MCP",
+      "browserControl": "In-App Browser",
+      "sessionsControl": "Sessions",
+      "sessionsStartConfirm": "Ask Before Starting a Session",
+      "checklistControl": "Checklists",
+      "walkthroughControl": "Walkthroughs",
+      "terminalControl": "Terminal",
       "usageLimitResume": "Resume Automatically When the Usage Limit Resets",
       "autoCompactPercent": "Auto Optimized Compact At",
       "awayWait": "Away Mode Wait Time",
       "language": "Language",
       "languageSystem": "System Default",
-      "browserHosts": "Allowed Sites for Claude in the In-App Browser…",
+      "browserHosts": "Allowed Sites in the In-App Browser…",
       "prompts": "Messages Sent to Claude…",
       "file": "File",
       "newSession": "New Session",
@@ -579,8 +580,8 @@
         "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
       },
       "compactUnavailable": {
-        "checklistOff": "Turn on “Let Claude Manage Checklists” in the menu to use this",
-        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “Let Claude Manage Checklists” in the menu and restart the session to use this"
+        "checklistOff": "Turn on “tanacode > MCP > Checklists” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > MCP > Checklists” in the menu and restart the session to use this"
       },
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
@@ -813,7 +814,7 @@
     },
     "away": {
       "name": "Away mode",
-      "about": "While you are away, Claude decides without asking you and records what it decided. Permission prompts and questions in this session wait for a set time (change it in the menu) and are declined if nobody answers. Nothing is allowed for you. Child sessions are not affected",
+      "about": "While you are away, Claude decides without asking you and records what it decided. Permission prompts and questions in this session wait for a set time (change it in the menu: tanacode > Away Mode Wait Time) and are declined if nobody answers. Nothing is allowed for you. Child sessions are not affected",
       "stateOn": "Away",
       "stateOff": "Off",
       "terminal": "In terminal mode, prompts and questions are not declined (Claude is only told the rules)"

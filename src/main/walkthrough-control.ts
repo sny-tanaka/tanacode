@@ -29,7 +29,7 @@ import { Workspace } from './workspace';
 type Deps = {
   // セッションのフォルダ（worktree のセッションは worktree）。無いセッションなら null
   cwdOf: (sessionId: string) => string | null;
-  // メニューの「Claude にウォークスルーさせる」
+  // メニューの「MCP → ウォークスルー」
   enabled: () => boolean;
   // 変わった（終えたら null）。画面に送る
   onChange: (sessionId: string, walkthrough: Walkthrough | null) => void;
@@ -117,7 +117,7 @@ export class WalkthroughControl {
   async handle(callerId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (!walkthroughTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
-      return textResult(`The user has turned off "${t('main.menu.walkthroughControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
+      return textResult(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.walkthroughControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
     }
     const cwd = this.deps.cwdOf(callerId);
     if (!cwd) return textResult('This session is not in tanacode.', true);

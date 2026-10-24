@@ -229,7 +229,7 @@ describe('中継と起動の引数', () => {
     expect(allowedSessionToolIds()).toContain(sessionToolId('get_app_update'));
   });
 
-  it('「Claude がセッションを始める前に許可を求める」は既定でオンで、保存される', () => {
+  it('「MCP → セッションを始める前に許可を求める」は既定でオンで、保存される', () => {
     const file = join(root, 'settings.json');
     const settings = new AppSettings(file);
     expect(settings.sessionsStartConfirmEnabled()).toBe(true);
@@ -613,7 +613,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
   it('メニューでオフなら断る。知らないセッションからの呼び出しも断る', async () => {
     enabled = false;
-    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toBe(`The user has turned off "${t('main.menu.sessionsControl')}" in the tanacode menu. Ask the user to turn it on.`);
+    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toBe(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.sessionsControl')}" in the tanacode menu. Ask the user to turn it on.`);
     enabled = true;
     expect((await control.handle('nobody', 'list_sessions', {})).isError).toBe(true);
   });

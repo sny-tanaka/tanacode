@@ -73,13 +73,13 @@ describe('足したプロファイルを開く', () => {
     expect(view().visible).toBe(false);
   });
 
-  it('「Claude がセッションを始める前に許可を求める」はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のファイルを見て、見ているプロファイルによらず同じ設定を切り替える', async () => {
+  it('「MCP → セッションを始める前に許可を求める」はアプリ全体で 1 つ: どのプロファイルのセッションも同じ印のファイルを見て、見ているプロファイルによらず同じ設定を切り替える', async () => {
     await boot({ profiles: PROFILES });
     const noAskFile = join(state.userData, 'sessions-start-no-ask');
     expect(sessionsLaunchOf(0)).toMatchObject({ noAskFile });
     expect(sessionsLaunchOf(1)).toMatchObject({ noAskFile });
     await invoke(IpcChannel.ProfilesSwitch, 'p2');
-    const item = menuItem('Claude がセッションを始める前に許可を求める');
+    const item = menuItem('sessionsStartConfirm');
     expect(item.checked).toBe(true);
     item.checked = false;
     item.click?.(item);
@@ -88,7 +88,7 @@ describe('足したプロファイルを開く', () => {
     expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ sessionsStartConfirm: false });
     expect(existsSync(join(state.userData, 'profiles', 'p2', 'settings.json'))).toBe(false);
     await invoke(IpcChannel.ProfilesSwitch, 'default');
-    expect(menuItem('Claude がセッションを始める前に許可を求める').checked).toBe(false);
+    expect(menuItem('sessionsStartConfirm').checked).toBe(false);
   });
 
   it('アプリ内ブラウザの webview は、プロファイルごとのセッション（Cookie）を使わせる', async () => {

@@ -50,18 +50,19 @@
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
       "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
-      "browserControl": "Claude にアプリ内ブラウザを操作させる",
-      "sessionsControl": "Claude にほかのセッションを扱わせる",
-      "sessionsStartConfirm": "Claude がセッションを始める前に許可を求める",
-      "checklistControl": "Claude にチェックリストを扱わせる",
-      "walkthroughControl": "Claude にウォークスルーさせる",
-      "terminalControl": "Claude にターミナルを使わせる",
+      "mcp": "MCP",
+      "browserControl": "アプリ内ブラウザ",
+      "sessionsControl": "セッション",
+      "sessionsStartConfirm": "セッションを始める前に許可を求める",
+      "checklistControl": "チェックリスト",
+      "walkthroughControl": "ウォークスルー",
+      "terminalControl": "ターミナル",
       "usageLimitResume": "利用枠で止まったら、戻ったときに自動で再開する",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
       "awayWait": "離席モードで答えを待つ時間",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
-      "browserHosts": "アプリ内ブラウザで Claude に許す先…",
+      "browserHosts": "アプリ内ブラウザで許す先…",
       "prompts": "Claude に送る文…",
       "file": "ファイル",
       "newSession": "新規セッション",
@@ -572,8 +573,8 @@
         "waiting": "最適化圧縮: 再開の文を送るのを待っています（入力欄が空くと送ります）"
       },
       "compactUnavailable": {
-        "checklistOff": "メニューの「Claude にチェックリストを扱わせる」をオンにすると使えます",
-        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「Claude にチェックリストを扱わせる」をオンにして、セッションを起動し直すと使えます"
+        "checklistOff": "メニューの「tanacode → MCP → チェックリスト」をオンにすると使えます",
+        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「tanacode → MCP → チェックリスト」をオンにして、セッションを起動し直すと使えます"
       },
       "compactFailure": {
         "interrupted": "仕上げを中断したので、最適化圧縮を取りやめました。会話は消していません",
@@ -786,7 +787,7 @@
     },
     "away": {
       "name": "離席モード",
-      "about": "席を外している間、Claude に聞かずに決めて記録させます。このセッションに出た許可の確認・質問は、決まった時間（メニューで変えられます）待って、答えが無ければ断ります。許すことはしません。子のセッションには効きません",
+      "about": "席を外している間、Claude に聞かずに決めて記録させます。このセッションに出た許可の確認・質問は、決まった時間（メニューの「tanacode → 離席モードで答えを待つ時間」で変えられます）待って、答えが無ければ断ります。許すことはしません。子のセッションには効きません",
       "stateOn": "離席モード中",
       "stateOff": "オフ",
       "terminal": "ターミナルモードの間は、確認・質問を断りません（Claude に決まりを伝えるだけです）"

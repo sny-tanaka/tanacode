@@ -90,9 +90,9 @@ describe('Claude がセッションの MCP で子セッションを始める', (
   });
 });
 
-// メニューの「Claude がセッションを始める前に許可を求める」をオフにすると、manual の親でも、許可の確認を出さずに子が始まる。
+// メニューの「MCP → セッションを始める前に許可を求める」をオフにすると、manual の親でも、許可の確認を出さずに子が始まる。
 // オンに戻すと、動いている親（Claude Code を起動し直さない）でも、次の起動からまた確認が出る（フックが呼ばれるたびに印のファイルを見る）
-const NO_ASK_LABEL = 'Claude がセッションを始める前に許可を求める';
+const NO_ASK_ID = 'sessionsStartConfirm';
 const NO_ASK_PARENT = '確認なしで別のセッションを始めてください';
 const NO_ASK_CHILD = '確認なしで始めた子の作業として、返事だけしてください';
 const NO_ASK_CHILD_NAME = '確認なしの子';
@@ -103,7 +103,7 @@ const ASK_AGAIN_CHILD = '確認を戻したあとの子の作業として、返�
 const ASK_AGAIN_CHILD_NAME = '確認を戻したあとの子';
 const ASK_AGAIN_DONE = '確認を戻したあとに子を始めました';
 
-describe('「Claude がセッションを始める前に許可を求める」の切り替え', () => {
+describe('「MCP → セッションを始める前に許可を求める」の切り替え', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
@@ -133,26 +133,17 @@ describe('「Claude がセッションを始める前に許可を求める」の
     await app?.close();
   });
 
-  // メニューの「tanacode」の項目を押す（人が押したときと同じく、チェックを切り替えてから押した処理を動かす）。押したあとのチェックを返す
-  const toggleMenu = (label: string) =>
-    app.app.evaluate(({ Menu }, label) => {
-      type Item = { label: string; checked: boolean; click(): void; submenu?: { items: Item[] } | null };
-      const find = (items: Item[]): Item | null => {
-        for (const item of items) {
-          if (item.label === label) return item;
-          const found = item.submenu ? find(item.submenu.items) : null;
-          if (found) return found;
-        }
-        return null;
-      };
-      const item = find((Menu.getApplicationMenu()?.items ?? []) as unknown as Item[]);
-      if (!item) throw new Error(`メニューに「${label}」がありません`);
+  // メニューの項目を id で探して押す（人が押したときと同じく、チェックを切り替えてから押した処理を動かす）。押したあとのチェックを返す
+  const toggleMenu = (id: string) =>
+    app.app.evaluate(({ Menu }, id) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+      if (!item) throw new Error(`メニューに「${id}」がありません`);
       item.click();
       return item.checked;
-    }, label);
+    }, id);
 
   it('オフにすると、manual の親でも、許可の確認を出さずに子が始まる', async () => {
-    expect(await toggleMenu(NO_ASK_LABEL)).toBe(false);
+    expect(await toggleMenu(NO_ASK_ID)).toBe(false);
     await app.startSession(NO_ASK_PARENT, { mode: 'manual' });
     await app.byText('.chat-list', NO_ASK_DONE).waitFor();
     expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
@@ -162,7 +153,7 @@ describe('「Claude がセッションを始める前に許可を求める」の
 
   it('オンに戻すと、動いている親でも（起動し直さずに）、次の起動から許可の確認が出る', async () => {
     const running = await app.claudePids();
-    expect(await toggleMenu(NO_ASK_LABEL)).toBe(true);
+    expect(await toggleMenu(NO_ASK_ID)).toBe(true);
     await app.byText('.session-list .session-row', NO_ASK_PARENT).click();
     await app.byText('.chat-list', NO_ASK_DONE).waitFor();
     await app.send(ASK_AGAIN);

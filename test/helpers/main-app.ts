@@ -181,7 +181,9 @@ export class FakeNotification extends Emitter {
 
 // メニューの項目（Menu.buildFromTemplate に渡したもの）
 export type MenuItem = {
+  id?: string;
   label?: string;
+  sublabel?: string;
   role?: string;
   type?: string;
   checked?: boolean;
@@ -777,18 +779,18 @@ export function sentToRenderer(channel?: string): unknown[] {
   return channel ? sent.filter(([c]) => c === channel).map(([, payload]) => payload) : sent;
 }
 
-// メニューの項目をラベルか役割で探す
-export function menuItem(label: string): MenuItem {
+// メニューの項目を id か役割で探す（文言を変えても壊れないよう、ラベルでは探さない）
+export function menuItem(id: string): MenuItem {
   const walk = (items: MenuItem[]): MenuItem | undefined => {
     for (const item of items) {
-      if (item.label === label || item.role === label) return item;
+      if (item.id === id || item.role === id) return item;
       const found = item.submenu && walk(item.submenu);
       if (found) return found;
     }
     return undefined;
   };
   const found = state.menu && walk(state.menu);
-  if (!found) throw new Error(`メニューに「${label}」がありません`);
+  if (!found) throw new Error(`メニューに「${id}」がありません`);
   return found;
 }
 

@@ -29,7 +29,7 @@ export type TerminalsApi = Pick<ShellTerminals, 'list' | 'info' | 'flush' | 'tai
 type Deps = {
   terminals: TerminalsApi;
   sessions: TerminalSessions;
-  // メニューの「Claude にターミナルを使わせる」
+  // メニューの「MCP → ターミナル」
   enabled: () => boolean;
   clock?: () => number;
   // 打ったあと、出力が止まったとみなすまでの間と、待つ上限（テストでは短くする）
@@ -90,7 +90,7 @@ export class TerminalControl {
   }
 
   private check(caller: string): void {
-    if (!this.deps.enabled()) throw new ToolError(`The user has turned off "${t('main.menu.terminalControl')}" in the tanacode menu.`);
+    if (!this.deps.enabled()) throw new ToolError(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.terminalControl')}" in the tanacode menu.`);
     if (!this.deps.sessions.exists(caller)) throw new ToolError('This session is not in tanacode.');
   }
 

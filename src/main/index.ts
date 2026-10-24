@@ -22,6 +22,11 @@ import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
 import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
+import { BROWSER_MCP_SERVER } from '@shared/browser-tools';
+import { SESSIONS_MCP_SERVER } from '@shared/session-tools';
+import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
+import { WALKTHROUGH_MCP_SERVER } from '@shared/walkthrough-tools';
+import { TERMINAL_MCP_SERVER } from '@shared/terminal-tools';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -974,23 +979,45 @@ function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        // 既定の appMenu の並びに、「新しいバージョンが出たら通知する」の切り替えを足す
+        // 既定の appMenu の並びに、tanacode の設定を足す。更新 ／ MCP（Claude に使わせるツール）／ Claude の自動の動きと送る文 ／ 言語。
+        // テストは id で探す（文言を変えても壊れないように）
         label: app.name,
         submenu: [
           { role: 'about' },
           { type: 'separator' },
-          { label: t('main.menu.notifyUpdates'), type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
-          { label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
-          { label: t('main.menu.browserControl'), type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-          { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-          { label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
-          { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-          { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
-          { label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
-          { label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: !!activeProfile()?.settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
+          { id: 'notifyUpdates', label: t('main.menu.notifyUpdates'), type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { id: 'updateOnQuit', label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
+          { type: 'separator' },
           {
+            // tanacode が Claude Code に足す MCP サーバーごとに、区切りで分ける。副題はサーバーの名前（Claude Code の /mcp に出る名前）
+            id: 'mcp',
+            label: t('main.menu.mcp'),
+            submenu: [
+              { id: 'browserControl', label: t('main.menu.browserControl'), sublabel: BROWSER_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+              {
+                id: 'browserHosts',
+                label: t('main.menu.browserHosts'),
+                click: () => {
+                  showWindow();
+                  sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
+                },
+              },
+              { type: 'separator' },
+              { id: 'sessionsControl', label: t('main.menu.sessionsControl'), sublabel: SESSIONS_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+              { id: 'sessionsStartConfirm', label: t('main.menu.sessionsStartConfirm'), type: 'checkbox', checked: settings.sessionsStartConfirmEnabled(), click: (item) => setSessionsStartConfirm(item) },
+              { type: 'separator' },
+              { id: 'checklistControl', label: t('main.menu.checklistControl'), sublabel: CHECKLIST_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+              { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), sublabel: WALKTHROUGH_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+              { id: 'terminalControl', label: t('main.menu.terminalControl'), sublabel: TERMINAL_MCP_SERVER, type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
+            ],
+          },
+          { type: 'separator' },
+          { id: 'usageLimitResume', label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: !!activeProfile()?.settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
+          {
+            id: 'autoCompactPercent',
             label: t('main.menu.autoCompactPercent'),
             submenu: AUTO_COMPACT_PERCENTS.map((percent) => ({
+              id: `autoCompactPercent-${percent}`,
               label: `${percent}%`,
               type: 'radio' as const,
               checked: (activeProfile()?.settings.autoCompactPercent() ?? DEFAULT_AUTO_COMPACT_PERCENT) === percent,
@@ -998,8 +1025,10 @@ function buildMenu(): void {
             })),
           },
           {
+            id: 'awayWait',
             label: t('main.menu.awayWait'),
             submenu: AWAY_WAIT_MINUTES.map((minutes) => ({
+              id: `awayWait-${minutes}`,
               label: t('main.away.minutes', { count: minutes }),
               type: 'radio' as const,
               checked: (activeProfile()?.settings.awayWaitMinutes() ?? DEFAULT_AWAY_WAIT_MINUTES) === minutes,
@@ -1007,13 +1036,7 @@ function buildMenu(): void {
             })),
           },
           {
-            label: t('main.menu.browserHosts'),
-            click: () => {
-              showWindow();
-              sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
-            },
-          },
-          {
+            id: 'prompts',
             label: t('main.menu.prompts'),
             click: () => {
               showWindow();
@@ -1022,8 +1045,10 @@ function buildMenu(): void {
           },
           { type: 'separator' },
           {
+            id: 'language',
             label: t('main.menu.language'),
             submenu: LANGUAGE_SETTINGS.map((setting) => ({
+              id: `language-${setting}`,
               label: languageSettingLabel(setting),
               type: 'radio' as const,
               checked: settings.languageSetting() === setting,
@@ -1041,9 +1066,11 @@ function buildMenu(): void {
         ],
       },
       {
+        id: 'file',
         label: t('main.menu.file'),
         submenu: [
           {
+            id: 'newSession',
             label: t('main.menu.newSession'),
             accelerator: 'CmdOrCtrl+N',
             click: () => {
@@ -1056,6 +1083,7 @@ function buildMenu(): void {
           { type: 'separator' },
           {
             // 確認を出さずに止める（ふだんの終了は、動いている Claude Code があれば止めるか確認する）
+            id: 'stopAndQuit',
             label: t('main.menu.stopAndQuit'),
             click: () => void quit(true),
           },
@@ -1215,7 +1243,7 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
   return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
 }
 
-// メニューの「Claude にアプリ内ブラウザを操作させる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → アプリ内ブラウザ」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。
 // 人が許した、許す先の外のオリジンも捨てる（browser-control の turnOff）。保存できなかったら、チェックを元に戻す
 function setBrowserControl(item: MenuItem): void {
@@ -1228,7 +1256,7 @@ function setBrowserControl(item: MenuItem): void {
   if (!item.checked) activeProfile()?.browser.turnOff();
 }
 
-// メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → セッション」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（sessions-control の handle）。子への知らせも止める。
 // 保存できなかったら、チェックを元に戻す
 function setSessionsControl(item: MenuItem): void {
@@ -1251,7 +1279,7 @@ function syncSessionsNoAskFile(): void {
   }
 }
 
-// メニューの「Claude がセッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// メニューの「MCP → セッションを始める前に許可を求める」。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
 // 起動の確認のフックは、呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く（sessions-bridge.ts の sessionsGateCommand）。
 // 印のファイルを先に置く・消してから保存する。どちらかができなかったら、チェックと印のファイルを、保存した設定に戻す
 function setSessionsStartConfirm(item: MenuItem): void {
@@ -1264,7 +1292,7 @@ function setSessionsStartConfirm(item: MenuItem): void {
   }
 }
 
-// メニューの「Claude にチェックリストを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → チェックリスト」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（checklist-control の handle）。画面のチェックリストは使える。
 // 保存できなかったら、チェックを元に戻す
 function setChecklistControl(item: MenuItem): void {
@@ -1290,7 +1318,7 @@ function setAwayWaitMinutes(minutes: number): void {
   buildMenu();
 }
 
-// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
+// メニューの「自動で最適化圧縮する大きさ」。プロファイルごと（見ているプロファイルの設定を変える）。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
 function setAutoCompactPercent(percent: number): void {
   const profile = activeProfile();
   if (!profile) return;
@@ -1305,7 +1333,7 @@ function setAutoCompactPercent(percent: number): void {
   buildMenu();
 }
 
-// メニューの「Claude にウォークスルーさせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → ウォークスルー」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（walkthrough-control の handle）。
 // 保存できなかったら、チェックを元に戻す
 function setWalkthroughControl(item: MenuItem): void {
@@ -1316,7 +1344,7 @@ function setWalkthroughControl(item: MenuItem): void {
   }
 }
 
-// メニューの「Claude にターミナルを使わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// メニューの「MCP → ターミナル」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（terminal-control の handle。打つ前の確認のフックも断られ、確認を出させる）。
 // 保存できなかったら、チェックを元に戻す
 function setTerminalControl(item: MenuItem): void {

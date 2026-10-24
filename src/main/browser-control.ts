@@ -492,7 +492,7 @@ export class BrowserControl {
   // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）。
   // 人が許した、許す先の外のオリジンと、確認した印も捨てる（オンに戻したら、また人に許可を求める）
   turnOff(): void {
-    this.asks.cancelAll(`The request was withdrawn because the user turned off "${t('main.menu.browserControl')}" in the tanacode menu.`);
+    this.asks.cancelAll(`The request was withdrawn because the user turned off "${t('main.menu.mcp')} > ${t('main.menu.browserControl')}" in the tanacode menu.`);
     for (const session of this.sessions.values()) {
       session.handoff = [];
       for (const guest of session.tabs.values()) {
@@ -538,7 +538,7 @@ export class BrowserControl {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId, args);
     const tool = browserTool(name);
     if (!tool) return textResult(`Unknown tool: ${name}`, true);
-    if (!this.deps.enabled()) return textResult(`The user has turned off "${t('main.menu.browserControl')}" in the tanacode menu.`, true);
+    if (!this.deps.enabled()) return textResult(`The user has turned off "${t('main.menu.mcp')} > ${t('main.menu.browserControl')}" in the tanacode menu.`, true);
     if (!this.deps.hasSession(sessionId)) return textResult('This session is not in tanacode.', true);
     if (tool.kind === 'ask') {
       this.yieldToUser(sessionId);
@@ -799,7 +799,7 @@ export class BrowserControl {
     const index = marks.findIndex((m) => m.url === url && m.newTab === newTab && m.tabId === tabId);
     if (index === -1) {
       throw new ToolError(
-        `${what} (${origin}) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.browserHosts')}" in the tanacode menu), ` +
+        `${what} (${origin}) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.mcp')} > ${t('main.menu.browserHosts')}" in the tanacode menu), ` +
           'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
           'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
       );
@@ -1833,7 +1833,7 @@ export class BrowserControl {
     if (isBlank(url)) throw new ToolError('The current tab is empty. Open a page with navigate.');
     if (!this.allowedIn(guest, url)) {
       throw new ToolError(
-        `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.browserHosts')}" in the tanacode menu), ` +
+        `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.mcp')} > ${t('main.menu.browserHosts')}" in the tanacode menu), ` +
           'and the user has not permitted it in this tab. To use it, open it with navigate (tanacode asks the user for permission).',
       );
     }
