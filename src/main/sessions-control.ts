@@ -31,6 +31,7 @@ import {
   SWITCHABLE_MODES,
   type SessionState,
 } from '@shared/session-tools';
+import { AWAY_ENDED, awayRules, type AwayChangedBy } from '@shared/away-mode';
 import { resumeContinued } from './compact-notice';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -56,6 +57,7 @@ import { WorktreeError, type WorktreeFailure } from './worktree';
 // アプリ内ブラウザでの人の操作待ちは、ツールでは状態 browser として見せる（SessionManager.stateOf は作業中のまま。withBrowserState）
 // schedule_wakeup・list_wakeups・cancel_wakeup は、自分のセッションへの予約（時刻を指定して送信と同じ流れ。scheduled-messages.ts）。子も使える。
 // report_result は、ターンの終わりの通知に載せる報告を預ける（子は人に通知しないので、子でないセッションだけ）
+// set_away_mode は、離席モードを入れる・解く（子は人に聞かないので、子でないセッションだけ。@shared/away-mode）
 
 // 人だけが答えられる確認かを決めるのに使う、許可の確認のツールと入力
 export type PermissionTarget = { tool: string; input: Record<string, unknown> };
@@ -119,6 +121,9 @@ export type SessionsHost = {
   remoteAvailable(): boolean;
   // Remote Control が今つながっているか（null: つながるのを待っている。Claude Code が動いていなければ false）
   remoteConnectedOf(id: string): boolean | null;
+  // 離席モードを切り替える（画面のスイッチと同じ。子は切り替えない: false）と、人の答えを待つ時間（ミリ秒）
+  setAway?(id: string, on: boolean, by: AwayChangedBy): boolean;
+  awayWaitMs?(): number;
 };
 
 // 予約したメッセージ（ScheduledMessages）のうち、自分への予約のツールが使うもの
@@ -355,6 +360,8 @@ export class SessionsControl {
           return this.cancelWakeup(caller, args);
         case 'report_result':
           return this.reportResult(caller, args);
+        case 'set_away_mode':
+          return this.setAwayMode(caller, args);
         default:
           return textResult(`Unknown tool: ${name}`, true);
       }
@@ -1036,6 +1043,18 @@ export class SessionsControl {
     if (!this.deps.report) throw new ToolError(NOT_READY);
     this.deps.report(caller.id, text);
     return textResult('Saved. It is shown in the notification when this turn ends (not while the user is looking at this session, and not if notifications are off).');
+  }
+
+  // 離席モードを入れる・解く（人が Claude に頼んだとき。スマホの Remote Control からも）。子は人に聞かないので、子には効かせない
+  private setAwayMode(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    if (caller.parentId) throw new ToolError('A child session does not ask the user, so it has no away mode. Only the session the user runs can turn it on.');
+    if (typeof args.away !== 'boolean') throw new ToolError('away must be true (the user is away) or false (the user is back).');
+    const { host } = this.deps;
+    if (!host.setAway || !host.awayWaitMs) throw new ToolError(NOT_READY);
+    const before = !!caller.away;
+    if (!host.setAway(caller.id, args.away, 'claude')) throw new ToolError('tanacode could not change away mode of this session (it may be archived).');
+    if (args.away) return textResult(`${before ? 'Away mode was already on.' : 'Away mode is now on.'} Tell the user in one line, then follow these rules.\n\n${awayRules(host.awayWaitMs())}`);
+    return textResult(before ? AWAY_ENDED : 'Away mode was already off. Nothing changed.');
   }
 
   // 子への予約（利用枠の再開・子の Claude の予約・人の予約）を、時刻に送れなかった・送れなかった。子は人に通知しないので、親に知らせる

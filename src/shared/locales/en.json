@@ -58,6 +58,7 @@
       "terminalControl": "Let Claude Use the Terminal",
       "usageLimitResume": "Resume Automatically When the Usage Limit Resets",
       "autoCompactPercent": "Auto Optimized Compact At",
+      "awayWait": "Away Mode Wait Time",
       "language": "Language",
       "languageSystem": "System Default",
       "browserHosts": "Allowed Sites for Claude in the In-App Browser…",
@@ -312,6 +313,18 @@
       "child": "A child session can't be made a parent (a child can't start child sessions of its own)",
       "unusableOnStart": "{reason}. Sent only the first instruction (not started as a parent)"
     },
+    "away": {
+      "on": "Away mode is on. Permission prompts and questions for you are declined if nobody answers them within the wait time",
+      "onByClaude": "Claude turned away mode on. Permission prompts and questions for you are declined if nobody answers them within the wait time",
+      "off": "Away mode is off",
+      "offByClaude": "Claude turned away mode off",
+      "permissionDenied": "Declined a permission prompt that had no answer after {wait} because of away mode (Claude adds it to the things for you to do and goes on)",
+      "questionDeclined": "Returned a question that had no answer after {wait} to Claude because of away mode (Claude decides itself and records it for your review)",
+      "minutes": "{count} minutes",
+      "minutes_one": "{count} minute",
+      "seconds": "{count} seconds",
+      "seconds_one": "{count} second"
+    },
     "instructions": {
       "empty": "{path} is empty, so it isn't passed to Claude",
       "tooLarge": "{path} is larger than 1 MB, so it isn't passed to Claude",
@@ -464,7 +477,8 @@
       "schedule_wakeup": "Schedule a Wake-up",
       "list_wakeups": "List Wake-ups",
       "cancel_wakeup": "Cancel a Wake-up",
-      "report_result": "Report the Result"
+      "report_result": "Report the Result",
+      "set_away_mode": "Away Mode"
     },
     "checklist": {
       "checklist_overview": "Overview",
@@ -790,6 +804,13 @@
       "enabled": "Remote Control is on (it connects once Claude Code has started and the connection is ready)",
       "disconnected": "Not connected",
       "lockedInTerminal": "Can't be switched in terminal mode (use /remote-control in Claude Code's screen)"
+    },
+    "away": {
+      "name": "Away mode",
+      "about": "While you are away, Claude decides without asking you and records what it decided. Permission prompts and questions in this session wait for a set time (change it in the menu) and are declined if nobody answers. Nothing is allowed for you. Child sessions are not affected",
+      "stateOn": "Away",
+      "stateOff": "Off",
+      "terminal": "In terminal mode, prompts and questions are not declined (Claude is only told the rules)"
     },
     "todo": {
       "title": "Todos"
@@ -1255,6 +1276,7 @@
       "parent": "Parent: {name}",
       "worktreeTip": "Running in worktree {name} (branch {branch})\nOriginal folder: {root}",
       "checklistUnread": "{count} unread replies from Claude in the checklist",
+      "away": "Away mode",
       "checklistUnread_one": "{count} unread reply from Claude in the checklist",
       "unarchive": "Unarchive",
       "archive": "Archive",

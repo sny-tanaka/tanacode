@@ -26,6 +26,7 @@ import type { CarriedTask } from '@shared/optimized-compact';
 import type { UsageLimitStop } from '@shared/usage-limit';
 import type { TurnActivity } from '@shared/checklist-reminder';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
+import { awayPermissionDenied, awayQuestionDeclined, DEFAULT_AWAY_WAIT_MINUTES, type AwayChangedBy } from '@shared/away-mode';
 import { modeWithin, parentMessageText, parseParentMessage, type SessionState } from '@shared/session-tools';
 import { INSTRUCTIONS_FILE, PARENT_INSTRUCTIONS_FILE, parentRoleText, parseParentRole } from '@shared/project-instructions';
 import type {
@@ -239,6 +240,8 @@ type Runtime = {
   openedUrls: Map<string, ElicitationWait>;
   // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
   questionWaits: Map<string, AbortController>;
+  // 離席モードで、人に回った要求（許可の確認・質問）の答えを待つ時間（request_id → 時間切れで断るタイマー）
+  awayTimers: Map<string, NodeJS.Timeout>;
   // プランの承認（ExitPlanMode）の要求の、プランの本文（request_id → 本文。Claude Code は要求の入力に本文を入れない）
   plans: Map<string, string | null>;
   // 今の会話のプランのファイル（会話ログの plan_mode の添付の planFilePath。プランモードで Claude が書く）
@@ -497,6 +500,11 @@ export class SessionManager {
   // profile.ts が AutoCompact.blocks をつなぐ）。止める圧縮は、作業中の表示で圧縮中にしない
   compactBlocked: (id: string) => boolean = () => false;
 
+  // 離席モードで、人に回った許可の確認・質問の答えを待つ時間（ミリ秒。profile.ts が設定からつなぐ）
+  awayWaitMs: () => number = () => DEFAULT_AWAY_WAIT_MINUTES * 60_000;
+  // 離席モードが変わった（by: 画面のスイッチか Claude か。profile.ts が、画面で解いたときに Claude へ報告を頼む）
+  onAwayChanged: ((id: string, away: boolean, by: AwayChangedBy) => void) | null = null;
+
   // 残った claude を止める（leftover-claude.ts。テストで差し替える）
   stopLeftover: (claude: ClaudeProcess) => Promise<boolean> = stopLeftoverClaude;
 
@@ -576,6 +584,7 @@ export class SessionManager {
           settingsFile: r.settingsFile ?? null,
           remoteControl: this.wantsRemote(r),
           autoCompact: r.autoCompact !== false,
+          ...(r.away && !r.parentId ? { away: true } : {}),
           worktree: r.worktree
             ? {
                 ...r.worktree,
@@ -1580,6 +1589,59 @@ export class SessionManager {
     return this.remoteControlAvailable;
   }
 
+  // 離席モードか。子には効かせない（子は人に聞かない）
+  isAway(id: string): boolean {
+    const record = this.store.get(id);
+    return !!record?.away && !record.parentId;
+  }
+
+  // 離席モードを切り替える（画面のスイッチ・Claude の set_away_mode）。子・無いセッションは切り替えない（false）。
+  // 入れたら、もう人に回っている要求も、入れたときから待つ時間を数える。解いたら、待っている要求は、ふつうどおり人の答えを待つ
+  setAway(id: string, on: boolean, by: AwayChangedBy): boolean {
+    const record = this.store.get(id);
+    if (!record || record.parentId || record.archived) return false;
+    if (!!record.away === on) return true;
+    this.store.update(id, { away: on });
+    const rt = this.runtimes.get(id);
+    if (rt) {
+      if (on) for (const requestId of rt.requests.keys()) this.armAway(id, rt, requestId);
+      else this.clearAwayTimers(rt);
+      if (rt.process) this.pushEvents(id, [{ type: 'info', id: `away:${randomUUID()}`, text: t(on ? (by === 'claude' ? 'main.away.onByClaude' : 'main.away.on') : by === 'claude' ? 'main.away.offByClaude' : 'main.away.off') }]);
+    }
+    this.emitSessions();
+    this.changed(id);
+    this.onAwayChanged?.(id, on, by);
+    return true;
+  }
+
+  // 離席中なら、人に回った要求の答えを待つ時間を数え始める。ターミナルモードでは、アプリは答えられないので数えない
+  private armAway(id: string, rt: Runtime, requestId: string): void {
+    if (!this.isAway(id) || rt.terminal || rt.awayTimers.has(requestId)) return;
+    const waitMs = this.awayWaitMs();
+    const timer = setTimeout(() => {
+      rt.awayTimers.delete(requestId);
+      this.awayTimedOut(id, rt, requestId, waitMs);
+    }, waitMs);
+    timer.unref?.();
+    rt.awayTimers.set(requestId, timer);
+  }
+
+  // 離席中に、待つ時間のうちに人が答えなかった。許可の確認は断り（許すことはしない）、質問は Claude に自分で決めさせる
+  private awayTimedOut(id: string, rt: Runtime, requestId: string, waitMs: number): void {
+    const request = rt.requests.get(requestId);
+    if (this.runtimes.get(id) !== rt || !request || rt.terminal || !this.isAway(id)) return;
+    const question = request.tool_name === 'AskUserQuestion';
+    const message = question ? awayQuestionDeclined(waitMs) : awayPermissionDenied(waitMs);
+    if (!rt.process?.client?.respond(requestId, { behavior: 'deny', message })) return;
+    this.requestRemoved(id, rt, requestId);
+    this.pushEvents(id, [{ type: 'info', id: `away-declined:${requestId}`, text: t(question ? 'main.away.questionDeclined' : 'main.away.permissionDenied', { wait: awayWaitLabel(waitMs) }) }]);
+  }
+
+  private clearAwayTimers(rt: Runtime): void {
+    for (const timer of rt.awayTimers.values()) clearTimeout(timer);
+    rt.awayTimers.clear();
+  }
+
   // Remote Control が今つながっているか。null: つなぐ・切るのを待っている（remote_control の返事を待っている）。
   // Claude Code が動いていなければ false
   remoteConnectedOf(id: string): boolean | null {
@@ -2447,6 +2509,7 @@ export class SessionManager {
         elicitations: new Map(),
         openedUrls: new Map(),
         questionWaits: new Map(),
+        awayTimers: new Map(),
         plans: new Map(),
         planFile: null,
         planInputs: new Map(),
@@ -3672,6 +3735,7 @@ export class SessionManager {
         if (process?.client?.respond(requestId, questionResult(request.input, reply))) this.requestRemoved(id, rt, requestId);
       });
     }
+    this.armAway(id, rt, requestId);
     this.updateAttention(id, rt, replayed);
   }
 
@@ -3712,6 +3776,8 @@ export class SessionManager {
     rt.plans.delete(requestId);
     rt.questionWaits.get(requestId)?.abort();
     rt.questionWaits.delete(requestId);
+    clearTimeout(rt.awayTimers.get(requestId));
+    rt.awayTimers.delete(requestId);
     this.updateAttention(id, rt);
   }
 
@@ -3725,6 +3791,7 @@ export class SessionManager {
     rt.plans.clear();
     for (const wait of rt.questionWaits.values()) wait.abort();
     rt.questionWaits.clear();
+    this.clearAwayTimers(rt);
     this.updateAttention(id, rt);
   }
 
@@ -4325,3 +4392,9 @@ function elicitationMenu(pending: PendingElicitation): Menu {
 
 // MCP サーバーの質問。pending: カードの形 / request: Claude Code の要求（完了の知らせと結ぶ、サーバーの名前と elicitation_id）
 type ElicitationWait = { pending: PendingElicitation; request: ElicitationRequest };
+
+// 離席モードで待った時間の、画面の言い方（分で割り切れなければ秒）
+function awayWaitLabel(waitMs: number): string {
+  const seconds = Math.max(1, Math.round(waitMs / 1000));
+  return seconds % 60 === 0 ? t('main.away.minutes', { count: seconds / 60 }) : t('main.away.seconds', { count: seconds });
+}

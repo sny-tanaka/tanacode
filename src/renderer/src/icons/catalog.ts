@@ -100,6 +100,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('MonitorIcon', 'Claude の画面'),
       item('FlowIcon', 'ワークフローの概要'),
       item('RemoteIcon', 'Remote Control'),
+      item('AwayIcon', '離席モード'),
       item('BellIcon', '通知'),
       item('LockIcon', 'ロック中'),
       item('UnlockIcon', 'ロックしていない'),

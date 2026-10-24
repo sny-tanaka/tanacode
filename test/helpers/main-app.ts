@@ -447,7 +447,8 @@ const SessionManager = fakeClass('SessionManager', {
   permissionRequested: () => undefined,
   tuiStopHook: () => undefined,
   browserAskChanged: () => undefined,
-  watchState: () => undefined,
+  // 本物と同じく、見るのをやめる関数を返す
+  watchState: () => () => undefined,
   stateOf: () => 'idle',
   notifyState: echo('manager.notifyState'),
   lastTurnInterrupted: () => false,

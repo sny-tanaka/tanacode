@@ -8071,6 +8071,15 @@ body.resizing-rows webview {
 }
 
 /* セッション一覧の、チェックリストの未読の返信の数 */
+/* 離席モードの印（チャットのヘッダーのスイッチと同じアイコン） */
+.session-away {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--text-secondary);
+}
+
 .session-checklist-unread {
   flex: none;
   display: inline-flex;

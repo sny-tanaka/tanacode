@@ -81,6 +81,7 @@ Five MCP servers that tanacode adds to Claude Code, with nothing extra to instal
 
 - It runs the `claude` CLI you've already installed (the chat runs it as `claude -p` in stream-json mode, and terminal mode shows its usual screen). Your skills, CLAUDE.md, hooks, and MCP settings **all keep working**
 - **Claude Code keeps running** after you close the app. You can continue from your phone with Remote Control
+- **Away mode** for each session when you step away. Claude decides without asking you and records what it decided, and permission prompts and questions nobody answers are declined after a few minutes, so the work does not stall. You can also ask for it from your phone ("turn on away mode")
 - It **never writes** to your Claude Code settings (such as `~/.claude/settings.json`). tanacode itself has no way of sending your data anywhere
 - It's **checked automatically every day** against the latest Claude Code. If your Claude Code differs from the verified version, a mark in the status bar tells you
 - Conversations you started in the terminal **can be imported**

@@ -21,6 +21,7 @@ import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs
 import { applyPromptChanges, promptChangesOf, type PromptChanges } from '@shared/prompts';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
+import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -736,6 +737,9 @@ function registerIpc(): void {
     p.autoCompact?.toggled(String(id));
     p.compact?.refresh([String(id)]);
   });
+  handle(IpcChannel.SessionsSetAway, (e, id: string, on: boolean) => {
+    P(e).manager.setAway(String(id), on === true, 'human');
+  });
   handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
   handle(IpcChannel.SessionsProgressGet, (e, id: string) => P(e).manager.progress(id));
   handle(IpcChannel.QuestionGet, (e, id: string) => P(e).manager.pendingQuestion(id));
@@ -981,6 +985,15 @@ function buildMenu(): void {
             })),
           },
           {
+            label: t('main.menu.awayWait'),
+            submenu: AWAY_WAIT_MINUTES.map((minutes) => ({
+              label: t('main.away.minutes', { count: minutes }),
+              type: 'radio' as const,
+              checked: (activeProfile()?.settings.awayWaitMinutes() ?? DEFAULT_AWAY_WAIT_MINUTES) === minutes,
+              click: () => setAwayWaitMinutes(minutes),
+            })),
+          },
+          {
             label: t('main.menu.browserHosts'),
             click: () => {
               showWindow();
@@ -1223,6 +1236,16 @@ function setChecklistControl(item: MenuItem): void {
 }
 
 // メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
+// 離席モードで答えを待つ時間。次に人に回った要求から効く（もう数え始めたものは、そのまま）
+function setAwayWaitMinutes(minutes: number): void {
+  try {
+    activeProfile()?.settings.setAwayWaitMinutes(minutes);
+  } catch {
+    // 保存できなければ、メニューを作り直して元に戻す
+  }
+  buildMenu();
+}
+
 function setAutoCompactPercent(percent: number): void {
   const profile = activeProfile();
   if (!profile) return;

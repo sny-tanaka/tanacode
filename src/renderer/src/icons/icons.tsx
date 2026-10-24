@@ -558,6 +558,15 @@ export const RemoteIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 離席モード: だれも座っていない椅子（横から見た形。背もたれ・座面・脚）
+export const AwayIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M6 3.5v9" />
+    <rect x="6" y="12.5" width="13" height="3" rx="1.3" />
+    <path d="M7.5 15.5v5M17.5 15.5v5" />
+  </Svg>
+);
+
 // 通知: ベル
 export const BellIcon: IconComponent = (p) => (
   <Svg {...p}>

@@ -27,6 +27,8 @@ export type SessionRecord = {
   remoteControl?: boolean;
   // 最適化圧縮を自動で始めるか。無いもの（新しいセッション・この指定ができる前のセッション）はオン
   autoCompact?: boolean;
+  // 離席モード（@shared/away-mode）。子でないセッションだけ。アプリを起動し直しても残す（人が戻ったとき、画面のスイッチか Claude が解く）
+  away?: boolean;
   // worktree で始めたセッション（claude --worktree）。cwd は worktree のフォルダ（root/.claude/worktrees/<name>）、
   // root は元のフォルダ（リポジトリのいちばん上）、branch は Claude Code が作ったブランチ。無いものはふつうのセッション
   worktree?: { name: string; branch: string; root: string } | null;

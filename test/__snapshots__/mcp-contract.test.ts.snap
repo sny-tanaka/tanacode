@@ -833,6 +833,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__list_wakeups",
     "mcp__tanacode-sessions__cancel_wakeup",
     "mcp__tanacode-sessions__report_result",
+    "mcp__tanacode-sessions__set_away_mode",
   ],
   "tools": [
     {
@@ -1200,6 +1201,22 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "instruct",
       "label": "結果を報告",
       "name": "report_result",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "away": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "away",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "離席モード",
+      "name": "set_away_mode",
     },
   ],
 }

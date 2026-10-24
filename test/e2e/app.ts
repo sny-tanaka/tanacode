@@ -51,6 +51,8 @@ type Options = {
   // アプリ（と Claude Code）の一時フォルダ（TMPDIR）を、試しのフォルダの中の tmp にする。試しのフォルダは一時フォルダの中にあるので、
   // 一時フォルダの中を扱わないもの（Claude がフォルダの外で読んだもの）を、試しのフォルダの中のファイルで確かめるとき
   ownTmp?: boolean;
+  // アプリに足す環境変数（確かめやすくするための切り替え。TANACODE_AWAY_WAIT_SECONDS など）
+  env?: Record<string, string>;
 };
 
 export class E2EApp {
@@ -148,6 +150,7 @@ export class E2EApp {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       ...(BACKGROUND ? { TANACODE_BACKGROUND: '1' } : {}),
       ...(this.options.ownTmp ? { TMPDIR: `${join(this.root, 'tmp')}/` } : {}),
+      ...this.options.env,
       // メインプロセス・pty ホスト・MCP の中継（どれも Node）は、終わるときにカバレッジをここに書く
       ...(COVERAGE ? { NODE_V8_COVERAGE: join(COVERAGE_RAW, 'v8') } : {}),
     };

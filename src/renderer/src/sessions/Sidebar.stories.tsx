@@ -161,10 +161,11 @@ export const ロックなし: Story = { args: { locked: false } };
 export const ロック中: Story = { args: { locked: true } };
 
 // 親子のセッション。親の Claude が start_session で起動した子は、親の下にぶら下げて出す（子同士は新しい順）。
+// 取りまとめの親は離席モード中（タイトルの右に印）。子には離席モードが無い。
 // 親の行の右のボタンで畳む・開く。畳んでいる間は子の数を出し、子が人を待っていれば黄色、作業中なら Claude の色にする。
 // 親をアーカイブ済みにした子（「古い取りまとめの残り」）と、親を一覧から削除した子（「親のいない子」）は、いちばん上の段に出す
 const FAMILY: SessionSummary[] = [
-  session(20, '検索機能の取りまとめ', '/Users/me/work/tanacode', { running: true }),
+  session(20, '検索機能の取りまとめ', '/Users/me/work/tanacode', { running: true, away: true }),
   session(21, 'API の実装', '/Users/me/work/tanacode/.claude/worktrees/tc-1003-a1b2', {
     parentId: 's20',
     running: true,

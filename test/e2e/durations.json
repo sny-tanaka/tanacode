@@ -1,5 +1,6 @@
 {
   "test/e2e/added-folders.test.ts": 14,
+  "test/e2e/away-mode.test.ts": 20,
   "test/e2e/browser-failed.test.ts": 8,
   "test/e2e/browser-outside.test.ts": 13,
   "test/e2e/browser-popup.test.ts": 37,

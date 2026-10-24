@@ -41,6 +41,7 @@ import { RewindCard } from './RewindCard';
 import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
+import { AwayToggle } from './AwayToggle';
 import { useCanCompact } from './compactState';
 import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
@@ -736,6 +737,10 @@ export const ClaudePane = memo(function ClaudePane({
             locked={terminalOpen}
             onChange={(on) => void setRemoteControl(on)}
           />
+        )}
+        {/* 離席モードは、人が動かすセッションだけ（子は人に聞かない） */}
+        {!session.archived && !session.parentId && (
+          <AwayToggle on={!!session.away} terminal={terminalOpen} onChange={(on) => void window.tanacode.sessions.setAway(session.id, on)} />
         )}
         {live && (
           <CompactButton
