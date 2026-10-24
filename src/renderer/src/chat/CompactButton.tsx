@@ -16,6 +16,9 @@ const UNAVAILABLE_TEXT = {
   'no-checklist': 'chat.pane.compactUnavailable.noChecklist',
 } as const satisfies Record<CompactUnavailable, string>;
 
+// 使えない理由。メニューの項目の名前は、メニューと同じ文言（main.menu.*）を差し込む
+const unavailableText = (unavailable: CompactUnavailable) => t(UNAVAILABLE_TEXT[unavailable], { mcp: t('main.menu.mcp'), item: t('main.menu.checklistControl') });
+
 const FAILURE_TEXT = {
   interrupted: 'chat.pane.compactFailure.interrupted',
   prompted: 'chat.pane.compactFailure.prompted',
@@ -73,7 +76,7 @@ export function CompactButton({
   useEffect(() => {
     if (!failure) setDismissed(null);
   }, [failure]);
-  const tip = phase ? t(PHASE_TEXT[phase]) : unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.optimizedCompactTip');
+  const tip = phase ? t(PHASE_TEXT[phase]) : unavailable ? unavailableText(unavailable) : t('chat.pane.optimizedCompactTip');
   const shownFailure = !phase && failure && failure !== dismissed ? failure : null;
   const autoOn = auto && !unavailable;
 
@@ -103,7 +106,7 @@ export function CompactButton({
           name={t('chat.pane.autoCompactName')}
           on={autoOn}
           disabled={!!unavailable}
-          title={unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.autoCompactTip', { percent: autoPercent })}
+          title={unavailable ? unavailableText(unavailable) : t('chat.pane.autoCompactTip', { percent: autoPercent })}
           onChange={onAutoChange}
         />
       </div>

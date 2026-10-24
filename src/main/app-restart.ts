@@ -1,5 +1,6 @@
 import type { AppUpdate, HomebrewUpdate } from '@shared/app-update';
 import { compareVersions } from '@shared/claude-code';
+import { t } from '@shared/i18n';
 
 // Claude が頼む、tanacode の更新と再起動（tanacode-sessions の get_app_update・restart_app）。
 // 人がスマホの Remote Control から使っていて Mac の前にいなくても、親の Claude に「tanacode を更新して」と頼めるようにする。
@@ -99,7 +100,7 @@ export function noUpdateReason(info: AppUpdateInfo): string {
     if (info.download?.status === 'failed') return `v${info.latest} is available, but tanacode could not download it with Homebrew (it tries again later).`;
     return `v${info.latest} is available and tanacode is still downloading it with Homebrew. Check again later with get_app_update.`;
   }
-  if (!info.checkEnabled) return `The user has turned off checking for new versions in the tanacode menu, so tanacode does not know of a newer version.`;
+  if (!info.checkEnabled) return `The user has turned off "${t('main.menu.notifyUpdates')}" under tanacode, so tanacode does not know of a newer version.`;
   if (!info.latest) return `tanacode has not been able to check for new versions yet (for example, it is offline).`;
   return `tanacode is up to date (v${info.current}).`;
 }

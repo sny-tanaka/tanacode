@@ -38,7 +38,7 @@ export function ScheduledRow({
           </span>
         )}
         {limit && (
-          <span className="chat-scheduled-by" data-tip={t('schedule.row.usageLimitTip')}>
+          <span className="chat-scheduled-by" data-tip={t('schedule.row.usageLimitTip', { item: t('main.menu.usageLimitResume') })}>
             {t('schedule.row.usageLimit')}
           </span>
         )}

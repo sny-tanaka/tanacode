@@ -582,8 +582,8 @@
         "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
       },
       "compactUnavailable": {
-        "checklistOff": "Turn on “tanacode > MCP > Checklists” in the menu to use this",
-        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > MCP > Checklists” in the menu and restart the session to use this"
+        "checklistOff": "Turn on “tanacode > {mcp} > {item}” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > {mcp} > {item}” in the menu and restart the session to use this"
       },
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
@@ -1044,7 +1044,7 @@
       "claude": "Claude's wake-up",
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "usageLimit": "Usage limit resume",
-      "usageLimitTip": "Claude stopped at the usage limit, so tanacode sends a message asking it to continue after the limit resets. Cancel it to not resume automatically (menu: Resume Automatically When the Usage Limit Resets)",
+      "usageLimitTip": "Claude stopped at the usage limit, so tanacode sends a message asking it to continue after the limit resets. Cancel it to not resume automatically (menu: tanacode > {item})",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
       "cancelTip": "Unschedule and move the message back to the chat input",
       "unsaved": "Not saved",
@@ -1120,7 +1120,7 @@
       "resume": "Optimized Compact: Resume"
     },
     "about": {
-      "usageResume": "Sent to a session that stopped at the usage limit, one minute after the limit resets (when “Resume Automatically When the Usage Limit Resets” is on in the menu). tanacode wraps it in {tag}. A change applies from the next scheduled resume.",
+      "usageResume": "Sent to a session that stopped at the usage limit, one minute after the limit resets (when “tanacode > {item}” is on in the menu). tanacode wraps it in {tag}. A change applies from the next scheduled resume.",
       "handoff": "Sent before an optimized compact clears the conversation, to have Claude write what’s needed to continue on the checklists (both manual and automatic). tanacode wraps it in {tag}.",
       "resume": "Sent as the first message after the conversation is cleared. tanacode wraps it in {tag} and adds, after it, the cards of the decisions and state lists, the other lists, the user’s original messages from the previous conversation, Claude’s last reply (or, when the turn was stopped midway, where it stopped) and the background tasks."
     },
@@ -1353,7 +1353,7 @@
       "readyLabel": "Restart and Update to v{version}",
       "downloaded": "Downloaded v{version}",
       "readyRestart": "Click to quit tanacode, install the update with Homebrew, and relaunch",
-      "readyOnQuit": "If “Install Updates on Quit” is on in the menu, the update is also installed when you quit normally",
+      "readyOnQuit": "If “tanacode > {item}” is on in the menu, the update is also installed when you quit normally",
       "restart": "Restart to Update"
     },
     "titleBar": {
