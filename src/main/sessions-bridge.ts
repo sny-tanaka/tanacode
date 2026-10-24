@@ -40,17 +40,28 @@ const CLAUDE_TIMEOUT_MS = SESSIONS_CALL_TIMEOUT_MS + 60_000;
 // 目印の環境変数は、チャットのフックの一覧に出さないためのもの。
 // 入力は使わないが、最後まで読んで捨てる（Claude Code は、入力を書き終える前にフックが標準入力を閉じると、フックの失敗として扱う）
 export function sessionsGateCommand(): string {
-  const print = (permissionDecision: 'allow' | 'ask') => {
-    const output = JSON.stringify({
-      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: t('main.hooks.sessionsGate') },
-      // アプリのフックの印（hook-output.ts）
-      suppressOutput: true,
-    });
-    return `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
-  };
+  const print = (permissionDecision: 'allow' | 'ask') => gateOutput(permissionDecision, t('main.hooks.sessionsGate'));
   return `cat >/dev/null; if [ -f "$${SESSIONS_NO_ASK_ENV}" ]; then ${print('allow')}; else ${print('ask')}; fi`;
 }
 export const SESSIONS_GATED_TOOL = sessionToolId('start_session');
+
+// tanacode の再起動（restart_app）の前のフック。権限モードによらず、いつも人の許可の確認を出させる（印のファイルは見ない。
+// アプリ全体を起動し直すので、人が頼んだことを人に確かめる）。Remote Control からも答えられる。入力は読んで捨てる（上と同じ）
+export function restartGateCommand(): string {
+  return `cat >/dev/null; ${gateOutput('ask', t('main.hooks.restartGate'))}`;
+}
+export const RESTART_GATED_TOOL = sessionToolId('restart_app');
+
+// 確認のフックの答えを書くコマンド。理由はシェルの単一引用符に埋め込むので、' を含めない。
+// 目印の環境変数は、チャットのフックの一覧に出さないためのもの
+function gateOutput(permissionDecision: 'allow' | 'ask', reason: string): string {
+  const output = JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: reason },
+    // アプリのフックの印（hook-output.ts）
+    suppressOutput: true,
+  });
+  return `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
+}
 
 // 印のファイルを、メニューの設定に合わせて置く・消す。ask: 始める前に許可を求めるか（求めるなら消す）
 export function writeSessionsNoAskFile(file: string, ask: boolean): void {

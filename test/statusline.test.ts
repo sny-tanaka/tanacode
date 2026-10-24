@@ -112,8 +112,9 @@ describe('アプリが Claude Code に渡す設定', () => {
   it('Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す。質問の入力を書くフックは足さない', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
     expect(matchers(ownSettings(null))).toEqual(['Bash']);
-    expect(matchers(ownSettings(null, true, true))).toHaveLength(3);
-    expect(matchers(ownSettings(null, false, true))).toEqual(['Bash', expect.any(String)]);
+    // セッションは、子セッションの起動と tanacode の再起動（restart_app）の 2 つ
+    expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
+    expect(matchers(ownSettings(null, false, true))).toEqual(['Bash', 'mcp__tanacode-sessions__start_session', 'mcp__tanacode-sessions__restart_app']);
     expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(2);
   });
 

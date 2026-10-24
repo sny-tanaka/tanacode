@@ -13,6 +13,7 @@ import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
+import { restartNoticeText, type AppRestart, type AppUpdateInfo, type RestartNotice } from './app-restart';
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
@@ -74,6 +75,9 @@ export type ProfileOptions = {
   remoteControl: boolean;
   // セッションの一覧が変わったとき（ほかのプロファイルの画面に「通知あり」を出し直す）
   onSessionsChanged?: () => void;
+  // Claude が頼む tanacode の更新と再起動（アプリ全体で 1 つ。app-restart.ts）。無ければ、ツールは起動が終わっていないと答える
+  // upgradeRan: 前のアプリが終わったあとに、Homebrew での入れ替えを試したか（起動したときに結果のファイルがあった）
+  app?: { updateInfo: () => Promise<AppUpdateInfo>; restart: AppRestart; upgradeRan: () => boolean };
 };
 
 // プロファイル（Claude Code のアカウントごとの環境）が持つもの。セッションの一覧と Claude Code（pty ホスト）・
@@ -105,6 +109,8 @@ export class Profile {
   terminalControl: TerminalControl | null = null;
   // 画面のスイッチで離席モードを解いたときに、Claude へ報告を頼む知らせ
   private awayNotices: SessionNotices<true> | null = null;
+  // Claude が restart_app で起動し直したあとに、呼んだセッションへ送る知らせ
+  private restartNotices: SessionNotices<RestartNotice> | null = null;
   // Claude がターンの終わりの通知に載せる報告（tanacode-sessions の report_result）
   private readonly reports = new TurnReports();
   // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー・人のターミナルの読み書き。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
@@ -279,6 +285,7 @@ export class Profile {
     // チェックリストのファイルを読めず、変更を保存しないセッションは、一覧の印でチェックリストのパネルに知らせる
     manager.checklistUnsaved = (id) => this.checklists.unsavable(id);
     this.checklists.onUnsaved = (id) => manager.checklistUnsavedChanged(id);
+    const appOptions = this.options.app;
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
@@ -288,6 +295,14 @@ export class Profile {
       home: homedir(),
       scheduled: () => this.scheduled ?? null,
       report: (id, text) => this.reports.set(id, text),
+      ...(appOptions
+        ? {
+            app: {
+              updateInfo: appOptions.updateInfo,
+              restart: (id, onlyIfUpdate) => appOptions.restart.request(onlyIfUpdate, (notice) => this.restartNotices?.add(id, 'restart', notice)),
+            },
+          }
+        : {}),
     });
     // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する。子セッションのものは、人に通知しない代わりに親に知らせる
     this.scheduled = new ScheduledMessages(
@@ -361,6 +376,21 @@ export class Profile {
     manager.onAwayChanged = (id, away, by) => {
       if (!away && by === 'human') awayNotices.add(id, 'ended', true);
     };
+    // restart_app で起動し直したら、呼んだセッションに、どうなったか（バージョンが変わったか）を知らせる。終える前に記録に残し（channel）、
+    // 起動し直したアプリが、手が空いたら送る。起動し直すと決めたこのアプリでは送らない（holds）。今のバージョンは、送るときに比べる
+    const restart = this.options.app?.restart;
+    this.restartNotices = new SessionNotices<RestartNotice>({
+      host: outward,
+      enabled: () => true,
+      compose: (_target, items) => {
+        const notice = items.get('restart');
+        return notice ? sessionEventText([], restartNoticeText(notice, app.getVersion(), this.options.app?.upgradeRan() ?? false)) : null;
+      },
+      holds: () => restart?.pending() ?? false,
+      // PROTOCOL が変わって、Claude Code が止まってから --resume で起動し直すときも、手が空いたら送る
+      keepWhileStopped: true,
+      channel: 'restart',
+    });
     const compact = new OptimizedCompact({
       host: manager,
       lists: (id) => this.checklists.lists(id),
@@ -577,6 +607,7 @@ export class Profile {
     this.sessionsBridge?.close();
     this.checklistControl?.dispose();
     this.awayNotices?.dispose();
+    this.restartNotices?.dispose();
     this.compact?.dispose();
     this.checklistBridge?.close();
     this.checklists.flush();

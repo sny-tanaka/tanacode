@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APP_BUNDLE, BREW_ENV, CASK, findBrew, HomebrewUpdater, parseCaskInfo, UPGRADE_SCRIPT, type BrewRunner } from '../src/main/homebrew-update';
+import { APP_BUNDLE, BREW_ENV, CASK, findBrew, HomebrewUpdater, parseCaskInfo, upgradeOrRelaunch, UPGRADE_SCRIPT, type BrewRunner } from '../src/main/homebrew-update';
 
 // Homebrew で入れた tanacode の更新（裏でのダウンロードと、終了したあとの入れ替え）
 const info = (version: string, installed: string | null, tap = 'sny-tanaka/tanacode') => JSON.stringify({ formulae: [], casks: [{ token: 'tanacode', tap, version, installed }] });
@@ -231,6 +231,77 @@ describe('HomebrewUpdater.upgradeAfterExit で書けないとき', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// 終えるときの入れ替えと起動し直し（index.ts の before-quit）。起動し直すはずなら、入れ替えのシェルを起動できなくても、終わったままにしない
+describe('upgradeOrRelaunch', () => {
+  let dir: string;
+  beforeEach(() => (dir = mkdtempSync(join(tmpdir(), 'tanacode-brew-'))));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // spawnFails: シェルの起動の失敗が、あとから届く（spawn の error）
+  const ready = async (spawnFails = false) => {
+    const shells: string[][] = [];
+    const u = new HomebrewUpdater({
+      brew: '/opt/homebrew/bin/brew',
+      run: fakeBrew({ update: () => '', [INFO]: () => info('1.3.0', '1.2.1'), [FETCH]: () => '' }).run,
+      current: '1.2.1',
+      onChange: () => {},
+      spawnShell: (args, _env, onError) => {
+        shells.push(args);
+        if (spawnFails) queueMicrotask(onError);
+      },
+    });
+    u.want('1.3.0');
+    await u.prepare();
+    return { u, shells };
+  };
+  const paths = () => ({ pid: 1, log: join(dir, 'update.log'), result: join(dir, 'result') });
+
+  it('シェルを起動できたら、起動し直すのはシェル（入れ替えたあと）に任せる', async () => {
+    const { u, shells } = await ready();
+    const relaunch = vi.fn();
+    upgradeOrRelaunch(u, true, paths(), true, relaunch);
+    await Promise.resolve();
+    expect(shells).toHaveLength(1);
+    expect(shells[0][6]).toBe('1');
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it('シェルの起動の失敗があとから分かったら、入れ替えずに起動し直す。もう一度入れ替えを試せるように戻す', async () => {
+    const { u, shells } = await ready(true);
+    const relaunch = vi.fn();
+    upgradeOrRelaunch(u, true, paths(), true, relaunch);
+    expect(relaunch).not.toHaveBeenCalled();
+    await new Promise((resolve) => queueMicrotask(() => resolve(null)));
+    expect(relaunch).toHaveBeenCalledTimes(1);
+    expect(u.upgradeAfterExit({ ...paths(), relaunch: false })).toBe(true);
+    expect(shells).toHaveLength(2);
+  });
+
+  it('ログを書けない・用意が無い・Homebrew で入れていないときは、すぐに起動し直す', async () => {
+    const { u, shells } = await ready();
+    writeFileSync(join(dir, 'file'), '');
+    const relaunch = vi.fn();
+    upgradeOrRelaunch(u, true, { ...paths(), log: join(dir, 'file/update.log') }, true, relaunch);
+    expect(shells).toEqual([]);
+    expect(relaunch).toHaveBeenCalledTimes(1);
+    upgradeOrRelaunch(null, true, paths(), true, relaunch);
+    expect(relaunch).toHaveBeenCalledTimes(2);
+    // 入れ替えない終了（ダウンロード済みでない・メニューでオフ）でも、起動し直すはずなら起動し直す
+    upgradeOrRelaunch(u, false, paths(), true, relaunch);
+    expect(relaunch).toHaveBeenCalledTimes(3);
+    expect(shells).toEqual([]);
+  });
+
+  it('起動し直さない終了では、シェルを起動できなくても起動し直さない', async () => {
+    const { u } = await ready(true);
+    const relaunch = vi.fn();
+    upgradeOrRelaunch(u, true, paths(), false, relaunch);
+    await new Promise((resolve) => queueMicrotask(() => resolve(null)));
+    upgradeOrRelaunch(null, false, paths(), false, relaunch);
+    expect(relaunch).not.toHaveBeenCalled();
   });
 });
 

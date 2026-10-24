@@ -41,6 +41,7 @@ import type { ScheduledMessage } from '@shared/scheduled';
 import type { WaitingText } from './session-manager';
 import type { WorktreeSetupTrouble } from './worktree';
 import { SEND_FAILURE, SendError } from './send-error';
+import { appUpdateJson, restartResultText, type AppUpdateInfo, type RestartOutcome } from './app-restart';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 import { WorktreeError, type WorktreeFailure } from './worktree';
@@ -59,6 +60,7 @@ import { WorktreeError, type WorktreeFailure } from './worktree';
 // schedule_wakeup・list_wakeups・cancel_wakeup は、自分のセッションへの予約（時刻を指定して送信と同じ流れ。scheduled-messages.ts）。子も使える。
 // report_result は、ターンの終わりの通知に載せる報告を預ける（子は人に通知しないので、子でないセッションだけ）
 // set_away_mode は、離席モードを入れる・解く（子は人に聞かないので、子でないセッションだけ。@shared/away-mode）
+// get_app_update・restart_app は、tanacode 自身の更新の様子を返す・起動し直す（子でないセッションだけ。app-restart.ts）
 
 // 人だけが答えられる確認かを決めるのに使う、許可の確認のツールと入力
 export type PermissionTarget = { tool: string; input: Record<string, unknown> };
@@ -159,6 +161,13 @@ type Deps = {
   stuckStartingMs?: number;
   // 今の時刻（起動中の時間を数える。テストでは差し替える）
   now?: () => number;
+  // tanacode 自身の更新の様子（確かめ直してから）と、起動し直す（呼んだセッションへの知らせも積む。app-restart.ts）
+  app?: AppControl;
+};
+
+export type AppControl = {
+  updateInfo(): Promise<AppUpdateInfo>;
+  restart(callerId: string, onlyIfUpdate: boolean): RestartOutcome;
 };
 
 // 質問に答えたあと、子が続けて出す次の質問を待つ上限。子は、答えを受け取ってから数秒で次の質問を出す
@@ -198,6 +207,8 @@ const WAKEUPS_UNSAVED =
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 // 起動が終わる前（予約・報告の受け手を作る前）に届いた呼び出しに返すもの
 const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try again.';
+// 子が tanacode の更新・再起動を頼んだときに返すもの
+const CHILD_APP_REFUSAL = 'A child session cannot update or restart tanacode. Tell your parent session if it is needed.';
 // 送れなかった指示を親への知らせに入れる長さ（親が見分けて送り直せるように。知らせは 1 行なので、長いものは頭だけ）
 const MAX_FAILED_MESSAGE_CHARS = 300;
 // send_message で預かった指示の、届くまでの確かめ方と、送れなかったとき
@@ -369,6 +380,10 @@ export class SessionsControl {
           return this.reportResult(caller, args);
         case 'set_away_mode':
           return this.setAwayMode(caller, args);
+        case 'get_app_update':
+          return await this.getAppUpdate(caller);
+        case 'restart_app':
+          return this.restartApp(caller, args);
         default:
           return textResult(`Unknown tool: ${name}`, true);
       }
@@ -1075,6 +1090,21 @@ export class SessionsControl {
     if (!host.setAway(caller.id, args.away, 'claude')) throw new ToolError('tanacode could not change away mode of this session (it may be archived).');
     if (args.away) return textResult(`${before ? 'Away mode was already on.' : 'Away mode is now on.'} Tell the user in one line, then follow these rules.\n\n${awayRules(host.awayWaitMs())}`);
     return textResult(before ? AWAY_ENDED : 'Away mode was already off. Nothing changed.');
+  }
+
+  private async getAppUpdate(caller: SessionSummary): Promise<ToolResult> {
+    if (caller.parentId) throw new ToolError(CHILD_APP_REFUSAL);
+    if (!this.deps.app) throw new ToolError(NOT_READY);
+    return json(appUpdateJson(await this.deps.app.updateInfo()));
+  }
+
+  // tanacode を起動し直す（人の許可の確認は、Claude Code のフックで済ませてある）。アプリ全体を起動し直すので、人が動かすセッションからだけ
+  private restartApp(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    if (caller.parentId) throw new ToolError(CHILD_APP_REFUSAL);
+    if (args.only_if_update !== undefined && typeof args.only_if_update !== 'boolean') throw new ToolError('only_if_update must be true or false.');
+    if (!this.deps.app) throw new ToolError(NOT_READY);
+    const outcome = this.deps.app.restart(caller.id, args.only_if_update === true);
+    return textResult(restartResultText(outcome), !outcome.restarting && !outcome.noUpdate);
   }
 
   // 子への予約（利用枠の再開・子の Claude の予約・人の予約）を、時刻に送れなかった・送れなかった。子は人に通知しないので、親に知らせる

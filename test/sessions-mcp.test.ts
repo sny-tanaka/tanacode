@@ -41,7 +41,8 @@ import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { SendError, type SendFailure } from '../src/main/send-error';
 import { textResult } from '../src/main/mcp-bridge';
-import { sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_ASK_ENV, writeSessionsNoAskFile } from '../src/main/sessions-bridge';
+import { restartGateCommand, RESTART_GATED_TOOL, sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_ASK_ENV, writeSessionsNoAskFile } from '../src/main/sessions-bridge';
+import type { AppUpdateInfo, RestartOutcome } from '../src/main/app-restart';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
 import { AWAY_ENDED } from '../src/shared/away-mode';
@@ -77,7 +78,7 @@ describe('中継と起動の引数', () => {
     const list = await respond({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, deps);
     const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
     const readOnly = tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
-    expect(readOnly.sort()).toEqual(['get_session', 'get_session_diff', 'list_sessions', 'list_wakeups', 'read_session', 'wait_sessions']);
+    expect(readOnly.sort()).toEqual(['get_app_update', 'get_session', 'get_session_diff', 'list_sessions', 'list_wakeups', 'read_session', 'wait_sessions']);
     await respond({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'rm', arguments: {} } }, deps);
     expect(calls).toEqual([]);
   });
@@ -208,6 +209,24 @@ describe('中継と起動の引数', () => {
     } finally {
       setLanguage('ja');
     }
+  });
+
+  it('tanacode の再起動（restart_app）の確認のフックは、印のファイルがあっても、権限モードによらずいつも ask を出す', () => {
+    const file = join(root, 'sessions-start-no-ask');
+    writeFileSync(file, '');
+    const env = { PATH: process.env.PATH ?? '', ...sessionsGateEnv({ ...launch, noAskFile: file }) };
+    const out = execFileSync('/bin/sh', ['-c', restartGateCommand()], { encoding: 'utf8', input: '{"tool_name":"mcp__tanacode-sessions__restart_app"}', env });
+    const decision = JSON.parse(out) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }; suppressOutput: boolean };
+    expect(decision.hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: t('main.hooks.restartGate') });
+    expect(decision.suppressOutput).toBe(true);
+    expect(restartGateCommand()).toContain('TANACODE_SESSIONS_GATE=1');
+    // --settings の PreToolUse に、restart_app だけに当たるフックとして入る
+    const hooks = (ownSettings(null, false, true).hooks as { PreToolUse: { matcher: string; hooks: { command: string }[] }[] }).PreToolUse;
+    expect(hooks.find((h) => h.matcher === RESTART_GATED_TOOL)?.hooks[0].command).toBe(restartGateCommand());
+    expect(RESTART_GATED_TOOL).toBe('mcp__tanacode-sessions__restart_app');
+    // 確認なしに通るツール（--allowedTools）には入れない。更新の様子を読むだけのツールは入れる
+    expect(allowedSessionToolIds()).not.toContain(RESTART_GATED_TOOL);
+    expect(allowedSessionToolIds()).toContain(sessionToolId('get_app_update'));
   });
 
   it('「Claude がセッションを始める前に許可を求める」は既定でオンで、保存される', () => {
@@ -4116,6 +4135,61 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(textOf(await control.handle(CHILD, 'set_away_mode', { away: true }))).toContain('A child session does not ask the user');
     expect(textOf(await control.handle(PARENT, 'set_away_mode', { away: 'yes' }))).toContain('away must be true');
     expect(changes.filter((c) => c.id === CHILD)).toEqual([]);
+  });
+
+  it('get_app_update・restart_app: 子でないセッションだけ。restart_app は only_if_update を渡し、結果の文を返す。子は断る', async () => {
+    const info: AppUpdateInfo = { current: '2.4.0', latest: '2.5.0', checkEnabled: true, install: 'homebrew', download: { status: 'ready', version: '2.5.0' } };
+    const calls: { id: string; onlyIfUpdate: boolean }[] = [];
+    let outcome: RestartOutcome = { restarting: true, to: '2.5.0', info };
+    const withApp = new SessionsControl({
+      host,
+      enabled: () => true,
+      archive: async () => null,
+      home: '/nonexistent-home',
+      app: {
+        updateInfo: async () => info,
+        restart: (id, onlyIfUpdate) => {
+          calls.push({ id, onlyIfUpdate });
+          return outcome;
+        },
+      },
+    });
+    try {
+      expect(jsonOf(await withApp.handle(PARENT, 'get_app_update', {}))).toMatchObject({ current_version: '2.4.0', ready_to_install: '2.5.0' });
+      const restarted = await withApp.handle(PARENT, 'restart_app', { only_if_update: true });
+      expect(restarted.isError).toBeFalsy();
+      expect(textOf(restarted)).toContain('update from v2.4.0 to v2.5.0');
+      // 頼まれたとおり入れ替えるものが無かったのはエラーにしない。終了の途中などで断ったときはエラー
+      outcome = { restarting: false, reason: 'tanacode is up to date (v2.4.0). tanacode was not restarted.', noUpdate: true, info };
+      expect((await withApp.handle(PEER, 'restart_app', {})).isError).toBeFalsy();
+      outcome = { restarting: false, reason: 'busy', noUpdate: false, info };
+      expect((await withApp.handle(PARENT, 'restart_app', {})).isError).toBe(true);
+      expect(calls).toEqual([
+        { id: PARENT, onlyIfUpdate: true },
+        { id: PEER, onlyIfUpdate: false },
+        { id: PARENT, onlyIfUpdate: false },
+      ]);
+      expect(textOf(await withApp.handle(PARENT, 'restart_app', { only_if_update: 'yes' }))).toContain('only_if_update must be true or false');
+      // 子は、アプリ全体を起動し直せない
+      expect(textOf(await withApp.handle(CHILD, 'restart_app', {}))).toContain('A child session cannot update or restart tanacode');
+      expect(textOf(await withApp.handle(CHILD, 'get_app_update', {}))).toContain('A child session cannot update or restart tanacode');
+      expect(calls).toHaveLength(3);
+    } finally {
+      withApp.dispose();
+    }
+    // アプリがつないでいない（起動の途中）なら、起動が終わっていないと答える
+    expect(textOf(await control.handle(PARENT, 'restart_app', {}))).toContain('has not finished starting up');
+  });
+
+  it('説明: 更新・再起動のツールは子に見せず、使いどころは子でないセッションにだけ渡す', () => {
+    expect(SESSIONS_MCP.tools.map((t) => t.name)).toEqual(expect.arrayContaining(['get_app_update', 'restart_app']));
+    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('restart_app');
+    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('get_app_update');
+    expect(SESSIONS_MCP.instructions).toContain('restart_app');
+    expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('restart_app');
+    const restart = SESSIONS_MCP.tools.find((t) => t.name === 'restart_app');
+    expect(restart?.kind).toBe('act');
+    expect(restart?.description).toContain('--resume');
   });
 
   it('説明: 離席モードのツールは子に見せず、決まりは子でないセッションにだけ渡す', () => {
