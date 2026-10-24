@@ -1,11 +1,11 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { appHookOutput, SUPPRESS_OUTPUT } from '../src/main/hook-output';
-import { sessionsGateCommand, SESSIONS_NO_ASK_ENV } from '../src/main/sessions-bridge';
+import { restartGateCommand, sessionsGateCommand, SESSIONS_NO_ASK_ENV } from '../src/main/sessions-bridge';
 import { AUTO_COMPACT_STOP_COMMAND, IDLE_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 import { worktreeGuardCommand } from '../src/main/worktree-guard';
 
@@ -69,7 +69,36 @@ describe('シェルで動くアプリのフック', () => {
   // Claude Code（2.1.302）は、フックの入力を書き終える前にフックが標準入力を閉じると（EPIPE）、そのフックを失敗として扱い、
   // 標準出力も捨てる。ツールの結果は大きいことがある（PostToolUse の入力に入る）ので、パイプに入りきらない大きさの入力で確かめる
   // （読まずに終わるフックは、必ず EPIPE になる）
-  it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', () => {
+  // 入力は、Claude Code と同じく非同期の spawn で書いて閉じる（stdin.end）。spawnSync の input で渡すと、macOS（Node 24・libuv 1.52）では
+  // 数百回に 1 回、Node が入力を書き終えたのに子の標準入力を閉じず、cat が入力の終わりを待ち続ける（素の `cat >/dev/null` でも起こる。
+  // 入力がソケットに入りきる大きさなら起こらない）。止まったときの lsof では、cat は 1MB を読み終えていて、Node が子の標準入力を開いたままだった
+  const run = (command: string, input: string, noAskFile: string) =>
+    new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: string; timedOut: boolean }>((resolve) => {
+      const child = spawn('sh', ['-c', command], {
+        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+      });
+      let stdout = '';
+      let stderr = '';
+      let error: string | undefined;
+      let timedOut = false;
+      child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+      child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+      // 読まずに閉じたフックへの書き込みの EPIPE は、ここに来る（失敗として返す）
+      child.stdin.on('error', (e) => (error ??= `stdin: ${e.message}`));
+      child.on('error', (e) => (error ??= e.message));
+      // 止まったときに、どのコマンドで止まったかが分かる失敗にする（テストの時間切れで、何も残らずに落ちないように）
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, 10_000);
+      child.on('close', (status, signal) => {
+        clearTimeout(timer);
+        resolve({ status, signal, stdout, stderr, error, timedOut });
+      });
+      child.stdin.end(input);
+    });
+
+  it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', async () => {
     const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
     // 子セッションの起動の確認は、印のファイルがあるとき（allow）と無いとき（ask）の両方で
     const noAsk = join(dir, 'sessions-start-no-ask');
@@ -78,31 +107,19 @@ describe('シェルで動くアプリのフック', () => {
       [AUTO_COMPACT_STOP_COMMAND, ''],
       [sessionsGateCommand(), ''],
       [sessionsGateCommand(), noAsk],
+      [restartGateCommand(), ''],
       [worktreeGuardCommand(), ''],
       [PERMISSION_FILE_COMMAND, ''],
       [NOTIFICATION_FILE_COMMAND, ''],
       [IDLE_FILE_COMMAND, ''],
     ]) {
-      // timeout: 一度だけ、手元の Mac で重い負荷がかかっていたときに、Node が 1MB の入力を書き終えたのに標準入力を閉じず
-      // （ソケットに残りは無いのに、書く側を持ったまま）、フックの cat が入力の終わりを待ち続けて、テストの流れ全体が 20 分止まった。
-      // 3 回流し直しても再現しなかったので、次に起きたときに、どのコマンドで止まったか（ETIMEDOUT）が分かる失敗にする。
-      // 2026-10-21 に、npm test の全体で 1 回だけまた止まった（テストは 10029ms で、1 つのコマンドが 10 秒止まり、ほかはふだんどおり 20ms ほど。
-      // 負荷で全体が遅れたのではない）。単独では 3 回とも通った。どのコマンドかは、出力を絞っていて残らなかった。
-      // 次に止まったら、失敗の文で、かかった時間と、そのときまでの標準出力・標準エラーを読む。標準出力に答え（suppressOutput）があれば、
-      // フックは入力の終わりを受け取って答えを書いたあと（sh が終わらなかった）、空なら答えを書く前（入力の終わりを待っていた・動き出していなかった）。
-      // 2026-10-24 に、手元（ロードアベレージ 4〜7 ほど）で 7 回のうち 3 回止まった。分かった 2 回は、はじめの AUTO_COMPACT_STOP_COMMAND で、
-      // 標準出力は空（10004ms・SIGTERM。worktree-guard の awk より前で止まっている）。3 回目も標準出力は空（コマンドは控え損ねた）
       const started = performance.now();
-      const result = spawnSync('sh', ['-c', command], {
-        input,
-        timeout: 10_000,
-        encoding: 'utf8',
-        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), [SESSIONS_NO_ASK_ENV]: noAskFile, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
-      });
-      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout?.slice(-200))}・stderr ${JSON.stringify(result.stderr?.slice(-500))}`;
-      expect({ command, noAskFile, error: result.error?.message, status: result.status }, detail).toEqual({ command, noAskFile, error: undefined, status: 0 });
+      const result = await run(command, input, noAskFile);
+      // 標準出力に答え（suppressOutput）があれば、フックは入力の終わりを受け取って答えを書いたあと、空なら答えを書く前
+      const detail = `${Math.round(performance.now() - started)}ms・signal ${result.signal}・stdout ${JSON.stringify(result.stdout.slice(-200))}・stderr ${JSON.stringify(result.stderr.slice(-500))}`;
+      expect({ command, noAskFile, error: result.error, timedOut: result.timedOut, status: result.status }, detail).toEqual({ command, noAskFile, error: undefined, timedOut: false, status: 0 });
     }
-  });
+  }, 80_000);
 
   it('Bash の前の確認・子セッションの起動の前の確認は、確認を出させるときも、許すときも、何もしないときも、suppressOutput を付ける', () => {
     const bash = (command: string) => sh(worktreeGuardCommand(), { session_id: 'x', cwd: '/r/proj', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
@@ -113,5 +130,7 @@ describe('シェルで動くアプリのフック', () => {
     const noAsk = join(dir, 'no-ask');
     writeFileSync(noAsk, '');
     expect(JSON.parse(sh(sessionsGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'allow' }, suppressOutput: true });
+    // tanacode の再起動の前の確認（いつも ask）も
+    expect(JSON.parse(sh(restartGateCommand(), { hook_event_name: 'PreToolUse' }, noAsk))).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' }, suppressOutput: true });
   });
 });
