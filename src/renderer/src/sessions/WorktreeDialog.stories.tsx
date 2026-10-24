@@ -35,6 +35,7 @@ const CLEAN: WorktreeLeftovers = {
   untracked: 0,
   unpushed: 0,
   contentIn: null,
+  submodules: [],
   pr: MERGED_PR,
 };
 
@@ -70,6 +71,21 @@ export const 何も残っていない: Story = {};
 // 未コミットの変更・未追跡のファイル・プッシュしていないコミットが残っていて、PR はまだマージされていない
 export const 残っているものがある: Story = {
   args: { leftovers: { ...CLEAN, uncommitted: 3, untracked: 1, unpushed: 2, pr: { ...MERGED_PR, state: 'open' } } },
+};
+
+// submodule の中に、削除すると失われるもの（未コミットの変更・stash・プッシュしていないコミットなど）がある
+export const submoduleの中に変更: Story = {
+  args: { leftovers: { ...CLEAN, uncommitted: 1, submodules: ['lib', 'lib/nested'] } },
+};
+
+// submodule の中の stash だけが残っている（元のフォルダ側の数には出ない）
+export const submoduleのstashだけ: Story = {
+  args: { leftovers: { ...CLEAN, submodules: ['lib'] } },
+};
+
+// submodule の中を調べられなかった
+export const submoduleを調べられない: Story = {
+  args: { leftovers: { ...CLEAN, submodules: null } },
 };
 
 // PR はマージ済みだが、そのあとに手元でコミットを足した

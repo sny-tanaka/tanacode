@@ -198,7 +198,7 @@ async function commandKeys(cwd: string, budget: { left: number }, depth: number)
 const submoduleLists = new Map<string, { stamp: string; dirs: (string | Buffer)[] }>();
 
 // 取り出してある（.git のある）サブモジュールのフォルダ
-async function submodulesOf(cwd: string): Promise<string[]> {
+export async function submodulesOf(cwd: string): Promise<string[]> {
   // リポジトリの一番上とインデックスの場所は、毎回読む（サブフォルダで git init するなど、リポジトリの境目は変わる。rev-parse は軽い）
   const located = await runGitBytes(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then(
     (out) => splitBytes(out, 10),

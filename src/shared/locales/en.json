@@ -164,7 +164,9 @@
       "noCommit": "To start with a worktree, the repository needs at least one commit",
       "noName": "Couldn't choose a name for the worktree",
       "locked": "The worktree is locked, so it wasn't deleted",
-      "lockedWithReason": "The worktree is locked ({reason}), so it wasn't deleted"
+      "lockedWithReason": "The worktree is locked ({reason}), so it wasn't deleted",
+      "submoduleChanges": "The worktree wasn't deleted because {count} submodules ({paths}) contain things that would be lost (uncommitted changes, untracked files, stashes, or unpushed commits)",
+      "submoduleChanges_one": "The worktree wasn't deleted because {count} submodule ({paths}) contains things that would be lost (uncommitted changes, untracked files, stashes, or unpushed commits)"
     },
     "settingsFile": {
       "unusable": "Can't use settings file “{name}” ({path}): {reason}",
@@ -1332,6 +1334,9 @@
       "unpushed": "Unpushed commits",
       "contentIn": "These commits exist only locally, but their changes are already in {branch}",
       "nothingLeft": "No leftover changes or commits",
+      "submodules": "{count} submodules ({paths}) contain things that deleting would lose (uncommitted changes, untracked files, stashes, or unpushed commits). The worktree can't be deleted as it is",
+      "submodules_one": "{count} submodule ({paths}) contains things that deleting would lose (uncommitted changes, untracked files, stashes, or unpushed commits). The worktree can't be deleted as it is",
+      "submodulesUnknown": "Couldn't check inside the submodules. Deleting may fail",
       "leftoverCount": "{count}",
       "prUnknown": "Couldn't check for a PR (for example, gh isn't installed or you're not logged in)",
       "prNone": "No PR for this branch",

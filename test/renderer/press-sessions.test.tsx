@@ -122,6 +122,7 @@ describe('WorktreeDialog（worktree のセッションのアーカイブ・一�
     untracked: 0,
     unpushed: 1,
     contentIn: null,
+    submodules: [],
     pr: { state: 'none' },
     ...over,
   });
