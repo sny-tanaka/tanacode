@@ -213,6 +213,7 @@ const WORKTREE_FAILURE: Record<WorktreeFailure, string> = {
   closedWhileCreating: 'the session was archived or removed from the session list while its worktree was being created',
   submoduleChanges:
     'removing the worktree would lose uncommitted changes, untracked files, stashes or commits that are on no remote inside the submodules listed in parentheses. Commit and push them inside each submodule, or discard them, before removing the worktree',
+  usedBySession: 'a session that is not archived (named in parentheses) is running inside the worktree. End or archive that session first, then remove the worktree',
 };
 
 // ターンが終わった状態（親が止めた印を片付ける）

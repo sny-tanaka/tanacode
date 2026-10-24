@@ -11,7 +11,7 @@ import { type PullRequest, pullRequestsOf } from './github';
 
 // worktree を作れない・消せない理由。message は画面の言語の文（画面に出す）。Claude に返すときは、reason と detail から英語の文を作る
 // （sessions-control.ts。Claude に返す文は英語で書く決まり）。detail: ロックの理由など、添える言葉（人やツールが書いたもの）
-export type WorktreeFailure = 'notRepo' | 'noCommit' | 'noName' | 'locked' | 'closedWhileCreating' | 'submoduleChanges';
+export type WorktreeFailure = 'notRepo' | 'noCommit' | 'noName' | 'locked' | 'closedWhileCreating' | 'submoduleChanges' | 'usedBySession';
 export class WorktreeError extends Error {
   constructor(
     readonly reason: WorktreeFailure,
