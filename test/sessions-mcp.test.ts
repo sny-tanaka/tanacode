@@ -45,6 +45,7 @@ import { sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
 import { AWAY_ENDED } from '../src/shared/away-mode';
+import { MAX_PARENT_RULES_RESULT_CHARS, parentRulesResult } from '../src/shared/project-instructions';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { WorktreeError, withSetupNote, type WorktreeSetupTrouble } from '../src/main/worktree';
@@ -347,6 +348,8 @@ class FakeHost implements SessionsHost {
   // 離席モード（set_away_mode）。テストが入れる
   setAway?: SessionsHost['setAway'];
   awayWaitMs?: SessionsHost['awayWaitMs'];
+  // 今の会話にまだ渡していない TANACODE_PARENT.md（start_session の結果に付ける）。テストが入れる
+  takeParentRules?: SessionsHost['takeParentRules'];
   configured: { id: string; options: SessionOptions }[] = [];
   configureError: Error | null = null;
   // アプリ内ブラウザで人に操作を頼んでいるセッション
@@ -635,6 +638,57 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.kept).toEqual([started.session_id]);
     // worktree を使うかは必ず選ばせる
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
+  });
+
+  it('start_session: 親の決まり（TANACODE_PARENT.md）をまだ受け取っていない親には、結果に付けて渡す。2 本目・独立したセッション・受け取ったあとは付けない', async () => {
+    const rules = [{ path: '/p/TANACODE_PARENT.md', content: '# 親の決まり\n見回りを予約しない' }];
+    const taken: string[] = [];
+    let given = false;
+    host.takeParentRules = (id) => {
+      taken.push(id);
+      if (given) return null;
+      given = true;
+      return rules;
+    };
+    // 独立したセッションは子ではないので、渡さない（受け取ったことにもしない）
+    const independent = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent: true });
+    expect(independent.content).toHaveLength(1);
+    expect(taken).toEqual([]);
+    const first = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
+    // 結果の JSON はそのまま読める（1 つ目）。決まりは 2 つ目に、英語の前書きと、ファイルごとの囲みで
+    expect(jsonOf<{ session_id: string }>(first).session_id).toBeTruthy();
+    expect(first.content).toHaveLength(2);
+    expect((first.content[1] as { text: string }).text).toBe(parentRulesResult(rules));
+    expect(parentRulesResult(rules)).toContain('TANACODE_PARENT.md has not been passed to this conversation yet');
+    expect(parentRulesResult(rules)).toContain('<instructions-file path="/p/TANACODE_PARENT.md">\n# 親の決まり\n見回りを予約しない\n</instructions-file>');
+    const second = await control.handle(PARENT, 'start_session', { prompt: 'y', worktree: false });
+    expect(second.content).toHaveLength(1);
+    expect(taken).toEqual([PARENT, PARENT]);
+    // 長すぎるものは、中身の代わりに Read で読むよう頼む
+    const long = parentRulesResult([{ path: '/p/TANACODE_PARENT.md', content: 'x'.repeat(MAX_PARENT_RULES_RESULT_CHARS) }]);
+    expect(long).toContain('read the whole file with the Read tool before you go on (/p/TANACODE_PARENT.md)');
+    expect(long.length).toBeLessThan(2_000);
+    // 上限は、結果のほかの部分（JSON）も含めて測る（Claude Code の上限は結果の全体のトークン数）
+    const half = [{ path: '/p/TANACODE_PARENT.md', content: '決'.repeat(MAX_PARENT_RULES_RESULT_CHARS / 2) }];
+    expect(parentRulesResult(half)).toContain('決'.repeat(100));
+    expect(parentRulesResult(half, MAX_PARENT_RULES_RESULT_CHARS / 2)).not.toContain('決'.repeat(100));
+  });
+
+  it('start_session: 呼び出しが取り消された（Esc で中断した）ときは、親の決まりを渡したことにしない', async () => {
+    const taken: string[] = [];
+    host.takeParentRules = (id) => (taken.push(id), [{ path: '/p/TANACODE_PARENT.md', content: '決まり' }]);
+    const aborted = new AbortController();
+    aborted.abort();
+    const result = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }, aborted.signal);
+    expect(result.content).toHaveLength(1);
+    expect(taken).toEqual([]);
+  });
+
+  it('start_session: 子を始められなかったときは、親の決まりを受け取ったことにしない', async () => {
+    const taken: string[] = [];
+    host.takeParentRules = (id) => (taken.push(id), null);
+    expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'bypassPermissions' })).isError).toBe(true);
+    expect(taken).toEqual([]);
   });
 
   it('start_session: worktree の準備でうまくいかなかったこと（install の失敗など）は、子への最初の指示の本文に添え、get_session の worktree に出す', async () => {

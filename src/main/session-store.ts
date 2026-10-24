@@ -27,6 +27,10 @@ export type SessionRecord = {
   remoteControl?: boolean;
   // 最適化圧縮を自動で始めるか。無いもの（新しいセッション・この指定ができる前のセッション）はオン
   autoCompact?: boolean;
+  // 今の会話に TANACODE_PARENT.md を渡したか（「親にする」・「親として始める」・初めて子を始めたときの start_session の結果）。
+  // 渡していなければ、子を始めたときに start_session の結果に付けて渡す（SessionManager.takeParentRules）。会話を消したら（/clear・
+  // 最適化圧縮）・戻したら（「ここまで戻す」）外す。アプリを起動し直しても残す
+  parentRules?: boolean;
   // 離席モード（@shared/away-mode）。子でないセッションだけ。アプリを起動し直しても残す（人が戻ったとき、画面のスイッチか Claude が解く）
   away?: boolean;
   // worktree で始めたセッション（claude --worktree）。cwd は worktree のフォルダ（root/.claude/worktrees/<name>）、
