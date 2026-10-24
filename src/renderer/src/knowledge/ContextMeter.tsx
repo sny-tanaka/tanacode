@@ -18,7 +18,8 @@ export function ContextMeter({ tokens, limit, onClick }: { tokens: number | null
         <span style={{ width: `${Math.max(ratio * 100, 2)}%` }} />
       </span>
       <span className="context-meter-value">
-        {Math.round(ratio * 100)}% · {formatTokens(tokens)}
+        {/* 量（「· 120k」）は、チャットの列が狭いときに畳む（割合だけにする） */}
+        {Math.round(ratio * 100)}%<span className="context-meter-tokens"> · {formatTokens(tokens)}</span>
       </span>
     </button>
   );

@@ -97,10 +97,10 @@ describe('セッションのコンテキストを取りに行く入れ物（Sess
 
   it('メーターを押すと、中身の一覧を出す（受け手を呼ぶ）。使用量が分からなければ出さない', () => {
     const onClick = vi.fn();
-    const { rerender } = render(<ContextMeter tokens={120_000} limit={200_000} onClick={onClick} />);
+    const { rerender, container } = render(<ContextMeter tokens={120_000} limit={200_000} onClick={onClick} />);
     fireEvent.click(screen.getByLabelText('コンテキストの中身'));
     expect(onClick).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('60% · 120k')).toBeTruthy();
+    expect(container.querySelector('.context-meter-value')?.textContent).toBe('60% · 120k');
     rerender(<ContextMeter tokens={null} limit={200_000} onClick={onClick} />);
     expect(screen.queryByLabelText('コンテキストの中身')).toBeNull();
   });

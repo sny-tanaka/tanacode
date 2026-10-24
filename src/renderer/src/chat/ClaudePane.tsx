@@ -10,7 +10,8 @@ import type { PendingElicitation } from '@shared/elicitation';
 import type { BashTask, TaskRef } from '@shared/task';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { errorMessage } from '../errorMessage';
-import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ParentIcon, ReloadIcon } from '../icons';
+import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, MoreIcon, ParentIcon, ReloadIcon, type IconComponent } from '../icons';
+import { ContextMenu } from '../explorer/ContextMenu';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ExportDialog } from '../export/ExportDialog';
 import { ContextMeter } from '../knowledge/ContextMeter';
@@ -162,6 +163,9 @@ export const ClaudePane = memo(function ClaudePane({
   const [pastes, setPastes] = useState<string[]>([]);
   // 作業の書き出しの確認を出している
   const [exporting, setExporting] = useState(false);
+  // 狭いときの「…」のメニュー（開いている位置）
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
   const listRef = useRef<HTMLDivElement>(null);
   // 開いているツール・hooks のまとまり（自動では開かない）
@@ -722,6 +726,49 @@ export const ClaudePane = memo(function ClaudePane({
     </div>
   );
 
+  // ヘッダーの、あまり使わないボタン（親にする・再起動・書き出す）。欄が狭いときは、並べると右端のボタンが欄の外に出て押せなくなるので、
+  // CSS（@container）で隠して「…」のメニューにまとめる。広いときは今までどおり並べ、「…」は出さない
+  const extras: { key: string; button: { icon: IconComponent; label: string; tip: string; disabled?: boolean; onClick: () => void } }[] = [
+    ...(live && !session.parentId
+      ? [
+          {
+            key: 'parent',
+            button: {
+              icon: ParentIcon,
+              label: t('chat.pane.becomeParent'),
+              tip: t(parentFile === null ? 'chat.pane.becomeParentMissing' : 'chat.pane.becomeParentTip', { file: PARENT_INSTRUCTIONS_FILE }),
+              // 押すたびに 1 回読ませる（ボタンに押した印は付けない。渡したことは main が覚え、そのあとに子を始めても重ねて渡さない）。作業中なら順番待ちに入り、ターミナルモードなら入力欄に貼る
+              disabled: !parentFile,
+              onClick: () =>
+                void window.tanacode.sessions
+                  .becomeParent(session.id)
+                  .catch((error: unknown) => window.alert(t('chat.pane.becomeParentFailed', { error: errorMessage(error) }))),
+            },
+          },
+        ]
+      : []),
+    ...(live
+      ? [
+          {
+            key: 'restart',
+            button: {
+              icon: ReloadIcon,
+              label: t('chat.pane.restart'),
+              tip: t('chat.pane.restartTip'),
+              onClick: () => {
+                const busy = running || tasks.some((t) => t.state === 'running');
+                if (busy && !window.confirm(t('chat.pane.confirmRestart'))) return;
+                void window.tanacode.sessions
+                  .restart(session.id)
+                  .catch((error: unknown) => window.alert(t('chat.pane.restartFailed', { error: errorMessage(error) })));
+              },
+            },
+          },
+        ]
+      : []),
+    { key: 'export', button: { icon: ExportIcon, label: t('chat.pane.export'), tip: t('chat.pane.exportTip'), onClick: () => setExporting(true) } },
+  ];
+
   return (
     <section className="claude">
       <header className="claude-header">
@@ -751,43 +798,29 @@ export const ClaudePane = memo(function ClaudePane({
             onAutoChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)}
           />
         )}
-        {live && !session.parentId && (
-          <IconButton
-            size="md"
-            icon={ParentIcon}
-            label={t('chat.pane.becomeParent')}
-            tip={t(parentFile === null ? 'chat.pane.becomeParentMissing' : 'chat.pane.becomeParentTip', { file: PARENT_INSTRUCTIONS_FILE })}
-            // 押すたびに 1 回読ませる（ボタンに押した印は付けない。渡したことは main が覚え、そのあとに子を始めても重ねて渡さない）。作業中なら順番待ちに入り、ターミナルモードなら入力欄に貼る
-            disabled={!parentFile}
-            onClick={() =>
-              void window.tanacode.sessions
-                .becomeParent(session.id)
-                .catch((error: unknown) => window.alert(t('chat.pane.becomeParentFailed', { error: errorMessage(error) })))
-            }
-          />
-        )}
-        {live && (
-          <IconButton
-            size="md"
-            icon={ReloadIcon}
-            label={t('chat.pane.restart')}
-            tip={t('chat.pane.restartTip')}
-            onClick={() => {
-              const busy = running || tasks.some((t) => t.state === 'running');
-              if (busy && !window.confirm(t('chat.pane.confirmRestart'))) return;
-              void window.tanacode.sessions
-                .restart(session.id)
-                .catch((error: unknown) => window.alert(t('chat.pane.restartFailed', { error: errorMessage(error) })));
-            }}
-          />
-        )}
+        {extras.map((extra) => (
+          <IconButton key={extra.key} size="md" className="claude-header-extra" {...extra.button} />
+        ))}
         <IconButton
           size="md"
-          icon={ExportIcon}
-          label={t('chat.pane.export')}
-          tip={t('chat.pane.exportTip')}
-          onClick={() => setExporting(true)}
+          icon={MoreIcon}
+          className="claude-header-more"
+          label={t('chat.pane.more')}
+          aria-haspopup="menu"
+          aria-expanded={moreMenu !== null}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMoreMenu({ x: rect.left, y: rect.bottom + 4 });
+          }}
         />
+        {moreMenu && (
+          <ContextMenu
+            x={moreMenu.x}
+            y={moreMenu.y}
+            items={extras.map((extra) => ({ label: extra.button.label, disabled: extra.button.disabled, onSelect: extra.button.onClick }))}
+            onClose={closeMoreMenu}
+          />
+        )}
         {!session.archived && (
           <IconButton
             size="md"

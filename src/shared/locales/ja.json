@@ -602,6 +602,7 @@
       "becomeParentFailed": "親にできませんでした: {error}",
       "export": "作業を書き出す…",
       "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
+      "more": "その他の操作",
       "terminal": "ターミナルモード",
       "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する。切り替えると、Claude Code を起動し直して同じ会話を続けます（手が空いているときだけ）",
       "pasteComments": "入力欄に貼る",

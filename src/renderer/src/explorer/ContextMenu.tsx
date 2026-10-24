@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 // 右クリックのメニューの項目。'separator' は区切りの線
-export type ContextMenuItem = { label: string; onSelect: () => void; danger?: boolean } | 'separator';
+export type ContextMenuItem = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean } | 'separator';
 
 // 右クリックした位置に出すメニュー。画面からはみ出すときは内側に寄せる。外を押す・Esc・ウインドウを離れると閉じる。
 // 親のスクロールやはみ出しの切り取りを受けないよう、body に出す
@@ -56,6 +56,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
             type="button"
             role="menuitem"
             className={item.danger ? 'danger' : undefined}
+            disabled={item.disabled}
             onClick={() => {
               onClose();
               item.onSelect();

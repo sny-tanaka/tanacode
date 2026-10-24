@@ -1115,8 +1115,12 @@ body.resizing * {
   text-align: left;
   cursor: pointer;
 }
-.context-menu button:hover {
+.context-menu button:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+.context-menu button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
 }
 .context-menu button.danger {
   color: var(--danger);
@@ -1504,6 +1508,27 @@ body.resizing-rows {
   /* 間（gap の 8px）を 4px にする。@container の中では、問い合わせ先のヘッダー自身の gap は変えられないので、中の部品で詰める */
   .claude-header > * + * {
     margin-left: -4px;
+  }
+}
+/* 「…」のメニュー（あまり使わないボタンをまとめたもの）は、狭いときだけ出す */
+.claude-header > .claude-header-more {
+  display: none;
+}
+/* 欄が狭いと、ここまで詰めても右端のボタン（ターミナルモード）が欄の外に出る（列の幅は 320px まで狭められる）。
+   あまり使わないボタン（親にする・再起動・書き出す）を隠して、「…」のメニューにまとめる。幅はヘッダーの中身の幅（列の幅より 29px ほど狭い）で、
+   列が 390px より狭いとき（それより広ければ、並べてもタイトルが少し見える）。既定の 400px（E2E のウインドウも）では、並んだまま */
+@container (max-width: 360px) {
+  .claude-header > .claude-header-extra {
+    display: none;
+  }
+  .claude-header > .claude-header-more {
+    display: inline-grid;
+  }
+}
+/* さらに狭いと、それでもタイトルが見えなくなり、右端が欄の外に出る。コンテキストのメーターを割合だけにする（量はツールチップにある） */
+@container (max-width: 310px) {
+  .claude-header .context-meter-tokens {
+    display: none;
   }
 }
 /* Remote Control と離席モードのスイッチ。欄が狭いときは、つまみの帯を畳んでアイコンだけにする（どちらもスイッチで、ヘッダーの幅を

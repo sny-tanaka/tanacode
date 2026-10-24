@@ -59,7 +59,8 @@ function conversation(count: number): ChatItem[] {
 // unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
 // starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション /
 // partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）/ permission: 答えを待っている許可の確認（会話の最後にカードで出る）/
-// question: 答えを待っている質問（会話の最後にカードで出る）
+// question: 答えを待っている質問（会話の最後にカードで出る）/ width: チャットの列の幅（アプリでは列の境目を動かして変える。320px まで狭められる）/
+// contextTokens: コンテキストの量（ヘッダーにメーターが出る）
 function Pane({
   items,
   settingsFile = null,
@@ -78,6 +79,8 @@ function Pane({
   partial = NO_PARTIAL,
   permission = null,
   question = null,
+  width,
+  contextTokens = null,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -96,6 +99,8 @@ function Pane({
   partial?: PartialBlock[];
   permission?: PendingPermission | null;
   question?: PendingQuestion | null;
+  width?: number;
+  contextTokens?: number | null;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -105,7 +110,7 @@ function Pane({
   }, [input]);
   const partials = useMemo(() => fixedPartial(partial), [partial]);
   return (
-    <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
+    <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)', ...(width && { ['--w-claude' as string]: `${width}px` }) }}>
       <ClaudePane
         session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null, terminal: terminalOpen }}
         sessions={child ? [PARENT, session] : [session]}
@@ -122,7 +127,7 @@ function Pane({
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}
-        contextTokens={null}
+        contextTokens={contextTokens}
         statusLine={null}
         tasks={[]}
         activeTaskKey={null}
@@ -519,6 +524,16 @@ const showClaudeScreen = () =>
       return () => {};
     },
   });
+
+// チャットの列を狭めたときのヘッダー。ボタンがすべて出る（メーター・Remote Control・離席モード・最適化圧縮・親にする・再起動・書き出す・
+// ターミナルモード）。列が 390px より狭いと、あまり使わないボタン（親にする・再起動・書き出す）を「…」のメニューにまとめ、右端のボタンを欄の中に収める
+export const 狭い列のヘッダー: Story = { args: { items: conversation(4), width: 360, contextTokens: 92_000 } };
+
+// アプリで狭められるいちばん狭い幅（320px）
+export const いちばん狭い列のヘッダー: Story = { args: { items: conversation(4), width: 320, contextTokens: 92_000 } };
+
+// 広い列（既定の 400px）では、ボタンを今までどおり並べる（「…」は出さない）
+export const 広い列のヘッダー: Story = { args: { items: conversation(4), width: 400, contextTokens: 92_000 } };
 
 export const ターミナルモード: Story = {
   beforeEach: showClaudeScreen,
