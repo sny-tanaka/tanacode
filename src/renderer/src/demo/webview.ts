@@ -15,6 +15,10 @@ class DemoWebview extends HTMLElement {
   private readonly frame = document.createElement('iframe');
   private url = '';
   private readonly seq = ++viewSeq;
+  // 読み込み（srcdoc の差し替え）が済むまで待つための約束。読み込み中でなければ無い。
+  // srcdoc を差し替えた直後は、新しいページの中身（contentDocument）はあっても、まだ <html> が無い（documentElement が null の）ときがある
+  // （Electron で確かめた）。CI の PC のツアーで、描き直しの直後に画像を切り出して clientWidth を読めずに落ちたので、ページを読む前にこれを待つ
+  private loading: { promise: Promise<void>; done: () => void } | null = null;
 
   constructor() {
     super();
@@ -34,6 +38,8 @@ class DemoWebview extends HTMLElement {
   disconnectedCallback(): void {
     trace(`ブラウザ ${this.seq}: 外れた`);
     views.delete(this);
+    // 外れると読み込みは止まり、load は来ない。待っている側を止めたままにしない（中身が無ければ、その様子をエラーで知らせる）
+    this.finishLoading();
   }
 
   get src(): string {
@@ -54,7 +60,14 @@ class DemoWebview extends HTMLElement {
     const page = pageFor(this.url);
     trace(`ブラウザ ${this.seq}: 読み込む ${this.url}${withEvents ? '' : '（描き直し）'}`);
     if (withEvents) this.dispatchEvent(new Event('did-start-loading'));
+    // 前の読み込みが済む前に読み込み直したときは、前の約束をそのまま使う（前の読み込みの load は来ないため）
+    if (!this.loading) {
+      let done = (): void => {};
+      const promise = new Promise<void>((resolve) => (done = resolve));
+      this.loading = { promise, done };
+    }
     this.frame.onload = () => {
+      this.finishLoading();
       if (!withEvents) return;
       this.dispatchEvent(new Event('did-navigate'));
       this.dispatchEvent(new Event('did-stop-loading'));
@@ -62,6 +75,18 @@ class DemoWebview extends HTMLElement {
     this.frame.srcdoc = page
       ? `<!doctype html><html><head><meta charset="utf-8"><title>${page.title}</title><style>html,body{margin:0}${page.css}</style></head><body>${page.body}</body></html>`
       : '<!doctype html><p style="font:14px sans-serif;padding:24px">このページは開けません</p>';
+  }
+
+  private finishLoading(): void {
+    this.loading?.done();
+    this.loading = null;
+  }
+
+  // 読み込み中なら、済むまで待つ
+  private async loaded(): Promise<void> {
+    if (!this.loading) return;
+    trace(`ブラウザ ${this.seq}: 読み込みが済むのを待つ`);
+    await this.loading.promise;
   }
 
   getURL(): string {
@@ -85,23 +110,26 @@ class DemoWebview extends HTMLElement {
   }
 
   // ページの中でスクリプトを動かす（要素選びのスクリプトは Promise を返す）
-  executeJavaScript<T>(code: string): Promise<T> {
+  async executeJavaScript<T>(code: string): Promise<T> {
+    await this.loaded();
     const win = this.frame.contentWindow as (Window & { eval: (code: string) => unknown }) | null;
-    if (!win) return Promise.reject(new Error('demo: ページがありません'));
+    if (!win) throw new Error('demo: ページがありません');
     // 作り物のページの location は about:srcdoc なので、開いている URL に読み替える
-    return Promise.resolve(win.eval(code.replaceAll('location.href', JSON.stringify(this.url))) as T);
+    return (await win.eval(code.replaceAll('location.href', JSON.stringify(this.url)))) as T;
   }
 
   // ページの一部を画像にする（ページの中身を SVG の foreignObject に写して描く）。
   // 確かめ（?demo-trace）のときは、段ごとに足あとを出す（CI のスマホのツアーで、ページで最初にこれを動かす「要素を選ぶ」の直後に、
   // ページの処理が 40 秒応答しないまま落ちたことが 2 回あった。次に止まったときに、どの段で止まったかを見分ける）
   async capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<{ isEmpty(): boolean; toDataURL(): string }> {
+    await this.loaded();
     trace(`画像を切り出す: ページを SVG に写す（ブラウザ ${this.seq}）`);
     const doc = this.frame.contentDocument;
     // ページの中身が無いときは、そのときの様子をエラーに添える（CI の PC のツアーで、ここで落ちたことがあった。上の足あとと合わせて読む）
-    if (!doc) {
+    if (!doc?.documentElement || !doc.body) {
       const state = [
         `ブラウザ ${this.seq}`,
+        `中身: ${doc ? `<html> ${doc.documentElement ? 'あり' : 'なし'}・<body> ${doc.body ? 'あり' : 'なし'}・${doc.readyState}` : 'なし'}`,
         `webview: ${this.isConnected ? 'つながっている' : '外れている'}`,
         `iframe: ${this.frame.isConnected ? 'つながっている' : '外れている'}・${this.frame.parentNode === this ? 'webview の中' : 'webview の外'}`,
         `contentWindow: ${this.frame.contentWindow ? 'あり' : 'なし'}`,
