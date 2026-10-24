@@ -1,14 +1,18 @@
 import { BROWSER_MCP } from './browser-tools';
 import { CHECKLIST_MCP } from './checklist-tools';
-import { mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { mcpToolId, type McpServerDef, type McpTool, type McpToolGroup } from './mcp-tools';
 import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD } from './session-tools';
 import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from './terminal-tools';
 import { WALKTHROUGH_MCP } from './walkthrough-tools';
 
-// tanacode が足す MCP のツールごとの許可（メニューの「MCP → Claude のツールの許可…」）。プロファイルごとに持つ。
+// tanacode が足す MCP のツールごとの許可（メニューの「MCP の設定…」）。アプリ全体で 1 つ。
 // ask: 毎回確認 / allow: 常に許可。どのツールも、どちらにも変えられる（既定から変えるのは、利用者の判断）
 
 export type ToolPermission = 'ask' | 'allow';
+
+// MCP サーバーの入り・切り（アプリ全体で 1 つ。settings.json の browserControl など）
+export const MCP_GROUPS: McpToolGroup[] = ['browser', 'sessions', 'checklist', 'walkthrough', 'terminal'];
+export type McpEnabled = Record<McpToolGroup, boolean>;
 
 // 既定の扱い。画面の注記と、フック（main の tool-permissions.ts）の形を決める
 // - allowed: --allowedTools で許可済み（読むだけ・人に頼む・子への指示・チェックリスト・コードを示す）。既定は「常に許可」

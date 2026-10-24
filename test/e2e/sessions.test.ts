@@ -90,7 +90,7 @@ describe('Claude がセッションの MCP で子セッションを始める', (
   });
 });
 
-// メニューの「MCP → Claude のツールの許可…」で「セッションを始める」を常に許可にすると、manual の親でも、許可の確認を出さずに子が始まる。
+// メニューの「MCP の設定…」で start_session を常に許可にすると、manual の親でも、許可の確認を出さずに子が始まる。
 // 毎回確認に戻すと、動いている親（Claude Code を起動し直さない）でも、次の起動からまた確認が出る（フックが呼ばれるたびに印のファイルを見る）
 const NO_ASK_PARENT = '確認なしで別のセッションを始めてください';
 const NO_ASK_CHILD = '確認なしで始めた子の作業として、返事だけしてください';
@@ -102,7 +102,7 @@ const ASK_AGAIN_CHILD = '確認を戻したあとの子の作業として、返�
 const ASK_AGAIN_CHILD_NAME = '確認を戻したあとの子';
 const ASK_AGAIN_DONE = '確認を戻したあとに子を始めました';
 
-describe('「Claude のツールの許可」の「セッションを始める」の切り替え', () => {
+describe('「MCP の設定」の start_session の確認の切り替え', () => {
   let app: E2EApp;
 
   beforeAll(async () => {
@@ -132,19 +132,19 @@ describe('「Claude のツールの許可」の「セッションを始める」
     await app?.close();
   });
 
-  // メニューの「MCP → Claude のツールの許可…」を押してダイアログを開き、「セッションを始める」を選んで、保存されたら（既定から変えた印が変わったら）閉じる
+  // メニューの「MCP の設定…」を押してダイアログを開き、「セッションを始める」を選んで、保存されたら（既定から変えた印が変わったら）閉じる
   const choose = async (label: string, changed: boolean) => {
     await app.app.evaluate(({ Menu }) => {
-      const item = Menu.getApplicationMenu()?.getMenuItemById('toolPermissions');
-      if (!item) throw new Error('メニューに「toolPermissions」がありません');
+      const item = Menu.getApplicationMenu()?.getMenuItemById('mcpSettings');
+      if (!item) throw new Error('メニューに「mcpSettings」がありません');
       item.click();
     });
-    const select = app.page.getByLabel('セッションを始める の許可');
+    const select = app.page.getByLabel('start_session の確認');
     await select.selectOption({ label });
-    const row = app.page.locator('.tool-permission-row', { has: select });
+    const row = app.page.locator('.mcp-tool', { has: select });
     await expect.poll(async () => (await row.getAttribute('class'))?.split(' ').includes('changed')).toBe(changed);
     await app.page.keyboard.press('Escape');
-    await app.page.locator('.tool-permissions-dialog').waitFor({ state: 'detached' });
+    await app.page.locator('.mcp-settings-dialog').waitFor({ state: 'detached' });
   };
 
   it('常に許可にすると、manual の親でも、許可の確認を出さずに子が始まる', async () => {

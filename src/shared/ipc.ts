@@ -24,7 +24,8 @@ import type { SessionWalkthrough, WalkthroughShown } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
-import type { ToolPermission } from './tool-permissions';
+import type { McpEnabled, ToolPermission } from './tool-permissions';
+import type { McpToolGroup } from './mcp-tools';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
 
@@ -186,11 +187,12 @@ export const IpcChannel = {
   PromptsGet: 'prompts:get',
   PromptsUpdate: 'prompts:update',
   PromptsOpen: 'prompts:open',
-  // tanacode の MCP のツールごとの許可（アプリ全体で 1 つ。shared/tool-permissions.ts）。読む・1 つ変える /
-  // メニューの「MCP → Claude のツールの許可…」から。ツールの許可のダイアログを開かせる
-  ToolPermissionsGet: 'tool-permissions:get',
+  // MCP の設定（アプリ全体で 1 つ。shared/tool-permissions.ts）。入り・切りとツールごとの許可を読む・入り・切りを 1 つ変える・ツールの許可を 1 つ変える /
+  // メニューの「MCP の設定…」から。MCP の設定のダイアログを開かせる
+  McpSettingsGet: 'mcp-settings:get',
+  McpEnabledSet: 'mcp-settings:set-enabled',
   ToolPermissionsSet: 'tool-permissions:set',
-  ToolPermissionsOpen: 'tool-permissions:open',
+  McpSettingsOpen: 'mcp-settings:open',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -223,8 +225,6 @@ export const IpcChannel = {
   BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
   BrowserHostsSet: 'browser:hosts-set',
-  // メニューの「MCP → アプリ内ブラウザで Claude に許す先…」から。許す先のダイアログを開かせる
-  BrowserHostsOpen: 'browser:hosts-open',
   // Claude がユーザーに操作を頼む（ask_user_to_act）。main → 画面: 頼んだ・終わった / 画面 → main: 今頼んでいるもの・返事 /
   // main → 画面: そのセッションのブラウザを開かせる（頼まれたときの通知をクリックした）
   BrowserAsk: 'browser:ask',
@@ -703,10 +703,11 @@ export type TanacodeApi = {
     update(changes: PromptChanges): Promise<CustomPrompts>;
     onOpen(listener: () => void): () => void;
   };
-  // tanacode の MCP のツールごとの許可。返すのは、利用者が選んだツールだけ（ツールの ID → ask・allow。無いツールは既定）
-  toolPermissions: {
-    get(): Promise<Record<string, ToolPermission>>;
-    set(toolId: string, permission: ToolPermission): Promise<Record<string, ToolPermission>>;
+  // MCP の設定。enabled: MCP サーバーの入り・切り / permissions: 利用者が選んだツールの許可だけ（ツールの ID → ask・allow。無いツールは既定）
+  mcpSettings: {
+    get(): Promise<{ enabled: McpEnabled; permissions: Record<string, ToolPermission> }>;
+    setEnabled(server: McpToolGroup, on: boolean): Promise<McpEnabled>;
+    setPermission(toolId: string, permission: ToolPermission): Promise<Record<string, ToolPermission>>;
     onOpen(listener: () => void): () => void;
   };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
@@ -951,7 +952,6 @@ export type TanacodeApi = {
     hosts(): Promise<string[]>;
     // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
     setHosts(hosts: string[]): Promise<string[]>;
-    onHostsOpen(listener: () => void): () => void;
     // Claude がユーザーに頼んでいる操作。asks: 今頼んでいるもの（画面を作り直したとき用）/ answer: ユーザーの返事 /
     // onShow: そのセッションを選んで、ブラウザを開く（頼まれたときの通知をクリックした）
     onAsk(listener: (change: BrowserAskChange) => void): () => void;
@@ -1034,8 +1034,9 @@ export type IpcInvoke = {
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
   [IpcChannel.PromptsGet]: Api['prompts']['get'];
   [IpcChannel.PromptsUpdate]: Api['prompts']['update'];
-  [IpcChannel.ToolPermissionsGet]: Api['toolPermissions']['get'];
-  [IpcChannel.ToolPermissionsSet]: Api['toolPermissions']['set'];
+  [IpcChannel.McpSettingsGet]: Api['mcpSettings']['get'];
+  [IpcChannel.McpEnabledSet]: Api['mcpSettings']['setEnabled'];
+  [IpcChannel.ToolPermissionsSet]: Api['mcpSettings']['setPermission'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
@@ -1172,9 +1173,8 @@ export type IpcEvent = {
   [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
   [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
-  [IpcChannel.BrowserHostsOpen]: undefined;
   [IpcChannel.PromptsOpen]: undefined;
-  [IpcChannel.ToolPermissionsOpen]: undefined;
+  [IpcChannel.McpSettingsOpen]: undefined;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };

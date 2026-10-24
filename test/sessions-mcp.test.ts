@@ -531,7 +531,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
   it('メニューでオフなら断る。知らないセッションからの呼び出しも断る', async () => {
     enabled = false;
-    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toBe(`The user has turned off the tanacode MCP "${t('main.menu.sessionsControl')}". Ask the user to turn on "${t('main.menu.sessionsControl')}" under tanacode > ${t('main.menu.mcp')}.`);
+    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toBe(`The user has turned off the tanacode MCP "${t('tools.server.sessions')}". Ask the user to turn it on in tanacode > ${t('main.menu.mcpSettings')}.`);
     enabled = true;
     expect((await control.handle('nobody', 'list_sessions', {})).isError).toBe(true);
   });

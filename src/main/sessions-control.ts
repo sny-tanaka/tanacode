@@ -340,7 +340,7 @@ export class SessionsControl {
   async handle(callerId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     if (!sessionTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
-      return textResult(`The user has turned off the tanacode MCP "${t('main.menu.sessionsControl')}". Ask the user to turn on "${t('main.menu.sessionsControl')}" under tanacode > ${t('main.menu.mcp')}.`, true);
+      return textResult(`The user has turned off the tanacode MCP "${t('tools.server.sessions')}". Ask the user to turn it on in tanacode > ${t('main.menu.mcpSettings')}.`, true);
     }
     const caller = this.summary(callerId);
     if (!caller) return textResult('This session is not in tanacode.', true);

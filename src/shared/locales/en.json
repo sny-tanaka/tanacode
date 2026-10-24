@@ -50,19 +50,12 @@
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
       "updateOnQuit": "Install Updates on Quit (Homebrew)",
-      "mcp": "MCP",
-      "browserControl": "In-App Browser",
-      "sessionsControl": "Session Control",
-      "checklistControl": "Checklists",
-      "walkthroughControl": "Walkthroughs",
-      "terminalControl": "Terminal",
-      "toolPermissions": "Claude Tool Permissions…",
+      "mcpSettings": "MCP Settings…",
       "usageLimitResume": "Resume Automatically When the Usage Limit Resets",
       "autoCompactPercent": "Auto Optimized Compact At",
       "awayWait": "Away Mode Wait Time",
       "language": "Language",
       "languageSystem": "System Default",
-      "browserHosts": "Allowed Sites for Claude in the In-App Browser…",
       "prompts": "Messages Sent to Claude…",
       "file": "File",
       "newSession": "New Session",
@@ -584,8 +577,8 @@
         "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
       },
       "compactUnavailable": {
-        "checklistOff": "Turn on “tanacode > {mcp} > {item}” in the menu to use this",
-        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “tanacode > {mcp} > {item}” in the menu and restart the session to use this"
+        "checklistOff": "Turn on “{mcp}” in “tanacode > {item}” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “{mcp}” in “tanacode > {item}” in the menu and restart the session to use this"
       },
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
@@ -1156,29 +1149,23 @@
     "loadFailed": "Couldn’t load the saved messages: {error}",
     "confirmDiscard": "Discard your unsaved changes and close?"
   },
-  "toolPermissions": {
-    "title": "Claude Tool Permissions",
-    "description": "For each tool of the MCP servers that tanacode adds to Claude Code, choose whether Claude asks you before using it (Ask Every Time) or uses it without asking (Always Allow). Ask Every Time asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow lets Claude use the tool without asking, even in manual. While the permission mode is plan, tools that do more than read follow the plan mode of Claude Code. Before you change a default, check what the tool does.",
-    "scope": "This applies to the whole app and takes effect at once, also in running sessions. Sessions started in a version before this setting existed are not affected until you restart Claude Code in them.",
+  "mcpSettings": {
+    "title": "MCP Settings",
+    "description": "For each MCP server that tanacode adds to Claude Code, choose whether Claude can use it (the switch in its heading), and for each tool, whether Claude asks you before using it (Confirmation). Ask Every Time asks regardless of the permission mode (even in auto or bypassPermissions). Always Allow lets Claude use the tool without asking, even in manual. While the permission mode is plan, tools that do more than read follow the plan mode of Claude Code. Before you change a default, check what the tool does.",
+    "scope": "This applies to the whole app. A confirmation choice takes effect at once, also in running sessions (sessions started in a version before this setting existed are not affected until you restart Claude Code in them). When you turn a server off, Claude Code started after that does not get it, and running Claude Code is refused when it calls it.",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "confirm": "Confirmation"
+    },
+    "switchLabel": "Let Claude use {server}",
+    "off": "Turned off. When you turn it back on, the confirmation choices stay as they are.",
+    "hostsTitle": "Sites Allowed for Claude",
     "ask": "Ask Every Time",
     "allow": "Always Allow",
     "withDefault": "{label} (Default)",
-    "choiceLabel": "Permission for {tool}",
+    "choiceLabel": "Confirmation for {tool}",
     "childHidden": "Not given to child sessions",
-    "kind": {
-      "read": "Read only",
-      "act": "Acts",
-      "eval": "Runs JavaScript",
-      "ask": "Asks you",
-      "instruct": "Instructs, schedules or reports",
-      "note": "Writes checklists",
-      "show": "Shows code",
-      "openWorld": "Writes outside"
-    },
-    "rule": {
-      "outside": "This choice applies when Claude opens a page outside the sites allowed for Claude. Pages on the allowed sites always open without asking.",
-      "remote": "This choice applies when Claude runs JavaScript on a page other than localhost. On localhost pages, it always runs without asking."
-    },
     "closeTip": "Close (Esc)",
     "desc": {
       "browser": {
@@ -1188,7 +1175,7 @@
         "inspect": "Reads the HTML and the applied styles of an element",
         "get_console_logs": "Reads the console output",
         "get_failed_requests": "Reads the failed requests",
-        "navigate": "Opens a page, goes back or forward, or reloads",
+        "navigate": "Opens a page outside the sites allowed for Claude (pages on the allowed sites always open without asking)",
         "list_tabs": "Reads the list of tabs",
         "select_tab": "Switches the current tab",
         "close_tab": "Closes a tab",
@@ -1200,7 +1187,7 @@
         "set_viewport": "Changes the screen size or the emulated device",
         "touch": "Taps, swipes and pinches",
         "throttle": "Slows down the CPU or the network",
-        "evaluate": "Runs JavaScript on the page",
+        "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
         "ask_user_to_act": "Asks you to act in the browser, such as logging in"
       },
       "sessions": {
@@ -1924,12 +1911,10 @@
     "hosts": {
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",
       "empty": "(empty)",
-      "title": "Allowed Sites for Claude in the In-App Browser",
       "description": "In the in-app browser, Claude can open, read, and interact with pages on the sites listed here without asking. For any other site, Claude asks for your permission every time it opens one. The in-app browser shares sign-in state, so add only development sites you trust.",
       "default": "Default",
       "placeholder": "e.g., myapp.test, *.example.test",
-      "inputLabel": "Site to add",
-      "closeTip": "Close (Esc)"
+      "inputLabel": "Site to add"
     },
     "picked": {
       "heading": "Element selected in the in-app browser ({url}):",

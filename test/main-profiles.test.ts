@@ -84,7 +84,7 @@ describe('足したプロファイルを開く', () => {
     // アプリ全体の設定（既定のプロファイルと同じファイル）に保存し、足したプロファイルの設定には書かない
     expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8'))).toMatchObject({ toolPermissions: { 'mcp__tanacode-sessions__start_session': 'allow' } });
     expect(existsSync(join(state.userData, 'profiles', 'p2', 'settings.json'))).toBe(false);
-    await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({ 'mcp__tanacode-sessions__start_session': 'allow' });
+    await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ permissions: { 'mcp__tanacode-sessions__start_session': 'allow' } });
   });
 
   // 足したプロファイルの、前のバージョンの設定のファイル
@@ -97,17 +97,16 @@ describe('足したプロファイルを開く', () => {
   // SessionManager に渡す、チェックリストの MCP サーバーの材料（11 番目の引数）
   const checklistLaunchOf = (index: number) => (managers()[index]!.args[10] as () => unknown)();
 
-  it('MCP の切り替えと Claude の自動の動きはアプリ全体で 1 つ: どのプロファイルを見ていても、メニューは同じ値を出し、切り替えはどのプロファイルのセッションにも効く', async () => {
+  it('MCP の切り替えと Claude の自動の動きはアプリ全体で 1 つ: どのプロファイルを見ていても、同じ値を出し、切り替えはどのプロファイルのセッションにも効く', async () => {
     await boot({ profiles: PROFILES, settings: { checklistControl: false, browserHosts: ['a.test'] }, before: (s) => writeP2Settings(s, { checklistControl: true, autoCompactPercent: 40 }) });
     // 足したプロファイルのファイルにある前の値は使わない
     expect(checklistLaunchOf(0)).toBeNull();
     expect(checklistLaunchOf(1)).toBeNull();
     await invoke(IpcChannel.ProfilesSwitch, 'p2');
-    expect(menuItem('checklistControl').checked).toBe(false);
+    const enabled = async () => ((await invokeFrom(view().webContents, IpcChannel.McpSettingsGet)) as { enabled: Record<string, boolean> }).enabled;
+    expect((await enabled()).checklist).toBe(false);
     expect(menuItem('autoCompactPercent-80').checked).toBe(true);
-    const item = menuItem('checklistControl');
-    item.checked = true;
-    item.click?.(item);
+    await invokeFrom(view().webContents, IpcChannel.McpEnabledSet, 'checklist', true);
     expect(checklistLaunchOf(0)).not.toBeNull();
     expect(checklistLaunchOf(1)).not.toBeNull();
     menuItem('autoCompactPercent-60').click?.({});
@@ -115,12 +114,10 @@ describe('足したプロファイルを開く', () => {
     // 足したプロファイルのファイルは書き換えない
     expect(JSON.parse(readFileSync(p2SettingsFile(), 'utf8'))).toEqual({ version: 1, checklistControl: true, autoCompactPercent: 40 });
     await invoke(IpcChannel.ProfilesSwitch, 'default');
-    expect(menuItem('checklistControl').checked).toBe(true);
+    expect(((await invoke(IpcChannel.McpSettingsGet)) as { enabled: Record<string, boolean> }).enabled.checklist).toBe(true);
     expect(menuItem('autoCompactPercent-60').checked).toBe(true);
     // ブラウザの操作をオフにしたら、どのプロファイルでも頼んでいる操作を取り下げる
-    const browser = menuItem('browserControl');
-    browser.checked = false;
-    browser.click?.(browser);
+    await invoke(IpcChannel.McpEnabledSet, 'browser', false);
     expect(allOf('BrowserControl').map((c) => (c.instance as Fake).turnOff.mock.calls.length)).toEqual([1, 1]);
     // 許す先も、どのプロファイルの画面から読んでも同じ
     await expect(invokeFrom(view().webContents, IpcChannel.BrowserHostsGet)).resolves.toEqual(['a.test']);

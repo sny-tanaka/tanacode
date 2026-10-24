@@ -503,7 +503,7 @@ describe('別のセッションへコピー（CopyDialog）', () => {
   });
 
   // 不具合: コピー先を選ぶ欄（autoFocus）が無いと、フォーカスはダイアログを開いたボタンに残り、Esc がダイアログに届かない。
-  // ほかのダイアログ（ExportDialog・BrowserHostsDialog など）は、開いたらダイアログの中にフォーカスを移している
+  // ほかのダイアログ（ExportDialog・McpSettingsDialog など）は、開いたらダイアログの中にフォーカスを移している
   it('コピーできるセッションが無いときも、Esc で閉じられる', () => {
     render(<ChecklistPanel session={S1} lists={LISTS()} sessions={[S1]} activeCardId={null} onOpen={vi.fn()} />);
     fireEvent.click(cardRow('税率を読む'), { metaKey: true });

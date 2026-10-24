@@ -16,7 +16,8 @@ import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
-import { permissionToolDefaults, type ToolPermission } from '@shared/tool-permissions';
+import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
+import type { McpToolGroup } from '@shared/mcp-tools';
 import { sessionToolId } from '@shared/session-tools';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
@@ -918,7 +919,8 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
   handle(IpcChannel.BrowserHostsGet, (e) => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
-  handle(IpcChannel.ToolPermissionsGet, () => settings.toolPermissions());
+  handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions() }));
+  handle(IpcChannel.McpEnabledSet, (_e, server: McpToolGroup, on: boolean) => setMcpEnabled(server, on));
   handle(IpcChannel.ToolPermissionsSet, (_e, toolId: string, permission: ToolPermission) => setToolPermission(toolId, permission));
 }
 
@@ -983,35 +985,13 @@ function buildMenu(): void {
           { id: 'updateOnQuit', label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
           { type: 'separator' },
           {
-            // tanacode が Claude Code に足す MCP サーバーごとに、区切りで分ける
-            id: 'mcp',
-            label: t('main.menu.mcp'),
-            submenu: [
-              { id: 'browserControl', label: t('main.menu.browserControl'), type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-              {
-                id: 'browserHosts',
-                label: t('main.menu.browserHosts'),
-                click: () => {
-                  showWindow();
-                  sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
-                },
-              },
-              { type: 'separator' },
-              { id: 'sessionsControl', label: t('main.menu.sessionsControl'), type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-              { type: 'separator' },
-              { id: 'checklistControl', label: t('main.menu.checklistControl'), type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-              { id: 'walkthroughControl', label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
-              { id: 'terminalControl', label: t('main.menu.terminalControl'), type: 'checkbox', checked: settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
-              { type: 'separator' },
-              {
-                id: 'toolPermissions',
-                label: t('main.menu.toolPermissions'),
-                click: () => {
-                  showWindow();
-                  sendTo(activeId)(IpcChannel.ToolPermissionsOpen, undefined);
-                },
-              },
-            ],
+            // MCP の入り・切り・許す先・ツールごとの許可は、まとめてダイアログで変える
+            id: 'mcpSettings',
+            label: t('main.menu.mcpSettings'),
+            click: () => {
+              showWindow();
+              sendTo(activeId)(IpcChannel.McpSettingsOpen, undefined);
+            },
           },
           { type: 'separator' },
           { id: 'usageLimitResume', label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
@@ -1245,29 +1225,32 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
   return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
 }
 
-// メニューの「MCP → アプリ内ブラウザ」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。
-// 人が許した、許す先の外のオリジンも捨てる（browser-control の turnOff）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
-// 保存できなかったら、チェックを元に戻す
-function setBrowserControl(item: MenuItem): void {
-  try {
-    settings.setBrowserControlEnabled(item.checked);
-  } catch {
-    item.checked = !item.checked;
-    return;
-  }
-  if (!item.checked) for (const profile of profiles()) profile.browser.turnOff();
+// 「MCP の設定」のダイアログの入り・切り（アプリ全体で 1 つ。どのプロファイルのセッションにも効く）。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（各 *-control の handle。ターミナルの打つ前の確認のフックも断られ、確認を出させる）。
+// - アプリ内ブラウザをオフにしたら、人が許した許す先の外のオリジンも捨てる（browser-control の turnOff）
+// - チェックリストを入り・切りしたら、最適化圧縮のボタンとトグルの状態を知らせ直す（オフのあいだ使えない。自動で止めるファイルも片付ける）
+// 保存できなかったら投げる（画面は、スイッチを保存した値のまま出す）
+function setMcpEnabled(server: unknown, on: unknown): McpEnabled {
+  if (typeof on !== 'boolean' || !MCP_GROUPS.includes(server as McpToolGroup)) throw new Error(`Unknown MCP server: ${String(server)}`);
+  const group = server as McpToolGroup;
+  if (group === 'browser') settings.setBrowserControlEnabled(on);
+  else if (group === 'sessions') settings.setSessionsControlEnabled(on);
+  else if (group === 'checklist') settings.setChecklistControlEnabled(on);
+  else if (group === 'walkthrough') settings.setWalkthroughControlEnabled(on);
+  else settings.setTerminalControlEnabled(on);
+  if (group === 'browser' && !on) for (const profile of profiles()) profile.browser.turnOff();
+  if (group === 'checklist') refreshCompact();
+  return mcpEnabled();
 }
 
-// メニューの「MCP → セッションの操作」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（sessions-control の handle）。子への知らせも止める。
-// アプリ全体で 1 つ。保存できなかったら、チェックを元に戻す
-function setSessionsControl(item: MenuItem): void {
-  try {
-    settings.setSessionsControlEnabled(item.checked);
-  } catch {
-    item.checked = !item.checked;
-  }
+function mcpEnabled(): McpEnabled {
+  return {
+    browser: settings.browserControlEnabled(),
+    sessions: settings.sessionsControlEnabled(),
+    checklist: settings.checklistControlEnabled(),
+    walkthrough: settings.walkthroughControlEnabled(),
+    terminal: settings.terminalControlEnabled(),
+  };
 }
 
 // ツールごとの許可の印のファイルのフォルダ（アプリ全体で 1 つ。tool-permissions.ts）
@@ -1299,7 +1282,7 @@ function syncToolPermissionFiles(): void {
   }
 }
 
-// ツールごとの許可を 1 つ変える（メニューの「MCP → Claude のツールの許可…」のダイアログ）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
+// ツールごとの許可を 1 つ変える（メニューの「MCP の設定…」のダイアログ）。アプリ全体で 1 つ（どのプロファイルのセッションにも効く）。
 // フックは呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く。印のファイルを先に置く・消してから保存する。
 // どちらかができなかったら、印のファイルを保存した設定に戻して投げる
 function setToolPermission(toolId: unknown, permission: unknown): Record<string, ToolPermission> {
@@ -1314,20 +1297,6 @@ function setToolPermission(toolId: unknown, permission: unknown): Record<string,
     throw error;
   }
   return settings.toolPermissions();
-}
-
-// メニューの「MCP → チェックリスト」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（checklist-control の handle）。画面のチェックリストは使える。
-// アプリ全体で 1 つ。保存できなかったら、チェックを元に戻す
-function setChecklistControl(item: MenuItem): void {
-  try {
-    settings.setChecklistControlEnabled(item.checked);
-  } catch {
-    item.checked = !item.checked;
-    return;
-  }
-  // 最適化圧縮は、オフのあいだ使えない。ボタンとトグルの状態を知らせ直す（自動で止めるファイルも片付ける）
-  refreshCompact();
 }
 
 // 最適化圧縮の状態（使えるか・自動で始める大きさ）を、すべてのプロファイルのセッションに知らせ直す
@@ -1358,28 +1327,6 @@ function setAutoCompactPercent(percent: number): void {
   }
   refreshCompact();
   buildMenu();
-}
-
-// メニューの「MCP → ウォークスルー」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（walkthrough-control の handle）。
-// 保存できなかったら、チェックを元に戻す
-function setWalkthroughControl(item: MenuItem): void {
-  try {
-    settings.setWalkthroughControlEnabled(item.checked);
-  } catch {
-    item.checked = !item.checked;
-  }
-}
-
-// メニューの「MCP → ターミナル」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（terminal-control の handle。打つ前の確認のフックも断られ、確認を出させる）。
-// 保存できなかったら、チェックを元に戻す
-function setTerminalControl(item: MenuItem): void {
-  try {
-    settings.setTerminalControlEnabled(item.checked);
-  } catch {
-    item.checked = !item.checked;
-  }
 }
 
 // メニューの「利用枠で止まったら、戻ったときに自動で再開する」。オフにしたら、待っている再開の予約を取り消す（入れたままだと、

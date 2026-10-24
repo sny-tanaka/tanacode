@@ -50,19 +50,12 @@
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
       "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
-      "mcp": "MCP",
-      "browserControl": "アプリ内ブラウザ",
-      "sessionsControl": "セッションの操作",
-      "checklistControl": "チェックリスト",
-      "walkthroughControl": "ウォークスルー",
-      "terminalControl": "ターミナル",
-      "toolPermissions": "Claude のツールの許可…",
+      "mcpSettings": "MCP の設定…",
       "usageLimitResume": "利用枠で止まったら、戻ったときに自動で再開する",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
       "awayWait": "離席モードで答えを待つ時間",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
-      "browserHosts": "アプリ内ブラウザで Claude に許す先…",
       "prompts": "Claude に送る文…",
       "file": "ファイル",
       "newSession": "新規セッション",
@@ -577,8 +570,8 @@
         "waiting": "最適化圧縮: 再開の文を送るのを待っています（入力欄が空くと送ります）"
       },
       "compactUnavailable": {
-        "checklistOff": "メニューの「tanacode → {mcp} → {item}」をオンにすると使えます",
-        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「tanacode → {mcp} → {item}」をオンにして、セッションを起動し直すと使えます"
+        "checklistOff": "メニューの「tanacode → {item}」で「{mcp}」をオンにすると使えます",
+        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「tanacode → {item}」で「{mcp}」をオンにして、セッションを起動し直すと使えます"
       },
       "compactFailure": {
         "interrupted": "仕上げを中断したので、最適化圧縮を取りやめました。会話は消していません",
@@ -1116,29 +1109,23 @@
     "loadFailed": "保存した文を読めませんでした: {error}",
     "confirmDiscard": "保存していない変更を捨てて閉じますか？"
   },
-  "toolPermissions": {
-    "title": "Claude のツールの許可",
-    "description": "tanacode が Claude Code に足す MCP のツールごとに、使う前にあなたの確認を求めるか（毎回確認）、確認なしで使わせるか（常に許可）を選べます。毎回確認は、権限モードによらず（auto や bypassPermissions でも）確認を出します。常に許可は、manual でも確認なしで使わせます。ただし権限モードが plan のときは、読むだけでないツールは Claude Code の plan の扱いに任せます。既定から変えるときは、何をするツールかを確かめてから選んでください。",
-    "scope": "アプリ全体の設定です。変えるとすぐ、動いているセッションにも効きます。ただし、この設定ができる前のバージョンで始めたセッションには、Claude Code を起動し直すまで効きません。",
+  "mcpSettings": {
+    "title": "MCP の設定",
+    "description": "tanacode が Claude Code に足す MCP サーバーごとに、Claude に使わせるか（見出しのスイッチ）と、ツールごとに使う前にあなたの確認を求めるか（確認）を選べます。「毎回確認」は、権限モードによらず（auto や bypassPermissions でも）確認を出します。「常に許可」は、manual でも確認なしで使わせます。ただし権限モードが plan のときは、読むだけでないツールは Claude Code の plan の扱いに任せます。既定から変えるときは、何をするツールかを確かめてから選んでください。",
+    "scope": "アプリ全体の設定です。確認の選択は、動いているセッションにもすぐ効きます（この設定ができる前のバージョンで始めたセッションには、Claude Code を起動し直すまで効きません）。スイッチを切ると、次に起動する Claude Code からその MCP サーバーを足さず、動いている Claude Code から呼ばれても断ります。",
+    "columns": {
+      "name": "MCP名",
+      "description": "説明",
+      "confirm": "確認"
+    },
+    "switchLabel": "{server} を Claude に使わせる",
+    "off": "切っています。入れ直すと、確認の選択はそのまま使います。",
+    "hostsTitle": "Claude に許す先",
     "ask": "毎回確認",
     "allow": "常に許可",
     "withDefault": "{label}（既定）",
-    "choiceLabel": "{tool} の許可",
+    "choiceLabel": "{tool} の確認",
     "childHidden": "子セッションには出しません",
-    "kind": {
-      "read": "読むだけ",
-      "act": "操作する",
-      "eval": "JavaScript を実行する",
-      "ask": "人に頼む",
-      "instruct": "指示・予約・報告",
-      "note": "チェックリストを書く",
-      "show": "コードを示す",
-      "openWorld": "外に書き込む"
-    },
-    "rule": {
-      "outside": "この選択が効くのは、Claude に許す先の外のページを開くときです。許す先の中は、いつも確認なしで開きます。",
-      "remote": "この選択が効くのは、localhost 以外のページで実行するときです。localhost のページでは、いつも確認なしで実行します。"
-    },
     "closeTip": "閉じる（Esc）",
     "desc": {
       "browser": {
@@ -1148,7 +1135,7 @@
         "inspect": "要素の HTML と、効いているスタイルを読む",
         "get_console_logs": "コンソールの出力を読む",
         "get_failed_requests": "失敗した通信を読む",
-        "navigate": "ページを開く・戻る・進む・読み込み直す",
+        "navigate": "許す先の外のページを開く（許す先の中は、いつも確認なしで開く）",
         "list_tabs": "タブの一覧を読む",
         "select_tab": "見るタブを切り替える",
         "close_tab": "タブを閉じる",
@@ -1160,7 +1147,7 @@
         "set_viewport": "画面の大きさや、まねる端末を変える",
         "touch": "タップ・スワイプ・ピンチをする",
         "throttle": "CPU や通信を遅くする",
-        "evaluate": "ページで JavaScript を実行する",
+        "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
         "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"
       },
       "sessions": {
@@ -1865,12 +1852,10 @@
     "hosts": {
       "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
       "empty": "（空）",
-      "title": "アプリ内ブラウザで Claude に許す先",
       "description": "ここにある先のページは、Claude がアプリ内ブラウザで確認なしで開いて・読んで・操作できます。ほかの先は、Claude が開くたびにあなたの許可を求めます。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
       "default": "既定",
       "placeholder": "例: myapp.test・*.example.test",
-      "inputLabel": "足す先",
-      "closeTip": "閉じる（Esc）"
+      "inputLabel": "足す先"
     },
     "picked": {
       "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",

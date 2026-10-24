@@ -58,9 +58,8 @@ import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/tas
 import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
-import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
 import { PromptsDialog } from './prompts/PromptsDialog';
-import { ToolPermissionsDialog } from './mcp/ToolPermissionsDialog';
+import { McpSettingsDialog } from './mcp/McpSettingsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
 import { useAppUpdate } from './layout/AppUpdate';
@@ -165,10 +164,9 @@ export function App() {
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
   // アプリ内ブラウザで Claude に許す先のダイアログ（メニューから開く）
-  const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
   // メニューの「Claude に送る文…」
   const [promptsOpen, setPromptsOpen] = useState(false);
-  const [toolPermissionsOpen, setToolPermissionsOpen] = useState(false);
+  const [mcpSettingsOpen, setMcpSettingsOpen] = useState(false);
   // ウォークスルーを GitHub の PR に載せる下見のダイアログ（どのセッションのものか）
   const [commenting, setCommenting] = useState<string | null>(null);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
@@ -454,14 +452,12 @@ export function App() {
       if (sessionId === selectedIdRef.current) setDiffView({ source: 'preview' });
       else browsedUnseen.current.add(sessionId);
     });
-    const offHosts = window.tanacode.browser.onHostsOpen(() => setBrowserHostsOpen(true));
     const offPrompts = window.tanacode.prompts.onOpen(() => setPromptsOpen(true));
-    const offToolPermissions = window.tanacode.toolPermissions.onOpen(() => setToolPermissionsOpen(true));
+    const offMcpSettings = window.tanacode.mcpSettings.onOpen(() => setMcpSettingsOpen(true));
     return () => {
       offActivity();
-      offHosts();
       offPrompts();
-      offToolPermissions();
+      offMcpSettings();
     };
   }, []);
 
@@ -1252,9 +1248,8 @@ export function App() {
         )}
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
-        {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
         {promptsOpen && <PromptsDialog onClose={() => setPromptsOpen(false)} />}
-        {toolPermissionsOpen && <ToolPermissionsDialog onClose={() => setToolPermissionsOpen(false)} />}
+        {mcpSettingsOpen && <McpSettingsDialog onClose={() => setMcpSettingsOpen(false)} />}
         {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
           <WorktreeDialog

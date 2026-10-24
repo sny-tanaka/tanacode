@@ -16,8 +16,8 @@ const UNAVAILABLE_TEXT = {
   'no-checklist': 'chat.pane.compactUnavailable.noChecklist',
 } as const satisfies Record<CompactUnavailable, string>;
 
-// 使えない理由。メニューの項目の名前は、メニューと同じ文言（main.menu.*）を差し込む
-const unavailableText = (unavailable: CompactUnavailable) => t(UNAVAILABLE_TEXT[unavailable], { mcp: t('main.menu.mcp'), item: t('main.menu.checklistControl') });
+// 使えない理由。メニューの項目と MCP の名前は、メニュー・MCP の設定のダイアログと同じ文言（main.menu.*・tools.server.*）を差し込む
+const unavailableText = (unavailable: CompactUnavailable) => t(UNAVAILABLE_TEXT[unavailable], { mcp: t('tools.server.checklist'), item: t('main.menu.mcpSettings') });
 
 const FAILURE_TEXT = {
   interrupted: 'chat.pane.compactFailure.interrupted',

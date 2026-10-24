@@ -4,13 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserAskChange } from '@shared/ipc';
 import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
 import { openInBrowser } from '../../src/renderer/src/preview/openInBrowser';
-import { BrowserHostsDialog } from '../../src/renderer/src/preview/BrowserHostsDialog';
 import { PreviewPane } from '../../src/renderer/src/preview/PreviewPane';
 import { CANCEL_PICKER_SCRIPT, describePicked, type PickedElement } from '../../src/renderer/src/preview/picker';
 import './dom';
 import { mockApi } from './mock-api';
 
-// アプリ内ブラウザ（PreviewPane）と、Claude に許す先のダイアログ（BrowserHostsDialog）のボタン・入力を押して、効いたことを確かめる。
+// アプリ内ブラウザ（PreviewPane）のボタン・入力を押して、効いたことを確かめる（Claude に許す先は press-mcp-settings.test.tsx）。
 // jsdom には Electron の <webview> が無いので、作られた webview の要素に、押したことを控えるだけの操作（戻る・読み込み直すなど）を足す
 
 type FakeWebview = HTMLElement & {
@@ -620,93 +619,5 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
       ['s2', 'a2', { done: true, reason: '' }],
       ['s2', 'a2', { done: false, reason: '' }],
     ]);
-  });
-});
-
-describe('BrowserHostsDialog', () => {
-  function open(initial: string[], onClose = vi.fn()) {
-    api = mockApi({
-      'browser.hosts': () => Promise.resolve(initial),
-      'browser.setHosts': (next: never) => Promise.resolve(next),
-    });
-    api.install();
-    render(<BrowserHostsDialog onClose={onClose} />);
-    return onClose;
-  }
-  const input = () => screen.getByLabelText('足す先') as HTMLInputElement;
-  const add = (text: string) => {
-    fireEvent.change(input(), { target: { value: text } });
-    fireEvent.submit(input().closest('form')!);
-  };
-
-  it('打った先を書き方をそろえて足し、入力欄を空にする。空のあいだは「追加」を押せない', async () => {
-    open(['myapp.test']);
-    expect(await screen.findByText('myapp.test')).toBeTruthy();
-    expect(document.activeElement).toBe(input());
-    expect(button('追加').disabled).toBe(true);
-    fireEvent.change(input(), { target: { value: 'http://Example.TEST:8080/path' } });
-    expect(input().value).toBe('http://Example.TEST:8080/path');
-    expect(button('追加').disabled).toBe(false);
-    fireEvent.click(button('追加'));
-    await waitFor(() => expect(input().value).toBe(''));
-    expect(api.argsOf('browser.setHosts')).toEqual([[['myapp.test', 'example.test']]]);
-    expect(screen.getByText('example.test')).toBeTruthy();
-  });
-
-  it('書き方の違う先は足さずに理由を出す。既定の先・足してある先は保存せずに入力欄を空にする', async () => {
-    open(['myapp.test']);
-    await screen.findByText('myapp.test');
-    add('*');
-    expect(screen.getByText('書き方が違います: *（例: example.test・*.example.test・192.168.0.10）')).toBeTruthy();
-    expect(input().value).toBe('*');
-    add('localhost');
-    await waitFor(() => expect(input().value).toBe(''));
-    expect(screen.queryByText(/書き方が違います/)).toBeNull();
-    add('MyApp.test');
-    await waitFor(() => expect(input().value).toBe(''));
-    expect(api.argsOf('browser.setHosts')).toEqual([]);
-  });
-
-  it('保存に失敗したら理由を出し、打った先は入力欄に残す', async () => {
-    api = mockApi({
-      'browser.hosts': () => Promise.resolve([]),
-      'browser.setHosts': () => Promise.reject(new Error("Error invoking remote method 'browser:hosts-set': Error: 保存できません")),
-    });
-    api.install();
-    render(<BrowserHostsDialog onClose={() => {}} />);
-    await act(async () => {});
-    add('example.test');
-    expect(await screen.findByText('保存できません')).toBeTruthy();
-    expect(input().value).toBe('example.test');
-  });
-
-  it('削除を押すと、その先だけを除いて保存する', async () => {
-    open(['myapp.test', '*.staging.example.test']);
-    await screen.findByText('myapp.test');
-    const rows = screen.getAllByLabelText('削除');
-    expect(rows).toHaveLength(2);
-    fireEvent.click(rows[0]);
-    await waitFor(() => expect(screen.queryByText('myapp.test')).toBeNull());
-    expect(api.argsOf('browser.setHosts')).toEqual([[['*.staging.example.test']]]);
-    expect(screen.getByText('*.staging.example.test')).toBeTruthy();
-    // 押したボタンは消えるので、Esc で閉じられるようダイアログにフォーカスを戻す
-    expect(document.activeElement).toBe(screen.getByRole('dialog'));
-  });
-
-  it('外側を押すか Esc で閉じる。ダイアログの中を押しても、変換中の Esc でも閉じない', async () => {
-    const onClose = open([]);
-    await act(async () => {});
-    const dialog = screen.getByRole('dialog');
-    fireEvent.mouseDown(dialog);
-    fireEvent.mouseDown(input());
-    fireEvent.keyDown(input(), { key: 'Escape', isComposing: true });
-    fireEvent.keyDown(input(), { key: 'Enter' });
-    expect(onClose).not.toHaveBeenCalled();
-    fireEvent.keyDown(input(), { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    fireEvent.mouseDown(dialog.parentElement!);
-    expect(onClose).toHaveBeenCalledTimes(2);
-    fireEvent.click(button('閉じる'));
-    expect(onClose).toHaveBeenCalledTimes(3);
   });
 });

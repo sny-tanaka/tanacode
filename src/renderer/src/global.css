@@ -2755,60 +2755,98 @@ button.session-ref:hover {
 .browser-hosts-foot {
   gap: 8px;
 }
-/* Claude のツールの許可 */
-.tool-permissions-dialog {
-  width: min(760px, 92vw);
+/* MCP の設定 */
+.mcp-settings-dialog {
+  width: min(820px, 92vw);
   max-height: calc(100vh - 120px);
 }
-.tool-permissions-dialog .settings-files-head p + p {
+.mcp-settings-dialog .settings-files-head p + p {
   margin-top: 6px;
 }
-.tool-permissions-list {
+.mcp-settings-list {
   min-height: 0;
   flex: 1 1 auto;
   max-height: none;
+  padding: 4px 12px 12px;
 }
-.tool-permissions-server h3 {
+.mcp-server + .mcp-server {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.mcp-server-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0;
+}
+.mcp-server-head h3 {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin: 10px 10px 4px;
+  margin: 0;
   color: var(--text-heading);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
-.tool-permissions-dialog code {
+.mcp-settings-dialog code {
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: normal;
 }
-.tool-permission-name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+.mcp-server-off {
+  margin: 0 0 6px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.mcp-tools {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mcp-tools th {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: normal;
+  text-align: left;
+}
+.mcp-tools td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.mcp-tool:hover td {
+  background: var(--bg-hover);
+}
+.mcp-tool-name {
+  white-space: nowrap;
+}
+.mcp-tool-name code {
   color: var(--text-primary);
   font-size: 12px;
 }
-.tool-permission-kind {
-  padding: 0 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+.mcp-tool-desc {
   color: var(--text-secondary);
-  font-size: 10px;
-}
-.tool-permission-desc {
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-.tool-permission-note {
-  color: var(--text-tertiary);
-  font-size: 11px;
   line-height: 1.5;
 }
+.mcp-tool-note {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.mcp-tool-confirm {
+  width: 1%;
+  text-align: right;
+}
+/* 切っている MCP は、ツールの行を薄くする（選ぶ欄は押せない。選んだ値は保つ） */
+.mcp-server.off .mcp-tools {
+  opacity: 0.45;
+}
 .tool-permission-select {
-  flex: none;
   /* 既定の印の有無で幅が変わって、欄の端がそろわないように */
   min-width: 180px;
   height: 26px;
@@ -2825,8 +2863,32 @@ button.session-ref:hover {
   border-color: var(--border-focus);
 }
 /* 既定から変えたツール */
-.tool-permission-row.changed .tool-permission-select {
+.mcp-tool.changed .tool-permission-select {
   border-color: var(--warn);
+}
+/* MCP の設定の中の、Claude に許す先 */
+.browser-hosts-editor {
+  margin: 4px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.browser-hosts-editor h4 {
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.browser-hosts-about {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.browser-hosts-editor .browser-hosts-foot {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
 }
 /* .quick-open input を上書きする */
 .settings-files-dialog .browser-hosts-input {

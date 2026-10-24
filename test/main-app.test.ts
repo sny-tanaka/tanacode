@@ -303,11 +303,10 @@ describe('Claude Code に足す MCP サーバー', () => {
     });
   });
 
-  it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
+  it('MCP の設定で切っているものは足さない（次に起動する Claude Code から）', async () => {
     await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
-    menuItem('checklistControl').checked = true;
-    menuItem('checklistControl').click?.(menuItem('checklistControl'));
+    await invoke(IpcChannel.McpEnabledSet, 'checklist', true);
     expect(launch('checklistLaunch')).not.toBeNull();
   });
 
@@ -1208,7 +1207,7 @@ describe('メニュー', () => {
   const shape = (items: MenuItem[]) => items.map((i) => i.id ?? i.role ?? i.type);
 
   it('アプリのメニュー: 更新 ／ MCP ／ Claude の自動の動きと送る文 ／ 言語 の順に、区切って並べる', async () => {
-    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, sessionsStartConfirm: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
+    await boot({ settings: { updateCheck: false, usageLimitResume: false } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
     expect(shape(appMenu.submenu!)).toEqual([
@@ -1217,7 +1216,7 @@ describe('メニュー', () => {
       'notifyUpdates',
       'updateOnQuit',
       'separator',
-      'mcp',
+      'mcpSettings',
       'separator',
       'usageLimitResume',
       'autoCompactPercent',
@@ -1234,20 +1233,10 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    // MCP の中は、MCP サーバーごとに区切る
-    const mcp = menuItem('mcp').submenu!;
-    expect(shape(mcp)).toEqual(['browserControl', 'browserHosts', 'separator', 'sessionsControl', 'separator', 'checklistControl', 'walkthroughControl', 'terminalControl', 'separator', 'toolPermissions']);
-    const checks = [...appMenu.submenu!, ...mcp].filter((i) => i.type === 'checkbox');
-    expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({
-      notifyUpdates: false,
-      updateOnQuit: true,
-      browserControl: true,
-      sessionsControl: false,
-      checklistControl: true,
-      walkthroughControl: false,
-      terminalControl: true,
-      usageLimitResume: false,
-    });
+    // MCP の入り・切り・許す先・ツールの許可は、「MCP の設定…」のダイアログで変える（メニューにチェックを置かない）
+    expect(menuItem('mcpSettings').submenu).toBeUndefined();
+    const checks = appMenu.submenu!.filter((i) => i.type === 'checkbox');
+    expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({ notifyUpdates: false, updateOnQuit: true, usageLimitResume: false });
     expect(fileMenu.id).toBe('file');
     expect(shape(fileMenu.submenu!)).toEqual(['newSession', 'separator', 'close', 'separator', 'stopAndQuit']);
     expect(menuItem('newSession').accelerator).toBe('CmdOrCtrl+N');
@@ -1269,43 +1258,29 @@ describe('メニュー', () => {
   it('メニューの項目の名前（日本語と英語）', async () => {
     const labels = () => {
       const appMenu = state.menu![0].submenu!;
-      return [...appMenu, ...menuItem('mcp').submenu!].filter((i) => i.id).map((i) => i.label);
+      return appMenu.filter((i) => i.id).map((i) => i.label);
     };
     await boot();
     expect(labels()).toEqual([
       '新しいバージョンが出たら通知する',
       '終了するときに新しいバージョンを入れる（Homebrew）',
-      'MCP',
+      'MCP の設定…',
       '利用枠で止まったら、戻ったときに自動で再開する',
       '自動で最適化圧縮する大きさ',
       '離席モードで答えを待つ時間',
       'Claude に送る文…',
       '言語（Language）',
-      'アプリ内ブラウザ',
-      'アプリ内ブラウザで Claude に許す先…',
-      'セッションの操作',
-      'チェックリスト',
-      'ウォークスルー',
-      'ターミナル',
-      'Claude のツールの許可…',
     ]);
     await boot({ settings: { language: 'en' } });
     expect(labels()).toEqual([
       'Notify When Updates Are Available',
       'Install Updates on Quit (Homebrew)',
-      'MCP',
+      'MCP Settings…',
       'Resume Automatically When the Usage Limit Resets',
       'Auto Optimized Compact At',
       'Away Mode Wait Time',
       'Messages Sent to Claude…',
       'Language',
-      'In-App Browser',
-      'Allowed Sites for Claude in the In-App Browser…',
-      'Session Control',
-      'Checklists',
-      'Walkthroughs',
-      'Terminal',
-      'Claude Tool Permissions…',
     ]);
   });
 
@@ -1424,23 +1399,58 @@ describe('メニュー', () => {
     expect(savedSettings().updateCheck).toBe(true);
   });
 
-  it('「MCP → アプリ内ブラウザ」: オフにしたら、頼んでいる操作を取り下げ、許した外の先も捨てる', async () => {
-    await boot();
-    toggle('browserControl');
-    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
-    expect(savedSettings().browserControl).toBe(false);
-    toggle('browserControl');
-    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
-    expect(savedSettings().browserControl).toBe(true);
+  describe('MCP の設定の入り・切り', () => {
+    it('読むと、入り・切りとツールの許可を返す', async () => {
+      await boot({ settings: { sessionsControl: false, toolPermissions: { [sessionToolId('start_session')]: 'allow' } } });
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toEqual({
+        enabled: { browser: true, sessions: false, checklist: true, walkthrough: true, terminal: true },
+        permissions: { [sessionToolId('start_session')]: 'allow' },
+      });
+    });
+
+    it('アプリ内ブラウザを切ったら、頼んでいる操作を取り下げ、許した外の先も捨てる（入れたときは何もしない）', async () => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'browser', false)).resolves.toMatchObject({ browser: false });
+      expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
+      expect(savedSettings().browserControl).toBe(false);
+      await invoke(IpcChannel.McpEnabledSet, 'browser', true);
+      expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
+      expect(savedSettings().browserControl).toBe(true);
+    });
+
+    // 入り・切りは、それぞれ同じ名前の設定に保存する
+    it.each([
+      ['sessions', 'sessionsControl'],
+      ['checklist', 'checklistControl'],
+      ['walkthrough', 'walkthroughControl'],
+      ['terminal', 'terminalControl'],
+    ])('「%s」: %s に保存する', async (server, key) => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, server, false)).resolves.toMatchObject({ [server]: false });
+      expect(savedSettings()[key]).toBe(false);
+      await invoke(IpcChannel.McpEnabledSet, server, true);
+      expect(savedSettings()[key]).toBe(true);
+    });
+
+    it('知らない MCP・値は断る', async () => {
+      await boot();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'other', false)).rejects.toThrow();
+      await expect(invoke(IpcChannel.McpEnabledSet, 'browser', 'no')).rejects.toThrow();
+    });
+
+    it.each(['browser', 'sessions', 'checklist', 'walkthrough', 'terminal'])('「%s」: 保存できなかったら断り、値もほかも変えない', async (server) => {
+      await boot();
+      // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
+      mkdirSync(join(state.userData, 'settings.json.tmp'));
+      await expect(invoke(IpcChannel.McpEnabledSet, server, false)).rejects.toThrow();
+      expect(((await invoke(IpcChannel.McpSettingsGet)) as { enabled: Record<string, boolean> }).enabled[server]).toBe(true);
+      expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
+    });
   });
 
   // 項目の id は、保存する設定の名前と同じ
   it.each([
     'updateOnQuit',
-    'sessionsControl',
-    'checklistControl',
-    'walkthroughControl',
-    'terminalControl',
     'usageLimitResume',
   ])('「%s」: 同じ名前の設定に保存する', async (key) => {
     await boot();
@@ -1457,14 +1467,14 @@ describe('メニュー', () => {
 
     it('1 つ変えると、印のファイルを置き・消してから設定に保存する（フックが、動いているセッションでも次の呼び出しから読む）', async () => {
       await boot();
-      await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({});
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ permissions: {} });
       await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'allow')).resolves.toEqual({ [start]: 'allow' });
       expect(marks()).toEqual([`${start}.allow`]);
       expect(savedSettings().toolPermissions).toEqual({ [start]: 'allow' });
       // 既定に戻すと印は消え、選んだ値は残る
       await invoke(IpcChannel.ToolPermissionsSet, start, 'ask');
       expect(marks()).toEqual([]);
-      await expect(invoke(IpcChannel.ToolPermissionsGet)).resolves.toEqual({ [start]: 'ask' });
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ permissions: { [start]: 'ask' } });
       // 知らないツール・値は断る
       await expect(invoke(IpcChannel.ToolPermissionsSet, 'mcp__other__x', 'allow')).rejects.toThrow();
       await expect(invoke(IpcChannel.ToolPermissionsSet, start, 'yes')).rejects.toThrow();
@@ -1508,11 +1518,6 @@ describe('メニュー', () => {
   it.each([
     'notifyUpdates',
     'updateOnQuit',
-    'browserControl',
-    'sessionsControl',
-    'checklistControl',
-    'walkthroughControl',
-    'terminalControl',
     'usageLimitResume',
   ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (id) => {
     await boot();
@@ -1527,18 +1532,16 @@ describe('メニュー', () => {
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「MCP → アプリ内ブラウザで Claude に許す先…」「MCP → Claude のツールの許可…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「MCP の設定…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
-    menuItem('browserHosts').click?.({});
+    menuItem('mcpSettings').click?.({});
     expect(state.windows).toHaveLength(2);
-    menuItem('toolPermissions').click?.({});
     menuItem('prompts').click?.({});
     menuItem('newSession').click?.({});
-    expect(mainWindow().show).toHaveBeenCalledTimes(4);
+    expect(mainWindow().show).toHaveBeenCalledTimes(3);
     expect(mainWindow().webContents.sent).toEqual([
-      [IpcChannel.BrowserHostsOpen, undefined],
-      [IpcChannel.ToolPermissionsOpen, undefined],
+      [IpcChannel.McpSettingsOpen, undefined],
       [IpcChannel.PromptsOpen, undefined],
       [IpcChannel.SessionsNew, undefined],
     ]);

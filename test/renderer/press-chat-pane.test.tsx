@@ -309,14 +309,14 @@ describe('ヘッダー', () => {
     const compact = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
     await act(async () => {});
     expect(compact().disabled).toBe(true);
-    expect(compact().getAttribute('data-tip')).toBe('メニューの「tanacode → MCP → チェックリスト」をオンにすると使えます');
+    expect(compact().getAttribute('data-tip')).toBe('メニューの「tanacode → MCP の設定…」で「チェックリスト」をオンにすると使えます');
     fireEvent.click(compact());
     expect(api.argsOf('compact.start')).toEqual([]);
     // 自動のスイッチも押せず、同じ理由を出す（オンの指定でも、オフに見せる）
     const toggle = screen.getByRole('switch', { name: '自動の最適化圧縮' }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     expect(toggle.getAttribute('aria-checked')).toBe('false');
-    expect(toggle.getAttribute('data-tip')).toBe('メニューの「tanacode → MCP → チェックリスト」をオンにすると使えます');
+    expect(toggle.getAttribute('data-tip')).toBe('メニューの「tanacode → MCP の設定…」で「チェックリスト」をオンにすると使えます');
   });
 
   it('発言の「ここまで戻す」は、開いているセッションで、コードを戻すと変わるファイルを調べてから、戻すものを選ばせる。見つからなければ、わけを出す', async () => {

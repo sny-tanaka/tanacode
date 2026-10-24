@@ -219,7 +219,7 @@ describe('MCP のツール', () => {
 
   it('メニューでオフ・知らないセッション・知らないツールは断る', async () => {
     expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toBe(
-      'The user has turned off the tanacode MCP "ウォークスルー". Ask the user to turn on "ウォークスルー" under tanacode > MCP.',
+      'The user has turned off the tanacode MCP "ウォークスルー". Ask the user to turn it on in tanacode > MCP の設定….',
     );
     const { control } = setup();
     expect(text(await control.handle('other', 'walkthrough_status', {}))).toContain('not in tanacode');
@@ -485,7 +485,7 @@ describe('引数と状態の細かいところ', () => {
     try {
       setLanguage('en');
       expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toBe(
-        'The user has turned off the tanacode MCP "Walkthroughs". Ask the user to turn on "Walkthroughs" under tanacode > MCP.',
+        'The user has turned off the tanacode MCP "Walkthrough". Ask the user to turn it on in tanacode > MCP Settings….',
       );
       const { control } = setup();
       expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step(), step()] }))).toContain('with "Next" and "Back" at their own pace');

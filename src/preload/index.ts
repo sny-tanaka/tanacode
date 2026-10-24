@@ -129,10 +129,11 @@ const api: TanacodeApi = {
     update: (changes) => invoke(IpcChannel.PromptsUpdate, changes),
     onOpen: (listener) => subscribe(IpcChannel.PromptsOpen, () => listener()),
   },
-  toolPermissions: {
-    get: () => invoke(IpcChannel.ToolPermissionsGet),
-    set: (toolId, permission) => invoke(IpcChannel.ToolPermissionsSet, toolId, permission),
-    onOpen: (listener) => subscribe(IpcChannel.ToolPermissionsOpen, () => listener()),
+  mcpSettings: {
+    get: () => invoke(IpcChannel.McpSettingsGet),
+    setEnabled: (server, on) => invoke(IpcChannel.McpEnabledSet, server, on),
+    setPermission: (toolId, permission) => invoke(IpcChannel.ToolPermissionsSet, toolId, permission),
+    onOpen: (listener) => subscribe(IpcChannel.McpSettingsOpen, () => listener()),
   },
   system: {
     onStats: (listener) => subscribe(IpcChannel.SystemStats, listener),
@@ -282,7 +283,6 @@ const api: TanacodeApi = {
     clearThrottle: (sessionId, tabId) => send(IpcChannel.BrowserThrottleClear, sessionId, tabId),
     hosts: () => invoke(IpcChannel.BrowserHostsGet),
     setHosts: (hosts) => invoke(IpcChannel.BrowserHostsSet, hosts),
-    onHostsOpen: (listener) => subscribe(IpcChannel.BrowserHostsOpen, () => listener()),
     onAsk: (listener) => subscribe(IpcChannel.BrowserAsk, listener),
     asks: () => invoke(IpcChannel.BrowserAsksGet),
     answer: (sessionId, askId, answer) => send(IpcChannel.BrowserAnswer, sessionId, askId, answer),

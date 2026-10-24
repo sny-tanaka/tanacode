@@ -499,7 +499,12 @@ export class DemoBackend {
       },
       // デモにはメニューが無いので、Claude に送る文のダイアログは開かない
       prompts: { get: () => ok({}), update: () => ok({}), onOpen: () => () => {} },
-      toolPermissions: { get: () => ok({}), set: () => ok({}), onOpen: () => () => {} },
+      mcpSettings: {
+        get: () => ok({ enabled: { browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true }, permissions: {} }),
+        setEnabled: () => ok({ browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true }),
+        setPermission: () => ok({}),
+        onOpen: () => () => {},
+      },
       system: {
         onStats: (l) => {
           const tick = () =>
@@ -679,7 +684,6 @@ export class DemoBackend {
         clearThrottle: () => {},
         hosts: () => ok([]),
         setHosts: (hosts) => ok(hosts),
-        onHostsOpen: () => () => {},
         onAsk: (l) => this.ch.browserAsk.on(l),
         asks: () => ok([...this.asks.values()]),
         // 返事をしたら、本物と同じく依頼を取り下げる（帯はこれで消える）
