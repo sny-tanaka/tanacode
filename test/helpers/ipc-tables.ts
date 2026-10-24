@@ -28,6 +28,7 @@ export const EMPTY_EVENTS: Record<string, string> = {
   SessionsNew: 'sessions.onNew',
   BrowserHostsOpen: 'browser.onHostsOpen',
   PromptsOpen: 'prompts.onOpen',
+  ToolPermissionsOpen: 'toolPermissions.onOpen',
   AppUpdateChecked: 'appUpdate.onChecked',
 };
 export const emptyEventKeys = [...block('export type IpcEvent = {').matchAll(/\[IpcChannel\.(\w+)\]: undefined;/g)].map((m) => m[1]);
