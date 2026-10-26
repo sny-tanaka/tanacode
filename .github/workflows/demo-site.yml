@@ -115,10 +115,11 @@ jobs:
           VITE_DEMO_WAIT: 0
           DEMO_OUT_DIR: demo-check
         # 下の打ち切りが効かなかったときも、既定の 30 分（ジョブの上限）まで待たない。ふつうは 1 分ほど
-        timeout-minutes: 12
+        timeout-minutes: 16
         run: |
           # 入れるのが止まったまま（ダウンロード・apt の待ち）だと何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す
-          # （apt の .deb は上でキャッシュから置いてあるので、ミラーから落とすのは、キャッシュに無いもの・バージョンの違うものだけ）。
+          # （apt の .deb は上でキャッシュから置いてあるので、ミラーから落とすのは、キャッシュに無いもの・バージョンの違うものだけ。
+          # それも、先に scripts/prefetch-webkit-deps.sh で、ミラーを替えながら並べて落としておく）。
           # apt の 30 秒の打ち切り（上）でも、取り直しのまま 10 分止まったことがある（2.1.309 の PR。ミラーの取り込みの途中）。
           # 止まり続けたのか、少しずつ届いていたのかを見分けられるよう、出力の各行に時刻を付けて、ファイルに溜めずにステップのログへそのまま出す
           # （取り消されたときも、そこまでが残る。デモのビルドの出力と混ざるので、[WebKit] を付ける）
@@ -137,6 +138,9 @@ jobs:
           }
           install_webkit() {
             local n status
+            # キャッシュに無いものを先に落とす（落とせなかったものは apt に任せる）。打ち切りと root で動かすわけは attempt と同じ
+            echo "== キャッシュに無い .deb を先に落とす" | stamp
+            sudo env "PATH=$PATH" timeout -k 30 240 scripts/prefetch-webkit-deps.sh > >(stamp) 2>&1 || echo "== 先に落とすのは終了コード $?（apt に任せる）" | stamp
             for n in 1 2; do
               echo "== $n 回目を始める" | stamp
               # apt（install-deps）は、timeout ごと root で動かす。利用者の timeout からは root の apt に合図を送れず、sudo も、
