@@ -71,11 +71,13 @@ const CONVERSATIONS: Conversation[] = [
     ],
   },
   // 長く動くコマンドの途中で中断する。再開したあとの発言には、Claude Code が差し込む <synthetic> の応答の数だけずれた番号で
-  // 届くので、どちらにも同じ返事を置く
+  // 届くので、どちらにも同じ返事を置く。
+  // 長く動くコマンドは sleep にしない。2.1.310 から、CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC を付けて動かしても（test:cli は付ける）、
+  // 前で長く待つ sleep（sleep 30 && …）は動かさずにエラーの結果を返す（Blocked: sleep 30 followed by: …）ので、中断が起きない
   {
     match: TOOL_PROMPT,
     steps: [
-      [{ type: 'tool_use', id: 'toolu_long', name: 'Bash', input: { command: 'sleep 30 && touch interrupted.txt', description: '長く動くコマンド' } }],
+      [{ type: 'tool_use', id: 'toolu_long', name: 'Bash', input: { command: 'node -e "setTimeout(() => {}, 30000)" && touch interrupted.txt', description: '長く動くコマンド' } }],
       [{ type: 'text', text: RESUME_REPLY }],
       [{ type: 'text', text: RESUME_REPLY }],
     ],
