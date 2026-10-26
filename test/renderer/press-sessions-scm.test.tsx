@@ -8,6 +8,7 @@ import { ScmPanel } from '../../src/renderer/src/scm/ScmPanel';
 import { QuickOpen } from '../../src/renderer/src/search/QuickOpen';
 import { SearchPanel } from '../../src/renderer/src/search/SearchPanel';
 import './dom';
+import { focusByTab, key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 
 // ソース管理・エクスプローラー・検索（scm/・explorer/・search/）のボタン・入力を、ひとつ残らず押して、押した結果まで確かめる。
@@ -375,7 +376,7 @@ describe('ScmPanel（ソース管理）', () => {
       expect(p.onOpenDiff).toHaveBeenCalledTimes(2);
     });
 
-    it('見出し・フォルダ・ファイルの行は Tab で止まり、Enter で押したのと同じに動く。行のボタンの Enter は、行の Enter にしない', () => {
+    it('見出し・フォルダ・ファイルの行は Enter で押したのと同じに動く。行のボタンの Enter は、行の Enter にしない', () => {
       setup();
       const p = props({ view: 'tree' });
       render(<ScmPanel {...p} />);
@@ -383,7 +384,6 @@ describe('ScmPanel（ソース管理）', () => {
       const head = changes.querySelector<HTMLElement>('.scm-section-head')!;
       const dir = within(changes).getByTitle('src/lib');
       const file = within(changes).getByTitle('README.md');
-      for (const row of [head, dir, file]) expect(row.tabIndex).toBe(0);
       fireEvent.keyDown(file, { key: 'Enter' });
       expect(p.onOpenDiff).toHaveBeenCalledWith('README.md', false);
       // 修飾キー付き・変換中の Enter は、行を押したことにしない
@@ -400,6 +400,45 @@ describe('ScmPanel（ソース管理）', () => {
       expect(within(section('ブランチの変更')).queryByTitle(/docs\/guide\.md/)).not.toBeNull();
       fireEvent.keyDown(branchHead, { key: 'Enter' });
       expect(within(section('ブランチの変更')).queryByTitle(/docs\/guide\.md/)).toBeNull();
+    });
+  });
+
+  describe('キーで動かす', () => {
+    it('Tab で止まるのは一覧の 1 行だけ。↑↓ で移り、フォルダは → で開いてボタンへ、← で閉じて親へ。ファイルの行は → でボタンへ', () => {
+      setup();
+      render(<ScmPanel {...props({ view: 'tree' })} />);
+      const changes = section('変更');
+      const head = changes.querySelector<HTMLElement>('.scm-section-head')!;
+      const dir = within(changes).getByTitle('src/lib');
+      pressTab();
+      expect(tabStops()).toHaveLength(1);
+      focusByTab(dir);
+      // 開いているフォルダの ← は閉じる。閉じているときの → は開く
+      key('ArrowLeft');
+      expect(within(changes).queryByTitle('src/lib/util.ts')).toBeNull();
+      key('ArrowRight');
+      expect(within(changes).getByTitle('src/lib/util.ts')).not.toBeNull();
+      // 開いているときの → は、フォルダのボタンへ
+      key('ArrowRight');
+      expect(document.activeElement?.closest('[data-key-row]')).toBe(dir);
+      expect(document.activeElement?.tagName).toBe('BUTTON');
+      key('ArrowLeft');
+      expect(document.activeElement).toBe(dir);
+      key('ArrowDown');
+      const util = document.activeElement as HTMLElement;
+      expect(util.title).toMatch(/^src\/lib\//);
+      // ファイルの行の → は、ステージ・破棄のボタンへ
+      key('ArrowRight');
+      expect(document.activeElement).toBe(within(util).getAllByRole('button')[0]);
+      key('ArrowLeft');
+      // ファイルの行の ← は、親のフォルダへ。閉じているフォルダの ← は、見出しへ
+      key('ArrowLeft');
+      expect(document.activeElement).toBe(dir);
+      key('ArrowLeft');
+      key('ArrowLeft');
+      expect(document.activeElement).toBe(head);
+      key('Home');
+      expect(document.activeElement).toBe(section('ブランチの変更').querySelector('.scm-section-head'));
     });
   });
 
@@ -658,8 +697,6 @@ describe('Explorer（エクスプローラー）', () => {
       render(<Explorer {...p} />);
       await screen.findByText('README.md');
       const readme = rowOf('README.md');
-      expect(readme.tabIndex).toBe(0);
-      expect(rootRow().tabIndex).toBe(0);
       fireEvent.keyDown(readme, { key: 'Enter' });
       expect(p.onOpenFile).toHaveBeenCalledWith('README.md');
       fireEvent.keyDown(rowOf('src'), { key: 'Enter' });
@@ -690,6 +727,56 @@ describe('Explorer（エクスプローラー）', () => {
       // フォルダそのものの行でも開ける
       fireEvent.keyDown(rootRow(), { key: 'Enter', ctrlKey: true });
       expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', 'パスをコピー', 'Finder で表示']);
+    });
+
+    it('Tab で止まるのはツリーの 1 行だけ。↑↓ で移り、フォルダは → で開いて子へ、← で閉じて親へ', async () => {
+      setupOps();
+      render(<Explorer {...props({ fileOps: fileOps() })} />);
+      await screen.findByText('README.md');
+      pressTab();
+      expect(tabStops()).toEqual([rootRow()]);
+      focusByTab(rootRow());
+      key('ArrowDown');
+      expect(document.activeElement).toBe(rowOf('src'));
+      // 閉じたフォルダの → は開く。開いたフォルダの → は最初の子へ
+      key('ArrowRight');
+      await screen.findByText('main.ts');
+      key('ArrowRight');
+      expect(document.activeElement).toBe(rowOf('main.ts'));
+      // ファイルの ← は親のフォルダへ。開いたフォルダの ← は閉じる
+      key('ArrowLeft');
+      expect(document.activeElement).toBe(rowOf('src'));
+      key('ArrowLeft');
+      expect(screen.queryByText('main.ts')).toBeNull();
+      key('End');
+      expect(document.activeElement).toBe(rowOf('README.md'));
+      key('Home');
+      expect(document.activeElement).toBe(rootRow());
+      // 一覧から出て戻ると、前にいた行に止まる
+      focusByTab(rowOf('README.md'));
+      pressTab();
+      expect(tabStops()).toEqual([rowOf('README.md')]);
+    });
+
+    it('マウスで押した行・入力欄・変換中の矢印キーでは、ツリーを動かさない', async () => {
+      setupOps();
+      render(<Explorer {...props({ fileOps: fileOps() })} />);
+      await screen.findByText('README.md');
+      // 変換中の矢印キーは、行のものにしない
+      focusByTab(rowOf('src'));
+      key('ArrowDown', { isComposing: true });
+      expect(document.activeElement).toBe(rowOf('src'));
+      // マウスで押すと、フォーカスは body に戻る（直す前と同じ）。そのあとの ↓ は、ツリーに届かない
+      fireEvent.pointerDown(rowOf('src'));
+      fireEvent.pointerUp(window);
+      expect(document.activeElement).toBe(document.body);
+      key('ArrowDown');
+      expect(document.activeElement).toBe(document.body);
+      // 名前を変える欄の矢印キーは、欄のもの
+      fireEvent.keyDown(rowOf('README.md'), { key: 'Enter', ctrlKey: true });
+      pick('名前を変更');
+      expect(key('ArrowUp')).toBe(true);
+      expect(document.activeElement).toBe(input());
     });
 
     it('キーで開いたメニューの中では、Tab で外へ出ない（出ると Esc で行へ戻れない）', async () => {

@@ -9,6 +9,7 @@ import { SESSION_COLLAPSED_KEY, SESSION_LOCK_KEY, Sidebar } from '../../src/rend
 import { WorktreeCleanupDialog } from '../../src/renderer/src/sessions/WorktreeCleanupDialog';
 import { WorktreeDialog } from '../../src/renderer/src/sessions/WorktreeDialog';
 import './dom';
+import { focusByTab, key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 
 // セッションまわりの画面（sessions/）のボタン・入力を、ひとつ残らず押して、押した結果まで確かめる。
@@ -750,10 +751,40 @@ describe('Sidebar（セッションの一覧）', () => {
     expect(screen.queryByRole('button', { name: 'worktree の片付け' })).toBeNull();
   });
 
-  it('行と「アーカイブ済み」の見出しは Tab で止まり、Enter で押したのと同じに動く。行の中のボタン・入力欄の Enter は、行を選ばない', () => {
+  it('Tab で止まるのは選んでいる行だけ。↑↓ で行と「アーカイブ済み」の見出しを移り、→ で行のボタンへ。見出しは → で開く', () => {
+    const p = props([session('P', { title: '親' }), session('C', { title: '子', parentId: 'P' }), session('Z', { title: '古い作業', archived: true })], { selectedId: 'C' });
+    render(<Sidebar {...p} />);
+    pressTab();
+    expect(tabStops()).toEqual([row('子')]);
+    focusByTab(row('子'));
+    key('ArrowUp');
+    expect(document.activeElement).toBe(row('親'));
+    // ↑↓ は移るだけで、選ばない
+    expect(p.onSelect).not.toHaveBeenCalled();
+    // 行のボタン（子セッションを畳む・アーカイブ）へ。ボタンにいる間も、ボタンを出したまま
+    key('ArrowRight');
+    expect(document.activeElement).toBe(button('子セッションを畳む'));
+    expect(row('親').hasAttribute('data-key-focus')).toBe(true);
+    key('ArrowRight');
+    expect(document.activeElement?.closest('.session-row')).toBe(row('親'));
+    key('ArrowLeft');
+    key('ArrowLeft');
+    expect(document.activeElement).toBe(row('親'));
+    key('End');
+    const archived = screen.getByText(/^アーカイブ済み/).closest<HTMLElement>('.pane-heading')!;
+    expect(document.activeElement).toBe(archived);
+    key('ArrowRight');
+    expect(screen.queryByText('古い作業')).not.toBeNull();
+    key('ArrowDown');
+    expect(document.activeElement).toBe(row('古い作業'));
+    // 一覧から出て戻ると、前にいた行に止まる
+    pressTab();
+    expect(tabStops()).toEqual([row('古い作業')]);
+  });
+
+  it('行と「アーカイブ済み」の見出しは Enter で押したのと同じに動く。行の中のボタン・入力欄の Enter は、行を選ばない', () => {
     const p = props([session('P', { title: '親' }), session('C', { title: '子', parentId: 'P' }), session('Z', { title: '古い作業', archived: true })]);
     render(<Sidebar {...p} />);
-    expect(row('親').tabIndex).toBe(0);
     fireEvent.keyDown(row('子'), { key: 'Enter' });
     expect(p.onSelect).toHaveBeenCalledWith('C');
     fireEvent.keyDown(button('子セッションを畳む'), { key: 'Enter' });
@@ -761,7 +792,6 @@ describe('Sidebar（セッションの一覧）', () => {
     fireEvent.keyDown(document.querySelector<HTMLInputElement>('input.session-rename')!, { key: 'Enter' });
     expect(p.onSelect).toHaveBeenCalledTimes(1);
     const archived = screen.getByText(/^アーカイブ済み/).closest<HTMLElement>('.pane-heading')!;
-    expect(archived.tabIndex).toBe(0);
     expect(screen.queryByText('古い作業')).toBeNull();
     fireEvent.keyDown(archived, { key: 'Enter' });
     expect(screen.queryByText('古い作業')).not.toBeNull();

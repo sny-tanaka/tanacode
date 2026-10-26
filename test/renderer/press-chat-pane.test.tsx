@@ -794,6 +794,38 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(800);
   });
 
+  // 直す前: 1px より多く上へ動いたときだけ、上へ動いたと見ていた。画素密度 1 の画面では、↑ のキーのなめらかなスクロールが 1px ずつ動くので、
+  // そのたびに最下部へ送り戻し、1 秒ほど（なめらかなスクロールが終わるまで）一覧が動かなかった（CI の E2E の keyboard で落ちた）
+  it('上へ送るキーのなめらかなスクロールが 1px ずつ動いても、上へ動いたと見て、最下部へ送り戻さない', () => {
+    render(<ClaudePane {...props({ chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: '質問' }] }) })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    sizeList(list, () => 1000);
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    fireEvent.keyDown(document.body, { key: 'ArrowUp' });
+    list.scrollTop = 799;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(799);
+    list.scrollTop = 798;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(798);
+  });
+
+  // 直す前: 上へ送るキーを押した直後に、その前のスクロール（カードを開いて最下部へ送り直したなど）の scrollend が届くと、人の操作の印を下ろし、
+  // キーのスクロールの最初の動きを最下部へ送り戻した。送り戻しの scrollend がまた印を下ろすので、1 秒ほど一覧が動かなかった（CI の E2E の keyboard で落ちた）
+  it('上へ送るキーを押した直後に、その前のスクロールの scrollend が届いても、キーのスクロールを最下部へ送り戻さない', () => {
+    render(<ClaudePane {...props({ chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: '質問' }] }) })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    sizeList(list, () => 1000);
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    fireEvent.keyDown(document.body, { key: 'ArrowUp' });
+    fireEvent(list, new Event('scrollend'));
+    list.scrollTop = 799;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(799);
+  });
+
   // 直す前: Tab で上の見えていない要素へフォーカスを移すと、ブラウザが一覧を上へ送って見せたのに、人の操作でない上へのスクロールとして
   // 最下部へ戻し、フォーカスした要素が見えなくなっていた（本物の画面で確かめた。ブラウザは、focusin より先に一覧を動かす）
   it('Tab（Shift+Tab）で一覧の中の上の要素へフォーカスを移し、一覧が上へ動いたら、人のスクロールとして追いかけをやめる', () => {

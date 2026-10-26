@@ -4,7 +4,7 @@ import { CheckMark } from '../layout/CheckMark';
 import { formatDuration } from '../workflow/WorkflowCard';
 import { DisclosureIcon, IconButton, StopIcon } from '../icons';
 import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
-import { keyRow } from '../layout/keyRow';
+import { keyList, keyRow } from '../layout/keyRow';
 
 // これより多いときは折りたたむ
 const COLLAPSE_OVER = 3;
@@ -33,7 +33,7 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
   if (rows.length === 0) return null;
   const shown = collapsed ? [] : expanded || rows.length <= COLLAPSE_OVER + 1 ? rows : rows.slice(0, COLLAPSE_OVER);
   return (
-    <div className="task-tray">
+    <div className="task-tray" {...keyList()}>
       <button className="task-tray-head" onClick={() => setCollapsed((v) => !v)}>
         <DisclosureIcon open={!collapsed} />
         {t('tasks.tray.title')}
@@ -48,6 +48,7 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
             className={`task-row${task.key === activeKey ? ' active' : ''}${left ? ' leaving' : ''}`}
             onClick={() => onOpen(task)}
             {...keyRow}
+            data-key-id={task.key}
             title={t('tasks.list.openTip')}
           >
             {left ? (

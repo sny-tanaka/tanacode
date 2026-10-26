@@ -5,6 +5,7 @@ import { answerText, type PendingQuestion, type QuestionAnnotations, type Questi
 import type { AskQuestion } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 import { placePreview, type Place } from './previewPlace';
+import { keyList } from '../layout/keyRow';
 
 // 1 つの質問の、カードの中での答え（選んだ選択肢と、入力欄に書いた文）。
 // textOnly: 「入力だけで答える」で、書いた文だけを答えにした
@@ -229,7 +230,7 @@ export function QuestionCard({ sessionId, question }: Props) {
       {current ? (
         <>
           <div className="menu-title">{current.question}</div>
-          <div className="menu-options">
+          <div className="menu-options" {...keyList()}>
             {current.options.map((option) => {
               const picked = draft.picked.includes(option.label);
               return (
@@ -327,7 +328,7 @@ export function QuestionCard({ sessionId, question }: Props) {
               );
             })}
           </dl>
-          <div className="menu-options">
+          <div className="menu-options" {...keyList()}>
             <button type="button" className="menu-option submit" disabled={sending || !complete} onClick={() => send(answer(drafts))}>
               {t('screen.card.submitAnswers')}
             </button>

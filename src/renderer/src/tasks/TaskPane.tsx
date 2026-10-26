@@ -17,6 +17,7 @@ import { bashStateLabel, elapsed, stoppable, taskStateLabel, useNow, type TaskEn
 import { Busy } from '../layout/Busy';
 import { CloseIcon, DisclosureIcon, FlowIcon, IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
+import { keyList } from '../layout/keyRow';
 
 // 実行中の会話ログを読み直す間隔
 const POLL_MS = 1000;
@@ -169,6 +170,7 @@ const AgentConversation = memo(function AgentConversation({
     <div
       className="task-body chat-list"
       ref={listRef}
+      {...keyList('last')}
       onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;

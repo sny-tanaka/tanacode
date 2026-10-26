@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import { initialDraft, readDraft, type ElicitationDraft, type ElicitationField, type ElicitationProblem, type ElicitationReply, type PendingElicitation, type TextFormat } from '@shared/elicitation';
 import { t, type MessageKey } from '@shared/i18n';
 import { CloseIcon, IconButton } from '../icons';
+import { keyList } from '../layout/keyRow';
 
 type Props = {
   sessionId: string;
@@ -238,7 +239,7 @@ export function ElicitationCard({ sessionId, elicitation }: Props) {
           </form>
         )
       )}
-      <div className="menu-options">
+      <div className="menu-options" {...keyList()}>
         {opened ? (
           <>
             <button type="button" className="menu-option submit" disabled={sending} onClick={() => send({ kind: 'reopen' })}>
