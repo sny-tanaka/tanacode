@@ -117,14 +117,14 @@ describe('キーの受け方', () => {
     expect(ran).toEqual(['nextTab', 'toggleTerminal']);
   });
 
-  it('押し続けたとき、タブ・セッションの送りとタブを閉じるはくり返し、開け閉め・フォーカスの移動はくり返さない', () => {
+  it('押し続けたとき、タブ・セッションの送りはくり返し、開け閉め・フォーカスの移動・タブを閉じるはくり返さない（続けて閉じない）', () => {
     const ran: Shortcut[] = [];
     render(<Keys ran={ran} />);
     cmd('KeyJ', 'j', { repeat: true });
     cmd('Digit2', '2', { repeat: true });
     press({ key: 'Tab', code: 'Tab', ctrlKey: true, repeat: true });
     cmd('KeyW', 'w', { repeat: true });
-    expect(ran).toEqual(['nextTab', 'closeTab']);
+    expect(ran).toEqual(['nextTab']);
   });
 
   it('ダイアログを開いている間は、何もしない（後ろの画面を動かさない）', () => {
@@ -338,6 +338,8 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
   const card = () => document.querySelector<HTMLElement>('[data-answer-card]')!;
   const option = (label: string) => screen.getByText(label).closest<HTMLButtonElement>('button')!;
   const focusCard = () => cmd('KeyA', 'a', { shiftKey: true });
+  // 頭に出している番号（data-key-number）
+  const numbers = () => [...document.querySelectorAll<HTMLElement>('[data-key-number]')].map((el) => el.dataset.keyNumber);
 
   it('⌘⇧A で、カードそのものへフォーカスを移す。続けて Enter を押しても答えにならない', async () => {
     render(inChat(<QuestionCard sessionId="s1" question={question} />));
@@ -354,11 +356,11 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
   it('カードに入っている間、数字でその番号の選択肢へフォーカスを移すだけ（答えない）。選択肢の無い番号では何もしない', async () => {
     render(inChat(<QuestionCard sessionId="s1" question={question} />));
     focusCard();
-    // キーで入っている間は、選択肢の頭に番号を出す（global.css の data-key-numbers）
-    expect(card().dataset.keyNumbers).toBe('');
+    // キーで入っている間は、選択肢の頭に番号を出す（選択肢の data-key-number。global.css）
+    expect(numbers()).toEqual(['1', '2']);
     expect(press({ key: '2', code: 'Digit2' })).toBe(false);
     expect(document.activeElement).toBe(option('だ・である'));
-    expect(card().dataset.keyNumbers).toBe('');
+    expect(numbers()).toEqual(['1', '2']);
     press({ key: '1', code: 'Digit1' });
     expect(document.activeElement).toBe(option('です・ます'));
     press({ key: '9', code: 'Digit9' });
@@ -378,6 +380,23 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
     expect(document.activeElement).toBe(field);
   });
 
+  // 直す前: 入力欄はマウスで押しても :focus-visible になるので、キーで入ったと見て、選択肢に番号を出していた
+  it('マウスでカードの入力欄を押しても、番号を出さない（質問のカードの自由に書ける欄・許可のカードの理由の欄）', () => {
+    const permission: PendingPermission = { id: 'p1', tool: 'Bash', title: 'Bash', description: '', input: { command: 'ls' }, reason: null, always: null, plan: null, agent: null };
+    const view = render(inChat(<QuestionCard sessionId="s1" question={question} />));
+    mouse();
+    act(() => screen.getByRole('textbox').focus());
+    expect(screen.getByRole('textbox').matches(':focus-visible')).toBe(true);
+    expect(numbers()).toEqual([]);
+    expect(press({ key: '2', code: 'Digit2' })).toBe(true);
+    // 許可のカードの「断って、理由を伝える」は、理由の欄（autoFocus）を開く
+    view.rerender(inChat(<MenuCard sessionId="s1" permission={permission} />));
+    mouse();
+    fireEvent.click(screen.getByText(/^断って、理由を伝える/));
+    expect(document.activeElement).toBe(screen.getByRole('textbox'));
+    expect(numbers()).toEqual([]);
+  });
+
   it('マウスで選択肢を押したあと（キーで入っていない）は、数字で移らない（直す前と同じ）', () => {
     render(inChat(<QuestionCard sessionId="s1" question={{ ...question, questions: [{ ...question.questions[0], multiSelect: true }] }} />));
     mouse();
@@ -385,7 +404,7 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
     fireEvent.click(option('です・ます'));
     expect(press({ key: '2', code: 'Digit2' })).toBe(true);
     expect(document.activeElement).toBe(option('です・ます'));
-    expect(card().dataset.keyNumbers).toBeUndefined();
+    expect(numbers()).toEqual([]);
   });
 
   it('アプリ内ブラウザのページで押したとき（画面にキーが届かない）も、カードに入り、数字で選択肢へ移れる', () => {

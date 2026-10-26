@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
-import { matchShortcut, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
+import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
 import { instructionDirs, instructionFiles } from './project-instructions';
 import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
@@ -359,6 +359,8 @@ function setupAppContents(contents: WebContents, id: string): void {
       const shortcut = matchShortcut({ code: input.code, key: input.key, meta: input.meta, ctrl: input.control, shift: input.shift, alt: input.alt });
       if (!shortcut) return;
       event.preventDefault();
+      // 押し続けたとき、くり返さないもの（開け閉め・タブを閉じるなど）は、はじめの 1 回だけ（画面で押したときと同じ）
+      if (input.isAutoRepeat && !REPEATING.has(shortcut)) return;
       sendTo(id)(IpcChannel.ShortcutRun, shortcut);
     });
   });
@@ -1085,7 +1087,7 @@ function buildMenu(): void {
       { role: 'viewMenu' },
       {
         // キーボードで動くためのショートカット。キーは右に出る（macOS）。⌘W はタブを閉じる（ウインドウを閉じる「閉じる」は置かない。
-        // 置くと ⌘W でアプリが終わるため。バツボタンで閉じたときは今までどおり終える）
+        // 置くと、メインのウインドウで ⌘W を押したときにアプリが終わるため。バツボタンで閉じたときは今までどおり終える）
         id: 'go',
         label: t('main.menu.go'),
         submenu: GO_MENU.flatMap((group, i): MenuItemConstructorOptions[] => [
@@ -1094,17 +1096,30 @@ function buildMenu(): void {
             id: `shortcut-${id}`,
             label: t(`main.menu.shortcuts.${id}`),
             accelerator: SHORTCUTS.find((s) => s.id === id)!.accelerator,
-            // キーで押したものは、アプリの画面（画面が自分で受ける）かアプリ内ブラウザのページ（before-input-event）が受けている。
-            // ここでも知らせると、メニューまで回ってきたときに二重に動く（⌘J の開け閉めが戻るなど）ので、マウスで押したときだけ知らせる
-            click: (_item, _window, event) => {
-              if (!event.triggeredByAccelerator) sendTo(activeId)(IpcChannel.ShortcutRun, id);
-            },
+            click: (_item, _window, event) => runGoMenu(id, event.triggeredByAccelerator === true),
           })),
         ]),
       },
       { role: 'windowMenu' },
     ]),
   );
+}
+
+// 「移動」のメニューを押した（triggeredByAccelerator: キーで押した）。
+// - メインのウインドウで押したキーは、アプリの画面（画面が自分で受ける）かアプリ内ブラウザのページ（before-input-event）が受けている。
+//   ここでも知らせると、メニューまで回ってきたときに二重に動く（⌘J の開け閉めが戻るなど）ので、何もしない
+// - ほかのウインドウ（アプリ内ブラウザのポップアップ・About のパネル・切り離した DevTools）で押した ⌘W は、そのウインドウを閉じる
+//   （前の「閉じる」と同じ。About のパネルと DevTools は BrowserWindow ではないので、macOS の閉じる操作を送る）
+// - ほかは、ほかのメニューの項目と同じく、メインのウインドウを前に出してから画面に知らせる
+function runGoMenu(id: Shortcut, byKey: boolean): void {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (byKey && focused && focused === mainWindow) return;
+  if (byKey && id === 'closeTab') {
+    Menu.sendActionToFirstResponder('performClose:');
+    return;
+  }
+  showWindow();
+  sendTo(activeId)(IpcChannel.ShortcutRun, id);
 }
 
 // 「移動」のメニューの並び（区切りごと）

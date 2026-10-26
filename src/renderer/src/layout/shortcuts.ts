@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { matchShortcut, type Shortcut } from '@shared/shortcuts';
+import { matchShortcut, REPEATING, type Shortcut } from '@shared/shortcuts';
 
 // メニューバーの「移動」のショートカット（shared/shortcuts.ts）を、画面で動かす。
 // キーは、アプリの画面で押したものは画面が受ける（ウインドウで、ほかより先に。エディタ・ターミナルにフォーカスがあっても効くように）。
@@ -28,9 +28,6 @@ export function runShortcut(shortcut: Shortcut): void {
   for (const handler of [...handlers]) if (handler(shortcut)) return;
 }
 
-// 押し続けたときに、くり返すもの（タブ・セッションを順に送る・タブを閉じる）。ほかはくり返さない（開け閉めがちらつくため）
-const REPEATS = new Set<Shortcut>(['nextTab', 'previousTab', 'previousSession', 'nextSession', 'closeTab']);
-
 // アプリの画面で押したキーを受ける（App に 1 つ）。ショートカットのキーは、ほかの部品（Monaco・xterm・入力欄）に渡さない
 export function useShortcutKeys(): void {
   useEffect(() => {
@@ -40,17 +37,19 @@ export function useShortcutKeys(): void {
       if (shortcut) {
         e.preventDefault();
         e.stopPropagation();
-        if (!e.repeat || REPEATS.has(shortcut)) runShortcut(shortcut);
+        if (!e.repeat || REPEATING.has(shortcut)) runShortcut(shortcut);
         return;
       }
       pickOptionByNumber(e);
     };
     // フォーカスが入ったときに、キーで入ったか（:focus-visible か、focusByKey で移したか）を覚えておく。
-    // 数字のキーと、選択肢の頭の番号（カードの data-key-numbers。global.css）は、キーで入っているときだけにする
-    // （Chromium は、マウスで押したボタンでも、そのあとキーを押すと :focus-visible に変えるので、入ったときに見る）
+    // 数字のキーと、選択肢の頭の番号（global.css）は、キーで入っているときだけにする
+    // （Chromium は、マウスで押したボタンでも、そのあとキーを押すと :focus-visible に変えるので、入ったときに見る）。
+    // 入力欄は、マウスで押しても :focus-visible になるので数えない（keyRow と同じ。カードの入力欄を押して番号が出ないように）
     const onFocus = (e: FocusEvent) => {
       const target = e.target instanceof HTMLElement ? e.target : null;
-      keyFocused = target && (movingByKey(target) || target.matches(':focus-visible')) ? target : null;
+      const byKey = target && (movingByKey(target) || (target.matches(':focus-visible') && !target.matches(TEXT_FIELD)));
+      keyFocused = byKey ? target : null;
       markNumbered(keyFocused?.closest<HTMLElement>('[data-answer-card]') ?? null);
     };
     // ウインドウの外・body へ外れた（次に入る先が無い）
@@ -72,12 +71,18 @@ export function useShortcutKeys(): void {
 
 // キーで入った要素（useShortcutKeys が覚える）
 let keyFocused: HTMLElement | null = null;
-// 選択肢の頭に番号を出している（キーで入っている）質問・許可のカード
+// 文字を打つ欄
+const TEXT_FIELD = 'input, textarea, select, [contenteditable="true"]';
+// 質問・許可のカードの、番号で選べる選択肢（並び順。1〜9 のキーと、頭に出す番号で同じものを使う）
+const numberedOptions = (card: HTMLElement) => [...card.querySelectorAll<HTMLButtonElement>('.menu-options > .menu-option')].slice(0, 9);
+// 選択肢の頭に番号を出している（キーで入っている）質問・許可のカード。選択肢に data-key-number を付け、global.css がそれを出す
 let numbered: HTMLElement | null = null;
 function markNumbered(card: HTMLElement | null): void {
-  if (numbered && numbered !== card) delete numbered.dataset.keyNumbers;
+  if (numbered && numbered !== card) for (const option of numbered.querySelectorAll<HTMLElement>('[data-key-number]')) delete option.dataset.keyNumber;
   numbered = card;
-  if (card) card.dataset.keyNumbers = '';
+  if (!card) return;
+  for (const option of card.querySelectorAll<HTMLElement>('[data-key-number]')) delete option.dataset.keyNumber;
+  numberedOptions(card).forEach((option, i) => (option.dataset.keyNumber = String(i + 1)));
 }
 
 // キーで移すフォーカス。キーを押したのがアプリの画面なら、移した先は :focus-visible になり、枠が出る。
@@ -129,8 +134,6 @@ export function focusedPane(): TabPane | null {
   return null;
 }
 
-// ブラウザを出しているか（Claude の操作のために後ろで描かせているときは、aria-hidden）
-export const browserShown = (): boolean => !!document.querySelector('.preview-pane:not([hidden]):not([aria-hidden="true"])');
 
 // 並びの中で、今のものから前後へ delta 進んだもの。wrap なら端から反対の端へ回り、そうでなければ端で止まる。今のものが無ければ先頭
 export function stepIn<T>(list: readonly T[], current: T | null | undefined, delta: number, wrap = false): T | null {
@@ -216,10 +219,10 @@ export function columnShortcut(shortcut: Shortcut): boolean {
 function pickOptionByNumber(e: KeyboardEvent): void {
   if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
   const active = document.activeElement;
-  if (!(active instanceof HTMLElement) || active.matches('input, textarea, select, [contenteditable="true"]')) return;
+  if (!(active instanceof HTMLElement) || active.matches(TEXT_FIELD)) return;
   const card = active.closest<HTMLElement>('[data-answer-card]');
   if (!card || keyFocused !== active) return;
-  const option = card.querySelectorAll<HTMLButtonElement>('.menu-options > .menu-option')[Number(e.key) - 1];
+  const option = numberedOptions(card)[Number(e.key) - 1];
   if (!option || option.disabled) return;
   e.preventDefault();
   focusByKey(option);

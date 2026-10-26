@@ -370,37 +370,38 @@ describe('EditorPane（エディタ）', () => {
     expect(p.onActivate).toHaveBeenCalledTimes(2);
   });
 
-  it('⌘W は、エディタにフォーカスがある・どの欄にもフォーカスが無いときに、今のタブを閉じる（未保存なら確かめる）。ターミナルにフォーカスがある・ブラウザを出しているときは閉じない', async () => {
+  // 直す前: どの欄にもフォーカスが無いとき（チャットの入力欄など）も、見えているエディタのタブを閉じていた（間違えて押したときに困る）
+  it('⌘W は、エディタにフォーカスがあるときだけ、今のタブを閉じる（未保存なら確かめる）。チャット・ターミナルなど、ほかにフォーカスがあれば閉じない', async () => {
     mockApi().install();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const p = props();
-    const view = render(
+    render(
       <>
         <EditorPane {...p} />
         <div className="terminal-panel">
           <button>ターミナルの中</button>
         </div>
+        <div className="main">
+          <section className="claude">
+            <textarea aria-label="チャットの入力欄" />
+          </section>
+        </div>
       </>,
     );
     act(() => screen.getByText('ターミナルの中').focus());
+    act(() => runShortcut('closeTab'));
+    act(() => screen.getByLabelText('チャットの入力欄').focus());
+    act(() => runShortcut('closeTab'));
+    act(() => (document.activeElement as HTMLElement).blur());
     act(() => runShortcut('closeTab'));
     expect(p.onClose).not.toHaveBeenCalled();
     act(() => tab('src/app.ts').querySelector<HTMLElement>('button')!.focus());
     act(() => runShortcut('closeTab'));
     expect(vi.mocked(p.onClose).mock.calls).toEqual([['src/app.ts']]);
-    act(() => (document.activeElement as HTMLElement).blur());
     await edit(APP, 'const total = 2;\n');
+    act(() => tab('src/app.ts').querySelector<HTMLElement>('button')!.focus());
     act(() => runShortcut('closeTab'));
     expect(confirm).toHaveBeenCalledWith('app.ts の変更を保存せずに閉じますか？');
-    expect(p.onClose).toHaveBeenCalledTimes(1);
-    view.rerender(
-      <>
-        <EditorPane {...p} />
-        <div className="preview-pane" />
-      </>,
-    );
-    confirm.mockReturnValue(true);
-    act(() => runShortcut('closeTab'));
     expect(p.onClose).toHaveBeenCalledTimes(1);
   });
 

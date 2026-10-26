@@ -219,6 +219,8 @@ function freshState() {
     views: [] as FakeView[],
     displays: [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
     menu: null as MenuItem[] | null,
+    // Menu.sendActionToFirstResponder で送った macOS の操作
+    firstResponderActions: [] as string[],
     defaultSession: new FakeSession(),
     partitions: new Map<string, FakeSession>(),
     powerMonitor: new Emitter(),
@@ -343,6 +345,7 @@ export const electronModule = {
       state.menu = menu;
     },
     buildFromTemplate: (template: MenuItem[]) => template,
+    sendActionToFirstResponder: (action: string) => state.firstResponderActions.push(action),
   },
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
   Notification: FakeNotification,

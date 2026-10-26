@@ -1,5 +1,5 @@
 // アプリ全体のキーボードショートカット（メニューバーの「移動」に並べるもの）。main（メニューとアプリ内ブラウザのページ）と画面で同じ表を使う。
-// キーは英字・数字・矢印・Tab だけにする（記号のキーは、JIS 配列と US 配列で場所が違い、押せないことがあるため）。
+// キーは英字・数字・矢印・Tab・Enter だけにする（記号のキーは、JIS 配列と US 配列で場所が違い、押せないことがあるため）。
 // 間違えて押しにくいよう、どれも ⌘ か ⌃ と組み合わせる
 export type Shortcut =
   | 'focusSessions'
@@ -60,6 +60,10 @@ export function matchShortcut(pressed: PressedKey): Shortcut | null {
   );
   return found?.id ?? null;
 }
+
+// 押し続けたときに、くり返すもの（タブ・セッションを順に送る）。ほかはくり返さない（開け閉めがちらつく・タブを続けて閉じてしまうため）。
+// 画面（キーの repeat）と main（アプリ内ブラウザのページの isAutoRepeat）で同じものを使う
+export const REPEATING: ReadonlySet<Shortcut> = new Set<Shortcut>(['nextTab', 'previousTab', 'previousSession', 'nextSession']);
 
 export function shortcutLabel(id: Shortcut): string {
   return SHORTCUTS.find((s) => s.id === id)!.label;

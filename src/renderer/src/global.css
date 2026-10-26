@@ -4300,17 +4300,11 @@ details[open] > summary > .disclosure {
 .menu-option.previewed {
   border-color: var(--border-focus);
 }
-/* 質問・許可のカードにキーで入っている間（⌘⇧A・Tab でカードに入った・数字で選択肢に移った。data-key-numbers）だけ、選択肢の頭に 1〜9 の番号を出す。
-   その数字を押すと、その選択肢へ移る（layout/shortcuts.ts）。マウスで選択肢を押したときは出さない（:focus-visible で出すと、
-   押したあとにキーを押したときに Chromium が :focus-visible に変え、番号が出てしまう） */
-.menu-options {
-  counter-reset: menu-option;
-}
-.menu-options > .menu-option {
-  counter-increment: menu-option;
-}
-[data-answer-card][data-key-numbers] .menu-options > .menu-option:nth-of-type(-n + 9)::before {
-  content: counter(menu-option);
+/* 質問・許可のカードにキーで入っている間（⌘⇧A・Tab でカードに入った・数字で選択肢に移った）だけ、選択肢の頭に 1〜9 の番号を出す。
+   番号は layout/shortcuts.ts が選択肢に付ける（data-key-number。数字のキーと同じ数え方）。マウスで選択肢・入力欄を押したときは付けない
+   （:focus-visible で出すと、押したあとにキーを押したときに Chromium が :focus-visible に変え、入力欄はマウスで押しても :focus-visible になり、番号が出てしまう） */
+.menu-option[data-key-number]::before {
+  content: attr(data-key-number);
   flex: none;
   min-width: 1ch;
   color: var(--text-tertiary);

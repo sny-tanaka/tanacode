@@ -10,7 +10,7 @@ import { MarkdownPreview } from './MarkdownPreview';
 import { PdfView } from './PdfView';
 import { SvgPreview } from './SvgPreview';
 import { editorTheme, languageFor, monaco } from './monaco';
-import { browserShown, focusByKey, focusedPane, isHidden, stepIn, useShortcuts } from '../layout/shortcuts';
+import { focusByKey, focusedPane, isHidden, stepIn, useShortcuts } from '../layout/shortcuts';
 
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
@@ -155,7 +155,7 @@ export const EditorPane = memo(function EditorPane({
   const previewMode = activePath && activeText !== null && hasPreview(activePath) ? (previewModes.get(activePath) ?? 'preview') : null;
 
   // ショートカット（layout/shortcuts.ts）。⌘4: エディタへ（文字を出していれば Monaco、プレビュー・画像などなら欄そのもの）/
-  // ⌃Tab・⌃⇧Tab: エディタにフォーカスがあれば、タブを順に送る / ⌘W: エディタにフォーカスがある（ほかの欄にも無く、ブラウザを出していない）なら、今のタブを閉じる
+  // ⌃Tab・⌃⇧Tab: エディタにフォーカスがあれば、タブを順に送る / ⌘W: エディタにフォーカスがあるときだけ、今のタブを閉じる（ほかの欄で押したら何もしない。間違えて押したときに、見えているタブを閉じないため）
   const sectionRef = useRef<HTMLElement>(null);
   const focusEditor = () => {
     const section = sectionRef.current;
@@ -184,7 +184,7 @@ export const EditorPane = memo(function EditorPane({
         return true;
       }
       case 'closeTab':
-        if (!activePath || !(pane === 'editor' || (pane === null && !browserShown()))) return false;
+        if (!activePath || pane !== 'editor') return false;
         close(activePath);
         return true;
       default:

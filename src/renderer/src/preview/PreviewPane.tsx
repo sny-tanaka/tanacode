@@ -334,7 +334,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const current = () => (activeTab ? views.current.get(activeTab) : undefined);
 
   // ショートカット（layout/shortcuts.ts）。⌘4: ブラウザを出していれば、ページへ（まだ何も開いていなければアドレス欄へ）/
-  // ⌃Tab・⌃⇧Tab: ブラウザにフォーカスがあれば、タブを順に送る / ⌘W: ブラウザにフォーカスがある（ほかの欄にも無く、ブラウザを出している）なら、今のタブを閉じる
+  // ⌃Tab・⌃⇧Tab: ブラウザにフォーカスがあれば、タブを順に送る / ⌘W: ブラウザにフォーカスがあるときだけ、今のタブを閉じる（ほかの欄で押したら何もしない）
   const focusPage = () => {
     const wv = current();
     if (wv && url) wv.focus();
@@ -361,10 +361,10 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         return true;
       }
       case 'closeTab':
-        if (!(pane === 'browser' || (pane === null && visible))) return false;
+        if (pane !== 'browser') return false;
         if (activeTab) closeTab(sessionId, activeTab);
-        // 閉じたタブにフォーカスがあったら、移った先のタブへ（続けて ⌘W・⌃Tab を押せるように）
-        if (pane === 'browser') requestAnimationFrame(() => focusPageRef.current());
+        // 閉じたタブにフォーカスがあったので、移った先のタブへ（続けて ⌘W・⌃Tab を押せるように）
+        requestAnimationFrame(() => focusPageRef.current());
         return true;
       default:
         return false;
@@ -589,7 +589,9 @@ export function TabStrip({
               reveal
               label={t('preview.tabs.close')}
               tip={tab.id === active ? t('preview.tabs.closeTip') : undefined}
-              onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onClose(tab.id)}
+            />
           </div>
         );
       })}

@@ -475,7 +475,8 @@ describe('PreviewPane: ショートカット（⌘4・⌃Tab・⌘W）', () => {
     expect(activated()).toHaveLength(before);
   });
 
-  it('⌘W は、ブラウザにフォーカスがある・どの欄にもフォーカスが無いときに、今のタブを閉じる。ほかの欄にフォーカスがあれば閉じない', async () => {
+  // 直す前: どの欄にもフォーカスが無いときも、出しているブラウザのタブを閉じていた
+  it('⌘W は、ブラウザにフォーカスがあるときだけ、今のタブを閉じる。ほかの欄にフォーカスがある・どこにも無いときは閉じない', async () => {
     render(
       <>
         <Pane sessionId="s1" />
@@ -493,7 +494,7 @@ describe('PreviewPane: ショートカット（⌘4・⌃Tab・⌘W）', () => {
     expect(tabs().map((t) => t.textContent)).toEqual(['localhost:3000/']);
     act(() => address().blur());
     act(() => runShortcut('closeTab'));
-    expect(tabs()).toEqual([]);
+    expect(tabs()).toHaveLength(1);
   });
 
   it('⌘4 で、出しているブラウザのページへ（何も開いていなければアドレス欄へ）。出していなければ何もしない', async () => {

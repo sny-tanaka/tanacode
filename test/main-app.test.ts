@@ -16,6 +16,7 @@ import {
   fakeEvent,
   type Fake,
   FakeWebContents,
+  FakeWindow,
   invoke,
   mainWindow,
   manager,
@@ -1069,10 +1070,15 @@ describe('ウインドウ', () => {
     expect(press({ key: 'c', code: 'KeyC', meta: true })).toBe(false);
     expect(press({ key: 'w', code: 'KeyW', meta: true, alt: true })).toBe(false);
     expect(press({ key: 'Tab', code: 'Tab' })).toBe(false);
+    // 押し続けたとき: タブの送りはくり返し、タブを閉じる・フォーカスの移動はくり返さない（ページにも渡さない）
+    expect(press({ key: 'Tab', code: 'Tab', control: true, isAutoRepeat: true })).toBe(true);
+    expect(press({ key: 'w', code: 'KeyW', meta: true, isAutoRepeat: true })).toBe(true);
+    expect(press({ key: 'j', code: 'KeyJ', meta: true, isAutoRepeat: true })).toBe(true);
     expect(mainWindow().webContents.sent).toEqual([
       [IpcChannel.ShortcutRun, 'closeTab'],
       [IpcChannel.ShortcutRun, 'previousTab'],
       [IpcChannel.ShortcutRun, 'focusSessions'],
+      [IpcChannel.ShortcutRun, 'nextTab'],
     ]);
   });
 
@@ -1294,14 +1300,40 @@ describe('メニュー', () => {
     expect(roles(state.menu!)).not.toContain('close');
     const click = (id: string, triggeredByAccelerator: boolean) =>
       (menuItem(id).click as unknown as (item: unknown, window: unknown, event: { triggeredByAccelerator: boolean }) => void)({}, undefined, { triggeredByAccelerator });
+    // マウスで押したら、ほかのメニューの項目と同じく、メインのウインドウを前に出してから知らせる
     click('shortcut-closeTab', false);
     click('shortcut-focusQuestion', false);
-    // キーで押したものは、画面（か before-input-event）が受けているので、二重に知らせない
+    expect(mainWindow().show).toHaveBeenCalledTimes(2);
+    // メインのウインドウでキーで押したものは、画面（か before-input-event）が受けているので、二重に知らせない。⌘W でもウインドウを閉じない
+    mainWindow().focused = true;
     click('shortcut-toggleTerminal', true);
+    click('shortcut-closeTab', true);
+    expect(state.firstResponderActions).toEqual([]);
     expect(mainWindow().webContents.sent).toEqual([
       [IpcChannel.ShortcutRun, 'closeTab'],
       [IpcChannel.ShortcutRun, 'focusQuestion'],
     ]);
+  });
+
+  // 直す前（ファイルのメニューの「閉じる」を外しただけ）: ポップアップ・About のパネル・切り離した DevTools が、⌘W で閉じなくなっていた
+  it('「移動」: メインでないウインドウ（ポップアップ・About のパネル・切り離した DevTools）で押した ⌘W は、そのウインドウを閉じる。ほかのキーは、メインのウインドウを前に出して知らせる', async () => {
+    await boot();
+    const main = mainWindow();
+    const click = (id: string) =>
+      (menuItem(id).click as unknown as (item: unknown, window: unknown, event: { triggeredByAccelerator: boolean }) => void)({}, undefined, { triggeredByAccelerator: true });
+    // About のパネル・DevTools（BrowserWindow ではない）にフォーカスがある
+    click('shortcut-closeTab');
+    expect(state.firstResponderActions).toEqual(['performClose:']);
+    // アプリ内ブラウザのポップアップ（メインでない BrowserWindow）
+    const popup = new FakeWindow({});
+    popup.focused = true;
+    click('shortcut-closeTab');
+    expect(state.firstResponderActions).toEqual(['performClose:', 'performClose:']);
+    expect(state.quit).not.toHaveBeenCalled();
+    click('shortcut-focusSessions');
+    expect(main.show).toHaveBeenCalledTimes(1);
+    expect(main.webContents.sent).toEqual([[IpcChannel.ShortcutRun, 'focusSessions']]);
+    expect(popup.webContents.sent).toEqual([]);
   });
 
   it('「自動で最適化圧縮する大きさ」「離席モードで答えを待つ時間」: 選んだものを設定に保存し、チェックを移す', async () => {

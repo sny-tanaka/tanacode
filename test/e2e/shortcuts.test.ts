@@ -139,6 +139,11 @@ describe('「移動」のショートカット', () => {
     // 選択肢の頭の番号（::before）。キーで入っている間だけ出す
     const number = (label: string) => option(label).evaluate((el) => getComputedStyle(el, '::before').content);
     expect(await number('青')).toBe('none');
+    // マウスでカードの自由に書ける欄を押しても、番号は出ない（直す前は、入力欄が :focus-visible になるので出ていた）
+    await card.locator('textarea').click();
+    await app.page.keyboard.type('1');
+    expect(await number('青')).toBe('none');
+    await card.locator('textarea').fill('');
     await app.page.keyboard.press('Meta+2');
     await app.page.keyboard.press('Meta+Shift+A');
     expect(await isActive(card)).toBe(true);
@@ -147,7 +152,7 @@ describe('「移動」のショートカット', () => {
     await app.rendered();
     expect(await card.isVisible()).toBe(true);
     expect(app.api.toolResults.some((r) => r.includes('"どちらにしますか？"'))).toBe(false);
-    expect(await number('青')).toBe('counter(menu-option)');
+    expect(await number('青')).toBe('"2"');
     await app.page.keyboard.press('2');
     expect(await isActive(option('青'))).toBe(true);
     await app.page.keyboard.press('Enter');
@@ -212,20 +217,35 @@ describe('「移動」のショートカット', () => {
     expect(await outline(sessionRow(ASK))).toBe('solid');
   });
 
-  it('メニューを押しても動く（「ターミナルを開く・閉じる」）。キーで押したもの（triggeredByAccelerator）は、画面が受けているので二重に動かさない', async () => {
-    const panel = app.page.locator('.terminal-panel');
-    const click = (triggeredByAccelerator: boolean) =>
-      app.app.evaluate(({ Menu }, triggered) => {
-        const item = Menu.getApplicationMenu()!.getMenuItemById('shortcut-toggleTerminal')!;
-        (item.click as unknown as (event: unknown, window: unknown, contents: unknown) => void)({ triggeredByAccelerator: triggered }, undefined, undefined);
-      }, triggeredByAccelerator);
-    expect(await panel.isVisible()).toBe(false);
-    await click(false);
-    await panel.waitFor({ state: 'visible' });
-    await click(true);
+  // 直す前: どの欄にもフォーカスが無いとき（チャットの入力欄など）も、出しているエディタ・ブラウザのタブを閉じていた
+  it('⌘W は、エディタ・ブラウザにフォーカスがあるときだけタブを閉じる。チャットの入力欄で押しても、出しているエディタのタブは閉じない', async () => {
+    // ブラウザを閉じてエディタを出す（README.md・src/main.ts のタブが開いている）
+    await app.page.click('.activity-bar [aria-label="ブラウザ"]');
+    await app.page.locator('.preview-pane').waitFor({ state: 'hidden' });
+    const editorTabs = app.page.locator('.editor-host .editor-tab');
+    const before = await editorTabs.count();
+    expect(before).toBeGreaterThan(0);
+    await app.page.keyboard.press('Meta+2');
+    await app.page.keyboard.press('Meta+W');
     await app.rendered();
-    expect(await panel.isVisible()).toBe(true);
-    await click(false);
+    expect(await editorTabs.count()).toBe(before);
+    await app.page.keyboard.press('Meta+4');
+    await app.page.keyboard.press('Meta+W');
+    await expect.poll(() => editorTabs.count()).toBe(before - 1);
+    expect(await windows()).toBe(1);
+  });
+
+  it('メニューをマウスで押しても動く（「ターミナルを開く・閉じる」）', async () => {
+    const panel = app.page.locator('.terminal-panel');
+    const click = () =>
+      app.app.evaluate(({ Menu }) => {
+        const item = Menu.getApplicationMenu()!.getMenuItemById('shortcut-toggleTerminal')!;
+        (item.click as unknown as (event: unknown, window: unknown, contents: unknown) => void)({ triggeredByAccelerator: false }, undefined, undefined);
+      });
+    expect(await panel.isVisible()).toBe(false);
+    await click();
+    await panel.waitFor({ state: 'visible' });
+    await click();
     await panel.waitFor({ state: 'hidden' });
   });
 });
