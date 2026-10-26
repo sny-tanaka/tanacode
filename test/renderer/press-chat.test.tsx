@@ -311,6 +311,15 @@ describe('ツールのカード（ToolCard）', () => {
     expect(onOpenFile).toHaveBeenLastCalledWith('/w/src/b.ts', 3);
   });
 
+  it('押せるカードは Tab で止まり、Enter で押したのと同じに動く', () => {
+    const onOpenFile = vi.fn();
+    const { container } = render(<ToolCard {...toolProps(tool({ name: 'Edit', target: 'a.ts', filePath: '/w/a.ts', line: 4 }), { onOpenFile })} />);
+    const card = container.querySelector<HTMLElement>('.tool-card')!;
+    expect(card.tabIndex).toBe(0);
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onOpenFile).toHaveBeenCalledWith('/w/a.ts', 4);
+  });
+
   it('開けるものが無いツールは、カードを押すと詳細（入力・結果）を開閉する', () => {
     const { container } = render(<ToolCard {...toolProps(tool({ input: '{"command":"npm test"}', output: 'ok', status: 'error' }))} />);
     const card = container.querySelector('.tool-card')!;

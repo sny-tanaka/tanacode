@@ -8,6 +8,7 @@ import { openWalkthroughTarget } from '../walkthrough/openWalkthrough';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import { ChevronRightIcon, DisclosureIcon } from '../icons';
+import { keyRow } from '../layout/keyRow';
 import { StatusDot, type DotState } from '../layout/StatusDot';
 import { findSession, sessionName, type SessionLink } from '../sessions/sessionLinks';
 import { bashStateLabel } from '../tasks/taskList';
@@ -93,9 +94,11 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
       : item.status;
   const finishing = useFinishing(dot);
 
+  const clickable = !!(opensFile || hasDetail || onOpenTask || openSession || openCard || openWalk);
+
   return (
     <div
-      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession || openCard || openWalk ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
+      className={`tool-card${clickable ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
       onClick={() =>
         onOpenTask
           ? onOpenTask()
@@ -109,6 +112,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
               ? onOpenFile(item.filePath!, item.line)
               : hasDetail && setOpen((v) => !v)
       }
+      {...(clickable ? keyRow : {})}
     >
       <div className="tool-card-head">
         <StatusDot state={dot} animate={finishing} />

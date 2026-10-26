@@ -13,6 +13,7 @@ import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { preparingLabel } from './worktree';
 import { AccountPanel } from '../account/AccountPanel';
+import { keyRow } from '../layout/keyRow';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
 export const SESSION_LOCK_KEY = 'tanacode.sessionOrderLock';
@@ -149,6 +150,7 @@ export const Sidebar = memo(function Sidebar({
         key={s.id}
         className={`session-row reveal-host${depth === 1 ? ' child' : ''}${s.id === selectedId ? ' active' : ''}${hidesSelected ? ' active-within' : ''}${s.archived ? ' archived' : ''}`}
         onClick={() => onSelect(s.id)}
+        {...keyRow}
         title={s.cwd}
       >
         <span className={`session-indicator ${activity?.kind ?? ''}`} title={activity?.label} />
@@ -297,7 +299,7 @@ export const Sidebar = memo(function Sidebar({
         {activeRows.map(row)}
         {archived.length > 0 && (
           <>
-            <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)}>
+            <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)} {...keyRow}>
               <DisclosureIcon open={showArchived} />
               {t('sessions.sidebar.archived', { count: archived.length })}
               {/* アーカイブ済みの worktree のセッションがあれば、worktree の片付けを開ける。フォルダが残っていれば、その数を出す */}

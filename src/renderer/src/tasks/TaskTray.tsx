@@ -4,6 +4,7 @@ import { CheckMark } from '../layout/CheckMark';
 import { formatDuration } from '../workflow/WorkflowCard';
 import { DisclosureIcon, IconButton, StopIcon } from '../icons';
 import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
+import { keyRow } from '../layout/keyRow';
 
 // これより多いときは折りたたむ
 const COLLAPSE_OVER = 3;
@@ -46,6 +47,7 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
             key={task.key}
             className={`task-row${task.key === activeKey ? ' active' : ''}${left ? ' leaving' : ''}`}
             onClick={() => onOpen(task)}
+            {...keyRow}
             title={t('tasks.list.openTip')}
           >
             {left ? (

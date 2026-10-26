@@ -6,6 +6,7 @@ import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
 import { AddIcon, CloseIcon, DisclosureIcon, IconButton } from '../icons';
 import { errorMessage } from '../errorMessage';
+import { clickOnEnter, keyRow } from '../layout/keyRow';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 
 // ファイル操作（名前の変更・ゴミ箱）に合わせて、開いているタブを直すもの（App）。path はツリーの行のパス（そのものと、その中のファイル）
@@ -48,7 +49,8 @@ type Props = {
 };
 
 // 右クリックした行。path はツリーの行のパス（フォルダそのものの行は base）。フォルダ外で Claude が読み書きしたファイルの行は、base が READ_FILES
-type MenuState = { base: string; path: string; isDir: boolean; isRoot: boolean; x: number; y: number };
+// keyboard: ⌃Enter で開いたもの（最初の項目にフォーカスし、閉じたら行に戻す）
+type MenuState = { base: string; path: string; isDir: boolean; isRoot: boolean; x: number; y: number; keyboard?: boolean };
 // ツリーの行の中で名前を入れているもの（新規作成は dir の中に行を足し、名前の変更は path の行で入れる）
 type EditState = { base: string; kind: 'file' | 'dir'; dir: string } | { base: string; kind: 'rename'; path: string };
 
@@ -154,6 +156,8 @@ export const Explorer = memo(function Explorer({
             e.stopPropagation();
             setMenu({ base: READ_FILES, path: file, isDir: false, isRoot: false, x: e.clientX, y: e.clientY });
           }}
+          {...keyRow}
+          onKeyDown={rowKeys((x, y) => setMenu({ base: READ_FILES, path: file, isDir: false, isRoot: false, x, y, keyboard: true }))}
           title={file}
         >
           <span className="tree-chevron">{knowledge[file] && <KnowledgeDot state={knowledge[file]} />}</span>
@@ -168,6 +172,7 @@ export const Explorer = memo(function Explorer({
         <ContextMenu
           x={menu.x}
           y={menu.y}
+          focusFirst={menu.keyboard}
           items={[
             { label: t('explorer.menu.copyPath'), onSelect: () => void navigator.clipboard.writeText(menu.path).catch(() => {}) },
             'separator',
@@ -313,6 +318,7 @@ function RootTree({
     e.stopPropagation();
     onMenu({ ...target, base, x: e.clientX, y: e.clientY });
   };
+  const keysOf = (target: Pick<MenuState, 'path' | 'isDir' | 'isRoot'>) => rowKeys((x, y) => onMenu({ ...target, base, x, y, keyboard: true }));
 
   // 新規作成は、フォルダの中（ファイルの行なら、入っているフォルダ）に名前を入れる行を出す。フォルダは開いておく
   const startCreate = (kind: 'file' | 'dir', dir: string) => {
@@ -418,6 +424,8 @@ function RootTree({
                 else onOpenFile(entry.path);
               }}
               onContextMenu={(e) => openMenu(e, { path: entry.path, isDir: entry.isDir, isRoot: false })}
+              {...keyRow}
+              onKeyDown={keysOf({ path: entry.path, isDir: entry.isDir, isRoot: false })}
               title={entry.path}
             >
               <span className="tree-chevron">
@@ -447,6 +455,8 @@ function RootTree({
         style={{ paddingLeft: 10 }}
         onClick={() => toggle(base)}
         onContextMenu={(e) => openMenu(e, { path: base, isDir: true, isRoot: true })}
+        {...keyRow}
+        onKeyDown={keysOf({ path: base, isDir: true, isRoot: true })}
         title={base || undefined}
       >
         <span className="tree-chevron">
@@ -483,7 +493,7 @@ function RootTree({
         )}
       </div>
       {expanded.has(base) && renderDir(base, 1)}
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={onCloseMenu} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={onCloseMenu} focusFirst={menu.keyboard} />}
     </>
   );
 }
@@ -553,6 +563,21 @@ function NameInput({
       {error && <span className="tree-input-error">{error}</span>}
     </span>
   );
+}
+
+// ツリーの行のキー。Enter はクリックと同じ。⌃Enter は、右クリックと同じメニューを、行の名前の下に開く
+// （Mac では ⌃ を押しながらのクリックが右クリックなので、それに合わせる）
+function rowKeys(open: (x: number, y: number) => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.target === e.currentTarget && e.key === 'Enter' && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      const row = e.currentTarget.getBoundingClientRect();
+      const label = e.currentTarget.querySelector('.tree-label')?.getBoundingClientRect();
+      open(label?.left ?? row.left, row.bottom);
+      return;
+    }
+    clickOnEnter(e);
+  };
 }
 
 // Claude が読んだものを一覧から消すボタン（行を押したときの動きは止める）

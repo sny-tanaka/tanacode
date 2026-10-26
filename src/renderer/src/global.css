@@ -1115,7 +1115,9 @@ body.resizing * {
   text-align: left;
   cursor: pointer;
 }
-.context-menu button:hover:not(:disabled) {
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible {
+  outline: none;
   background: var(--bg-hover);
 }
 .context-menu button:disabled {
@@ -1710,14 +1712,25 @@ body.resizing-rows {
   background: var(--bg-surface);
   color: var(--text-tertiary);
 }
-/* 行・見出し（.reveal-host）にホバーするか、中にフォーカスがあるときだけ出すボタン */
+/* 行・見出し（.reveal-host）にホバーするか、中にフォーカスがあるときだけ出すボタン。
+   行そのもの（Tab で止まる行。layout/keyRow.ts）のフォーカスは、キーで入ったとき（[data-key-focus]）だけ数える。
+   マウスで行を押しても行にフォーカスが入るので、:focus-within のままだと、マウスを離れてもボタンが出たままになる */
 .icon-button.reveal {
   visibility: hidden;
 }
 .reveal-host:hover .icon-button.reveal,
-.reveal-host:focus-within .icon-button.reveal,
+.reveal-host:focus-within:not(:focus) .icon-button.reveal,
+.reveal-host[data-key-focus] .icon-button.reveal,
 .icon-button.reveal:focus-visible {
   visibility: visible;
+}
+/* Tab で止まる一覧の行（layout/keyRow.ts）。枠は、キーで入ったときだけ出す（マウスで押したときは出さない） */
+[data-key-row]:focus {
+  outline: none;
+}
+[data-key-row]:focus-visible {
+  outline: 2px solid var(--ide);
+  outline-offset: -2px;
 }
 /* 展開の矢印（DisclosureIcon）。開いたら 90 度回る */
 .disclosure {
@@ -3319,7 +3332,9 @@ button.session-ref:hover {
 .session-row .icon-button.reveal {
   display: none;
 }
-.session-row:hover .icon-button.reveal {
+/* キーで行に入ったとき（行か、中のボタン。layout/keyRow.ts）も出す。マウスで押したボタンのフォーカスでは出さない（ホバーを離れたら消えるように） */
+.session-row:hover .icon-button.reveal,
+.session-row[data-key-focus] .icon-button.reveal {
   display: inline-grid;
 }
 

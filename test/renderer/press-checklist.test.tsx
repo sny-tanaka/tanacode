@@ -245,6 +245,18 @@ describe('カードを開く・チェックする・選ぶ', () => {
     expect(onOpen).toHaveBeenLastCalledWith('L2', 'g1');
   });
 
+  it('見出しとカードは Tab で止まり、Enter で押したのと同じに動く。チェック欄の Enter は、カードを開かない', () => {
+    const { onOpen } = show();
+    expect(cardRow('表示を差し替える').tabIndex).toBe(0);
+    fireEvent.keyDown(cardRow('表示を差し替える'), { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledWith('L1', 'c3');
+    fireEvent.keyDown(within(cardRow('税率を読む')).getByRole('checkbox'), { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(head(todo().name).tabIndex).toBe(0);
+    fireEvent.keyDown(head(todo().name), { key: 'Enter' });
+    expect(screen.queryByText('表示を差し替える', { selector: '.checklist-title' })).toBeNull();
+  });
+
   it('チェック欄は、そのカードのチェックを付け外しする（カードは開かない）', () => {
     const { onOpen } = show();
     fireEvent.click(within(cardRow('税率を読む')).getByRole('checkbox'));

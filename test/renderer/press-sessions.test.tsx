@@ -750,6 +750,23 @@ describe('Sidebar（セッションの一覧）', () => {
     expect(screen.queryByRole('button', { name: 'worktree の片付け' })).toBeNull();
   });
 
+  it('行と「アーカイブ済み」の見出しは Tab で止まり、Enter で押したのと同じに動く。行の中のボタン・入力欄の Enter は、行を選ばない', () => {
+    const p = props([session('P', { title: '親' }), session('C', { title: '子', parentId: 'P' }), session('Z', { title: '古い作業', archived: true })]);
+    render(<Sidebar {...p} />);
+    expect(row('親').tabIndex).toBe(0);
+    fireEvent.keyDown(row('子'), { key: 'Enter' });
+    expect(p.onSelect).toHaveBeenCalledWith('C');
+    fireEvent.keyDown(button('子セッションを畳む'), { key: 'Enter' });
+    fireEvent.doubleClick(screen.getByText('親'));
+    fireEvent.keyDown(document.querySelector<HTMLInputElement>('input.session-rename')!, { key: 'Enter' });
+    expect(p.onSelect).toHaveBeenCalledTimes(1);
+    const archived = screen.getByText(/^アーカイブ済み/).closest<HTMLElement>('.pane-heading')!;
+    expect(archived.tabIndex).toBe(0);
+    expect(screen.queryByText('古い作業')).toBeNull();
+    fireEvent.keyDown(archived, { key: 'Enter' });
+    expect(screen.queryByText('古い作業')).not.toBeNull();
+  });
+
   it('名前の変更中に入力欄を押しても、その行を選ばない（変更は続けられる）', () => {
     const p = props([session('A'), session('B')]);
     render(<Sidebar {...p} />);
