@@ -19,7 +19,8 @@ export type QuestionReply = { kind: 'answer'; answers: Record<string, string>; a
 // plan: プランの承認（ExitPlanMode）なら、プランの本文 / agent: サブエージェントの中の呼び出しなら、その ID
 // always: 「今後は聞かない」で足す許可の説明（何を許すかと保存先。画面の言葉。Claude Code の候補が無ければ null）/
 // plan: プランの承認なら本文（読めなければ空の文字列）。プランの承認でなければ null /
-// humanOnly: 人だけが答えられる確認なら、その理由（親の Claude に向けた英語。プランの承認・Claude Code や人の設定が人に回したもの）
+// humanOnly: 人だけが答えられる確認なら、その理由（親の Claude に向けた英語。プランの承認・Claude Code が人に回したもの）/
+// askRule: 人の設定の ask の規則（permissions.ask）が出させた確認なら、その規則（例: Bash(rm:*)）。親に許させるかは「MCP の設定」で決める
 export type PendingPermission = {
   id: string;
   tool: string;
@@ -31,6 +32,7 @@ export type PendingPermission = {
   plan: string | null;
   agent: string | null;
   humanOnly?: string | null;
+  askRule?: string | null;
 };
 
 // 許可の確認への答え。allow: 許す（always: 今後は聞かない。Claude Code が出した候補の許可を足す）/

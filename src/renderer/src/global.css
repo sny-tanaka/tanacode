@@ -2900,6 +2900,29 @@ button.session-ref:hover {
 .mcp-tool.changed .tool-permission-select {
   border-color: var(--warn);
 }
+/* MCP の設定の中の、MCP サーバーごとの設定（許す先と同じ枠） */
+.mcp-server-option {
+  margin: 4px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.mcp-server-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 4px;
+}
+.mcp-server-option-head h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.mcp-server.off .mcp-server-option {
+  opacity: 0.45;
+}
 /* MCP の設定の中の、Claude に許す先 */
 .browser-hosts-editor {
   margin: 4px 0 12px;

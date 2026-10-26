@@ -82,6 +82,16 @@ describe('既定', () => {
     expect(new AppSettings(file).toolPermissions()).toEqual({ [sessionToolId('start_session')]: 'allow' });
     expect(JSON.parse(readFileSync(file, 'utf8')).toolPermissions).toEqual({ [sessionToolId('start_session')]: 'allow' });
   });
+
+  it('ask の規則で出た子の確認を親に許させるかは、既定でオフ。保存して読み直せる（true のときだけオン）', () => {
+    const file = join(root, 'settings.json');
+    const settings = new AppSettings(file);
+    expect(settings.parentAskRulesEnabled()).toBe(false);
+    settings.setParentAskRulesEnabled(true);
+    expect(new AppSettings(file).parentAskRulesEnabled()).toBe(true);
+    writeFileSync(file, JSON.stringify({ version: 1, parentAskRules: 'yes' }));
+    expect(new AppSettings(file).parentAskRulesEnabled()).toBe(false);
+  });
 });
 
 describe('印のファイル', () => {

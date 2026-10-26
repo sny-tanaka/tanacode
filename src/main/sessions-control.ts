@@ -144,6 +144,8 @@ type Deps = {
   archive: (id: string, options: ArchiveOptions) => Promise<WorktreeRemoval | null>;
   // 子の許可の確認のうち、人だけが答えられるもの（アプリ内ブラウザで、許す先の外を開く）。当たれば、親に許させない理由（英語）
   humanOnly?: (sessionId: string, request: PermissionTarget) => string | null;
+  // 人の設定の ask の規則（permissions.ask）が出させた確認も、親に許させるか（「MCP の設定」のスイッチ。既定はオフ）
+  askRulesAllowed?: () => boolean;
   // ホームのフォルダ（ここを開いたセッションに、ホームの下のすべてのセッションを見せないため）
   home: string;
   // 予約したメッセージ（自分への予約に使う）。予約は SessionsControl より後で作るので、取り出す関数で渡す
@@ -736,7 +738,7 @@ export class SessionsControl {
     if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first). Check with get_session.`);
     const changed = () => new ToolError('The permission prompt showing now is not the one you read (the user answered it, or the child moved on to another prompt). Nothing was answered. Read it again with get_session.');
     if (shown.id !== id) throw changed();
-    const view = permissionView(shown, (r) => this.deps.humanOnly?.(child.id, r) ?? null);
+    const view = this.permissionView(child.id, shown);
     if (allow) {
       // 親が自分の操作を人に毎回許してもらうモードなら、子の操作も親には許させない（子を通じて、人の確認を省かせない）
       const mode = host.modeOf(caller.id) ?? 'manual';
@@ -765,8 +767,20 @@ export class SessionsControl {
         : reason
           ? 'Denied. The child was told the reason and continues its work.'
           : 'Denied. The child stops this operation and waits for an instruction: tell it what to do instead with send_message.',
-      next_permission: next ? permissionView(next, (r) => this.deps.humanOnly?.(child.id, r) ?? null).view : undefined,
+      next_permission: next ? this.permissionView(child.id, next).view : undefined,
     });
+  }
+
+  // 子が答えを待っている許可の確認を、親に渡す形にする（そのときの設定とページで、親に許させるかを決める）
+  private permissionView(childId: string, permission: PendingPermission): { view: Record<string, unknown>; problem: string | null } {
+    return permissionView(permission, {
+      humanOnly: (r) => this.deps.humanOnly?.(childId, r) ?? null,
+      askRulesAllowed: this.deps.askRulesAllowed?.() ?? false,
+    });
+  }
+
+  private permissionViewOf(childId: string, permission: PendingPermission | null): Record<string, unknown> | undefined {
+    return permission ? this.permissionView(childId, permission).view : undefined;
   }
 
   private async configureSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
@@ -1410,7 +1424,7 @@ export class SessionsControl {
         : undefined,
       question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id)) : undefined,
       mcp_question: base.state === 'question' ? mcpQuestionView(askingElicitation(this.deps.host, s.id)) : undefined,
-      permission: base.state === 'permission' ? permissionViewOf(this.deps.host.pendingPermission(s.id), (r) => this.deps.humanOnly?.(s.id, r) ?? null) : undefined,
+      permission: base.state === 'permission' ? this.permissionViewOf(s.id, this.deps.host.pendingPermission(s.id)) : undefined,
     };
   }
 
@@ -1653,12 +1667,24 @@ function limitNoticeText(child: SessionSummary | undefined, id: string, limit: U
 
 // 答えを待っている許可の確認を、親に渡す形にする。
 // problem: 親に許させない理由（入力が長すぎて全文を渡せない・人だけが答えられる）。あっても、断ることはできる。
-// 人だけが答えられるのは、プランの承認・Claude Code や人の設定が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly
-function permissionView(permission: PendingPermission, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): { view: Record<string, unknown>; problem: string | null } {
+// 人だけが答えられるのは、プランの承認・Claude Code が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly と、
+// 人の設定の ask の規則が出させたもの（PendingPermission.askRule）のうち、「MCP の設定」で親に許させていないとき（askRulesAllowed が false）。
+// ask の規則に当たった確認は、親に許させるときも ask_rule に規則を出す（人が一度目を通したい操作だと、親が知って読むように）
+function permissionView(
+  permission: PendingPermission,
+  checks: { humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null; askRulesAllowed: boolean },
+): { view: Record<string, unknown>; problem: string | null } {
   const full = JSON.stringify(permission.input, null, 2);
   const bytes = Buffer.byteLength(full, 'utf8');
   const tooLong = bytes > MAX_PERMISSION_INPUT_BYTES;
-  const problem = tooLong ? `the tool input is too long to show in full (${bytes} bytes), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
+  const askRule = permission.askRule ?? null;
+  const askRuleProblem =
+    askRule && !checks.askRulesAllowed
+      ? "the user's settings (a permissions.ask rule, see ask_rule) say the user must be asked, and the user has not let parent sessions allow such prompts (a switch in tanacode's MCP settings)."
+      : null;
+  const problem = tooLong
+    ? `the tool input is too long to show in full (${bytes} bytes), so you cannot read all of it.`
+    : (permission.humanOnly ?? askRuleProblem ?? checks.humanOnly(permission));
   return {
     problem,
     // 確認の ID（answer_permission に渡すもの）は、入力のあとに置く。Claude Code は大きすぎる MCP の結果を頭から切る
@@ -1667,6 +1693,7 @@ function permissionView(permission: PendingPermission, humanOnly: (request: { to
       title: permission.title ?? permission.tool,
       description: permission.description ?? undefined,
       reason: permission.reason ?? undefined,
+      ask_rule: askRule ?? undefined,
       tool: permission.tool,
       input: tooLong ? `${clipBytes(full, MAX_PERMISSION_INPUT_BYTES)}\n…(truncated)` : permission.input,
       from_subagent: permission.agent ?? undefined,
@@ -1688,10 +1715,6 @@ function clipBytes(text: string, max: number): string {
     end += char.length;
   }
   return text.slice(0, end);
-}
-
-function permissionViewOf(permission: PendingPermission | null, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): Record<string, unknown> | undefined {
-  return permission ? permissionView(permission, humanOnly).view : undefined;
 }
 
 // Claude Code が答えを待っている MCP サーバーの質問（完了を待っている URL の形の質問は、もう答えたので除く）

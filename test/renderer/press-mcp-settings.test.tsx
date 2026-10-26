@@ -22,6 +22,7 @@ type Overrides = {
   enabled?: Partial<McpEnabled>;
   permissions?: Record<string, ToolPermission>;
   problem?: string;
+  parentAskRules?: boolean;
   hosts?: string[];
   setEnabled?: (server: McpToolGroup, on: boolean) => Promise<McpEnabled>;
   setPermission?: (toolId: string, permission: ToolPermission) => Promise<Record<string, ToolPermission>>;
@@ -31,9 +32,14 @@ type Overrides = {
 async function open(o: Overrides = {}) {
   let enabled: McpEnabled = { ...ALL_ON, ...o.enabled };
   let permissions = o.permissions ?? {};
+  let parentAskRules = o.parentAskRules ?? false;
   const onClose = vi.fn();
   api = mockApi({
-    'mcpSettings.get': () => Promise.resolve({ enabled, permissions, problem: o.problem ?? null }),
+    'mcpSettings.get': () => Promise.resolve({ enabled, permissions, parentAskRules, problem: o.problem ?? null }),
+    'mcpSettings.setParentAskRules': ((on: boolean) => {
+      parentAskRules = on;
+      return Promise.resolve(parentAskRules);
+    }) as never,
     'mcpSettings.setEnabled': (o.setEnabled ??
       ((server: McpToolGroup, on: boolean) => {
         enabled = { ...enabled, [server]: on };
@@ -150,6 +156,26 @@ describe('McpSettingsDialog: 入り・切り', () => {
     fireEvent.click(toggle('セッション'));
     expect(await screen.findByText('保存できません')).toBeTruthy();
     expect(toggle('セッション').getAttribute('aria-checked')).toBe('true');
+  });
+});
+
+describe('McpSettingsDialog: ask の規則で出た子の確認', () => {
+  const askRules = () => screen.getByRole('switch', { name: '設定の ask の規則で出た子の確認も、親に許させる' });
+
+  it('セッションの見出しの下に出し、既定はオフ。押すと保存する', async () => {
+    await open();
+    const sessions = screen.getByRole('region', { name: 'セッション' });
+    expect(within(sessions).getByRole('group', { name: '設定の ask の規則で出た子の確認も、親に許させる' })).toBeTruthy();
+    expect(askRules().getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(askRules());
+    await waitFor(() => expect(askRules().getAttribute('aria-checked')).toBe('true'));
+    expect(api.argsOf('mcpSettings.setParentAskRules')).toEqual([[true]]);
+  });
+
+  it('セッションの MCP を切っているときは押せない（値は保つ）', async () => {
+    await open({ enabled: { sessions: false }, parentAskRules: true });
+    expect(askRules().getAttribute('aria-checked')).toBe('true');
+    expect((askRules() as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
