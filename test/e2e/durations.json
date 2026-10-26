@@ -39,6 +39,7 @@
   "test/e2e/send-next-step.test.ts": 39,
   "test/e2e/session-ops.test.ts": 11,
   "test/e2e/sessions.test.ts": 67,
+  "test/e2e/shortcuts.test.ts": 15,
   "test/e2e/single-instance.test.ts": 6,
   "test/e2e/start-then-switch.test.ts": 13,
   "test/e2e/tasks.test.ts": 13,
