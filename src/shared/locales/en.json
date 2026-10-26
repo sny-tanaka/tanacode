@@ -59,7 +59,21 @@
       "prompts": "Messages Sent to Claude…",
       "file": "File",
       "newSession": "New Session",
-      "stopAndQuit": "Stop Claude Code and Quit"
+      "stopAndQuit": "Stop Claude Code and Quit",
+      "go": "Go",
+      "shortcuts": {
+        "focusSessions": "Sessions",
+        "focusChat": "Chat",
+        "focusSide": "Side Panel",
+        "focusContent": "Editor or Browser",
+        "previousSession": "Previous Session",
+        "nextSession": "Next Session",
+        "nextTab": "Next Tab",
+        "previousTab": "Previous Tab",
+        "closeTab": "Close Tab",
+        "toggleTerminal": "Toggle Terminal",
+        "focusQuestion": "Pending Question or Permission"
+      }
     },
     "notification": {
       "browserAsk": "Request to act in the browser: {message}",
@@ -1284,7 +1298,7 @@
       "contextTitle": "Context (what's in the current conversation and how much space it takes)",
       "browserTip": "Toggle browser\nOpen the page you're developing, pick an element, and have Claude fix it",
       "browser": "Browser",
-      "terminalTip": "Toggle terminal (⌃`)",
+      "terminalTip": "Toggle terminal (⌘J)",
       "terminal": "Terminal",
       "tasksEmpty": "Background tasks run in the session will appear here",
       "checklistEmpty": "The session's checklist will appear here",
@@ -1720,7 +1734,8 @@
     "tabs": {
       "closeConfirm": "Close “{name}” without saving your changes?",
       "unsaved": "Unsaved changes (⌘S to save)",
-      "changedInBranch": "Changed in this branch"
+      "changedInBranch": "Changed in this branch",
+      "closeTip": "Close (⌘W)"
     },
     "conflict": {
       "message": "The file changed on disk while you had unsaved changes",
@@ -1841,7 +1856,7 @@
       "sendToClaude": "Send to Claude",
       "sendToClaudeTip": "Send to Claude\nPaste the selected terminal output into the chat input (in terminal mode, into Claude Code's prompt)",
       "close": "Close panel",
-      "closeTip": "Close panel (⌃`)"
+      "closeTip": "Close panel (⌘J)"
     },
     "tabs": {
       "close": "Close terminal",
@@ -1898,7 +1913,8 @@
       "label": "Browser tabs",
       "untitled": "New Tab",
       "close": "Close tab",
-      "new": "New tab"
+      "new": "New tab",
+      "closeTip": "Close tab (⌘W)"
     },
     "claude": {
       "operating": "Claude is using the browser"

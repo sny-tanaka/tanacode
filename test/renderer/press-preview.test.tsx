@@ -6,6 +6,7 @@ import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
 import { openInBrowser } from '../../src/renderer/src/preview/openInBrowser';
 import { PreviewPane } from '../../src/renderer/src/preview/PreviewPane';
 import { CANCEL_PICKER_SCRIPT, describePicked, type PickedElement } from '../../src/renderer/src/preview/picker';
+import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -441,6 +442,81 @@ describe('PreviewPane: タブ', () => {
     expect(activated().at(-1)).toEqual(['s1', null]);
     expect(tabs()).toEqual([]);
     expect(screen.getByText('上のアドレス欄に URL を入れて Enter で開きます')).toBeTruthy();
+  });
+});
+
+describe('PreviewPane: ショートカット（⌘4・⌃Tab・⌘W）', () => {
+  // タブを 2 つ（localhost:3000・localhost:4000）開く。今のタブは 2 つ目
+  const twoTabs = async () => {
+    await act(async () => {});
+    go('localhost:3000');
+    fireEvent.click(button('新しいタブ'));
+    go('localhost:4000');
+    webviews.forEach(loaded);
+    return [...new Set(activated().map(([, id]) => id as string))];
+  };
+  const frame = () => act(() => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))));
+
+  it('ブラウザにフォーカスがあるとき、⌃Tab・⌃⇧Tab でタブを順に送り、移った先のページにフォーカスを移す', async () => {
+    render(<Pane sessionId="s1" />);
+    const ids = await twoTabs();
+    act(() => address().focus());
+    act(() => runShortcut('nextTab'));
+    expect(activated().at(-1)).toEqual(['s1', ids[0]]);
+    await frame();
+    expect(webviews[0].log).toContain('focus');
+    act(() => address().focus());
+    act(() => runShortcut('previousTab'));
+    expect(activated().at(-1)).toEqual(['s1', ids[1]]);
+    // ブラウザの外にフォーカスがあれば、送らない
+    act(() => address().blur());
+    const before = activated().length;
+    act(() => runShortcut('nextTab'));
+    expect(activated()).toHaveLength(before);
+  });
+
+  it('⌘W は、ブラウザにフォーカスがある・どの欄にもフォーカスが無いときに、今のタブを閉じる。ほかの欄にフォーカスがあれば閉じない', async () => {
+    render(
+      <>
+        <Pane sessionId="s1" />
+        <div className="terminal-panel">
+          <button>ターミナルの中</button>
+        </div>
+      </>,
+    );
+    await twoTabs();
+    act(() => screen.getByText('ターミナルの中').focus());
+    act(() => runShortcut('closeTab'));
+    expect(tabs()).toHaveLength(2);
+    act(() => address().focus());
+    act(() => runShortcut('closeTab'));
+    expect(tabs().map((t) => t.textContent)).toEqual(['localhost:3000/']);
+    act(() => address().blur());
+    act(() => runShortcut('closeTab'));
+    expect(tabs()).toEqual([]);
+  });
+
+  it('⌘4 で、出しているブラウザのページへ（何も開いていなければアドレス欄へ）。出していなければ何もしない', async () => {
+    const view = render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    act(() => address().blur());
+    act(() => runShortcut('focusContent'));
+    expect(document.activeElement).toBe(address());
+    go('localhost:3000');
+    webviews.forEach(loaded);
+    act(() => runShortcut('focusContent'));
+    expect(webviews[0].log).toContain('focus');
+    webviews[0].log.length = 0;
+    view.rerender(<Pane sessionId="s1" visible={false} />);
+    act(() => runShortcut('focusContent'));
+    expect(webviews[0].log).not.toContain('focus');
+  });
+
+  it('今のタブの × のツールチップに、⌘W を添える', async () => {
+    render(<Pane sessionId="s1" />);
+    await twoTabs();
+    const tips = tabs().map((t) => t.querySelector('[aria-label="タブを閉じる"]')!.getAttribute('data-tip'));
+    expect(tips).toEqual(['タブを閉じる', 'タブを閉じる（⌘W）']);
   });
 });
 

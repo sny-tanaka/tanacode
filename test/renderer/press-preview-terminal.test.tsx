@@ -6,6 +6,7 @@ import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
 import { useOpenInBrowser } from '../../src/renderer/src/preview/openInBrowser';
 import { runInTerminal } from '../../src/renderer/src/terminal/runInTerminal';
 import { TerminalPanel } from '../../src/renderer/src/terminal/TerminalPanel';
+import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -204,6 +205,26 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect(shown(termOf(1))).toBe(true);
     fireEvent.click(closeOf(0));
     expect(api.argsOf('shell.kill')).toEqual([['sh1'], ['sh2']]);
+  });
+
+  it('ターミナルにフォーカスがあるとき、⌃Tab・⌃⇧Tab でタブを順に送る（端から反対の端へ回る）。⌘W ではタブを閉じない。フォーカスが外にあれば何もしない', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    await newShell();
+    expect(selectedTab()).toBe(1);
+    // ターミナルの中（タブの ×）にフォーカスを置く
+    act(() => closeOf(1).focus());
+    act(() => runShortcut('nextTab'));
+    expect(selectedTab()).toBe(0);
+    act(() => closeOf(0).focus());
+    act(() => runShortcut('previousTab'));
+    expect(selectedTab()).toBe(1);
+    act(() => runShortcut('closeTab'));
+    expect(api.argsOf('shell.kill')).toEqual([]);
+    expect(tabNames()).toEqual(['zsh 1', 'zsh 2']);
+    act(() => (document.activeElement as HTMLElement).blur());
+    act(() => runShortcut('nextTab'));
+    expect(selectedTab()).toBe(1);
   });
 
   // 動いている間の ×（止めて閉じる）は、下の「押しても効かない（不具合）」で確かめる

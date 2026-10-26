@@ -10,6 +10,7 @@ import { MarkdownPreview } from './MarkdownPreview';
 import { PdfView } from './PdfView';
 import { SvgPreview } from './SvgPreview';
 import { editorTheme, languageFor, monaco } from './monaco';
+import { browserShown, focusByKey, focusedPane, isHidden, stepIn, useShortcuts } from '../layout/shortcuts';
 
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
@@ -152,6 +153,44 @@ export const EditorPane = memo(function EditorPane({
   const active = files.find((f) => f.path === activePath);
   const activeText = active?.content.kind === 'text' ? active.content.text : null;
   const previewMode = activePath && activeText !== null && hasPreview(activePath) ? (previewModes.get(activePath) ?? 'preview') : null;
+
+  // ショートカット（layout/shortcuts.ts）。⌘4: エディタへ（文字を出していれば Monaco、プレビュー・画像などなら欄そのもの）/
+  // ⌃Tab・⌃⇧Tab: エディタにフォーカスがあれば、タブを順に送る / ⌘W: エディタにフォーカスがある（ほかの欄にも無く、ブラウザを出していない）なら、今のタブを閉じる
+  const sectionRef = useRef<HTMLElement>(null);
+  const focusEditor = () => {
+    const section = sectionRef.current;
+    if (!section || isHidden(section) || !active) return false;
+    if (activeText !== null && previewMode !== 'preview') editorRef.current?.focus();
+    else focusByKey(section);
+    return true;
+  };
+  const focusEditorRef = useRef(focusEditor);
+  focusEditorRef.current = focusEditor;
+  useShortcuts((shortcut) => {
+    const section = sectionRef.current;
+    if (!section || isHidden(section)) return false;
+    const pane = focusedPane();
+    switch (shortcut) {
+      case 'focusContent':
+        return focusEditor();
+      case 'nextTab':
+      case 'previousTab': {
+        if (pane !== 'editor') return false;
+        const next = stepIn(files.map((f) => f.path), activePath, shortcut === 'nextTab' ? 1 : -1, true);
+        if (next && next !== activePath) {
+          onActivate(next);
+          requestAnimationFrame(() => focusEditorRef.current());
+        }
+        return true;
+      }
+      case 'closeTab':
+        if (!activePath || !(pane === 'editor' || (pane === null && !browserShown()))) return false;
+        close(activePath);
+        return true;
+      default:
+        return false;
+    }
+  });
   const change = activePath ? changes[activePath] : undefined;
   // Finder で、このファイルを選んだ状態にして、入っているフォルダを開く。開けなくても（消えたなど）、何も出さない
   const openInFinder = () => {
@@ -332,7 +371,7 @@ export const EditorPane = memo(function EditorPane({
   }, [change, activeText, activePath, baseline]);
 
   return (
-    <section className="editor">
+    <section className="editor" ref={sectionRef}>
       <div className="editor-tabs">
         {files.map((f) => (
           <div
@@ -353,6 +392,7 @@ export const EditorPane = memo(function EditorPane({
               reveal={f.path !== activePath}
               icon={CloseIcon}
               label={t('common.close')}
+              tip={f.path === activePath ? t('editor.tabs.closeTip') : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 close(f.path);

@@ -135,6 +135,9 @@ const api: TanacodeApi = {
     setPermission: (toolId, permission) => invoke(IpcChannel.ToolPermissionsSet, toolId, permission),
     onOpen: (listener) => subscribe(IpcChannel.McpSettingsOpen, () => listener()),
   },
+  shortcuts: {
+    onRun: (listener) => subscribe(IpcChannel.ShortcutRun, listener),
+  },
   system: {
     onStats: (listener) => subscribe(IpcChannel.SystemStats, listener),
   },

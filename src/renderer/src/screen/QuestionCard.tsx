@@ -189,6 +189,7 @@ export function QuestionCard({ sessionId, question }: Props) {
     <div
       ref={card}
       className="menu-card question"
+      data-answer-card=""
       onMouseEnter={() => {
         hovering.current = true;
       }}

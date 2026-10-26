@@ -7,6 +7,7 @@ import { MarkdownPreview } from '../../src/renderer/src/editor/MarkdownPreview';
 import { saveForLeaving, UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
+import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -354,6 +355,78 @@ describe('EditorPane（エディタ）', () => {
       expect(api.argsOf('workspace.revealFile')).toEqual([['A', 'src/app.ts']]);
       expect(alert).not.toHaveBeenCalled();
     });
+  });
+
+  it('エディタにフォーカスがあるとき、⌃Tab・⌃⇧Tab でタブを順に送る（端から反対の端へ回る）。フォーカスが外にあれば送らない', () => {
+    mockApi().install();
+    const p = props({ files: [text('src/app.ts', APP), text('README.md', README), text('src/b.ts', 'b')] });
+    render(<EditorPane {...p} />);
+    act(() => tab('src/app.ts').querySelector<HTMLElement>('button')!.focus());
+    act(() => runShortcut('nextTab'));
+    act(() => runShortcut('previousTab'));
+    expect(vi.mocked(p.onActivate).mock.calls).toEqual([['README.md'], ['src/b.ts']]);
+    act(() => (document.activeElement as HTMLElement).blur());
+    act(() => runShortcut('nextTab'));
+    expect(p.onActivate).toHaveBeenCalledTimes(2);
+  });
+
+  it('⌘W は、エディタにフォーカスがある・どの欄にもフォーカスが無いときに、今のタブを閉じる（未保存なら確かめる）。ターミナルにフォーカスがある・ブラウザを出しているときは閉じない', async () => {
+    mockApi().install();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const p = props();
+    const view = render(
+      <>
+        <EditorPane {...p} />
+        <div className="terminal-panel">
+          <button>ターミナルの中</button>
+        </div>
+      </>,
+    );
+    act(() => screen.getByText('ターミナルの中').focus());
+    act(() => runShortcut('closeTab'));
+    expect(p.onClose).not.toHaveBeenCalled();
+    act(() => tab('src/app.ts').querySelector<HTMLElement>('button')!.focus());
+    act(() => runShortcut('closeTab'));
+    expect(vi.mocked(p.onClose).mock.calls).toEqual([['src/app.ts']]);
+    act(() => (document.activeElement as HTMLElement).blur());
+    await edit(APP, 'const total = 2;\n');
+    act(() => runShortcut('closeTab'));
+    expect(confirm).toHaveBeenCalledWith('app.ts の変更を保存せずに閉じますか？');
+    expect(p.onClose).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <>
+        <EditorPane {...p} />
+        <div className="preview-pane" />
+      </>,
+    );
+    confirm.mockReturnValue(true);
+    act(() => runShortcut('closeTab'));
+    expect(p.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('⌘4 で、エディタへ。エディタを隠している（差分を見ている）ときは何もしない', () => {
+    mockApi().install();
+    const view = render(<EditorPane {...props({ activePath: 'README.md' })} />);
+    // Markdown はプレビューで出すので、欄そのものへ（移している間だけ tabindex を付ける）
+    act(() => runShortcut('focusContent'));
+    const section = document.querySelector<HTMLElement>('section.editor')!;
+    expect(document.activeElement).toBe(section);
+    act(() => section.blur());
+    expect(section.hasAttribute('tabindex')).toBe(false);
+    view.rerender(
+      <div hidden>
+        <EditorPane {...props({ activePath: 'README.md' })} />
+      </div>,
+    );
+    act(() => runShortcut('focusContent'));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('今のタブの × のツールチップに、⌘W を添える', () => {
+    mockApi().install();
+    render(<EditorPane {...props()} />);
+    expect(tab('src/app.ts').querySelector('button')!.getAttribute('data-tip')).toBe('閉じる（⌘W）');
+    expect(tab('README.md').querySelector('button')!.getAttribute('data-tip')).toBe('閉じる');
   });
 
   it('未保存の変更があるタブを閉じるときは確かめ、やめたら閉じない', async () => {

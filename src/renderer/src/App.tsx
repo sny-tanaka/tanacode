@@ -61,6 +61,7 @@ import { switchTerminalMode } from './terminal/terminalMode';
 import { PromptsDialog } from './prompts/PromptsDialog';
 import { McpSettingsDialog } from './mcp/McpSettingsDialog';
 import { PreviewPane } from './preview/PreviewPane';
+import { columnShortcut, useShortcutKeys, useShortcuts } from './layout/shortcuts';
 import { TitleBar } from './layout/TitleBar';
 import { useAppUpdate } from './layout/AppUpdate';
 import { TooltipLayer } from './layout/Tooltip';
@@ -704,14 +705,18 @@ export function App() {
     [changes, openBranchDiff, openFile],
   );
 
-  // ⌘P: ファイル名で開く / ⌘⇧F: 全文検索 / ⌃`: ターミナルの開閉
+  // メニューバーの「移動」のショートカット（layout/shortcuts.ts）。エディタ・ブラウザ・ターミナルのタブと ⌘4 は、それぞれの欄が受け持つ。
+  // ここは、ほかの欄が受けなかったもの。カラムが無い・何も無いときは何もしない（開きはしない）
+  useShortcutKeys();
+  useShortcuts((shortcut) => {
+    if (shortcut !== 'toggleTerminal') return columnShortcut(shortcut);
+    toggleShell();
+    return true;
+  });
+
+  // ⌘P: ファイル名で開く / ⌘⇧F: 全文検索
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.metaKey && e.code === 'Backquote') {
-        e.preventDefault();
-        toggleShell();
-        return;
-      }
       if (!(e.metaKey || e.ctrlKey) || !viewId) return;
       const key = e.key.toLowerCase();
       if (key === 'p' && !e.shiftKey) {

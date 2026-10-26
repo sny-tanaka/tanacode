@@ -3,6 +3,7 @@ import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserPoint, BrowserR
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
+import { focusedPane, stepIn, useShortcuts } from '../layout/shortcuts';
 import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
 import { codeBlock } from '../chat/sanitize';
 import { useOpenInBrowser } from './openInBrowser';
@@ -332,6 +333,44 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
 
   const current = () => (activeTab ? views.current.get(activeTab) : undefined);
 
+  // ショートカット（layout/shortcuts.ts）。⌘4: ブラウザを出していれば、ページへ（まだ何も開いていなければアドレス欄へ）/
+  // ⌃Tab・⌃⇧Tab: ブラウザにフォーカスがあれば、タブを順に送る / ⌘W: ブラウザにフォーカスがある（ほかの欄にも無く、ブラウザを出している）なら、今のタブを閉じる
+  const focusPage = () => {
+    const wv = current();
+    if (wv && url) wv.focus();
+    else addressRef.current?.focus();
+  };
+  const focusPageRef = useRef(focusPage);
+  focusPageRef.current = focusPage;
+  useShortcuts((shortcut) => {
+    if (!sessionId) return false;
+    const pane = focusedPane();
+    switch (shortcut) {
+      case 'focusContent':
+        if (!visible) return false;
+        focusPage();
+        return true;
+      case 'nextTab':
+      case 'previousTab': {
+        if (pane !== 'browser') return false;
+        const next = stepIn(tabsRef.current.get(sessionId) ?? [], activeTab, shortcut === 'nextTab' ? 1 : -1, true);
+        if (next && next !== activeTab) {
+          activate(sessionId, next);
+          requestAnimationFrame(() => focusPageRef.current());
+        }
+        return true;
+      }
+      case 'closeTab':
+        if (!(pane === 'browser' || (pane === null && visible))) return false;
+        if (activeTab) closeTab(sessionId, activeTab);
+        // 閉じたタブにフォーカスがあったら、移った先のタブへ（続けて ⌘W・⌃Tab を押せるように）
+        if (pane === 'browser') requestAnimationFrame(() => focusPageRef.current());
+        return true;
+      default:
+        return false;
+    }
+  });
+
   const go = (input: string) => {
     const next = normalizeUrl(input);
     if (!next || !sessionId) return;
@@ -544,7 +583,13 @@ export function TabStrip({
           >
             {tab.loading && <span className="tool-dot running" />}
             <span className="preview-tab-title">{label}</span>
-            <IconButton icon={CloseIcon} size="sm" reveal label={t('preview.tabs.close')} onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
+            <IconButton
+              icon={CloseIcon}
+              size="sm"
+              reveal
+              label={t('preview.tabs.close')}
+              tip={tab.id === active ? t('preview.tabs.closeTip') : undefined}
+              onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
           </div>
         );
       })}

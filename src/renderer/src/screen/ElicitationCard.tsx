@@ -171,7 +171,7 @@ export function ElicitationCard({ sessionId, elicitation }: Props) {
   };
 
   return (
-    <div className={`menu-card elicitation${opened ? ' opened' : ''}`}>
+    <div className={`menu-card elicitation${opened ? ' opened' : ''}`} data-answer-card="">
       <div className="menu-card-head">
         <div className="menu-card-kind">{t('screen.kind.elicitation')}</div>
         {!opened && <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('screen.elicitation.cancelTip')} disabled={sending} onClick={() => send({ kind: 'cancel' })} />}

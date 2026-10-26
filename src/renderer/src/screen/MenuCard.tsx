@@ -189,7 +189,7 @@ export function MenuCard({ sessionId, permission }: Props) {
       ];
 
   return (
-    <div className={`menu-card ${plan ? 'plan' : 'permission'}`}>
+    <div className={`menu-card ${plan ? 'plan' : 'permission'}`} data-answer-card="">
       {/* 見出しの行。断って止めるのは右上（Claude Code の画面の Esc と同じ働き）。キーの Esc には割り当てない。
           エディタ・ターミナル・入力欄の候補・ダイアログを閉じるのに押した Esc で、作業まで止めてしまうため */}
       <div className="menu-card-head">
