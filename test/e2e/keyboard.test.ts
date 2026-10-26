@@ -7,6 +7,8 @@ import { E2EApp } from './app';
 
 const PROMPT = 'キーでの操作を試してください';
 const REPLY = 'はい';
+// ツールのカードの出力欄をスクロールさせるため、Bash で長い出力を出す
+const LONG = { command: 'seq 1 120', description: '長い出力' };
 
 describe('一覧の行を、キーでもマウスでも使う', () => {
   let app: E2EApp;
@@ -25,10 +27,18 @@ describe('一覧の行を、キーでもマウスでも使う', () => {
     app = await E2EApp.launch({
       trusted: true,
       files: { 'README.md': '# shop\n', 'src/main.ts': 'export {};\n' },
-      conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: REPLY }]] }],
+      conversations: () => [
+        {
+          match: PROMPT,
+          steps: [[{ type: 'tool_use', id: 'toolu_long', name: 'Bash', input: LONG }], [{ type: 'text', text: REPLY }]],
+        },
+      ],
     });
-    await app.startSession(PROMPT);
+    // seq は読むだけのコマンドなので、許可の確認なしに動く
+    await app.startSession(PROMPT, { mode: 'manual' });
     await app.byText('.chat-list', REPLY).waitFor();
+    // 終わった操作はまとまりに畳まれるので、開いてカードを出す
+    await app.page.locator('.chat-list .tool-group-head').first().click();
   });
 
   afterEach(async ({ task }) => {
@@ -46,6 +56,56 @@ describe('一覧の行を、キーでもマウスでも使う', () => {
     await moveAway();
     expect(await display(archive)).toBe('none');
     expect(await outline(sessionRow())).toBe('none');
+  });
+
+  // 直す前: マウスで押した行にフォーカスが残り、ダイアログを閉じてフォーカスを戻すと :focus-visible になって、枠とボタンが出たままになった
+  it('マウスでセッションの行を押してから、ダイアログを開いて Esc で閉じても、枠もホバーで出るボタンも出ない', async () => {
+    await sessionRow().locator('.session-title').click();
+    await app.app.evaluate(({ Menu }) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById('mcpSettings');
+      if (!item) throw new Error('メニューに「mcpSettings」がありません');
+      item.click();
+    });
+    await app.page.locator('.mcp-settings-dialog').waitFor();
+    await app.page.keyboard.press('Escape');
+    await app.page.locator('.mcp-settings-dialog').waitFor({ state: 'detached' });
+    await moveAway();
+    expect(await display(sessionRow().locator('.icon-button.reveal'))).toBe('none');
+    expect(await outline(sessionRow())).toBe('none');
+    // 押した行にフォーカスを残さない（直す前と同じく body）
+    expect(await app.page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  });
+
+  it('ツールのカードの出力の文字は、マウスでドラッグして選べる（行からフォーカスを外しても、選んだ範囲は残る）', async () => {
+    const card = app.page.locator('.chat-list .tool-card', { hasText: '長い出力' });
+    if ((await card.locator('.tool-detail').count()) === 0) await card.locator('.tool-card-head').click();
+    const box = (await card.locator('.tool-pre').last().boundingBox())!;
+    await app.page.mouse.move(box.x + 10, box.y + 10);
+    await app.page.mouse.down();
+    await app.page.mouse.move(box.x + 60, box.y + 60, { steps: 5 });
+    await app.page.mouse.up();
+    expect((await app.page.evaluate(() => window.getSelection()?.toString() ?? '')).trim()).not.toBe('');
+  });
+
+  // 直す前: マウスで押したカードにフォーカスが残り、そのあとの Enter でカードをもう一度押した（詳細が閉じた）
+  it('マウスでツールのカードを押したあとに Enter を押しても、カードを押したことにならない', async () => {
+    const card = app.page.locator('.chat-list .tool-card', { hasText: '長い出力' });
+    await card.locator('.tool-card-head').click();
+    const shown = await card.locator('.tool-detail').count();
+    await app.page.keyboard.press('Enter');
+    await app.page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await card.locator('.tool-detail').count()).toBe(shown);
+  });
+
+  // 直す前: カードにフォーカスが残るので、出力欄を押してから送るキーを押すと、出力欄でなくチャットの一覧が動いた
+  it('ツールのカードの出力欄を押してから PageDown を押すと、出力欄が動く', async () => {
+    const card = app.page.locator('.chat-list .tool-card', { hasText: '長い出力' });
+    if ((await card.locator('.tool-detail').count()) === 0) await card.locator('.tool-card-head').click();
+    const output = card.locator('.tool-pre').last();
+    expect(await output.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    await output.click({ position: { x: 20, y: 20 } });
+    await app.page.keyboard.press('PageDown');
+    await expect.poll(() => output.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
   });
 
   it('Tab でセッションの行に入ると、枠とホバーで出るボタンが出て、行の中のボタンへ Tab で移れる', async () => {

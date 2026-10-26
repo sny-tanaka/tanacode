@@ -664,7 +664,10 @@ describe('Explorer（エクスプローラー）', () => {
       expect(p.onOpenFile).toHaveBeenCalledWith('README.md');
       fireEvent.keyDown(rowOf('src'), { key: 'Enter' });
       await screen.findByText('main.ts');
+      // Tab で行に入る
+      fireEvent.keyDown(document.body, { key: 'Tab' });
       readme.focus();
+      expect(document.activeElement).toBe(readme);
       fireEvent.keyDown(readme, { key: 'Enter', ctrlKey: true });
       expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', '名前を変更', 'ゴミ箱に入れる', 'パスをコピー', '相対パスをコピー', 'Finder で表示']);
       expect(readme.classList.contains('menu-target')).toBe(true);
@@ -687,6 +690,56 @@ describe('Explorer（エクスプローラー）', () => {
       // フォルダそのものの行でも開ける
       fireEvent.keyDown(rootRow(), { key: 'Enter', ctrlKey: true });
       expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', 'パスをコピー', 'Finder で表示']);
+    });
+
+    it('キーで開いたメニューの中では、Tab で外へ出ない（出ると Esc で行へ戻れない）', async () => {
+      setupOps();
+      render(<Explorer {...props({ fileOps: fileOps() })} />);
+      await screen.findByText('README.md');
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      rowOf('README.md').focus();
+      fireEvent.keyDown(rowOf('README.md'), { key: 'Enter', ctrlKey: true });
+      expect(fireEvent.keyDown(document.activeElement!, { key: 'Tab' })).toBe(false);
+      expect(fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true })).toBe(false);
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(document.activeElement).toBe(rowOf('README.md'));
+    });
+
+    it('右クリックで開いたままで、別の行で ⌃Enter を押すと、その行のメニューに開き直して、最初の項目にフォーカスする', async () => {
+      setupOps();
+      render(<Explorer {...props({ fileOps: fileOps() })} />);
+      fireEvent.contextMenu(await screen.findByText('README.md'));
+      expect(screen.getByRole('menu').contains(document.activeElement)).toBe(false);
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      rootRow().focus();
+      fireEvent.keyDown(rootRow(), { key: 'Enter', ctrlKey: true });
+      expect(menuLabels()).toEqual(['新規ファイル', '新規フォルダ', 'パスをコピー', 'Finder で表示']);
+      expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[0]);
+      fireEvent.keyDown(window, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[1]);
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(document.activeElement).toBe(rootRow());
+    });
+
+    it('マウスで押した行には、フォーカスを残さない（押したあとの Enter で、行をもう一度押さない）', async () => {
+      setupOps();
+      const p = props({ fileOps: fileOps() });
+      render(<Explorer {...p} />);
+      await screen.findByText('README.md');
+      // マウスで押すと、ブラウザは行（tabIndex 付き）にフォーカスを入れる。:focus-visible ではないので、離したときに外す
+      // （押している間に外すと、ドラッグで文字を選べなくなる）
+      const row = rowOf('README.md');
+      fireEvent.pointerDown(row);
+      row.focus();
+      expect(document.activeElement).toBe(row);
+      fireEvent.pointerUp(window);
+      fireEvent.click(row);
+      expect(document.activeElement).toBe(document.body);
+      // スクリプトで戻したフォーカス（ダイアログを閉じたときなど）も、キーで入ったのでなければ、すぐ外す
+      row.focus();
+      expect(document.activeElement).toBe(document.body);
+      fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+      expect(p.onOpenFile).toHaveBeenCalledTimes(1);
     });
 
     it('右クリックで開いたメニューは、項目にフォーカスを移さない', async () => {

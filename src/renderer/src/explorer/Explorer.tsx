@@ -51,6 +51,8 @@ type Props = {
 // 右クリックした行。path はツリーの行のパス（フォルダそのものの行は base）。フォルダ外で Claude が読み書きしたファイルの行は、base が READ_FILES
 // keyboard: ⌃Enter で開いたもの（最初の項目にフォーカスし、閉じたら行に戻す）
 type MenuState = { base: string; path: string; isDir: boolean; isRoot: boolean; x: number; y: number; keyboard?: boolean };
+// 開いたままのメニューを、別の行・別の開き方（右クリック・⌃Enter）で開き直したら、作り直す（キーで開いたら、項目にフォーカスを移すため）
+const menuKey = (menu: MenuState) => `${menu.keyboard ? 'key' : 'mouse'}:${menu.path}`;
 // ツリーの行の中で名前を入れているもの（新規作成は dir の中に行を足し、名前の変更は path の行で入れる）
 type EditState = { base: string; kind: 'file' | 'dir'; dir: string } | { base: string; kind: 'rename'; path: string };
 
@@ -170,6 +172,7 @@ export const Explorer = memo(function Explorer({
       {/* フォルダ外のファイルは、どのツリーにも入っていないので、相対パスは無い。書き換えもさせない */}
       {menu?.base === READ_FILES && (
         <ContextMenu
+          key={menuKey(menu)}
           x={menu.x}
           y={menu.y}
           focusFirst={menu.keyboard}
@@ -493,7 +496,7 @@ function RootTree({
         )}
       </div>
       {expanded.has(base) && renderDir(base, 1)}
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={onCloseMenu} focusFirst={menu.keyboard} />}
+      {menu && <ContextMenu key={menuKey(menu)} x={menu.x} y={menu.y} items={menuItems(menu)} onClose={onCloseMenu} focusFirst={menu.keyboard} />}
     </>
   );
 }

@@ -13,18 +13,40 @@ export function clickOnEnter(e: KeyboardEvent<HTMLElement>): boolean {
 // キーで行（か、行の中の要素）に入っている間、行に data-key-focus を付ける。ホバーで出るボタンを、キーで入ったときも出すため（global.css）。
 // :has(:focus-visible) で出すと、行の中でボタンからボタンへ Tab で移る一瞬（前のものから外れて、次に入る前）に消え、
 // 消えた（display: none の）ボタンには移れない。属性は、行の外へ出たとき・マウスで押したときに外す
-// 入力欄（セッションの名前を変える欄など）は、マウスで入っても :focus-visible になるので数えない
+// 入力欄（セッションの名前を変える欄など）は、マウスで入っても :focus-visible になるので数えない。
+// マウスで行を押して行にフォーカスが入ったとき（:focus-visible でない）は、外す。直す前（行に tabIndex が無かった）と同じく、
+// フォーカスを body に置くため。行に残すと、押したあとの Enter が行を押し、↑↓・Space が押した場所（ツールの出力欄など）でなく
+// 一覧を動かし、ダイアログを閉じてフォーカスを戻したときに枠とボタンが出る。
+// 外すのは、マウスを離したとき（ドラッグなら終わったとき）。押している間に外すと、ドラッグで文字を選べなくなる。
+// mousedown は止めない（文字の選択・カードのドラッグ・⌘⇧クリック・ダブルクリックを壊さないため）
 function keyFocus(e: FocusEvent<HTMLElement>) {
-  if (e.target.matches(':focus-visible') && !e.target.matches('input, textarea')) e.currentTarget.dataset.keyFocus = '';
-  else delete e.currentTarget.dataset.keyFocus;
+  const row = e.currentTarget;
+  if (e.target === row && !row.matches(':focus-visible')) {
+    delete row.dataset.keyFocus;
+    // 押している最中なら、離したときに外す（pointerDown で待っている）
+    if (pressed !== row) row.blur();
+    return;
+  }
+  if (e.target.matches(':focus-visible') && !e.target.matches('input, textarea')) row.dataset.keyFocus = '';
+  else delete row.dataset.keyFocus;
 }
 function keyBlur(e: FocusEvent<HTMLElement>) {
   if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) delete e.currentTarget.dataset.keyFocus;
 }
-// キーで入った行をマウスで押したときは、フォーカスが動かず枠が残るので、いったん外す（押した続きで、マウスで入り直す）
+// マウスで押している行。離したとき（ドラッグなら終わったとき）に、行にフォーカスが残っていれば外す。
+// キーで入った行を押したときも、フォーカスが動かず枠が残るので、離したときに外す
+let pressed: HTMLElement | null = null;
+const RELEASE = ['pointerup', 'pointercancel', 'dragend'] as const;
 function pointerDown(e: { currentTarget: HTMLElement }) {
-  delete e.currentTarget.dataset.keyFocus;
-  if (document.activeElement === e.currentTarget) e.currentTarget.blur();
+  const row = e.currentTarget;
+  delete row.dataset.keyFocus;
+  pressed = row;
+  const release = () => {
+    for (const type of RELEASE) window.removeEventListener(type, release, true);
+    if (pressed === row) pressed = null;
+    if (document.activeElement === row) row.blur();
+  };
+  for (const type of RELEASE) window.addEventListener(type, release, true);
 }
 
 // 一覧の行に付ける props。Tab で止まり、Enter でクリックと同じ動きをする。

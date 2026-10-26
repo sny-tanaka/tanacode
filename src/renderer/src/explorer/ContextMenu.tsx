@@ -8,7 +8,8 @@ export type ContextMenuItem = { label: string; onSelect: () => void; danger?: bo
 // 親のスクロールやはみ出しの切り取りを受けないよう、body に出す。
 // anchor は、メニューを開いたボタン。そこを押したときは外を押したことにせず、ボタンの側で閉じさせる（閉じてすぐ開き直さないように）
 // focusFirst は、キーで開いたとき。最初の項目にフォーカスし、閉じたら開く前の場所（行など）にフォーカスを戻す。
-// 中にフォーカスがあれば、↑↓ で項目を移り、Enter で実行する（項目はボタンなので、Enter はそのまま押したことになる）
+// 中にフォーカスがあれば、↑↓ で項目を移り、Enter で実行する（項目はボタンなので、Enter はそのまま押したことになる）。Tab では外へ出さない。
+// 開いたままで別の行から開き直すときは、作り直す（key を変える）こと。focusFirst は、作ったときだけ見る
 export function ContextMenu({
   x,
   y,
@@ -42,7 +43,7 @@ export function ContextMenu({
     return () => {
       // 項目を選んで、ほかの場所（名前を入れる欄など）にフォーカスが移ったときは、そちらに任せる
       const now = document.activeElement;
-      if (back?.isConnected && (!now || now === document.body || ref.current?.contains(now))) back.focus();
+      if (back?.isConnected && (!now || now === document.body || ref.current?.contains(now))) back.focus({ preventScroll: true });
     };
     // 開いたときだけ（位置が変わっても、フォーカスは動かさない）
   }, []);
@@ -54,6 +55,8 @@ export function ContextMenu({
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      // メニューの中では Tab で外へ出さない（出ると、Esc で閉じても行へ戻れない）。項目は ↑↓ で移る
+      else if (e.key === 'Tab' && ref.current?.contains(document.activeElement)) e.preventDefault();
       else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && ref.current?.contains(document.activeElement)) {
         e.preventDefault();
         const buttons = [...ref.current.querySelectorAll<HTMLElement>('button:not(:disabled)')];
