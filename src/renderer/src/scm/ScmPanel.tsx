@@ -25,6 +25,7 @@ import {
   type IconComponent,
 } from '../icons';
 import type { ScmView } from './scmView';
+import { keyRow } from '../layout/keyRow';
 
 type Props = {
   sessionId: string;
@@ -277,7 +278,7 @@ function ChangeRows<T extends { path: string }>({
     node.kind === 'file' ? (
       <Fragment key={`f:${node.path}`}>{renderFile(node.item, depth)}</Fragment>
     ) : (
-      <div key={`d:${node.path}`} className="scm-row scm-dir-row reveal-host" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} title={node.path}>
+      <div key={`d:${node.path}`} className="scm-row scm-dir-row reveal-host" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} {...keyRow} title={node.path}>
         <span className="tree-chevron">
           <DisclosureIcon open={!collapsed.has(node.path)} />
         </span>
@@ -331,7 +332,7 @@ function BranchSection({
       : t('scm.branchChanges.notInUpstream', { ref: base.ref });
   return (
     <div className="scm-section">
-      <div className="scm-section-head" onClick={() => setOpen((v) => !v)} title={from}>
+      <div className="scm-section-head" onClick={() => setOpen((v) => !v)} {...keyRow} title={from}>
         <span className="tree-chevron">
           <DisclosureIcon open={open} />
         </span>
@@ -392,6 +393,7 @@ function BranchRow({
       className={`scm-row${active ? ' active' : ''}`}
       style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
       onClick={() => onOpen(path)}
+      {...keyRow}
       title={t('scm.branchChanges.rowTitle', { path, kind: kindLabel(change.kind) })}
     >
       <span className={`scm-name${change.kind === 'deleted' ? ' deleted' : ''}`}>{path.split('/').pop()}</span>
@@ -431,7 +433,7 @@ function Section({
   if (entries.length === 0 && staged) return null;
   return (
     <div className="scm-section">
-      <div className="scm-section-head reveal-host" onClick={() => setOpen((v) => !v)}>
+      <div className="scm-section-head reveal-host" onClick={() => setOpen((v) => !v)} {...keyRow}>
         <span className="tree-chevron">
           <DisclosureIcon open={open} />
         </span>
@@ -468,6 +470,7 @@ function Section({
                 className="scm-row reveal-host"
                 style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
                 onClick={() => onOpen(entry)}
+                {...keyRow}
                 title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
               >
                 <span className="scm-name">{entry.path.split('/').pop()}</span>

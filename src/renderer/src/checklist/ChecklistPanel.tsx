@@ -7,6 +7,7 @@ import { CardCheck } from './CardCheck';
 import { CopyDialog } from './CopyDialog';
 import { ListForm } from './ListForm';
 import { applyChecklist } from './useChecklists';
+import { keyRow } from '../layout/keyRow';
 
 type Props = {
   session: SessionSummary;
@@ -169,6 +170,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
               <div
                 className={`checklist-list-head reveal-host${dropTarget === `end:${list.id}` ? ' drop' : ''}`}
                 onClick={() => toggleList(list.id)}
+                {...keyRow}
                 onDoubleClick={() => setEditing({ id: list.id, name: list.name, description: list.description, kind: kindOf(list) })}
                 onDragOver={(e) => dragOver(e, `end:${list.id}`)}
                 onDragLeave={() => setDropTarget(null)}
@@ -230,6 +232,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         onDrop={(e) => drop(e, list.id, card.id)}
                         onDragEnd={dragEnd}
                         onClick={(e) => clickCard(e, list, card)}
+                        {...keyRow}
                       >
                         {traits.checkable ? (
                           <CardCheck

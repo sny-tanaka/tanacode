@@ -5,6 +5,7 @@ import type { ChatEvent, HookRun } from '@shared/chat';
 import type { AgentLogRef } from '@shared/task';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import { TaskPane } from '../../src/renderer/src/tasks/TaskPane';
+import { TaskListPanel } from '../../src/renderer/src/tasks/TaskListPanel';
 import { TaskTray } from '../../src/renderer/src/tasks/TaskTray';
 import type { TaskEntry } from '../../src/renderer/src/tasks/taskList';
 import { WorkflowCard } from '../../src/renderer/src/workflow/WorkflowCard';
@@ -64,6 +65,24 @@ describe('TaskTray（入力欄の上のタスクの一覧）', () => {
     fireEvent.click(stopOf('npm run dev'));
     expect(onStop).toHaveBeenCalledWith(tasks[0]);
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('行は Tab で止まり、Enter で開く。止めるボタンの Enter は、行を開かない', () => {
+    const onOpen = vi.fn();
+    const onStop = vi.fn();
+    const tasks = [entry('bash', 'b1', 'npm run dev'), entry('workflow', 'w1', 'review')];
+    const view = render(<TaskTray tasks={tasks} activeKey={null} onOpen={onOpen} onStop={onStop} stopping={new Set()} />);
+    expect(row('review').tabIndex).toBe(0);
+    fireEvent.keyDown(row('review'), { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledWith(tasks[1]);
+    fireEvent.keyDown(stopOf('npm run dev'), { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // タスクの一覧（サイドパネル）のカードも同じ
+    view.rerender(<TaskListPanel tasks={tasks} activeKey={null} onOpen={onOpen} onStop={onStop} stopping={new Set()} />);
+    const card = screen.getByText('review').closest<HTMLElement>('.task-card')!;
+    expect(card.tabIndex).toBe(0);
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
   it('止めている途中のタスクは、止めるボタンを押せない', () => {
