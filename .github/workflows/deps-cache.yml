@@ -1,7 +1,8 @@
-# PR の CI（ci.yml）が使うキャッシュを、develop で作っておく。
-# PR で作ったキャッシュはその PR からしか読めず、ci.yml は develop では動かないので、ここで作らないと、どの PR もはじめの CI は作るところからになる。
+# PR の CI（ci.yml・demo-site.yml）が使うキャッシュを、develop で作っておく。
+# PR で作ったキャッシュはその PR からしか読めず、ci.yml と demo-site.yml の tour は develop では動かないので、ここで作らないと、どの PR もはじめの CI は作るところからになる。
 # - node_modules（.github/actions/npm-ci）: ubuntu（unit・storybook・build・check）と macOS（cli）
 # - 翻訳の補助プログラム（ci.yml の app）: macOS
+# - WebKit の依存の apt の .deb（demo-site.yml の tour）: ubuntu
 # 作るのは、元が変わって develop に入ったときと、週に 1 回（キャッシュは 7 日使われないと消え、ランナーのイメージも変わる。あれば戻すだけで終わる）
 name: deps-cache
 
@@ -43,3 +44,25 @@ jobs:
           key: translate-helper-${{ steps.image.outputs.version }}-${{ hashFiles('native/translate/**', 'scripts/build-translate-helper.mjs') }}
       - if: runner.os == 'macOS' && steps.helper.outputs.cache-hit != 'true'
         run: node scripts/build-translate-helper.mjs --require
+      # demo-site.yml の tour と同じキー
+      - if: runner.os == 'Linux'
+        id: webkit-apt-key
+        run: echo "key=webkit-apt-$ImageOS-$ImageVersion-playwright$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - if: runner.os == 'Linux'
+        id: webkit-apt
+        uses: actions/cache@v6
+        with:
+          path: ~/webkit-apt
+          key: ${{ steps.webkit-apt-key.outputs.key }}
+      # WebKit の依存を入れて、apt が落とした .deb を集める。前のキャッシュは戻さずに、毎回落とし直す（バージョンの古い .deb が溜まらないように）。
+      # ミラーが遅くても PR を待たせないので、打ち切りは長めにする（止まったままにはしない）
+      - if: runner.os == 'Linux' && steps.webkit-apt.outputs.cache-hit != 'true'
+        name: WebKit の依存の .deb を集める
+        timeout-minutes: 20
+        run: |
+          # apt-get は落とした .deb を残すのが既定だが、イメージの設定で消されないよう、はっきり残させる
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAPT::Keep-Downloaded-Packages "true";\n' | sudo tee /etc/apt/apt.conf.d/80-tanacode-retries
+          sudo env "PATH=$PATH" npx playwright install-deps webkit
+          mkdir -p ~/webkit-apt
+          cp /var/cache/apt/archives/*.deb ~/webkit-apt/
+          echo "$(ls ~/webkit-apt/*.deb | wc -l) 個（$(du -sh ~/webkit-apt | cut -f1)）"

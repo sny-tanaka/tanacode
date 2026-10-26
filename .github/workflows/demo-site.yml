@@ -82,6 +82,32 @@ jobs:
       - run: printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/80-tanacode-retries
       # 画面の外で描いても、Linux では X のディスプレイが要る（下で WebKit を入れるのと apt がぶつからないよう、先に済ませる）
       - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
+      # WebKit の依存（apt の .deb。185 個・140MB ほど）は、deps-cache.yml が develop で取り込んでおいたものをキャッシュから戻し、
+      # apt のキャッシュ（/var/cache/apt/archives）に置いて、ミラーから落とさずに入れる。ランナーのミラーが極端に遅いことがあり
+      # （数十 KB に数秒〜十数秒。#350・#352 の PR）、落とすと 4 分の打ち切りに 2 回とも当たって落ちたため。
+      # キーは deps-cache.yml と同じ（ランナーのイメージ・Playwright のバージョンで要るものが変わる）。PR で作ったキャッシュはその PR からしか
+      # 読めないので、ここでは戻すだけにする。イメージが変わってまだ作られていないときは、前のイメージのものを戻す（バージョンが同じ .deb は、そのまま使われる。
+      # 違うものだけミラーから落とす）
+      - id: webkit-apt-key
+        run: |
+          echo "image=webkit-apt-$ImageOS-" >> "$GITHUB_OUTPUT"
+          echo "key=webkit-apt-$ImageOS-$ImageVersion-playwright$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: webkit-apt
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/webkit-apt
+          key: ${{ steps.webkit-apt-key.outputs.key }}
+          restore-keys: ${{ steps.webkit-apt-key.outputs.image }}
+      - name: WebKit の依存の .deb を apt のキャッシュに置く
+        env:
+          MATCHED: ${{ steps.webkit-apt.outputs.cache-matched-key }}
+        run: |
+          if ! ls ~/webkit-apt/*.deb > /dev/null 2>&1; then
+            echo "::warning::WebKit の依存の .deb のキャッシュがありません。ミラーから落とします（deps-cache.yml が develop で作ります）"
+            exit 0
+          fi
+          sudo cp ~/webkit-apt/*.deb /var/cache/apt/archives/
+          echo "$(ls ~/webkit-apt/*.deb | wc -l) 個を置きました（キャッシュ: $MATCHED）"
       # スマホのツアーで使う WebKit は、ビルドと関わりが無いので、ビルドと並べて入れる
       - name: デモのサイトを待ち時間 0 でビルドする（あわせて WebKit を入れる）
         env:
@@ -91,7 +117,8 @@ jobs:
         # 下の打ち切りが効かなかったときも、既定の 30 分（ジョブの上限）まで待たない。ふつうは 1 分ほど
         timeout-minutes: 12
         run: |
-          # 入れるのが止まったまま（ダウンロード・apt の待ち）だと何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す。
+          # 入れるのが止まったまま（ダウンロード・apt の待ち）だと何時間も待つので、1 回を 4 分で打ち切って、2 回まで入れ直す
+          # （apt の .deb は上でキャッシュから置いてあるので、ミラーから落とすのは、キャッシュに無いもの・バージョンの違うものだけ）。
           # apt の 30 秒の打ち切り（上）でも、取り直しのまま 10 分止まったことがある（2.1.309 の PR。ミラーの取り込みの途中）。
           # 止まり続けたのか、少しずつ届いていたのかを見分けられるよう、出力の各行に時刻を付けて、ファイルに溜めずにステップのログへそのまま出す
           # （取り消されたときも、そこまでが残る。デモのビルドの出力と混ざるので、[WebKit] を付ける）
