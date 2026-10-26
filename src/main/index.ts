@@ -5,9 +5,10 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
+import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
 import { instructionDirs, instructionFiles } from './project-instructions';
 import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
@@ -349,7 +350,20 @@ function setupAppContents(contents: WebContents, id: string): void {
     if (!/^https?:\/\//.test(params.src) && params.src !== 'about:blank') event.preventDefault();
   });
   // ページが新しいウインドウで開くもの（新しいタブ・ポップアップの別ウインドウ）の扱いは、browser-windows.ts
-  contents.on('did-attach-webview', (_e, guest) => previewWindows.attach(guest, opened.get(id)?.browser));
+  contents.on('did-attach-webview', (_e, guest) => {
+    previewWindows.attach(guest, opened.get(id)?.browser);
+    // ページにフォーカスがあっても、「移動」のショートカットを効かせる。ページより先に受ける（ページがキーを使うと、メニューまで届かないため）。
+    // アプリの画面で押したキーは、画面が自分で受ける（renderer の layout/shortcuts.ts）
+    guest.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const shortcut = matchShortcut({ code: input.code, key: input.key, meta: input.meta, ctrl: input.control, shift: input.shift, alt: input.alt });
+      if (!shortcut) return;
+      event.preventDefault();
+      // 押し続けたとき、くり返さないもの（開け閉め・タブを閉じるなど）は、はじめの 1 回だけ（画面で押したときと同じ）
+      if (input.isAutoRepeat && !REPEATING.has(shortcut)) return;
+      sendTo(id)(IpcChannel.ShortcutRun, shortcut);
+    });
+  });
 }
 
 // 足したプロファイルの画面を作って、ウインドウに重ねる（見ているプロファイルのものだけを出す）
@@ -1067,8 +1081,6 @@ function buildMenu(): void {
             },
           },
           { type: 'separator' },
-          { role: 'close' },
-          { type: 'separator' },
           {
             // 確認を出さずに止める（ふだんの終了は、動いている Claude Code があれば止めるか確認する）
             id: 'stopAndQuit',
@@ -1079,10 +1091,51 @@ function buildMenu(): void {
       },
       { role: 'editMenu' },
       { role: 'viewMenu' },
+      {
+        // キーボードで動くためのショートカット。キーは右に出る（macOS）。⌘W はタブを閉じる（ウインドウを閉じる「閉じる」は置かない。
+        // 置くと、メインのウインドウで ⌘W を押したときにアプリが終わるため。バツボタンで閉じたときは今までどおり終える）
+        id: 'go',
+        label: t('main.menu.go'),
+        submenu: GO_MENU.flatMap((group, i): MenuItemConstructorOptions[] => [
+          ...(i > 0 ? [{ type: 'separator' as const }] : []),
+          ...group.map((id): MenuItemConstructorOptions => ({
+            id: `shortcut-${id}`,
+            label: t(`main.menu.shortcuts.${id}`),
+            accelerator: SHORTCUTS.find((s) => s.id === id)!.accelerator,
+            click: (_item, _window, event) => runGoMenu(id, event.triggeredByAccelerator === true),
+          })),
+        ]),
+      },
       { role: 'windowMenu' },
     ]),
   );
 }
+
+// 「移動」のメニューを押した（triggeredByAccelerator: キーで押した）。
+// - メインのウインドウで押したキーは、アプリの画面（画面が自分で受ける）かアプリ内ブラウザのページ（before-input-event）が受けている。
+//   ここでも知らせると、メニューまで回ってきたときに二重に動く（⌘J の開け閉めが戻るなど）ので、何もしない
+// - ほかのウインドウ（アプリ内ブラウザのポップアップ・About のパネル・切り離した DevTools）で押した ⌘W は、そのウインドウを閉じる
+//   （前の「閉じる」と同じ。About のパネルと DevTools は BrowserWindow ではないので、macOS の閉じる操作を送る）
+// - ほかは、ほかのメニューの項目と同じく、メインのウインドウを前に出してから画面に知らせる
+function runGoMenu(id: Shortcut, byKey: boolean): void {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (byKey && focused && focused === mainWindow) return;
+  if (byKey && id === 'closeTab') {
+    Menu.sendActionToFirstResponder('performClose:');
+    return;
+  }
+  showWindow();
+  sendTo(activeId)(IpcChannel.ShortcutRun, id);
+}
+
+// 「移動」のメニューの並び（区切りごと）
+const GO_MENU: Shortcut[][] = [
+  ['focusSessions', 'focusChat', 'focusSide', 'focusContent'],
+  ['previousSession', 'nextSession'],
+  ['nextTab', 'previousTab', 'closeTab'],
+  ['toggleTerminal'],
+  ['focusQuestion'],
+];
 
 // メニューの「新しいバージョンが出たら通知する」。オフにしたら、GitHub への問い合わせをやめて、タイトルバーの印も消す。
 // 保存できなかったら、チェックを元に戻す

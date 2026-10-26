@@ -16,6 +16,7 @@ import {
   fakeEvent,
   type Fake,
   FakeWebContents,
+  FakeWindow,
   invoke,
   mainWindow,
   manager,
@@ -1052,6 +1053,35 @@ describe('ウインドウ', () => {
     expect(state.shell.openExternal.mock.calls).toEqual([['https://example.test/outside'], ['http://localhost:8080/']]);
   });
 
+  it('webview のページにフォーカスがあっても、「移動」のショートカットを効かせる（ページに渡さず、画面に知らせる）。ほかのキーはページに渡す', async () => {
+    await boot();
+    const guest = new FakeWebContents();
+    mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
+    const press = (input: Partial<Electron.Input>) => {
+      const event = fakeEvent();
+      guest.emit('before-input-event', event, { type: 'keyDown', key: '', code: '', meta: false, control: false, shift: false, alt: false, ...input });
+      return event.preventDefault.mock.calls.length > 0;
+    };
+    expect(press({ key: 'w', code: 'KeyW', meta: true })).toBe(true);
+    expect(press({ key: 'Tab', code: 'Tab', control: true, shift: true })).toBe(true);
+    expect(press({ key: '1', code: 'Digit1', meta: true })).toBe(true);
+    // 離したキー・ショートカットでないキー（⌘C・⌥ を足したもの・修飾キーの無い Tab）は、ページのもの
+    expect(press({ type: 'keyUp', key: 'w', code: 'KeyW', meta: true })).toBe(false);
+    expect(press({ key: 'c', code: 'KeyC', meta: true })).toBe(false);
+    expect(press({ key: 'w', code: 'KeyW', meta: true, alt: true })).toBe(false);
+    expect(press({ key: 'Tab', code: 'Tab' })).toBe(false);
+    // 押し続けたとき: タブの送りはくり返し、タブを閉じる・フォーカスの移動はくり返さない（ページにも渡さない）
+    expect(press({ key: 'Tab', code: 'Tab', control: true, isAutoRepeat: true })).toBe(true);
+    expect(press({ key: 'w', code: 'KeyW', meta: true, isAutoRepeat: true })).toBe(true);
+    expect(press({ key: 'j', code: 'KeyJ', meta: true, isAutoRepeat: true })).toBe(true);
+    expect(mainWindow().webContents.sent).toEqual([
+      [IpcChannel.ShortcutRun, 'closeTab'],
+      [IpcChannel.ShortcutRun, 'previousTab'],
+      [IpcChannel.ShortcutRun, 'focusSessions'],
+      [IpcChannel.ShortcutRun, 'nextTab'],
+    ]);
+  });
+
   it('webview のページが開くポップアップ（new-window）は、アプリ内ブラウザの外の別ウインドウで開く（window.opener をつなぐ）。http(s) でないものは開かない', async () => {
     await boot();
     const guest = new FakeWebContents();
@@ -1238,9 +1268,72 @@ describe('メニュー', () => {
     const checks = appMenu.submenu!.filter((i) => i.type === 'checkbox');
     expect(Object.fromEntries(checks.map((i) => [i.id, i.checked]))).toEqual({ notifyUpdates: false, updateOnQuit: true, usageLimitResume: false });
     expect(fileMenu.id).toBe('file');
-    expect(shape(fileMenu.submenu!)).toEqual(['newSession', 'separator', 'close', 'separator', 'stopAndQuit']);
+    // ウインドウを閉じる「閉じる」（⌘W）は置かない。⌘W は「移動」の「タブを閉じる」にして、アプリを終えない
+    expect(shape(fileMenu.submenu!)).toEqual(['newSession', 'separator', 'stopAndQuit']);
     expect(menuItem('newSession').accelerator).toBe('CmdOrCtrl+N');
-    expect(rest.map((i) => i.role)).toEqual(['editMenu', 'viewMenu', 'windowMenu']);
+    expect(rest.map((i) => i.role ?? i.id)).toEqual(['editMenu', 'viewMenu', 'go', 'windowMenu']);
+  });
+
+  it('「移動」: ショートカットを区切りごとに並べ、キーを右に出す。押したら、見ているプロファイルの画面に知らせる', async () => {
+    await boot();
+    const go = state.menu!.find((i) => i.id === 'go')!;
+    expect(go.label).toBe('移動');
+    expect(go.submenu!.map((i) => (i.type === 'separator' ? '---' : `${i.label} ${i.accelerator}`))).toEqual([
+      'セッション一覧 Cmd+1',
+      'チャット Cmd+2',
+      'サイドパネル Cmd+3',
+      'エディタ・ブラウザ Cmd+4',
+      '---',
+      '前のセッション Ctrl+Cmd+Up',
+      '次のセッション Ctrl+Cmd+Down',
+      '---',
+      '次のタブ Ctrl+Tab',
+      '前のタブ Ctrl+Shift+Tab',
+      'タブを閉じる Cmd+W',
+      '---',
+      'ターミナルを開く・閉じる Cmd+J',
+      '---',
+      '待っている質問・許可 Cmd+Shift+A',
+    ]);
+    // どのメニューにも、ウインドウを閉じる役割（⌘W でアプリが終わる）を置かない
+    const roles = (items: MenuItem[]): string[] => items.flatMap((i) => [i.role ?? '', ...roles(i.submenu ?? [])]);
+    expect(roles(state.menu!)).not.toContain('close');
+    const click = (id: string, triggeredByAccelerator: boolean) =>
+      (menuItem(id).click as unknown as (item: unknown, window: unknown, event: { triggeredByAccelerator: boolean }) => void)({}, undefined, { triggeredByAccelerator });
+    // マウスで押したら、ほかのメニューの項目と同じく、メインのウインドウを前に出してから知らせる
+    click('shortcut-closeTab', false);
+    click('shortcut-focusQuestion', false);
+    expect(mainWindow().show).toHaveBeenCalledTimes(2);
+    // メインのウインドウでキーで押したものは、画面（か before-input-event）が受けているので、二重に知らせない。⌘W でもウインドウを閉じない
+    mainWindow().focused = true;
+    click('shortcut-toggleTerminal', true);
+    click('shortcut-closeTab', true);
+    expect(state.firstResponderActions).toEqual([]);
+    expect(mainWindow().webContents.sent).toEqual([
+      [IpcChannel.ShortcutRun, 'closeTab'],
+      [IpcChannel.ShortcutRun, 'focusQuestion'],
+    ]);
+  });
+
+  // 直す前（ファイルのメニューの「閉じる」を外しただけ）: ポップアップ・About のパネル・切り離した DevTools が、⌘W で閉じなくなっていた
+  it('「移動」: メインでないウインドウ（ポップアップ・About のパネル・切り離した DevTools）で押した ⌘W は、そのウインドウを閉じる。ほかのキーは、メインのウインドウを前に出して知らせる', async () => {
+    await boot();
+    const main = mainWindow();
+    const click = (id: string) =>
+      (menuItem(id).click as unknown as (item: unknown, window: unknown, event: { triggeredByAccelerator: boolean }) => void)({}, undefined, { triggeredByAccelerator: true });
+    // About のパネル・DevTools（BrowserWindow ではない）にフォーカスがある
+    click('shortcut-closeTab');
+    expect(state.firstResponderActions).toEqual(['performClose:']);
+    // アプリ内ブラウザのポップアップ（メインでない BrowserWindow）
+    const popup = new FakeWindow({});
+    popup.focused = true;
+    click('shortcut-closeTab');
+    expect(state.firstResponderActions).toEqual(['performClose:', 'performClose:']);
+    expect(state.quit).not.toHaveBeenCalled();
+    click('shortcut-focusSessions');
+    expect(main.show).toHaveBeenCalledTimes(1);
+    expect(main.webContents.sent).toEqual([[IpcChannel.ShortcutRun, 'focusSessions']]);
+    expect(popup.webContents.sent).toEqual([]);
   });
 
   it('「自動で最適化圧縮する大きさ」「離席モードで答えを待つ時間」: 選んだものを設定に保存し、チェックを移す', async () => {

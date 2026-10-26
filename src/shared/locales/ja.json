@@ -59,7 +59,21 @@
       "prompts": "Claude に送る文…",
       "file": "ファイル",
       "newSession": "新規セッション",
-      "stopAndQuit": "Claude Code も止めて終了"
+      "stopAndQuit": "Claude Code も止めて終了",
+      "go": "移動",
+      "shortcuts": {
+        "focusSessions": "セッション一覧",
+        "focusChat": "チャット",
+        "focusSide": "サイドパネル",
+        "focusContent": "エディタ・ブラウザ",
+        "previousSession": "前のセッション",
+        "nextSession": "次のセッション",
+        "nextTab": "次のタブ",
+        "previousTab": "前のタブ",
+        "closeTab": "タブを閉じる",
+        "toggleTerminal": "ターミナルを開く・閉じる",
+        "focusQuestion": "待っている質問・許可"
+      }
     },
     "notification": {
       "browserAsk": "ブラウザでの操作の依頼: {message}",
@@ -1249,7 +1263,7 @@
       "contextTitle": "コンテキスト（今の会話に入っているものと大きさ）",
       "browserTip": "ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます",
       "browser": "ブラウザ",
-      "terminalTip": "ターミナルを開く・閉じる（⌃`）",
+      "terminalTip": "ターミナルを開く・閉じる（⌘J）",
       "terminal": "ターミナル",
       "tasksEmpty": "セッションで実行したバックグラウンドタスクが表示されます",
       "checklistEmpty": "セッションのチェックリストが表示されます",
@@ -1670,7 +1684,8 @@
     "tabs": {
       "closeConfirm": "{name} の変更を保存せずに閉じますか？",
       "unsaved": "未保存の変更があります（⌘S で保存）",
-      "changedInBranch": "このブランチで変わったファイル"
+      "changedInBranch": "このブランチで変わったファイル",
+      "closeTip": "閉じる（⌘W）"
     },
     "conflict": {
       "message": "未保存の変更があるうちに、ディスク上のファイルが変更されました",
@@ -1788,7 +1803,7 @@
       "sendToClaude": "Claude へ送る",
       "sendToClaudeTip": "Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る（ターミナルモードでは、Claude Code の入力欄に）",
       "close": "パネルを閉じる",
-      "closeTip": "パネルを閉じる（⌃`）"
+      "closeTip": "パネルを閉じる（⌘J）"
     },
     "tabs": {
       "close": "このターミナルを閉じる",
@@ -1844,7 +1859,8 @@
       "label": "ブラウザのタブ",
       "untitled": "新しいタブ",
       "close": "タブを閉じる",
-      "new": "新しいタブ"
+      "new": "新しいタブ",
+      "closeTip": "タブを閉じる（⌘W）"
     },
     "claude": {
       "operating": "Claude が操作中"

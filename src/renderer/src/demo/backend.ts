@@ -506,6 +506,9 @@ export class DemoBackend {
         setParentAskRules: (on) => ok(on),
         onOpen: () => () => {},
       },
+      shortcuts: {
+        onRun: () => () => {},
+      },
       system: {
         onStats: (l) => {
           const tick = () =>

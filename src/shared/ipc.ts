@@ -8,6 +8,7 @@ import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
 import type { ModelCatalog, SessionModel } from './models';
 import type { SettingsFile } from './settings-file';
+import type { Shortcut } from './shortcuts';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
@@ -194,6 +195,7 @@ export const IpcChannel = {
   ToolPermissionsSet: 'tool-permissions:set',
   ParentAskRulesSet: 'mcp-settings:set-parent-ask-rules',
   McpSettingsOpen: 'mcp-settings:open',
+  ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -714,6 +716,11 @@ export type TanacodeApi = {
     setParentAskRules(on: boolean): Promise<boolean>;
     onOpen(listener: () => void): () => void;
   };
+  // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
+  // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
+  shortcuts: {
+    onRun(listener: (shortcut: Shortcut) => void): () => void;
+  };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
   prefs: {
     // 起動したときにそろえる。この画面が持っている値を渡し、main がまだ覚えていないものはそれを採って、そろえた値を返す
@@ -1180,6 +1187,7 @@ export type IpcEvent = {
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
   [IpcChannel.PromptsOpen]: undefined;
   [IpcChannel.McpSettingsOpen]: undefined;
+  [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };
