@@ -9,6 +9,7 @@ import { insertIntoChat } from '../chat/insertInput';
 import { openInBrowser } from '../preview/openInBrowser';
 import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { Busy } from '../layout/Busy';
+import { focusedPane, stepIn, useShortcuts } from '../layout/shortcuts';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { useRunInTerminal } from './runInTerminal';
@@ -356,6 +357,17 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     x.term.focus();
     setHasSelection(x.term.hasSelection());
   }, [open, activeShell, height]);
+
+  // ショートカット（layout/shortcuts.ts）。ターミナルにフォーカスがあるとき、⌃Tab・⌃⇧Tab でタブを順に送る
+  // （選んだシェルには、上で xterm にフォーカスを移す）。⌘W では、ターミナルのタブを閉じない（エディタ・ブラウザのタブも閉じない）
+  useShortcuts((shortcut) => {
+    if (focusedPane() !== 'terminal' || !sessionId) return false;
+    if (shortcut === 'closeTab') return true;
+    if (shortcut !== 'nextTab' && shortcut !== 'previousTab') return false;
+    const next = stepIn(tabs, activeShell, shortcut === 'nextTab' ? 1 : -1, true);
+    if (next && next !== activeShell) setActive((prev) => ({ ...prev, [sessionId]: next.id }));
+    return true;
+  });
 
   const sendSelection = () => {
     const x = activeShell && xterms.current.get(activeShell.id);

@@ -1,7 +1,9 @@
+import type { ReactNode } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { PendingQuestion } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import { mockApi } from '../../../../.storybook/mockApi';
+import { columnShortcut, useShortcutKeys, useShortcuts } from '../layout/shortcuts';
 import { QuestionCard } from './QuestionCard';
 
 // Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。カードの形は、プレビューの有無で変わらない。
@@ -112,4 +114,20 @@ export const 右に場所が無いとき: Story = { args: { question: pending(bi
 // 送ろうとしたときに、もう答えられなかった（人がターミナルで答えた・Claude Code が先へ進んだ）
 export const 答えられなかったとき: Story = {
   beforeEach: () => mockApi({ 'question.reply': () => Promise.resolve(false) }),
+};
+
+// キーボードで答える。⌘⇧A でカードに入ると、枠が付き、選択肢の頭に番号が出る。数字でその選択肢へ移り、Enter で答える。
+// マウスで使うときは、番号は出ない（ほかのストーリーと同じ見た目）
+function WithShortcutKeys({ children }: { children: ReactNode }) {
+  useShortcutKeys();
+  useShortcuts(columnShortcut);
+  return (
+    <div className="main">
+      <section className="claude">{children}</section>
+    </div>
+  );
+}
+export const キーボードで答える: Story = {
+  args: { question: pending(languages) },
+  decorators: [(Story) => <WithShortcutKeys>{Story()}</WithShortcutKeys>],
 };

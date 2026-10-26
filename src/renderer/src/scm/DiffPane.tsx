@@ -6,6 +6,7 @@ import { shownStep } from '@shared/walkthrough';
 import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
 import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
 import { ArrowDownIcon, ArrowUpIcon, CloseIcon, ColumnsIcon, FileIcon, IconButton, RowsIcon } from '../icons';
+import { isHidden, useShortcuts } from '../layout/shortcuts';
 
 type Props = {
   path: string;
@@ -66,6 +67,14 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
   useEffect(() => {
     editorRef.current?.updateOptions({ renderSideBySide: !inline });
   }, [inline]);
+
+  // ⌘4（layout/shortcuts.ts）: 差分を出していれば、変更後の側へ
+  useShortcuts((shortcut) => {
+    const container = containerRef.current;
+    if (shortcut !== 'focusContent' || !container || isHidden(container)) return false;
+    editorRef.current?.getModifiedEditor().focus();
+    return true;
+  });
 
   useEffect(() => {
     let cancelled = false;

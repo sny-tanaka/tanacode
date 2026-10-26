@@ -1,4 +1,5 @@
 import type { FocusEvent, KeyboardEvent } from 'react';
+import { movingByKey } from './shortcuts';
 
 // 一覧の行（クリックで動く div）の Enter を、クリックと同じ動きにする。
 // 行の中のボタン・入力欄で押した Enter は、それぞれのものなので、行の Enter にしない。修飾キー付き（⌃Enter など）も、行ごとの別の操作に残す
@@ -19,8 +20,13 @@ export function clickOnEnter(e: KeyboardEvent<HTMLElement>): boolean {
 // 一覧を動かし、ダイアログを閉じてフォーカスを戻したときに枠とボタンが出る。
 // 外すのは、マウスを離したとき（ドラッグなら終わったとき）。押している間に外すと、ドラッグで文字を選べなくなる。
 // mousedown は止めない（文字の選択・カードのドラッグ・⌘⇧クリック・ダブルクリックを壊さないため）
+// ショートカット（⌘1 など）で行へ移したときも、キーで入ったと見る（アプリ内ブラウザのページで押したときは、:focus-visible にならないため）
 function keyFocus(e: FocusEvent<HTMLElement>) {
   const row = e.currentTarget;
+  if (e.target === row && movingByKey(row)) {
+    row.dataset.keyFocus = '';
+    return;
+  }
   if (e.target === row && !row.matches(':focus-visible')) {
     delete row.dataset.keyFocus;
     // 押している最中なら、離したときに外す（pointerDown で待っている）

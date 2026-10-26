@@ -1728,7 +1728,18 @@ body.resizing-rows {
 [data-key-row]:focus {
   outline: none;
 }
-[data-key-row]:focus-visible {
+[data-key-row]:focus-visible,
+[data-key-row][data-key-focus]:focus {
+  outline: 2px solid var(--ide);
+  outline-offset: -2px;
+}
+/* ショートカット（⌘4・⌘⇧A。layout/shortcuts.ts の focusByKey）で、移している間だけフォーカスできるようにした欄（エディタ・質問のカード）。
+   [data-key-focus] は、アプリ内ブラウザのページでキーを押した・メニューを押したとき（:focus-visible にならない）の代わり */
+[data-key-tabindex]:focus {
+  outline: none;
+}
+[data-key-tabindex]:focus-visible,
+[data-key-tabindex][data-key-focus]:focus {
   outline: 2px solid var(--ide);
   outline-offset: -2px;
 }
@@ -4288,6 +4299,16 @@ details[open] > summary > .disclosure {
 /* プレビューを出している選択肢 */
 .menu-option.previewed {
   border-color: var(--border-focus);
+}
+/* 質問・許可のカードにキーで入っている間（⌘⇧A・Tab でカードに入った・数字で選択肢に移った）だけ、選択肢の頭に 1〜9 の番号を出す。
+   番号は layout/shortcuts.ts が選択肢に付ける（data-key-number。数字のキーと同じ数え方）。マウスで選択肢・入力欄を押したときは付けない
+   （:focus-visible で出すと、押したあとにキーを押したときに Chromium が :focus-visible に変え、入力欄はマウスで押しても :focus-visible になり、番号が出てしまう） */
+.menu-option[data-key-number]::before {
+  content: attr(data-key-number);
+  flex: none;
+  min-width: 1ch;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 /* 選択肢のプレビューのポップアップ（QuestionCard の PreviewPopup）。カードの上（入りきらなければ下）に、画面に重ねて出す。
    位置・最小の幅（カードの幅）・高さの上限は、画面の部品が決める。カードの側の透明な余白で、カードとすき間なくつなぐ

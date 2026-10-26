@@ -505,6 +505,9 @@ export class DemoBackend {
         setPermission: () => ok({}),
         onOpen: () => () => {},
       },
+      shortcuts: {
+        onRun: () => () => {},
+      },
       system: {
         onStats: (l) => {
           const tick = () =>
