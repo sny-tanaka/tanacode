@@ -793,6 +793,7 @@ describe('待っている要求の知らせ', () => {
       plan: null,
       agent: null,
       humanOnly: null,
+      askRule: null,
     });
     expect(app.permissionLog.at(-1)).toEqual({ id, permission });
     // 知らない要求・質問の返事では答えない
