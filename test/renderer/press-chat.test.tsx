@@ -14,6 +14,7 @@ import { resetBlockTranslation } from '../../src/renderer/src/translate/BlockTra
 import { useOpenWalkthroughTarget } from '../../src/renderer/src/walkthrough/openWalkthrough';
 import type { WalkthroughToolTarget } from '@shared/walkthrough-tools';
 import './dom';
+import { key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 
 // チャットの行（発言・応答・思考・知らせ・ツールのカード・hooks・Todo）のボタンを押して、押した先に効くかを確かめる。
@@ -315,6 +316,8 @@ describe('ツールのカード（ToolCard）', () => {
     const onOpenFile = vi.fn();
     const { container } = render(<ToolCard {...toolProps(tool({ name: 'Edit', target: 'a.ts', filePath: '/w/a.ts', line: 4 }), { onOpenFile })} />);
     const card = container.querySelector<HTMLElement>('.tool-card')!;
+    // 一覧（チャット）に入っていないカードは、それぞれで Tab で止まる
+    pressTab();
     expect(card.tabIndex).toBe(0);
     fireEvent.keyDown(card, { key: 'Enter' });
     expect(onOpenFile).toHaveBeenCalledWith('/w/a.ts', 4);

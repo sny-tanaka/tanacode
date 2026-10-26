@@ -4,7 +4,7 @@ import { formatDuration } from '../workflow/WorkflowCard';
 import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
 import { IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
-import { keyRow } from '../layout/keyRow';
+import { keyList, keyRow } from '../layout/keyRow';
 
 type Props = {
   tasks: TaskEntry[];
@@ -34,7 +34,7 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
   const card = (task: TaskEntry) => {
     const ms = elapsed(task, now);
     return (
-      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} {...keyRow} title={t('tasks.list.openTip')}>
+      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} {...keyRow} data-key-id={task.key} title={t('tasks.list.openTip')}>
         <div className="task-card-head">
           <StatusDot state={task.state === 'running' ? 'running' : task.state === 'done' ? 'done' : 'error'} />
           <span className="task-kind">{t(`tasks.kind.${task.ref.kind}`)}</span>
@@ -63,7 +63,7 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
     );
   };
   return (
-    <div className="task-list" ref={listRef}>
+    <div className="task-list" ref={listRef} {...keyList()}>
       <div className="task-list-group">
         <div className="task-list-head">
           {t('tasks.list.running')} <span className="scm-count">{running.length}</span>

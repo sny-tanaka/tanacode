@@ -50,12 +50,18 @@ import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
+import { keyList } from '../layout/keyRow';
 
+// チャットの一覧のツールのカードを、キーで動かす（layout/keyRow.ts。Tab で入るのは、新しい方の端のカード）
+const chatKeys = keyList('last');
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
 const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
 const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
 // 押して離す間、画面の上の位置を保つ要素（押すと click で動くもの。カードの選択肢はどれも button）
 const PRESSABLE = 'button, a[href], [role="button"], summary, label';
+// スクロールの位置がこれより上へ動いたら、上へ動いたと見る（端数の揺れは数えない）。1 にすると、画素密度 1 の画面では、上へ送るキー（↑ など）の
+// なめらかなスクロールが 1px ずつ動く間、上へ動いたと見ずに最下部へ送り戻し続け、1 秒ほど動かなかった
+const UP_SLOP_PX = 0.5;
 // 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
 const PRESS_SLOP_PX = 4;
 
@@ -195,6 +201,10 @@ export const ClaudePane = memo(function ClaudePane({
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
+  // 上へ送るキーを押してから、そのスクロールが動き出すまで。その間に届いた scrollend は、押す前のスクロール（最下部への送り直しなど）の
+  // ものなので、userScrollingUp を下ろさない。下ろすと、キーのなめらかなスクロールの最初の動きを最下部へ送り戻し、その送り戻しの
+  // scrollend がまた下ろす、をくり返して、スクロールが終わるまで（1 秒ほど）一覧が動かなかった
+  const upKeyPending = useRef(false);
   // Tab（Shift+Tab）を押している間（押してから離すまで）。フォーカスを移した先を見せるために、ブラウザが一覧を動かすことがある
   const tabbing = useRef(false);
   // 一覧の中の押せる要素を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
@@ -216,7 +226,7 @@ export const ClaudePane = memo(function ClaudePane({
       keepPressed(list);
       return;
     }
-    if (userScrollingUp.current && list.scrollTop < lastScrollTop.current - 1) {
+    if (userScrollingUp.current && list.scrollTop < lastScrollTop.current - UP_SLOP_PX) {
       lastScrollTop.current = list.scrollTop;
       updateBottom(list);
       return;
@@ -329,8 +339,8 @@ export const ClaudePane = memo(function ClaudePane({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Tab') tabbing.current = true;
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
-      if (SCROLL_UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) userScrollingUp.current = true;
-      else if (SCROLL_DOWN_KEYS.has(e.key) || e.key === ' ') userScrollingUp.current = false;
+      if (SCROLL_UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) userScrollingUp.current = upKeyPending.current = true;
+      else if (SCROLL_DOWN_KEYS.has(e.key) || e.key === ' ') userScrollingUp.current = upKeyPending.current = false;
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Tab') tabbing.current = false;
@@ -885,8 +895,9 @@ export const ClaudePane = memo(function ClaudePane({
               keepPressed(el);
               return;
             }
-            const movedUp = el.scrollTop < lastScrollTop.current - 1;
+            const movedUp = el.scrollTop < lastScrollTop.current - UP_SLOP_PX;
             lastScrollTop.current = el.scrollTop;
+            if (movedUp) upKeyPending.current = false;
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
             if (jumping.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 40) return;
             jumping.current = false;
@@ -901,11 +912,14 @@ export const ClaudePane = memo(function ClaudePane({
           }}
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
+            upKeyPending.current = false;
           }}
+          {...chatKeys}
           onFocus={(e) => {
+            chatKeys.onFocus(e);
             // Tab で一覧の中の要素へフォーカスを移すと、ブラウザは focusin より先に、その要素が見えるよう一覧を動かす。上へ動いていれば、
             // 人が上へスクロールしたものとして扱う（最下部へ送り直すと、フォーカスした要素が見えなくなる）。アプリが動かしたフォーカスは数えない
-            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - 1) userScrollingUp.current = true;
+            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - UP_SLOP_PX) userScrollingUp.current = true;
           }}
           onPointerDown={(e) => {
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない
@@ -918,7 +932,7 @@ export const ClaudePane = memo(function ClaudePane({
             }
           }}
           onScrollEnd={(e) => {
-            userScrollingUp.current = false;
+            if (!upKeyPending.current) userScrollingUp.current = false;
             // 送っている途中に上へスクロールして止めたときは、止まった位置で読み直す
             if (!jumping.current) return;
             jumping.current = false;

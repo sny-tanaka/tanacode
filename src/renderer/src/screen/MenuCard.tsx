@@ -4,6 +4,7 @@ import { t } from '@shared/i18n';
 import type { PendingPermission, PermissionReply } from '@shared/questions';
 import { stripControlChars } from '../chat/sanitize';
 import { CloseIcon, IconButton } from '../icons';
+import { keyList } from '../layout/keyRow';
 
 // カードに出すツールの入力は、ひとまとまり（コマンド・差分・ほかの入力の値）ごとに、長ければ頭だけ
 const MAX_INPUT_CHARS = 4000;
@@ -213,7 +214,7 @@ export function MenuCard({ sessionId, permission }: Props) {
           {permission.agent && <div>{t('screen.permission.fromSubagent')}</div>}
         </div>
       )}
-      <div className="menu-options">
+      <div className="menu-options" {...keyList()}>
         {options.map((option) =>
           option.reply === null && editing ? (
             <form

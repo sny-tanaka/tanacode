@@ -5,6 +5,7 @@ import type { Checklist } from '@shared/checklist';
 import type { SessionSummary } from '@shared/ipc';
 import { ChecklistPanel } from '../../src/renderer/src/checklist/ChecklistPanel';
 import './dom';
+import { focusByTab, key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 import { card, dataTransfer, deferred, list, NOW, session } from './press-checklist-fixtures';
 
@@ -245,16 +246,41 @@ describe('カードを開く・チェックする・選ぶ', () => {
     expect(onOpen).toHaveBeenLastCalledWith('L2', 'g1');
   });
 
-  it('見出しとカードは Tab で止まり、Enter で押したのと同じに動く。チェック欄の Enter は、カードを開かない', () => {
+  it('見出しとカードは Enter で押したのと同じに動く。チェック欄の Enter は、カードを開かない', () => {
     const { onOpen } = show();
-    expect(cardRow('表示を差し替える').tabIndex).toBe(0);
     fireEvent.keyDown(cardRow('表示を差し替える'), { key: 'Enter' });
     expect(onOpen).toHaveBeenCalledWith('L1', 'c3');
     fireEvent.keyDown(within(cardRow('税率を読む')).getByRole('checkbox'), { key: 'Enter' });
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(head(todo().name).tabIndex).toBe(0);
     fireEvent.keyDown(head(todo().name), { key: 'Enter' });
     expect(screen.queryByText('表示を差し替える', { selector: '.checklist-title' })).toBeNull();
+  });
+
+  it('Tab で止まるのは一覧の 1 か所だけ。↑↓ で見出しとカードを移り、→ でチェック欄へ、← でカード・見出しへ戻り、見出しの ← で畳む', () => {
+    show();
+    pressTab();
+    expect(tabStops()).toEqual([head(todo().name)]);
+    focusByTab(head(todo().name));
+    key('ArrowDown');
+    expect(document.activeElement).toBe(cardRow('税率を読む'));
+    key('ArrowRight');
+    expect(document.activeElement).toBe(within(cardRow('税率を読む')).getByRole('checkbox'));
+    // ボタンにいる間も、ボタンを出したまま（ホバーと同じ）
+    expect(cardRow('税率を読む').hasAttribute('data-key-focus')).toBe(true);
+    key('ArrowLeft');
+    expect(document.activeElement).toBe(cardRow('税率を読む'));
+    // 一覧から出て戻ると、前にいたカードに止まる
+    pressTab();
+    expect(tabStops()).toEqual([cardRow('税率を読む')]);
+    key('ArrowLeft');
+    expect(document.activeElement).toBe(head(todo().name));
+    key('ArrowLeft');
+    expect(screen.queryByText('税率を読む', { selector: '.checklist-title' })).toBeNull();
+    key('ArrowRight');
+    expect(screen.queryByText('税率を読む', { selector: '.checklist-title' })).not.toBeNull();
+    // 開いた見出しの → は、見出しのボタンへ
+    key('ArrowRight');
+    expect(document.activeElement).toBe(within(head(todo().name)).getByRole('button', { name: 'カードを足す' }));
   });
 
   it('チェック欄は、そのカードのチェックを付け外しする（カードは開かない）', () => {

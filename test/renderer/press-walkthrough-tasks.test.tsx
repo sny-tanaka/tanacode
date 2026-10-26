@@ -11,6 +11,7 @@ import type { TaskEntry } from '../../src/renderer/src/tasks/taskList';
 import { WorkflowCard } from '../../src/renderer/src/workflow/WorkflowCard';
 import { WorkflowFlow } from '../../src/renderer/src/workflow/WorkflowFlow';
 import './dom';
+import { focusByTab, key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 
 // タスク（入力欄の上のトレイ・エディタの場所に開く中身）と、ワークフロー（チャットのカード・フロー図）の、ボタン。
@@ -67,12 +68,21 @@ describe('TaskTray（入力欄の上のタスクの一覧）', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('行は Tab で止まり、Enter で開く。止めるボタンの Enter は、行を開かない', () => {
+  it('一覧で Tab で止まるのは 1 行だけで、↑↓ で行を移り、→ で止めるボタンへ。Enter で開く。止めるボタンの Enter は、行を開かない', () => {
     const onOpen = vi.fn();
     const onStop = vi.fn();
     const tasks = [entry('bash', 'b1', 'npm run dev'), entry('workflow', 'w1', 'review')];
     const view = render(<TaskTray tasks={tasks} activeKey={null} onOpen={onOpen} onStop={onStop} stopping={new Set()} />);
-    expect(row('review').tabIndex).toBe(0);
+    pressTab();
+    expect(tabStops()).toEqual([row('npm run dev')]);
+    focusByTab(row('npm run dev'));
+    key('ArrowDown');
+    expect(document.activeElement).toBe(row('review'));
+    key('ArrowUp');
+    key('ArrowRight');
+    expect(document.activeElement).toBe(stopOf('npm run dev'));
+    key('ArrowLeft');
+    expect(document.activeElement).toBe(row('npm run dev'));
     fireEvent.keyDown(row('review'), { key: 'Enter' });
     expect(onOpen).toHaveBeenCalledWith(tasks[1]);
     fireEvent.keyDown(stopOf('npm run dev'), { key: 'Enter' });
@@ -80,7 +90,8 @@ describe('TaskTray（入力欄の上のタスクの一覧）', () => {
     // タスクの一覧（サイドパネル）のカードも同じ
     view.rerender(<TaskListPanel tasks={tasks} activeKey={null} onOpen={onOpen} onStop={onStop} stopping={new Set()} />);
     const card = screen.getByText('review').closest<HTMLElement>('.task-card')!;
-    expect(card.tabIndex).toBe(0);
+    pressTab();
+    expect(tabStops()).toEqual([screen.getByText('npm run dev').closest('.task-card')]);
     fireEvent.keyDown(card, { key: 'Enter' });
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
