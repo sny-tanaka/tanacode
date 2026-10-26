@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { matchShortcut, REPEATING, type Shortcut } from '@shared/shortcuts';
+import { chosenItem, syncKeyLists } from './keyRow';
 
 // メニューバーの「移動」のショートカット（shared/shortcuts.ts）を、画面で動かす。
 // キーは、アプリの画面で押したものは画面が受ける（ウインドウで、ほかより先に。エディタ・ターミナルにフォーカスがあっても効くように）。
@@ -42,15 +43,10 @@ export function useShortcutKeys(): void {
       }
       pickOptionByNumber(e);
     };
-    // フォーカスが入ったときに、キーで入ったか（:focus-visible か、focusByKey で移したか）を覚えておく。
-    // 数字のキーと、選択肢の頭の番号（global.css）は、キーで入っているときだけにする
-    // （Chromium は、マウスで押したボタンでも、そのあとキーを押すと :focus-visible に変えるので、入ったときに見る）。
-    // 入力欄は、マウスで押しても :focus-visible になるので数えない（keyRow と同じ。カードの入力欄を押して番号が出ないように）
+    // 数字のキーと、選択肢の頭の番号（global.css）は、キーで入っているときだけにする（enteredByKey）
     const onFocus = (e: FocusEvent) => {
-      const target = e.target instanceof HTMLElement ? e.target : null;
-      const byKey = target && (movingByKey(target) || (target.matches(':focus-visible') && !target.matches(TEXT_FIELD)));
-      keyFocused = byKey ? target : null;
-      markNumbered(keyFocused?.closest<HTMLElement>('[data-answer-card]') ?? null);
+      const target = e.target instanceof HTMLElement && enteredByKey(e.target) ? e.target : null;
+      markNumbered(target?.closest<HTMLElement>('[data-answer-card]') ?? null);
     };
     // ウインドウの外・body へ外れた（次に入る先が無い）
     const onBlur = (e: FocusEvent) => {
@@ -69,8 +65,22 @@ export function useShortcutKeys(): void {
   }, []);
 }
 
-// キーで入った要素（useShortcutKeys が覚える）
-let keyFocused: HTMLElement | null = null;
+// キーで入った要素。フォーカスが入ったときに、キーで入ったか（:focus-visible か、focusByKey で移したか）を見て覚えておく
+// （Chromium は、マウスで押したボタンでも、そのあとキーを押すと :focus-visible に変えるので、入ったときに見る）。
+// 入力欄は、マウスで押しても :focus-visible になるので数えない（カードの入力欄・セッションの名前の欄を押して、キーで入ったことにしない）。
+// 数字のキー（ここ）と、一覧の行の枠・矢印キー（keyRow.ts）が使う。ほかのフォーカスの知らせより先に見るよう、読み込んだときに付ける
+let keyFocused: Element | null = null;
+export const enteredByKey = (el: Element): boolean => keyFocused === el;
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      keyFocused = target && (movingByKey(target) || (target.matches(':focus-visible') && !target.matches(TEXT_FIELD))) ? target : null;
+    },
+    true,
+  );
+}
 // 文字を打つ欄
 const TEXT_FIELD = 'input, textarea, select, [contenteditable="true"]';
 // 質問・許可のカードの、番号で選べる選択肢（並び順。1〜9 のキーと、頭に出す番号で同じものを使う）
@@ -175,12 +185,15 @@ export function focusChat(): boolean {
   return true;
 }
 
-// ⌘3: サイドパネルの、開いているパネル。選んでいる行（エクスプローラーの開いているファイルなど）があればそこ、無ければ最初に止まれるところ
+// ⌘3: サイドパネルの、開いているパネル。一覧の前にいた行か選んでいる行（エクスプローラーの開いているファイルなど）があればそこ、無ければ最初に止まれるところ
 const FOCUSABLE = 'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 export function focusSide(): boolean {
   const body = [...document.querySelectorAll('.explorer .side-body')].find((el) => !isHidden(el));
   if (!body) return false;
-  const target = body.querySelector<HTMLElement>('[data-key-row].active') ?? [...body.querySelectorAll<HTMLElement>(FOCUSABLE)].find((el) => !isHidden(el));
+  // 一覧（keyRow の keyList）の行は、Tab で入るのと同じく、今の行だけを数える
+  syncKeyLists(body);
+  const chosen = [...body.querySelectorAll('[data-key-list]')].map(chosenItem).find((el) => el && !isHidden(el));
+  const target = chosen ?? [...body.querySelectorAll<HTMLElement>(FOCUSABLE)].find((el) => !isHidden(el));
   if (!target) return false;
   focusByKey(target);
   return true;
@@ -221,7 +234,7 @@ function pickOptionByNumber(e: KeyboardEvent): void {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement) || active.matches(TEXT_FIELD)) return;
   const card = active.closest<HTMLElement>('[data-answer-card]');
-  if (!card || keyFocused !== active) return;
+  if (!card || !enteredByKey(active)) return;
   const option = numberedOptions(card)[Number(e.key) - 1];
   if (!option || option.disabled) return;
   e.preventDefault();

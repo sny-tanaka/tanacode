@@ -10,6 +10,7 @@ import { MenuCard } from '../../src/renderer/src/screen/MenuCard';
 import { QuestionCard } from '../../src/renderer/src/screen/QuestionCard';
 import { Sidebar } from '../../src/renderer/src/sessions/Sidebar';
 import './dom';
+import { pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
 
 // メニューバーの「移動」のショートカット（layout/shortcuts.ts）を、キーとメニュー（main からの知らせ）の両方から押して確かめる。
@@ -42,8 +43,14 @@ const press = (init: KeyboardEventInit, target: Element = document.activeElement
 const cmd = (code: string, key: string, extra: KeyboardEventInit = {}) => press({ code, key, metaKey: true, ...extra });
 // メニューを押した・アプリ内ブラウザのページで押した（main からの知らせ。画面にはキーが届かない）
 const viaMain = (shortcut: Shortcut) => act(() => api.emit('shortcuts.onRun', shortcut));
-// マウスで押した（このあとのフォーカスは :focus-visible にならない）
-const mouse = () => fireEvent.pointerDown(document.body);
+// マウスで押した（このあとのフォーカスは :focus-visible にならない）。
+// jsdom（の :focus-visible の見分け）は、mousedown をマウスの操作と見る。見分けるものは、はじめて :focus-visible を調べたときに
+// イベントを聞き始めるので、先に一度調べておく（でないと、ファイルの中でこのテストだけを流したときに、マウスで押したことが伝わらない）
+const mouse = () => {
+  document.body.matches(':focus-visible');
+  fireEvent.pointerDown(document.body);
+  fireEvent.mouseDown(document.body);
+};
 
 const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
   id,
@@ -296,8 +303,10 @@ describe('⌘2（チャット）・⌘3（サイドパネル）', () => {
             <button>隠れたパネル</button>
           </div>
           <div className="side-body">
-            <div className="tree-row" tabIndex={0} data-key-row="" aria-label="README.md" />
-            <div className="tree-row active" tabIndex={0} data-key-row="" aria-label="main.ts" />
+            <div className="tree" data-key-list="first">
+              <div className="tree-row" tabIndex={-1} data-key-row="" aria-label="README.md" />
+              <div className="tree-row active" tabIndex={-1} data-key-row="" aria-label="main.ts" />
+            </div>
           </div>
         </aside>
       </Keys>,
@@ -395,6 +404,38 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
     fireEvent.click(screen.getByText(/^断って、理由を伝える/));
     expect(document.activeElement).toBe(screen.getByRole('textbox'));
     expect(numbers()).toEqual([]);
+  });
+
+  it('選択肢で Tab で止まるのは 1 つだけ。↑↓・Home・End で選択肢を移り（答えない）、数字のキーも効く。Enter で答える', async () => {
+    render(inChat(<QuestionCard sessionId="s1" question={question} />));
+    pressTab();
+    expect(tabStops()).toEqual([option('です・ます')]);
+    focusCard();
+    press({ key: '1', code: 'Digit1' });
+    expect(press({ key: 'ArrowDown', code: 'ArrowDown' })).toBe(false);
+    expect(document.activeElement).toBe(option('だ・である'));
+    // 番号は出したまま
+    expect(numbers()).toEqual(['1', '2']);
+    press({ key: 'Home', code: 'Home' });
+    expect(document.activeElement).toBe(option('です・ます'));
+    press({ key: 'End', code: 'End' });
+    expect(document.activeElement).toBe(option('だ・である'));
+    press({ key: '1', code: 'Digit1' });
+    expect(document.activeElement).toBe(option('です・ます'));
+    await act(async () => {});
+    expect(api.argsOf('question.reply')).toEqual([]);
+    // 一覧から出て戻ると、前にいた選択肢に止まる
+    pressTab();
+    expect(tabStops()).toEqual([option('です・ます')]);
+  });
+
+  it('マウスで選択肢を押したあと（キーで入っていない）は、↑↓ で移らない（直す前と同じ）', () => {
+    render(inChat(<QuestionCard sessionId="s1" question={{ ...question, questions: [{ ...question.questions[0], multiSelect: true }] }} />));
+    mouse();
+    act(() => option('です・ます').focus());
+    fireEvent.click(option('です・ます'));
+    expect(press({ key: 'ArrowDown', code: 'ArrowDown' })).toBe(true);
+    expect(document.activeElement).toBe(option('です・ます'));
   });
 
   it('マウスで選択肢を押したあと（キーで入っていない）は、数字で移らない（直す前と同じ）', () => {

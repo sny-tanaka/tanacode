@@ -50,7 +50,10 @@ import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
+import { keyList } from '../layout/keyRow';
 
+// チャットの一覧のツールのカードを、キーで動かす（layout/keyRow.ts。Tab で入るのは、新しい方の端のカード）
+const chatKeys = keyList('last');
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
 const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
 const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
@@ -902,7 +905,9 @@ export const ClaudePane = memo(function ClaudePane({
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
           }}
+          {...chatKeys}
           onFocus={(e) => {
+            chatKeys.onFocus(e);
             // Tab で一覧の中の要素へフォーカスを移すと、ブラウザは focusin より先に、その要素が見えるよう一覧を動かす。上へ動いていれば、
             // 人が上へスクロールしたものとして扱う（最下部へ送り直すと、フォーカスした要素が見えなくなる）。アプリが動かしたフォーカスは数えない
             if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - 1) userScrollingUp.current = true;

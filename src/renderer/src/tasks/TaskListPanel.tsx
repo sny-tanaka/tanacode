@@ -4,7 +4,7 @@ import { formatDuration } from '../workflow/WorkflowCard';
 import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
 import { IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
-import { keyRow } from '../layout/keyRow';
+import { keyList, keyRow } from '../layout/keyRow';
 
 type Props = {
   tasks: TaskEntry[];
@@ -63,7 +63,7 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
     );
   };
   return (
-    <div className="task-list" ref={listRef}>
+    <div className="task-list" ref={listRef} {...keyList()}>
       <div className="task-list-group">
         <div className="task-list-head">
           {t('tasks.list.running')} <span className="scm-count">{running.length}</span>

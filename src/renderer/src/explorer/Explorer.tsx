@@ -6,7 +6,7 @@ import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
 import { AddIcon, CloseIcon, DisclosureIcon, IconButton } from '../icons';
 import { errorMessage } from '../errorMessage';
-import { clickOnEnter, keyRow } from '../layout/keyRow';
+import { clickOnEnter, keyList, keyRow } from '../layout/keyRow';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 
 // ファイル操作（名前の変更・ゴミ箱）に合わせて、開いているタブを直すもの（App）。path はツリーの行のパス（そのものと、その中のファイル）
@@ -86,7 +86,7 @@ export const Explorer = memo(function Explorer({
   const closeMenu = useCallback(() => setMenu(null), []);
   const shared = { fileOps, menu, onMenu: setMenu, onCloseMenu: closeMenu, editing, onEdit: setEditing };
   return (
-    <div className="tree">
+    <div className="tree" {...keyList()}>
       <RootTree
         sessionId={sessionId}
         root={root}
@@ -160,6 +160,7 @@ export const Explorer = memo(function Explorer({
           }}
           {...keyRow}
           onKeyDown={rowKeys((x, y) => setMenu({ base: READ_FILES, path: file, isDir: false, isRoot: false, x, y, keyboard: true }))}
+          data-key-level={1}
           title={file}
         >
           <span className="tree-chevron">{knowledge[file] && <KnowledgeDot state={knowledge[file]} />}</span>
@@ -429,6 +430,8 @@ function RootTree({
               onContextMenu={(e) => openMenu(e, { path: entry.path, isDir: entry.isDir, isRoot: false })}
               {...keyRow}
               onKeyDown={keysOf({ path: entry.path, isDir: entry.isDir, isRoot: false })}
+              data-key-level={depth + 1}
+              data-key-open={entry.isDir ? expanded.has(entry.path) : undefined}
               title={entry.path}
             >
               <span className="tree-chevron">
@@ -460,6 +463,8 @@ function RootTree({
         onContextMenu={(e) => openMenu(e, { path: base, isDir: true, isRoot: true })}
         {...keyRow}
         onKeyDown={keysOf({ path: base, isDir: true, isRoot: true })}
+        data-key-level={1}
+        data-key-open={expanded.has(base)}
         title={base || undefined}
       >
         <span className="tree-chevron">

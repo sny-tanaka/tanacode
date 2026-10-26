@@ -7,7 +7,7 @@ import { CardCheck } from './CardCheck';
 import { CopyDialog } from './CopyDialog';
 import { ListForm } from './ListForm';
 import { applyChecklist } from './useChecklists';
-import { keyRow } from '../layout/keyRow';
+import { keyList, keyRow } from '../layout/keyRow';
 
 type Props = {
   session: SessionSummary;
@@ -136,7 +136,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
           onCancel={() => setEditing(null)}
         />
       )}
-      <div className="checklist-scroll">
+      <div className="checklist-scroll" {...keyList()}>
         {live.length === 0 && !editing && (
           <div className="scm-empty">{t('checklist.panel.empty')}</div>
         )}
@@ -171,6 +171,8 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                 className={`checklist-list-head reveal-host${dropTarget === `end:${list.id}` ? ' drop' : ''}`}
                 onClick={() => toggleList(list.id)}
                 {...keyRow}
+                data-key-level={1}
+                data-key-open={open}
                 onDoubleClick={() => setEditing({ id: list.id, name: list.name, description: list.description, kind: kindOf(list) })}
                 onDragOver={(e) => dragOver(e, `end:${list.id}`)}
                 onDragLeave={() => setDropTarget(null)}
@@ -233,6 +235,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         onDragEnd={dragEnd}
                         onClick={(e) => clickCard(e, list, card)}
                         {...keyRow}
+                        data-key-level={2}
                       >
                         {traits.checkable ? (
                           <CardCheck
