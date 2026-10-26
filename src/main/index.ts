@@ -919,9 +919,15 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
   handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
-  handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions(), problem: toolPermissionsProblem }));
+  handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions(), parentAskRules: settings.parentAskRulesEnabled(), problem: toolPermissionsProblem }));
   handle(IpcChannel.McpEnabledSet, (_e, server: McpToolGroup, on: boolean) => setMcpEnabled(server, on));
   handle(IpcChannel.ToolPermissionsSet, (_e, toolId: string, permission: ToolPermission) => setToolPermission(toolId, permission));
+  // 親が子の確認を読む・答えるたびに設定を見るので、動いているセッションにもすぐ効く
+  handle(IpcChannel.ParentAskRulesSet, (_e, on: unknown) => {
+    if (typeof on !== 'boolean') throw new Error(`Not a switch value: ${String(on)}`);
+    settings.setParentAskRulesEnabled(on);
+    return settings.parentAskRulesEnabled();
+  });
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {

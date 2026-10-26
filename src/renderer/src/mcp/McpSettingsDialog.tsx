@@ -9,10 +9,11 @@ import { BrowserHostsEditor } from './BrowserHostsEditor';
 
 const PERMISSIONS: ToolPermission[] = ['ask', 'allow'];
 
-type Settings = { enabled: McpEnabled; permissions: Record<string, ToolPermission>; problem: string | null };
+type Settings = { enabled: McpEnabled; permissions: Record<string, ToolPermission>; parentAskRules: boolean; problem: string | null };
 
 // MCP の設定（アプリ全体で 1 つ）。メニューの「MCP の設定…」から開く。tanacode が Claude Code に足す MCP サーバーごとに、
 // 見出しに入り・切りのスイッチ、その下にツールの表（MCP名・説明・確認）。アプリ内ブラウザは、見出しの下に Claude に許す先も出す。
+// セッションは、見出しの下に、設定の ask の規則で出た子の確認も親に許させるかのスイッチも出す。
 // 確認は「毎回確認／常に許可」で、既定のほうに「（既定）」を付ける。切っている MCP のツールの行は薄くして選べなくする（選んだ値は保つ）。
 // 変えたらすぐ保存する（ツールの許可のフックは呼ばれるたびに印のファイルを見るので、動いているセッションにもすぐ効く）
 export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
@@ -54,6 +55,7 @@ export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
   // 保存できたら、印のファイルを全部書き直せたので、起動したときの問題も直っている
   const setPermission = (toolId: string, permission: ToolPermission) =>
     save(async () => ({ permissions: await window.tanacode.mcpSettings.setPermission(toolId, permission), problem: null }));
+  const setParentAskRules = (on: boolean) => save(async () => ({ parentAskRules: await window.tanacode.mcpSettings.setParentAskRules(on) }));
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -92,6 +94,20 @@ export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
                   </div>
                   {!on && <p className="mcp-server-off">{t('mcpSettings.off')}</p>}
                   {group === 'browser' && <BrowserHostsEditor />}
+                  {group === 'sessions' && (
+                    <div className="mcp-server-option" role="group" aria-label={t('mcpSettings.parentAskRules.title')}>
+                      <div className="mcp-server-option-head">
+                        <h4>{t('mcpSettings.parentAskRules.title')}</h4>
+                        <Toggle
+                          on={settings.parentAskRules === true}
+                          disabled={!on}
+                          name={t('mcpSettings.parentAskRules.switchLabel')}
+                          onChange={(next) => void setParentAskRules(next)}
+                        />
+                      </div>
+                      <p className="browser-hosts-about">{t('mcpSettings.parentAskRules.description')}</p>
+                    </div>
+                  )}
                   <table className="mcp-tools">
                     <thead>
                       <tr>

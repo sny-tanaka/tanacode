@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askQuestionsOf, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
+import { askQuestionsOf, askRuleOf, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
 import type { CanUseToolRequest } from '../src/main/stream/protocol';
 
 // Claude Code が答えを待つ要求（can_use_tool）を、カードと親の道具で扱う形にし、答えを Claude Code への返事にする（requests.ts）
@@ -57,6 +57,7 @@ describe('permissionOf', () => {
       plan: null,
       agent: 'agent-1',
       humanOnly: null,
+      askRule: null,
     });
   });
 
@@ -99,19 +100,34 @@ describe('人だけが答えられる確認（humanOnlyReason）', () => {
     expect(humanOnlyReason(bash({ classifier_approvable: true, decision_reason_type: 'mode' }))).toBeNull();
   });
 
-  it('プランの承認・Claude Code が人に回したもの・人の設定の ask の規則が出させたものは、人だけ', () => {
+  it('プランの承認・Claude Code が人に回したものは、人だけ', () => {
     for (const request of [
       bash({ tool_name: 'ExitPlanMode', input: {} }),
       bash({ requires_user_interaction: true }),
       bash({ classifier_approvable: false }),
       bash({ decision_reason_type: 'safetyCheck' }),
-      bash({ matched_ask_rule: { source: 'userSettings', tool_name: 'Bash' } }),
-      bash({ decision_reason_type: 'rule' }),
       bash({ default_to_no: true }),
+      // ask の規則にも当たっていても、人だけ
+      bash({ default_to_no: true, matched_ask_rule: { source: 'userSettings', tool_name: 'Bash', rule_content: 'rm:*' } }),
     ]) {
       expect(humanOnlyReason(request), JSON.stringify(request)).toEqual(expect.any(String));
       expect(permissionOf('req-1', request).humanOnly).toEqual(expect.any(String));
     }
+  });
+
+  it('人の設定の ask の規則が出させたものは、人だけにはしない（親に許させるかは設定で決める）。規則を askRule に残す', () => {
+    const matched = bash({ matched_ask_rule: { source: 'userSettings', tool_name: 'Bash', rule_content: 'rm:*' } });
+    expect(humanOnlyReason(matched)).toBeNull();
+    expect(permissionOf('req-1', matched).askRule).toBe('Bash(rm:*)');
+    // 規則の中身が無い・ツールの確認がなく規則だけ（中身は来ない）
+    expect(askRuleOf(bash({ matched_ask_rule: { source: 'userSettings', tool_name: 'WebFetch' } }))).toBe('WebFetch');
+    expect(humanOnlyReason(bash({ decision_reason_type: 'rule' }))).toBeNull();
+    expect(askRuleOf(bash({ decision_reason_type: 'rule' }))).toBe('a permissions.ask rule (Claude Code does not say which one)');
+    // 制御の文字は消す
+    expect(askRuleOf(bash({ matched_ask_rule: { source: 'userSettings', tool_name: 'Bash', rule_content: 'rm\u001b[31m:*' } }))).toBe('Bash(rm:*)');
+    // ふつうの確認は null
+    expect(askRuleOf(bash())).toBeNull();
+    expect(askRuleOf(bash({ decision_reason_type: 'other' }))).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -63,6 +63,7 @@ const PERMIT = '許可の確認の確かめをしてください';
 // 画面に収まらない長さのコマンド（全文を読めるかを見る）
 const LONG_COMMAND = `echo ${'x'.repeat(600)} > /dev/null && mkdir made-1`;
 const DENY_REASON = 'made-2 は作らずに、次へ進んでください';
+const ASK_RULE = 'ask の規則の確認の確かめをしてください';
 const END = '裏でサーバーを動かしてください';
 // 裏で動かし続ける Bash（ほかのテストの sleep と見分けられる秒数にする）
 const END_COMMAND = 'sleep 7411';
@@ -177,6 +178,14 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
         ],
       },
       {
+        match: ASK_RULE,
+        delayMs: 300,
+        steps: [
+          [{ type: 'tool_use', id: 'toolu_ar1', name: 'Bash', input: { command: 'rm -rf work-tmp', description: '作業用のフォルダを消す' } }],
+          say('ask の規則の確かめを終えました'),
+        ],
+      },
+      {
         match: END,
         // 送ってから返事までを、作業中として見られるように遅らせる（sleep は、許可の確認なしに通る）
         delayMs: 3000,
@@ -205,10 +214,10 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
     if (socketDir) rmSync(socketDir, { recursive: true, force: true });
   });
 
-  const open = async (options: { mode?: 'bypassPermissions' } = {}) => {
+  const open = async (options: { mode?: 'bypassPermissions'; settings?: Record<string, unknown> } = {}) => {
     const run = new ClaudeRun(await api.start(), {
       sessions: { command: process.execPath, script, socketPath, version: 'test' },
-      ...(options.mode ? { mode: options.mode, settings: { skipDangerousModePermissionPrompt: true } } : {}),
+      ...(options.mode ? { mode: options.mode, settings: { skipDangerousModePermissionPrompt: true, ...options.settings } } : options.settings ? { settings: options.settings } : {}),
     });
     runs.push(run);
     await run.open();
@@ -493,6 +502,50 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect(result.isError, textOf(result)).toBeUndefined();
       await child.waitUntil('返事', replied(child, '許可の確かめを終えました'));
       expect(existsSync(join(child.cwd, 'made-5'))).toBe(true);
+    });
+  });
+
+  // 人の設定の ask の規則（permissions.ask）だけが出させた確認。bypassPermissions でも ask の規則の確認は出る。
+  // 親に許させるかは「MCP の設定」のスイッチ（askRulesAllowed）で決まる
+  describe('ask の規則で出た子の確認に親が答える', () => {
+    let child: ClaudeRun;
+    let control: SessionsControl;
+    let askRulesAllowed = false;
+    const parentId = randomUUID();
+    type View = { id: string; ask_rule?: string; input?: { command?: string }; can_allow: boolean; cannot_allow_reason?: string };
+    const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
+
+    beforeAll(async () => {
+      child = await open({ mode: 'bypassPermissions', settings: { permissions: { ask: ['Bash(rm:*)'] } } });
+      mkdirSync(join(child.cwd, 'work-tmp'));
+      const now = Date.now();
+      child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
+      child.manager['store'].update(child.sessionId!, { parentId });
+      const manager = child.manager;
+      const host = new Proxy(manager, {
+        get: (target, key) => (key === 'modeOf' ? (id: string) => (id === parentId ? 'auto' : target.modeOf(id)) : Reflect.get(target, key, target)),
+      });
+      control = new SessionsControl({ host, enabled: () => true, archive: (id, options) => manager.archive(id, options), askRulesAllowed: () => askRulesAllowed, home: child.home, notifyDelayMs: 10 });
+    });
+
+    afterAll(() => control?.dispose());
+
+    it('スイッチが切れていれば許せず、入れると今回だけ許せる。どちらも、ask の規則に当たったことを親に見せる', async () => {
+      await child.send(ASK_RULE);
+      await child.waitUntil('ask の規則の確認', () => child.manager.pendingPermission(child.sessionId!)?.input.command === 'rm -rf work-tmp');
+      const read = async () => (JSON.parse(textOf(await control.handle(parentId, 'get_session', { session_id: child.sessionId }))) as { permission: View }).permission;
+      const off = await read();
+      // 規則だけが出させた確認には、Claude Code は規則の中身を付けない（matched_ask_rule は無く、decision_reason_type が rule）
+      expect(off).toMatchObject({ can_allow: false, ask_rule: 'a permissions.ask rule (Claude Code does not say which one)' });
+      expect(off.cannot_allow_reason).toContain('permissions.ask');
+      expect((await control.handle(parentId, 'answer_permission', { session_id: child.sessionId, permission_id: off.id, decision: 'allow' })).isError).toBe(true);
+      askRulesAllowed = true;
+      const on = await read();
+      expect(on).toMatchObject({ id: off.id, can_allow: true, ask_rule: off.ask_rule });
+      const result = await control.handle(parentId, 'answer_permission', { session_id: child.sessionId, permission_id: on.id, decision: 'allow' });
+      expect(result.isError, textOf(result)).toBeUndefined();
+      await child.waitUntil('返事', replied(child, 'ask の規則の確かめを終えました'));
+      expect(existsSync(join(child.cwd, 'work-tmp'))).toBe(false);
     });
   });
 

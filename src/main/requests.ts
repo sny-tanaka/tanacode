@@ -55,20 +55,32 @@ export function permissionOf(requestId: string, request: CanUseToolRequest, plan
     plan: planText,
     agent: request.agent_id ?? null,
     humanOnly: humanOnlyReason(request),
+    askRule: askRuleOf(request),
   };
 }
 
 // 人だけが答えられる確認なら、その理由（親の Claude に向けた英語）。親の answer_permission では断ることだけできる。
 // プランの承認（承認すると子がプランモードから抜ける。入力は空で、親は本文も読めない）と、Claude Code が人に回したもの
-// （requires_user_interaction・人の承認が要る安全の確かめ・間違って許されないようにする確認）と、人の設定の ask の規則が出させたもの
-// （SDK の型の説明: 自動の承認で答えず、人に出す）。ふつうの確認には、どの印も付かない（実測）
+// （requires_user_interaction・人の承認が要る安全の確かめ・間違って許されないようにする確認）。ふつうの確認には、どの印も付かない（実測）。
+// 人の設定の ask の規則が出させたもの（askRuleOf）は、ここに入れない。親に許させるかは、利用者が「MCP の設定」で決める（sessions-control.ts）
 export function humanOnlyReason(request: CanUseToolRequest): string | null {
   if (request.tool_name === PLAN_TOOL) return 'it is a plan approval: only the user approves a plan (approving it also takes the child out of plan mode).';
   if (request.requires_user_interaction) return 'Claude Code requires the user to answer this prompt themselves.';
   if (request.classifier_approvable === false || request.decision_reason_type === 'safetyCheck') return "Claude Code flagged it as a safety check that needs the user's own approval.";
-  if (request.matched_ask_rule || request.decision_reason_type === 'rule') return "the user's settings (a permissions.ask rule) say the user must be asked.";
   if (request.default_to_no) return 'Claude Code marked it as a prompt the user must look at before it is allowed.';
   return null;
+}
+
+const ASK_RULE_UNKNOWN = 'a permissions.ask rule (Claude Code does not say which one)';
+
+// 人の設定の ask の規則（permissions.ask）が出させた確認なら、その規則（例: Bash(rm:*)。親の Claude に見せる）。当たらなければ null。
+// Claude Code は、ツール自身が出した確認（cd と git の複合コマンドなど）に ask の規則も当たったときは matched_ask_rule に規則を載せ、
+// ツールの確認がなく規則だけのときは decision_reason_type を rule にする（2.1.309 の SDK の型の説明。後者は test:cli で実測）。
+// 後者は規則の中身も理由の文も来ないので、どの規則かは分からないとだけ出す。規則の中身は人の設定に書かれたもので、制御の文字が入りうるので消す
+export function askRuleOf(request: CanUseToolRequest): string | null {
+  const rule = request.matched_ask_rule;
+  if (rule) return displayText(rule.rule_content ? `${rule.tool_name}(${rule.rule_content})` : rule.tool_name) || ASK_RULE_UNKNOWN;
+  return request.decision_reason_type === 'rule' ? ASK_RULE_UNKNOWN : null;
 }
 
 // 許可の確認への答えを、Claude Code への返事にする。accept-edits はプランの承認だけ（ほかの要求では、許すだけ）

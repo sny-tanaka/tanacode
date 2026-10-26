@@ -1125,6 +1125,11 @@
     "switchLabel": "{server} を Claude に使わせる",
     "off": "切っています。入れ直すと、確認の選択はそのまま使います。",
     "hostsTitle": "Claude に許す先",
+    "parentAskRules": {
+      "title": "設定の ask の規則で出た子の確認も、親に許させる",
+      "description": "子セッションの許可の確認のうち、Claude Code の設定の permissions.ask の規則が出させたもの（例: Bash(rm:*)）も、親の Claude が中身を読んで「今回だけ許す」と答えられるようにします。切っているとき（既定）は、親は断ることだけできます。入れても、Claude Code が人に答えさせる確認（安全の確かめなど）とプランの承認は、これまでどおりあなただけが許せます。動いているセッションにもすぐ効きます。",
+      "switchLabel": "設定の ask の規則で出た子の確認も、親に許させる"
+    },
     "ask": "毎回確認",
     "allow": "常に許可",
     "withDefault": "{label}（既定）",

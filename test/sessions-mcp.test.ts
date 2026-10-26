@@ -964,6 +964,7 @@ describe('ツールの実行（SessionsControl）', () => {
       cannot_allow_reason?: string;
       can_deny: boolean;
       from_subagent?: string;
+      ask_rule?: string;
     };
     const read = async () => jsonOf<{ permission: View }>(await control.handle(PARENT, 'get_session', { session_id: CHILD })).permission;
     const answer = (args: Record<string, unknown>, caller = PARENT) => control.handle(caller, 'answer_permission', { session_id: CHILD, ...args });
@@ -1031,7 +1032,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(await answer({ permission_id: 'req-3', decision: 'allow', reason: 'x' }))).toContain('only for decision "deny"');
     });
 
-    it('プランの承認と、Claude Code や人の設定が人に回した確認は、親が acceptEdits 以上でも許せない（断ることだけできる）', async () => {
+    it('プランの承認と、Claude Code が人に回した確認は、親が acceptEdits 以上でも許せない（断ることだけできる）', async () => {
       const plan = bashPermission('', { tool: 'ExitPlanMode', title: null, input: {}, plan: '# 計画', humanOnly: 'it is a plan approval: only the user approves a plan.' });
       show(plan);
       const view = await read();
@@ -1043,10 +1044,58 @@ describe('ツールの実行（SessionsControl）', () => {
       const denied = await answer({ permission_id: 'req-1', decision: 'deny', reason: '先にテストの計画を足して' });
       expect(denied.isError).toBeFalsy();
       expect(host.replies[0].reply).toMatchObject({ kind: 'deny', byParent: true });
-      // 人の設定の ask の規則が出させた確認も同じ
-      show(bashPermission('npm publish', { id: 'req-2', humanOnly: "the user's settings (a permissions.ask rule) say the user must be asked." }));
-      expect((await read()).can_allow).toBe(false);
-      expect(textOf(await answer({ permission_id: 'req-2', decision: 'allow' }))).toContain('permissions.ask');
+    });
+
+    describe('人の設定の ask の規則が出させた確認', () => {
+      let askRulesAllowed = false;
+      beforeEach(() => {
+        askRulesAllowed = false;
+        control.dispose();
+        control = new SessionsControl({
+          host,
+          enabled: () => enabled,
+          archive: (id, options) => host.archive(id, options),
+          askRulesAllowed: () => askRulesAllowed,
+          home: '/nonexistent-home',
+          notifyDelayMs: 10,
+          followUpMs: 40,
+        });
+      });
+
+      it('設定がオフ（既定）なら許せない。規則は見せ、断ることはできる', async () => {
+        show(bashPermission('rm -rf /tmp/work', { askRule: 'Bash(rm:*)' }));
+        const view = await read();
+        expect(view).toMatchObject({ can_allow: false, can_deny: true, ask_rule: 'Bash(rm:*)' });
+        expect(view.cannot_allow_reason).toContain('permissions.ask');
+        expect(view.cannot_allow_reason).toContain("tanacode's MCP settings");
+        expect(textOf(await answer({ permission_id: 'req-1', decision: 'allow' }))).toContain('Cannot allow this prompt');
+        expect(host.replies).toEqual([]);
+        expect((await answer({ permission_id: 'req-1', decision: 'deny' })).isError).toBeFalsy();
+      });
+
+      it('設定がオンなら、今回だけ許せる（規則は見せる）。設定は読むとき・答えるときに見る', async () => {
+        askRulesAllowed = true;
+        show(bashPermission('rm -rf /tmp/work', { askRule: 'Bash(rm:*)' }));
+        expect(await read()).toMatchObject({ can_allow: true, ask_rule: 'Bash(rm:*)' });
+        // 読んだあとにオフにされたら、許さない
+        askRulesAllowed = false;
+        expect((await answer({ permission_id: 'req-1', decision: 'allow' })).isError).toBe(true);
+        askRulesAllowed = true;
+        const result = await answer({ permission_id: 'req-1', decision: 'allow' });
+        expect(result.isError).toBeFalsy();
+        expect(host.replies).toEqual([{ id: CHILD, requestId: 'req-1', reply: { kind: 'allow' } }]);
+      });
+
+      it('設定がオンでも、Claude Code が人に回した確認と重なっていれば許せない・manual の親は許せない', async () => {
+        askRulesAllowed = true;
+        show(bashPermission('rm -rf /tmp/work', { askRule: 'Bash(rm:*)', humanOnly: "Claude Code flagged it as a safety check that needs the user's own approval." }));
+        expect(await read()).toMatchObject({ can_allow: false, ask_rule: 'Bash(rm:*)' });
+        expect(textOf(await answer({ permission_id: 'req-1', decision: 'allow' }))).toContain('safety check');
+        show(bashPermission('rm -rf /tmp/work', { id: 'req-2', askRule: 'Bash(rm:*)' }));
+        host.modes.set(PARENT, 'manual');
+        expect(textOf(await answer({ permission_id: 'req-2', decision: 'allow' }))).toContain('manual mode');
+        expect(host.replies).toEqual([]);
+      });
     });
 
     it('親が読んだあとで別の確認に変わっていたら、答えない（同じコマンドの 2 回目の確認も、別の確認）', async () => {

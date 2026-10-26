@@ -11,12 +11,13 @@ import { McpSettingsDialog } from './McpSettingsDialog';
 const noop = () => {};
 const ALL_ON: McpEnabled = { browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true };
 
-function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record<string, ToolPermission>; hosts?: string[] }) {
+function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record<string, ToolPermission>; parentAskRules?: boolean; hosts?: string[] }) {
   let enabled: McpEnabled = { ...ALL_ON, ...initial.enabled };
   let permissions = initial.permissions ?? {};
+  let parentAskRules = initial.parentAskRules ?? false;
   let hosts = initial.hosts ?? [];
   mockApi({
-    'mcpSettings.get': () => Promise.resolve({ enabled, permissions }),
+    'mcpSettings.get': () => Promise.resolve({ enabled, permissions, parentAskRules, problem: null }),
     'mcpSettings.setEnabled': (server, on) => {
       enabled = { ...enabled, [server as McpToolGroup]: on as boolean };
       return Promise.resolve(enabled);
@@ -24,6 +25,10 @@ function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record
     'mcpSettings.setPermission': (toolId, permission) => {
       permissions = toolPermissionsOf({ ...permissions, [toolId as string]: permission });
       return Promise.resolve(permissions);
+    },
+    'mcpSettings.setParentAskRules': (on) => {
+      parentAskRules = on as boolean;
+      return Promise.resolve(parentAskRules);
     },
     'browser.hosts': () => Promise.resolve(hosts),
     'browser.setHosts': (next) => {
@@ -58,7 +63,7 @@ type Story = StoryObj<typeof meta>;
 // どれも既定のまま
 export const 既定のまま: Story = { beforeEach: () => registry({}) };
 
-// いくつかを既定から変え、ターミナルを切った。許す先も足してある。変えた欄は枠の色が変わり、切った MCP の行は薄くなって選べない
+// いくつかを既定から変え、ターミナルを切った。許す先も足し、ask の規則で出た子の確認も親に許させている。変えた欄は枠の色が変わり、切った MCP の行は薄くなって選べない
 export const 変えたもの: Story = {
   beforeEach: () =>
     registry({
@@ -68,6 +73,7 @@ export const 変えたもの: Story = {
         'mcp__tanacode-sessions__start_session': 'allow',
         'mcp__tanacode-terminal__type_in_terminal': 'allow',
       },
+      parentAskRules: true,
       hosts: ['myapp.test', '*.staging.example.test'],
     }),
 };

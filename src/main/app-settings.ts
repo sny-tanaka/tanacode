@@ -20,6 +20,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // sessionsStartConfirm: 前のバージョンの「セッションを始める前に許可を求める」（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置いた）。
 //   オフだったら、start_session の許可に「常に許可」として引き継ぐ（index.ts の setUpToolPermissions）/
 // toolPermissions: tanacode の MCP のツールごとの許可（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。ツールの ID → ask・allow。利用者が選んだツールだけ。無いツールは既定。shared/tool-permissions.ts）/
+// parentAskRules: 子の許可の確認のうち、人の設定の ask の規則（permissions.ask）が出させたものも、親の Claude に許させるか（アプリ全体で 1 つ。
+//   既定はオフ。Claude Code は、ask の規則の確認は人に出すものとしている）/
 // checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）/
 // walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
 // terminalControl: Claude に人のターミナルを使わせるか（起動する Claude Code に、ターミナルの MCP サーバーを足すか）/
@@ -39,6 +41,7 @@ type Values = {
   sessionsControl: boolean;
   sessionsStartConfirm: boolean;
   toolPermissions: Record<string, ToolPermission>;
+  parentAskRules: boolean;
   checklistControl: boolean;
   walkthroughControl: boolean;
   terminalControl: boolean;
@@ -124,6 +127,14 @@ export class AppSettings {
 
   setToolPermissions(permissions: Record<string, ToolPermission>): void {
     this.update({ toolPermissions: toolPermissionsOf(permissions) });
+  }
+
+  parentAskRulesEnabled(): boolean {
+    return this.values.parentAskRules;
+  }
+
+  setParentAskRulesEnabled(on: boolean): void {
+    this.update({ parentAskRules: on });
   }
 
   checklistControlEnabled(): boolean {
@@ -261,6 +272,7 @@ function load(file: string): Values {
       sessionsControl?: unknown;
       sessionsStartConfirm?: unknown;
       toolPermissions?: unknown;
+      parentAskRules?: unknown;
       checklistControl?: unknown;
       walkthroughControl?: unknown;
       terminalControl?: unknown;
@@ -281,6 +293,7 @@ function load(file: string): Values {
       sessionsControl: data.sessionsControl !== false,
       sessionsStartConfirm: data.sessionsStartConfirm !== false,
       toolPermissions: toolPermissionsOf(data.toolPermissions),
+      parentAskRules: data.parentAskRules === true,
       checklistControl: data.checklistControl !== false,
       walkthroughControl: data.walkthroughControl !== false,
       terminalControl: data.terminalControl !== false,
@@ -292,7 +305,7 @@ function load(file: string): Values {
       profilesMerged: data.profilesMerged === true,
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, parentAskRules: false, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
   }
 }
 
