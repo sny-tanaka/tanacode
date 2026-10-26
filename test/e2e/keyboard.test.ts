@@ -46,9 +46,14 @@ describe('一覧の行を、キーでもマウスでも使う', () => {
         },
       ],
     });
+    // どの Mac でも、CI の Mac と同じ大きさのウインドウで確かめる（一覧のどこが見えているかで、押す位置・スクロールの要るかが変わるため）
+    await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1180, 674));
+    await app.page.waitForFunction(() => window.innerHeight === 674);
     // seq は読むだけのコマンドなので、許可の確認なしに動く
     await app.startSession(PROMPT, { mode: 'manual' });
     await app.byText('.chat-list', REPLY).waitFor();
+    // ターンが終わり、「作業中」と、そのあと 1.8 秒出る「完了」の行が消えるまで待つ（あとから一覧の高さが変わって、押す位置がずれないように）
+    await app.page.waitForFunction(() => !document.querySelector('.chat-list .chat-note.working, .chat-list .working-done'));
     // 終わった操作はまとまりに畳まれるので、開いてカードを出す
     await app.page.locator('.chat-list .tool-group-head').first().click();
   });
@@ -103,10 +108,14 @@ describe('一覧の行を、キーでもマウスでも使う', () => {
   it('ツールのカードの出力の文字は、マウスでドラッグして選べる（行からフォーカスを外しても、選んだ範囲は残る）', async () => {
     const card = app.page.locator('.chat-list .tool-card', { hasText: '長い出力' });
     if ((await card.locator('.tool-detail').count()) === 0) await card.locator('.tool-card-head').click();
+    // 出力欄の、一覧の中で見えている部分をドラッグする（一覧は最下部にいるので、出力欄の上は隠れていることがある）
     const box = (await card.locator('.tool-pre').last().boundingBox())!;
-    await app.page.mouse.move(box.x + 10, box.y + 10);
+    const view = (await app.page.locator('.chat-list').boundingBox())!;
+    const top = Math.max(box.y, view.y);
+    expect(Math.min(box.y + box.height, view.y + view.height) - top).toBeGreaterThan(80);
+    await app.page.mouse.move(box.x + 10, top + 10);
     await app.page.mouse.down();
-    await app.page.mouse.move(box.x + 60, box.y + 60, { steps: 5 });
+    await app.page.mouse.move(box.x + 60, top + 60, { steps: 5 });
     await app.page.mouse.up();
     expect((await app.page.evaluate(() => window.getSelection()?.toString() ?? '')).trim()).not.toBe('');
   });
@@ -227,10 +236,7 @@ describe('一覧の行を、キーでもマウスでも使う', () => {
 
   it('チャットのツールのカードは、カードにフォーカスがあるときだけ ↑↓ で前後のカードへ移り、そのカードが見えるところまでスクロールする', async () => {
     const list = app.page.locator('.chat-list');
-    // CI の Mac と同じ大きさのウインドウにして、長い出力を開く（一覧をスクロールでき、いちばん上のカードの頭が、最下部からは見えないように）
-    await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1180, 674));
-    await app.page.waitForFunction(() => window.innerHeight === 674);
-    // マウスで押したカードは、前にいた行として覚えない
+    // 長い出力を開く（一覧をスクロールでき、いちばん上のカードの頭が、最下部からは見えないように）。マウスで押したカードは、前にいた行として覚えない
     if ((await card('長い出力').locator('.tool-detail').count()) === 0) await card('長い出力').locator('.tool-card-head').click();
     // 答えの文を押して ⇧Tab で一覧に戻ると、新しい方の端のカードに止まる（答えの文とカードの間に、止まる所は無い）
     await reply().click();
