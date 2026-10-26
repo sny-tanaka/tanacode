@@ -466,7 +466,7 @@ export class ClaudeRun {
     for (;;) {
       if (this.sessionId && check(this.manager.stateOf(this.sessionId))) return;
       if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.stderr()}`);
-      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.stderr()}`);
+      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.lastToolResult()}${this.stderr()}`);
       await sleep(POLL_MS);
     }
   }
@@ -513,9 +513,15 @@ export class ClaudeRun {
       const value = get();
       if (value) return value;
       if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.stderr()}`);
-      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.stderr()}`);
+      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.lastToolResult()}${this.stderr()}`);
       await sleep(POLL_MS);
     }
+  }
+
+  // 時間切れのメッセージに添える、直近のツールの結果（ツールが思わぬ形で終わって待ちが外れたときに、原因を読めるように）
+  private lastToolResult(): string {
+    const result = [...this.chatEvents].reverse().find((e) => e.type === 'tool-result');
+    return result ? `直近のツールの結果: ${JSON.stringify(result)}\n` : '';
   }
 
   // claude（チャット）が標準出力に書いた stream-json の行。届いた順
