@@ -1498,8 +1498,20 @@ describe('メニュー', () => {
       await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toEqual({
         enabled: { browser: true, sessions: false, checklist: true, walkthrough: true, terminal: true },
         permissions: { [sessionToolId('start_session')]: 'allow' },
+        parentAskRules: false,
         problem: null,
       });
+    });
+
+    it('ask の規則で出た子の確認を親に許させるかを保存する（スイッチの値でなければ断る）', async () => {
+      await boot();
+      await expect(invoke(IpcChannel.ParentAskRulesSet, true)).resolves.toBe(true);
+      expect(savedSettings().parentAskRules).toBe(true);
+      await expect(invoke(IpcChannel.McpSettingsGet)).resolves.toMatchObject({ parentAskRules: true });
+      await expect(invoke(IpcChannel.ParentAskRulesSet, 'yes')).rejects.toThrow();
+      expect(savedSettings().parentAskRules).toBe(true);
+      await invoke(IpcChannel.ParentAskRulesSet, false);
+      expect(savedSettings().parentAskRules).toBe(false);
     });
 
     it('アプリ内ブラウザを切ったら、頼んでいる操作を取り下げ、許した外の先も捨てる（入れたときは何もしない）', async () => {

@@ -1179,6 +1179,11 @@
     "switchLabel": "Let Claude use {server}",
     "off": "Turned off. When you turn it back on, the confirmation choices stay as they are.",
     "hostsTitle": "Sites Allowed for Claude",
+    "parentAskRules": {
+      "title": "Let the parent allow child prompts from ask rules",
+      "description": "Lets the parent Claude read and allow once the permission prompts of a child session that a permissions.ask rule in your Claude Code settings asked for (for example, Bash(rm:*)). When this is off (the default), the parent can only deny them. Even when it is on, only you can allow the prompts that Claude Code leaves to you (such as safety checks) and plan approvals. Takes effect at once, also in running sessions.",
+      "switchLabel": "Let the parent allow child prompts from ask rules"
+    },
     "ask": "Ask Every Time",
     "allow": "Always Allow",
     "withDefault": "{label} (Default)",

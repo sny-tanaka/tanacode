@@ -193,6 +193,7 @@ export const IpcChannel = {
   McpSettingsGet: 'mcp-settings:get',
   McpEnabledSet: 'mcp-settings:set-enabled',
   ToolPermissionsSet: 'tool-permissions:set',
+  ParentAskRulesSet: 'mcp-settings:set-parent-ask-rules',
   McpSettingsOpen: 'mcp-settings:open',
   ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
@@ -708,9 +709,11 @@ export type TanacodeApi = {
   // MCP の設定。enabled: MCP サーバーの入り・切り / permissions: 利用者が選んだツールの許可だけ（ツールの ID → ask・allow。無いツールは既定）/
   // problem: 起動したときに、確認の選択を Claude Code に効かせられなかった理由（人に見せる文。無ければ null）
   mcpSettings: {
-    get(): Promise<{ enabled: McpEnabled; permissions: Record<string, ToolPermission>; problem: string | null }>;
+    // parentAskRules: 子の確認のうち、人の設定の ask の規則が出させたものも、親の Claude に許させるか
+    get(): Promise<{ enabled: McpEnabled; permissions: Record<string, ToolPermission>; parentAskRules: boolean; problem: string | null }>;
     setEnabled(server: McpToolGroup, on: boolean): Promise<McpEnabled>;
     setPermission(toolId: string, permission: ToolPermission): Promise<Record<string, ToolPermission>>;
+    setParentAskRules(on: boolean): Promise<boolean>;
     onOpen(listener: () => void): () => void;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
@@ -1045,6 +1048,7 @@ export type IpcInvoke = {
   [IpcChannel.McpSettingsGet]: Api['mcpSettings']['get'];
   [IpcChannel.McpEnabledSet]: Api['mcpSettings']['setEnabled'];
   [IpcChannel.ToolPermissionsSet]: Api['mcpSettings']['setPermission'];
+  [IpcChannel.ParentAskRulesSet]: Api['mcpSettings']['setParentAskRules'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];

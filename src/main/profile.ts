@@ -296,6 +296,7 @@ export class Profile {
       enabled: () => this.appSettings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
       humanOnly: (id, request) => this.browser.humanOnly(id, request),
+      askRulesAllowed: () => this.appSettings.parentAskRulesEnabled(),
       home: homedir(),
       scheduled: () => this.scheduled ?? null,
       report: (id, text) => this.reports.set(id, text),
