@@ -280,7 +280,7 @@ function ChangeRows<T extends { path: string }>({
     node.kind === 'file' ? (
       <Fragment key={`f:${node.path}`}>{renderFile(node.item, depth)}</Fragment>
     ) : (
-      <div key={`d:${node.path}`} className="scm-row scm-dir-row reveal-host" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} {...keyRow} data-key-level={depth + 2} data-key-open={!collapsed.has(node.path)} title={node.path}>
+      <div key={`d:${node.path}`} className="scm-row scm-dir-row reveal-host" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} {...keyRow} data-key-id={`dir:${node.path}`} data-key-level={depth + 2} data-key-open={!collapsed.has(node.path)} title={node.path}>
         <span className="tree-chevron">
           <DisclosureIcon open={!collapsed.has(node.path)} />
         </span>
@@ -396,6 +396,7 @@ function BranchRow({
       style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
       onClick={() => onOpen(path)}
       {...keyRow}
+      data-key-id={path}
       data-key-level={levelOf(depth)}
       title={t('scm.branchChanges.rowTitle', { path, kind: kindLabel(change.kind) })}
     >
@@ -474,6 +475,7 @@ function Section({
                 style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
                 onClick={() => onOpen(entry)}
                 {...keyRow}
+                data-key-id={entry.path}
                 data-key-level={levelOf(depth)}
                 title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
               >

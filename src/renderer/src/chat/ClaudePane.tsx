@@ -59,6 +59,9 @@ const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
 const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
 // 押して離す間、画面の上の位置を保つ要素（押すと click で動くもの。カードの選択肢はどれも button）
 const PRESSABLE = 'button, a[href], [role="button"], summary, label';
+// スクロールの位置がこれより上へ動いたら、上へ動いたと見る（端数の揺れは数えない）。1 にすると、画素密度 1 の画面では、上へ送るキー（↑ など）の
+// なめらかなスクロールが 1px ずつ動く間、上へ動いたと見ずに最下部へ送り戻し続け、1 秒ほど動かなかった
+const UP_SLOP_PX = 0.5;
 // 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
 const PRESS_SLOP_PX = 4;
 
@@ -219,7 +222,7 @@ export const ClaudePane = memo(function ClaudePane({
       keepPressed(list);
       return;
     }
-    if (userScrollingUp.current && list.scrollTop < lastScrollTop.current - 1) {
+    if (userScrollingUp.current && list.scrollTop < lastScrollTop.current - UP_SLOP_PX) {
       lastScrollTop.current = list.scrollTop;
       updateBottom(list);
       return;
@@ -888,7 +891,7 @@ export const ClaudePane = memo(function ClaudePane({
               keepPressed(el);
               return;
             }
-            const movedUp = el.scrollTop < lastScrollTop.current - 1;
+            const movedUp = el.scrollTop < lastScrollTop.current - UP_SLOP_PX;
             lastScrollTop.current = el.scrollTop;
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
             if (jumping.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 40) return;
@@ -910,7 +913,7 @@ export const ClaudePane = memo(function ClaudePane({
             chatKeys.onFocus(e);
             // Tab で一覧の中の要素へフォーカスを移すと、ブラウザは focusin より先に、その要素が見えるよう一覧を動かす。上へ動いていれば、
             // 人が上へスクロールしたものとして扱う（最下部へ送り直すと、フォーカスした要素が見えなくなる）。アプリが動かしたフォーカスは数えない
-            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - 1) userScrollingUp.current = true;
+            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - UP_SLOP_PX) userScrollingUp.current = true;
           }}
           onPointerDown={(e) => {
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない

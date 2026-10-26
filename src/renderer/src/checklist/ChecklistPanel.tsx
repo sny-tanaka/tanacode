@@ -171,6 +171,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                 className={`checklist-list-head reveal-host${dropTarget === `end:${list.id}` ? ' drop' : ''}`}
                 onClick={() => toggleList(list.id)}
                 {...keyRow}
+                data-key-id={list.id}
                 data-key-level={1}
                 data-key-open={open}
                 onDoubleClick={() => setEditing({ id: list.id, name: list.name, description: list.description, kind: kindOf(list) })}
@@ -235,6 +236,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         onDragEnd={dragEnd}
                         onClick={(e) => clickCard(e, list, card)}
                         {...keyRow}
+                        data-key-id={card.id}
                         data-key-level={2}
                       >
                         {traits.checkable ? (

@@ -151,6 +151,7 @@ export const Sidebar = memo(function Sidebar({
         className={`session-row reveal-host${depth === 1 ? ' child' : ''}${s.id === selectedId ? ' active' : ''}${hidesSelected ? ' active-within' : ''}${s.archived ? ' archived' : ''}`}
         onClick={() => onSelect(s.id)}
         {...keyRow}
+        data-key-id={s.id}
         title={s.cwd}
       >
         <span className={`session-indicator ${activity?.kind ?? ''}`} title={activity?.label} />

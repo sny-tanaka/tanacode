@@ -113,6 +113,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
               : hasDetail && setOpen((v) => !v)
       }
       {...(clickable ? keyRow : {})}
+      data-key-id={item.id}
     >
       <div className="tool-card-head">
         <StatusDot state={dot} animate={finishing} />

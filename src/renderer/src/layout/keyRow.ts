@@ -64,17 +64,21 @@ export const keyRow = {
 
 // ---- 一覧（行を並べたもの）を、キーで動かす ----
 // Tab は一覧の間を移るだけにする（ロービングタブインデックス）。一覧の中で Tab で止まるのは、今の行 1 つだけ。
-// 今の行は、前にいた行（覚えていれば）、選んでいる行（.active）、最初の行（チャットは最後の行）の順に決める。
+// 今の行は、前にいた行、選んでいる行（.active か .active-within）、最初の行（チャットは最後の行）の順に決める。
+// 前にいた行は、キーで入った行だけを覚える（マウスで押した行は覚えない）。覚えたあとに選んでいる行が変わったら（マウスで選んだ・⌃⌘↓ など）、選んでいる行を先にする。
 // 一覧の中は、↑↓ で行を移り、Home・End で先頭・末尾へ。→ ← で、行の上のボタンへ移る（ボタンにいる間は、keyRow の data-key-focus でボタンを出したまま）。
 // 開け閉めする行（data-key-open）は、→ で開き、← で閉じる。開いているときの → は、ボタンがあればボタンへ、無ければ最初の子へ。
 // 閉じている（か、開け閉めしない）行の ← は、親の行（data-key-level が小さい、前の行）へ。
-// 行は [data-key-row]（keyRow）と、質問・許可のカードの選択肢（.menu-option）。行の中のボタン（button・リンク）は Tab で止めない
+// 矢印キーは、行そのものか行のボタンにいるときだけ受ける（ツールのカードの出力欄など、行の中のほかの所で押したものは、ブラウザに渡す）。
+// 行は [data-key-row]（keyRow）と、質問・許可のカードの選択肢（.menu-option）。行の中のボタン（button・リンク）は Tab で止めない。
+// キーで操作している行（か、そのボタン）が消えた・作り直されたとき（ソース管理でステージしてセクションを移ったなど）は、同じ行（data-key-id が同じ）か、
+// 無ければ同じ位置の行へフォーカスを戻す（body に落ちると、矢印キーが効かなくなるため）
 const ITEM = '[data-key-row], .menu-option';
 const CONTROL = 'button, a[href]';
 const TEXT_FIELD = 'input, textarea, select, [contenteditable="true"]';
 
-// 一覧の中で、今の行（Tab で入る行）として覚えている行
-const remembered = new WeakMap<Element, HTMLElement>();
+// 一覧の中で、キーで入った行と、そのときに選んでいた行
+const remembered = new WeakMap<Element, { item: HTMLElement; selected: HTMLElement | null }>();
 
 const ownList = (el: Element) => el.closest('[data-key-list]');
 // 一覧の行（入れ子の一覧の行は入れない。隠しているもの・押せない選択肢は飛ばす）
@@ -87,12 +91,15 @@ function controlsOf(item: HTMLElement): HTMLElement[] {
 }
 const levelOf = (item: HTMLElement) => Number(item.dataset.keyLevel ?? 0);
 
-// 一覧の、前にいた行か、選んでいる行
+// 一覧の、選んでいる行
+const selectedOf = (items: HTMLElement[]) => items.find((el) => el.classList.contains('active')) ?? items.find((el) => el.classList.contains('active-within')) ?? null;
+// 一覧の、前にいた行（キーで入った行。そのあとに選んでいる行が変わっていなければ）か、選んでいる行
 export function chosenItem(list: Element): HTMLElement | null {
   const items = itemsOf(list);
+  const selected = selectedOf(items);
   const kept = remembered.get(list);
-  if (kept && items.includes(kept)) return kept;
-  return items.find((el) => el.classList.contains('active')) ?? items.find((el) => el.classList.contains('active-within')) ?? null;
+  if (kept && items.includes(kept.item) && kept.selected === selected) return kept.item;
+  return selected;
 }
 // 一覧の今の行（Tab で入る行）
 function currentItem(list: Element): HTMLElement | null {
@@ -113,6 +120,32 @@ export function syncKeyLists(root: ParentNode = document): void {
   // 一覧に入っていない行は、それぞれで止まる
   for (const row of root.querySelectorAll<HTMLElement>('[data-key-row]')) if (!ownList(row)) row.tabIndex = 0;
 }
+
+// キーで操作している行（か、そのボタン）。消えたときに、フォーカスを戻す先を探すため。
+// マウスで押したとき・一覧の外へフォーカスが移ったときにやめる（マウスで使ったときの動きは変えない）
+let watching: { list: Element; focused: HTMLElement; id: string | undefined; index: number } | null = null;
+const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => recover());
+function watch(list: Element, focused: HTMLElement, item: HTMLElement) {
+  watching = { list, focused, id: item.dataset.keyId, index: itemsOf(list).indexOf(item) };
+  observer?.observe(document.body, { childList: true, subtree: true });
+}
+function unwatch() {
+  watching = null;
+  observer?.disconnect();
+}
+// 操作していたものが消えて（か、作り直されて）フォーカスが body に落ちたら、同じ行か、同じ位置の行へ戻す
+function recover() {
+  if (!watching) return;
+  const { list, focused, id, index } = watching;
+  const active = document.activeElement;
+  if (focused.isConnected && active === focused) return;
+  if ((active && active !== document.body) || !list.isConnected) return unwatch();
+  if (focused.isConnected && list.contains(focused)) return focusByKey(focused);
+  const items = itemsOf(list);
+  const to = (id !== undefined ? items.find((el) => el.dataset.keyId === id) : undefined) ?? items[Math.min(index, items.length - 1)];
+  // 行がまだ無い（作り直している途中）なら、次の変化を待つ
+  if (to) focusByKey(to);
+}
 if (typeof window !== 'undefined') {
   window.addEventListener(
     'keydown',
@@ -121,19 +154,32 @@ if (typeof window !== 'undefined') {
     },
     true,
   );
+  window.addEventListener('pointerdown', unwatch, true);
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      if (watching && !(e.target instanceof Node && watching.list.contains(e.target))) unwatch();
+    },
+    true,
+  );
 }
 
-// 一覧の中に入った行を、今の行として覚える
+// キーで一覧の中の行（か、そのボタン）に入ったら、今の行として覚え、消えたときに備える
 function listFocus(e: FocusEvent<HTMLElement>) {
+  const list = e.currentTarget;
   const item = e.target.closest<HTMLElement>(ITEM);
-  if (item && ownList(item) === e.currentTarget) remembered.set(e.currentTarget, item);
+  if (!item || ownList(item) !== list || !enteredByKey(e.target)) return;
+  remembered.set(list, { item, selected: selectedOf(itemsOf(list)) });
+  watch(list, e.target, item);
 }
 
 function move(to: HTMLElement | null | undefined, e: KeyboardEvent<HTMLElement>) {
   if (!to) return;
   e.preventDefault();
   focusByKey(to);
+  // 行が見えるところまで送る。見えている範囲より背の高い行（開いたツールのカード）は、頭（最初の子）が見えるところまで
   to.scrollIntoView?.({ block: 'nearest' });
+  to.firstElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
 
 function listKeys(e: KeyboardEvent<HTMLElement>) {
@@ -144,10 +190,11 @@ function listKeys(e: KeyboardEvent<HTMLElement>) {
   if (target.matches(TEXT_FIELD) || !enteredByKey(target)) return;
   const item = target.closest<HTMLElement>(ITEM);
   if (!item || ownList(item) !== list) return;
-  const items = itemsOf(list);
-  const index = items.indexOf(item);
   const controls = controlsOf(item);
   const onItem = target === item;
+  if (!onItem && !controls.includes(target)) return;
+  const items = itemsOf(list);
+  const index = items.indexOf(item);
   const open = item.dataset.keyOpen;
   switch (e.key) {
     case 'ArrowDown':

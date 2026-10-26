@@ -48,6 +48,7 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
             className={`task-row${task.key === activeKey ? ' active' : ''}${left ? ' leaving' : ''}`}
             onClick={() => onOpen(task)}
             {...keyRow}
+            data-key-id={task.key}
             title={t('tasks.list.openTip')}
           >
             {left ? (

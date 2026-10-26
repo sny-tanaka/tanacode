@@ -34,7 +34,7 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
   const card = (task: TaskEntry) => {
     const ms = elapsed(task, now);
     return (
-      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} {...keyRow} title={t('tasks.list.openTip')}>
+      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} {...keyRow} data-key-id={task.key} title={t('tasks.list.openTip')}>
         <div className="task-card-head">
           <StatusDot state={task.state === 'running' ? 'running' : task.state === 'done' ? 'done' : 'error'} />
           <span className="task-kind">{t(`tasks.kind.${task.ref.kind}`)}</span>

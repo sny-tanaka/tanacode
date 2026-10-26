@@ -429,6 +429,20 @@ describe('⌘⇧A（待っている質問・許可のカード）と 1〜9', () 
     expect(tabStops()).toEqual([option('です・ます')]);
   });
 
+  // 直す前: カードそのものに入ったあとは、数字か Tab を押さないと選択肢へ移れなかった
+  it('⌘⇧A でカードに入った直後の ↓ で、最初の選択肢へ移る（答えない）。↑ はチャットのスクロールに渡す', async () => {
+    render(inChat(<QuestionCard sessionId="s1" question={question} />));
+    focusCard();
+    expect(press({ key: 'ArrowUp', code: 'ArrowUp' })).toBe(true);
+    expect(document.activeElement).toBe(card());
+    expect(press({ key: 'ArrowDown', code: 'ArrowDown' })).toBe(false);
+    expect(document.activeElement).toBe(option('です・ます'));
+    press({ key: 'ArrowDown', code: 'ArrowDown' });
+    expect(document.activeElement).toBe(option('だ・である'));
+    await act(async () => {});
+    expect(api.argsOf('question.reply')).toEqual([]);
+  });
+
   it('マウスで選択肢を押したあと（キーで入っていない）は、↑↓ で移らない（直す前と同じ）', () => {
     render(inChat(<QuestionCard sessionId="s1" question={{ ...question, questions: [{ ...question.questions[0], multiSelect: true }] }} />));
     mouse();

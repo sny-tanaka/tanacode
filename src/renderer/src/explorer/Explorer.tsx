@@ -160,6 +160,7 @@ export const Explorer = memo(function Explorer({
           }}
           {...keyRow}
           onKeyDown={rowKeys((x, y) => setMenu({ base: READ_FILES, path: file, isDir: false, isRoot: false, x, y, keyboard: true }))}
+          data-key-id={file}
           data-key-level={1}
           title={file}
         >
@@ -430,6 +431,7 @@ function RootTree({
               onContextMenu={(e) => openMenu(e, { path: entry.path, isDir: entry.isDir, isRoot: false })}
               {...keyRow}
               onKeyDown={keysOf({ path: entry.path, isDir: entry.isDir, isRoot: false })}
+              data-key-id={entry.path}
               data-key-level={depth + 1}
               data-key-open={entry.isDir ? expanded.has(entry.path) : undefined}
               title={entry.path}
@@ -463,6 +465,7 @@ function RootTree({
         onContextMenu={(e) => openMenu(e, { path: base, isDir: true, isRoot: true })}
         {...keyRow}
         onKeyDown={keysOf({ path: base, isDir: true, isRoot: true })}
+        data-key-id={base}
         data-key-level={1}
         data-key-open={expanded.has(base)}
         title={base || undefined}

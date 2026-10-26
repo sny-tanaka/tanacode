@@ -41,7 +41,7 @@ export function useShortcutKeys(): void {
         if (!e.repeat || REPEATING.has(shortcut)) runShortcut(shortcut);
         return;
       }
-      pickOptionByNumber(e);
+      if (!enterCardByArrow(e)) pickOptionByNumber(e);
     };
     // 数字のキーと、選択肢の頭の番号（global.css）は、キーで入っているときだけにする（enteredByKey）
     const onFocus = (e: FocusEvent) => {
@@ -225,6 +225,19 @@ export function columnShortcut(shortcut: Shortcut): boolean {
     default:
       return false;
   }
+}
+
+// ⌘⇧A でキーで入ったカード（カードそのもの）で ↓ を押すと、最初の選択肢へ移る（選択肢の間は、keyRow の keyList が ↑↓ で移す）。
+// ↑ は、今までどおりチャットのスクロールに使う
+function enterCardByArrow(e: KeyboardEvent): boolean {
+  if (e.key !== 'ArrowDown' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) return false;
+  const card = document.activeElement;
+  if (!(card instanceof HTMLElement) || !card.matches('[data-answer-card]') || !enteredByKey(card)) return false;
+  const option = numberedOptions(card).find((el) => !el.disabled);
+  if (!option) return false;
+  e.preventDefault();
+  focusByKey(option);
+  return true;
 }
 
 // 質問のカードにキーで入っている間、1〜9 でその番号の選択肢へフォーカスを移す（答えるのは Enter）。
