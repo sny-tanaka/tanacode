@@ -33,10 +33,11 @@ const found = (rect: { x: number; y: number; width: number; height: number }, de
 });
 
 // マウスとキーの CDP の命令を、確かめやすい形にする
+// ページへの入力。CDP の命令（Input.*）と、ページそのものに届けるキー・文字（webContents の sendInputEvent・insertText）を、送った順に
 const inputs = (page: ReturnType<ReturnType<typeof setup>['open']>): Record<string, unknown>[] =>
   page.debugger.commands
-    .filter((c) => c.method.startsWith('Input.'))
-    .map((c) => ({ method: c.method.replace('Input.', ''), ...c.params, ...(c.child ? { child: c.child } : {}) }));
+    .filter((c) => c.method.startsWith('Input.') || c.method.startsWith('Electron.'))
+    .map((c) => ({ method: c.method.replace(/^(Input|Electron)\./, ''), ...c.params, ...(c.child ? { child: c.child } : {}) }));
 
 describe('ページを読むツールの前に（今のページ）', () => {
   it('今のタブが空・許していない先なら、ページに触れずに断る（URL はオリジンだけ）', async () => {
@@ -953,9 +954,13 @@ describe('入力（type）', () => {
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'insertText', text: 'たなか' },
-      { method: 'dispatchKeyEvent', type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0, text: '\r', unmodifiedText: '\r' },
-      { method: 'dispatchKeyEvent', type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 },
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+      { method: 'sendInputEvent', type: 'char', keyCode: 'Enter', modifiers: [] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Enter', modifiers: [] },
     ]);
+    // 文字とキーは、CDP（アプリ全体でフォーカスのある所に届く）では送らない
+    expect(page.debugger.sent('Input.insertText')).toEqual([]);
+    expect(page.debugger.sent('Input.dispatchKeyEvent')).toEqual([]);
   });
 
   it('selector が無ければ、今フォーカスのある場所に入れる。文字が空なら入れない', async () => {
@@ -974,9 +979,9 @@ describe('入力（type）', () => {
     page.page.clear = () => undefined;
     await call('type', { text: '新しい', clear: true });
     expect(page.scriptsOf('clear')).toHaveLength(1);
-    expect(inputs(page).map((i) => `${i.method}:${String(i.type ?? i.text)}:${String(i.key ?? '')}`)).toEqual([
-      'dispatchKeyEvent:rawKeyDown:Backspace',
-      'dispatchKeyEvent:keyUp:Backspace',
+    expect(inputs(page).map((i) => `${i.method}:${String(i.type ?? i.text)}:${String(i.keyCode ?? '')}`)).toEqual([
+      'sendInputEvent:keyDown:Backspace',
+      'sendInputEvent:keyUp:Backspace',
       'insertText:新しい:',
     ]);
   });
@@ -1021,27 +1026,40 @@ describe('入力（type）', () => {
 });
 
 describe('キー（press_key）', () => {
-  it('キーと一緒に押すキーを CDP で送る。Shift なら文字も入れる', async () => {
+  // CDP の Input.dispatchKeyEvent は、アプリ全体でフォーカスのある所に届く（人がチャットの入力欄にいると、そこに入る）ので使わない
+  it('キーと一緒に押すキーを、ページそのものに送る（sendInputEvent）。Shift なら文字も入れる', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     expect(await call('press_key', { key: 'Enter', modifiers: ['shift'] })).toEqual(textResult('Pressed shift+Enter'));
     expect(inputs(page)).toEqual([
-      { method: 'dispatchKeyEvent', type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8, text: '\r', unmodifiedText: '\r' },
-      { method: 'dispatchKeyEvent', type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8 },
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] },
+      { method: 'sendInputEvent', type: 'char', keyCode: 'Enter', modifiers: ['shift'] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] },
     ]);
+    expect(page.debugger.sent('Input.dispatchKeyEvent')).toEqual([]);
   });
 
-  it('Ctrl・⌘ と一緒なら文字を入れない（rawKeyDown）。知らない修飾キーは数えない', async () => {
+  it('Ctrl・⌘ と一緒なら文字を入れない。知らない修飾キーは数えない。矢印・Space は Electron のキーの名前にする', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     expect(textOf(await call('press_key', { key: 'a', modifiers: ['control', 'meta', 'hyper', 3] }))).toBe('Pressed control+meta+hyper+a');
-    expect(inputs(page)[0]).toEqual({ method: 'dispatchKeyEvent', type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 6 });
+    expect(inputs(page)).toEqual([
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'a', modifiers: ['control', 'meta'] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'a', modifiers: ['control', 'meta'] },
+    ]);
     page.debugger.commands.length = 0;
     await call('press_key', { key: 'a', modifiers: ['alt'] });
-    expect(inputs(page)[0]).toMatchObject({ type: 'keyDown', modifiers: 1, text: 'a' });
+    expect(inputs(page)[1]).toEqual({ method: 'sendInputEvent', type: 'char', keyCode: 'a', modifiers: ['alt'] });
     page.debugger.commands.length = 0;
     await call('press_key', { key: 'Tab', modifiers: 'shift' });
-    expect(inputs(page)[0]).toMatchObject({ type: 'rawKeyDown', key: 'Tab', modifiers: 0 });
+    expect(inputs(page)).toEqual([
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Tab', modifiers: [] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Tab', modifiers: [] },
+    ]);
+    page.debugger.commands.length = 0;
+    await call('press_key', { key: 'ArrowDown' });
+    await call('press_key', { key: 'space' });
+    expect(inputs(page).map((i) => `${String(i.type)}:${String(i.keyCode)}`)).toEqual(['keyDown:Down', 'keyUp:Down', 'keyDown:Space', 'char: ', 'keyUp:Space']);
   });
 
   it('フォーカスが別プロセスの iframe（許す先）の中なら、その iframe に送る', async () => {

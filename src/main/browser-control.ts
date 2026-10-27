@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
+import { nativeImage, webContents as allWebContents, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import {
   BROWSER_DEVICES,
   BROWSER_MCP,
@@ -1368,7 +1368,7 @@ export class BrowserControl {
       );
       await this.key(guest, 'Backspace', []);
     }
-    if (text) await this.cdp(guest, 'Input.insertText', { text }, child);
+    if (text) await this.insertText(guest, text, child);
     if (args.submit === true) await this.key(guest, 'Enter', [], child);
     await settle(guest.contents);
     return textResult(`Typed into ${where}${args.submit === true ? ' and pressed Enter' : ''}`);
@@ -1380,15 +1380,45 @@ export class BrowserControl {
     return textResult(`Pressed ${[...modifiers, key].join('+')}`);
   }
 
+  // キーと文字は、ページ（webview の中身）そのものに届ける（webContents.sendInputEvent・insertText）。CDP の Input.dispatchKeyEvent・
+  // Input.insertText は、ページのタブに送っても、アプリ全体でフォーカスのある所に届く。人がチャットの入力欄などへ戻っていると、
+  // Claude がページで打つつもりのキーが、人の入力として入ってしまう（⌘Enter なら、人の発言として送られうる）。
+  // sendInputEvent は、webview にフォーカスを渡さず、人のフォーカスも動かさない。
+  // ただし、sendInputEvent はページのいちばん外のフレームにしか届かないので、フォーカスが別プロセスの iframe の中なら、その iframe の CDP の
+  // セッション（child）に送る（その iframe そのものに届き、人のフォーカスがある所には入らないことを確かめた）
   private async key(guest: Guest, name: string, modifiers: string[], child?: string): Promise<void> {
     const spec = keySpec(name);
     if (!spec) throw new ToolError(`Unknown key: ${name}`);
-    const bits = modifiers.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
+    const held = modifiers.filter((m) => m in MODIFIER_BITS);
+    const bits = held.reduce((sum, m) => sum | MODIFIER_BITS[m], 0);
     // Ctrl・⌘ と一緒に押すときは、文字を入れない
     const text = bits & (MODIFIER_BITS.control | MODIFIER_BITS.meta) ? undefined : spec.text;
-    const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, modifiers: bits };
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) }, child);
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, child);
+    if (child) {
+      const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, modifiers: bits };
+      await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) }, child);
+      await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, child);
+      return;
+    }
+    const keyCode = electronKeyCode(spec);
+    const mods = held as KeyboardInputEvent['modifiers'];
+    const send = (event: KeyboardInputEvent) => {
+      if (guest.contents.isDestroyed()) throw new ToolError('The tab was closed.');
+      guest.contents.sendInputEvent(event);
+    };
+    send({ type: 'keyDown', keyCode, modifiers: mods });
+    // 文字を入れるキーは、続けて文字（char）を送る（Enter の char は、フォームを送るなどの既定の動きになる）
+    if (text) send({ type: 'char', keyCode: text === '\r' ? 'Enter' : text, modifiers: mods });
+    send({ type: 'keyUp', keyCode, modifiers: mods });
+  }
+
+  // 文字を、ページのフォーカスのある欄に入れる（IME で確定したのと同じ。日本語・絵文字も 1 回で入る）。届け先は key と同じ
+  private async insertText(guest: Guest, text: string, child?: string): Promise<void> {
+    if (child) {
+      await this.cdp(guest, 'Input.insertText', { text }, child);
+      return;
+    }
+    if (guest.contents.isDestroyed()) throw new ToolError('The tab was closed.');
+    await guest.contents.insertText(text);
   }
 
   private async scroll(guest: Guest, selector: string | undefined, deltaX: number, deltaY: number): Promise<ToolResult> {
@@ -2280,6 +2310,18 @@ const NAMED_KEYS: Record<string, KeySpec> = {
   pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
   pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
 };
+
+// sendInputEvent に渡すキーの名前（Electron のアクセラレーターのキーの名前。文字のキーはその文字）
+const ELECTRON_KEYS: Record<string, string> = {
+  ' ': 'Space',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+};
+export function electronKeyCode(spec: KeySpec): string {
+  return ELECTRON_KEYS[spec.key] ?? spec.key;
+}
 
 export function keySpec(name: string): KeySpec | null {
   const named = NAMED_KEYS[name.toLowerCase()];

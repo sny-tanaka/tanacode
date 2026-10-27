@@ -175,6 +175,16 @@ export class FakeContents extends EventEmitter {
     return this.type;
   }
 
+  // ページそのものに届けるキー・文字（sendInputEvent・insertText）。CDP の命令と並べて確かめるため、debugger の控えに
+  // Electron.sendInputEvent・Electron.insertText として書く
+  sendInputEvent(event: Record<string, unknown>): void {
+    this.debugger.commands.push({ method: 'Electron.sendInputEvent', params: event });
+  }
+
+  async insertText(text: string): Promise<void> {
+    this.debugger.commands.push({ method: 'Electron.insertText', params: { text } });
+  }
+
   getURL(): string {
     return this.url;
   }
