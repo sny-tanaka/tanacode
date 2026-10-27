@@ -72,7 +72,9 @@ let remoteControl = false;
 // 裏で起動する（TANACODE_BACKGROUND=1）。ウインドウを画面に出さず、Dock にも出さない。画面は描かれ続けるので、Playwright などからは操作できる。
 // 手元で E2E を流す間、作業中のアプリから前面を奪わないためのもの（Electron は、ウインドウを出すときにアプリを最前面にする）
 const background = process.env.TANACODE_BACKGROUND === '1';
-// Dock のアイコンは、起動が済む前に消す。それでも、起動の直後の 0.3 秒ほどは Dock に出る種類のアプリとして見えることがある（実測。20 回のうち 2 回）
+// Dock のアイコンは、起動が済む前に消す。ただし、ここが動く前の 0.1 秒ほどは、Dock に出る種類のアプリ（regular）になっている（実測で 10 回のうち 10 回）。
+// それも避けるため、E2E と npm run dev・npm start は、Info.plist に LSUIElement を足した Electron の写しで起動する（scripts/background-electron.ts）。
+// そのときは、はじめから Dock に出ない種類で動き、これは何もしない。写しを使わない起動（パッケージしたアプリなど）のために残す
 if (background) app.dock?.hide();
 // アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
@@ -1514,15 +1516,18 @@ function useLoginShellPath(): void {
 }
 
 // 同じ userData で動くアプリは 1 つだけにする（開発版とパッケージ版を同じ userData で起動したときなど）。2 つ動くと、同じ会話を
-// 2 回 claude --resume し、チェックリストなどの保存もぶつかる。2 つめは何も作らずに終え、1 つめはウインドウを前に出す
-const primary = app.requestSingleInstanceLock();
+// 2 回 claude --resume し、チェックリストなどの保存もぶつかる。2 つめは何も作らずに終え、1 つめはウインドウを前に出す。
+// ただし、2 つめが裏で起動したもの（TANACODE_BACKGROUND=1）なら、前に出さない。開発版は --user-data-dir を分けなければ、
+// 人が使っているアプリと同じ userData になり、確かめのための裏の起動が、人のアプリを前に出して入力を奪うため
+const primary = app.requestSingleInstanceLock(background ? { background: true } : undefined);
 if (!primary) {
   quitDecided = true;
   app.quit();
 } else {
   // 起動の途中（ウインドウを作る前）は、ここでウインドウを作らず（起動の終わりにもう 1 枚作ってしまう）、印だけ付けておき、
   // ウインドウを作ったあとで前に出す（起動を待つあいだにほかのアプリへ移った人の頼みを、捨てない）
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, _argv, _cwd, data: unknown) => {
+    if ((data as { background?: unknown } | null)?.background === true) return;
     if (mainWindow) showWindow();
     else showWhenCreated = true;
   });

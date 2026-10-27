@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import license from 'rollup-plugin-license';
+import { backgroundElectron } from './scripts/background-electron';
 import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
 
 // TANACODE_SOURCEMAP=1 でビルドすると、ソースマップ（.map）も書き出す。E2E のカバレッジを src の行に戻すのに使う
@@ -11,6 +12,13 @@ const sourcemap = process.env.TANACODE_SOURCEMAP === '1';
 // ソースマップには元のソースを埋め込まない（カバレッジは src のファイルを読んで戻すので要らない）。
 // 埋め込むと、画面側のビルドの最大メモリが 0.7GB ほど増える（5.1GB → 5.8GB）
 const output = { sourcemapExcludeSources: true };
+
+// 裏で起動する（TANACODE_BACKGROUND=1）npm run dev・npm start は、LSUIElement を足した Electron の写しで起動する（scripts/background-electron.ts）。
+// 起動の直後も Dock に出さず、前面を奪わないため。electron-vite は ELECTRON_EXEC_PATH の Electron を起動する（自分で決めていれば、そのまま使う）
+if (process.env.TANACODE_BACKGROUND === '1' && !process.env.ELECTRON_EXEC_PATH) {
+  const bin = backgroundElectron(resolve('.'));
+  if (bin) process.env.ELECTRON_EXEC_PATH = bin;
+}
 
 // 画面に出すアプリのバージョン（__APP_VERSION__ として埋め込む）
 const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string };

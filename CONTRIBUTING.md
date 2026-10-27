@@ -84,8 +84,12 @@ npm run dev
   ```
 
 - 開発版を終了しても、「Claude Code も止めて終了」を選ばない限り、pty ホストと Claude Code は残ります（次の起動で引き継ぐため）。
-- `TANACODE_BACKGROUND=1` を付けて起動すると、裏で起動します。ウインドウを画面に出さず、Dock にも出しません（起動の直後の 0.3 秒ほどは、出ることがあります）。Playwright などで操作して確かめるとき用で、手元の E2E はこれで起動します（下の「アプリの通しのテスト（E2E）」）。
+- `TANACODE_BACKGROUND=1` を付けて起動すると、裏で起動します。ウインドウを画面に出さず、Dock にも出しません。Playwright などで操作して確かめるとき用で、手元の E2E はこれで起動します（下の「アプリの通しのテスト（E2E）」）。
   - 理由: Electron は、ウインドウを出すときにアプリを最前面にします。確かめのたびに、作業中のアプリから前面とキー入力を奪うためです。
+  - 起動の直後も Dock に出さないよう、Info.plist に `LSUIElement` を足した Electron の写しで起動します（`scripts/background-electron.ts`。写しは `node_modules/.cache/tanacode-background-electron`。APFS のクローンなので、ほとんど場所を取りません。Electron のバージョンが変わったら作り直します）。写しを使うのは、E2E（`test/e2e/app.ts`）と `npm run dev`・`npm start`（`electron.vite.config.ts` が electron-vite の `ELECTRON_EXEC_PATH` に渡す。自分で `ELECTRON_EXEC_PATH` を決めていれば、そのまま使います）です。
+    - 写さずに起動すると、メインプロセスの JavaScript が動く前の 0.1 秒ほど、アプリは Dock に出る種類（regular）になります（`app.dock.hide()` はそのあと。実測で 10 回のうち 10 回）。写しでは、はじめから Dock に出ない種類（accessory）で動きます（実測で 10 回のうち 0 回）。
+    - 写しを使わない起動（パッケージしたアプリ・Electron を直に起動するとき）は、これまでどおり `app.dock.hide()` で消すだけで、起動の直後に一瞬 Dock に出る種類になります。
+  - 開発版は、`--user-data-dir` を分けないと、人が使っているアプリ（/Applications の tanacode）と同じ userData になり、2 つめの起動としてすぐに終わります（`requestSingleInstanceLock`）。このとき、裏で起動した 2 つめは、1 つめに裏の起動であることを添え（`{ background: true }`）、1 つめはウインドウを前に出しません。添えないと、確かめのための起動のたびに、人のアプリが前に出て入力を奪うためです（人のアプリが、これを受け取るバージョンになってから効きます）。裏で起動して確かめるときは、`npm run dev -- -- --user-data-dir=/tmp/…` のように userData を分けます。
   - 画面は描かれ続けます。Playwright をつながずに起動しても、`requestAnimationFrame` は止まらず、`capturePage` でも撮れます（実測）。
   - Dock のアイコンや通知をクリックしても、前に出しません。最大化・フルスクリーンにもしません（どちらもウインドウを画面に出すため）。ウインドウの位置と大きさも覚え直しません。
   - Dock にもウインドウにも出ないので、動いているかは `ps` で確かめます。
