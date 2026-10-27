@@ -355,6 +355,13 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   };
   const focusPageRef = useRef(focusPage);
   focusPageRef.current = focusPage;
+  // タブを送った・閉じたあと、描き終えてからページへ移す。それまでに人がほかへ移っていたら（ウインドウが裏にあって描くのが遅れ、
+  // その間に ⌘1 などで一覧へ移ったなど）、あとから奪わない。移してよいのは、閉じたタブと一緒にフォーカスが落ちた（body）か、ブラウザの中にあるときだけ
+  const focusPageLater = () =>
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || paneRef.current?.contains(active)) focusPageRef.current();
+    });
   useShortcuts((shortcut) => {
     if (!sessionId) return false;
     const pane = focusedPane();
@@ -369,7 +376,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         const next = stepIn(tabsRef.current.get(sessionId) ?? [], activeTab, shortcut === 'nextTab' ? 1 : -1, true);
         if (next && next !== activeTab) {
           activate(sessionId, next);
-          requestAnimationFrame(() => focusPageRef.current());
+          focusPageLater();
         }
         return true;
       }
@@ -377,7 +384,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         if (pane !== 'browser') return false;
         if (activeTab) closeTab(sessionId, activeTab);
         // 閉じたタブにフォーカスがあったので、移った先のタブへ（続けて ⌘W・⌃Tab を押せるように）
-        requestAnimationFrame(() => focusPageRef.current());
+        focusPageLater();
         return true;
       default:
         return false;

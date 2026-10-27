@@ -497,6 +497,29 @@ describe('PreviewPane: ショートカット（⌘4・⌃Tab・⌘W）', () => {
     expect(tabs()).toHaveLength(1);
   });
 
+  // 直す前: ⌘W・⌃Tab のあと、描き終えるまでに ⌘1 などでほかへ移っても、描き終えたときにページへ奪い返していた
+  // （ウインドウが裏にあると、描くのが遅れる）
+  it('⌘W・⌃Tab のあと、ページへ移す前に人がほかへ移ったら、ページへ奪い返さない', async () => {
+    render(
+      <>
+        <Pane sessionId="s1" />
+        <button>セッションの行</button>
+      </>,
+    );
+    await twoTabs();
+    const row = screen.getByText('セッションの行');
+    act(() => address().focus());
+    act(() => runShortcut('nextTab'));
+    act(() => row.focus());
+    await frame();
+    act(() => address().focus());
+    act(() => runShortcut('closeTab'));
+    act(() => row.focus());
+    await frame();
+    expect(webviews.some((wv) => wv.log.includes('focus'))).toBe(false);
+    expect(document.activeElement).toBe(row);
+  });
+
   it('⌘4 で、出しているブラウザのページへ（何も開いていなければアドレス欄へ）。出していなければ何もしない', async () => {
     const view = render(<Pane sessionId="s1" />);
     await act(async () => {});

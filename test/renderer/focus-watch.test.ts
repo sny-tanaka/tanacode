@@ -89,7 +89,9 @@ describe('チャットの入力欄のフォーカスの見張り', () => {
     key(input, { key: 'x', code: 'KeyX', keyCode: 88, isComposing: true });
     clock += 20;
     other.focus();
-    expect(JSON.stringify(reports)).not.toMatch(/secret|example|KeyX|88/);
+    // スタック（行番号の数字を含む）を除いた中身に、title と打った文字が入っていない
+    const { stack: _, ...rest } = reports[0];
+    expect(JSON.stringify(rest)).not.toMatch(/secret|example|KeyX|88/);
     expect(reports[0]).toMatchObject({ to: 'button in .terminal-panel', lastKey: { key: '文字', code: '', keyCode: 0 } });
   });
 
