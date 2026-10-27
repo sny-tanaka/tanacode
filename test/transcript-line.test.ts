@@ -20,7 +20,7 @@ describe('classifyLine', () => {
   it('API の要求の控え（2.1.301 から。前の tool_use・tool_result の写しが入る）と、Claude Code が自分で使う付帯情報は、意図して捨てる行', () => {
     const copy = { type: 'api-request-blob', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'Async agent launched' }] } } as TranscriptEntry;
     expect(kind(copy)).toBe('ignored');
-    for (const type of ['api-request', 'api-request-shape', 'mode', 'atis-latch', 'last-prompt', 'file-history-snapshot', 'worktree-state', 'summary']) expect(kind({ type })).toBe('ignored');
+    for (const type of ['api-request', 'api-request-shape', 'mode', 'atis-latch', 'last-prompt', 'file-history-snapshot', 'worktree-state', 'summary', 'tools-used']) expect(kind({ type })).toBe('ignored');
   });
 
   it('知らない種類と種類の欄の無い行は、名前と、知らない・形が違うのわけを付けて、知らない行', () => {
