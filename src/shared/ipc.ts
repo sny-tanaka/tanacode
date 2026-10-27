@@ -180,6 +180,7 @@ export const IpcChannel = {
   // プロファイルをまたいで同じにする表示設定（shared/prefs.ts）
   PrefsSync: 'prefs:sync',
   PrefsSet: 'prefs:set',
+  FocusLost: 'diagnostics:focus-lost',
   PrefsChanged: 'prefs:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
@@ -503,6 +504,21 @@ export type ShellOpened = { owner: string; id: string; name: string; task: boole
 export type ShellReplay = { exitCode: number | null; cols: number; rows: number; screen: string };
 // 画面を読み込み直したとき（⌘R）に引き継ぐ、main が持っているターミナル（パネルのタブ）。task: コマンドのタブ / exitCode: 動いている間は null /
 // screen: 今の画面を描き直すための文字列（さかのぼって読める行も含む）。cols・rows の大きさの xterm に書く
+// チャットの入力欄から、人の操作でないのにフォーカスが外れた（renderer の chat/focusWatch.ts が調べて、main が focus.log に書く）。
+// reason: 外れ方（focusout: ほかへ移った・外された / removed・disabled・hidden: 入力欄が消えた・押せなくなった・隠れたまま、キーが body に届いた）。
+// to: 移った先の要素。lastPointer・lastKey: 直前に人が押したもの（msAgo: 外れる何 ms 前か）。composing: 日本語を変換している途中だったか。
+// stack: 外した処理（focus()・blur() を呼んだもの。focusout のときだけ取れる）
+export type FocusLostReport = {
+  reason: 'focusout' | 'removed' | 'disabled' | 'hidden' | 'unknown';
+  to: string;
+  lastPointer: { msAgo: number; target: string } | null;
+  lastKey: { msAgo: number; key: string; code: string; keyCode: number; isComposing: boolean; modifiers: string } | null;
+  composing: boolean;
+  input: { connected: boolean; disabled: boolean; readOnly: boolean; visible: boolean };
+  visibility: string;
+  stack: string | null;
+};
+
 export type ShellSnapshot = {
   owner: string;
   id: string;
@@ -720,6 +736,11 @@ export type TanacodeApi = {
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
   shortcuts: {
     onRun(listener: (shortcut: Shortcut) => void): () => void;
+  };
+  // 原因を読むためのログ
+  diagnostics: {
+    // チャットの入力欄から、人の操作でないのにフォーカスが外れた。main が userData/focus.log に書く
+    focusLost(report: FocusLostReport): void;
   };
   // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
   prefs: {
@@ -1126,6 +1147,7 @@ export type IpcSend = {
   [IpcChannel.SessionsInterrupt]: Api['sessions']['interrupt'];
   [IpcChannel.SessionsExportReveal]: Api['sessions']['revealExport'];
   [IpcChannel.PrefsSet]: Api['prefs']['set'];
+  [IpcChannel.FocusLost]: Api['diagnostics']['focusLost'];
   [IpcChannel.PtyWrite]: Api['pty']['write'];
   [IpcChannel.PtyResize]: Api['pty']['resize'];
   [IpcChannel.PtyResetSize]: Api['pty']['resetSize'];

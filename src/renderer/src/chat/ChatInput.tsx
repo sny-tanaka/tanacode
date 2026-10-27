@@ -16,6 +16,8 @@ const MAX_SESSIONS = 6;
 const MAX_COMMANDS = 200;
 // ワークスペースのファイル一覧を読み直す間隔
 const FILES_TTL_MS = 30_000;
+// 変換を確定してから、これより早く届いた Tab は、確定に使われたものとして扱う（確定と同じキーの押下で届くもの。人が確定してから Tab で欄を出るのは、これより遅い）
+const IME_TAB_MS = 100;
 
 // @ の候補に出すファイル。path: Claude Code に渡すパス（セッションのフォルダの中は相対、ワークスペースに追加したフォルダの中は絶対）。
 // shown: 候補に出すパス（追加したフォルダの中は、エクスプローラーと同じくフォルダの名前から）
@@ -156,6 +158,9 @@ export function ChatInput({
   owner = '',
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 日本語入力の変換の様子。変換中（compositionstart〜compositionend）と、確定した直後に届く Tab は、変換に使われたもの
+  // （予測変換の候補を選ぶ Tab。確定と同時に届くと、isComposing が false のこともある）。endedAt: 確定した時刻（イベントの timeStamp）
+  const composition = useRef({ active: false, endedAt: Number.NEGATIVE_INFINITY });
   const [caret, setCaret] = useState(0);
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null);
@@ -387,8 +392,19 @@ export function ChatInput({
             e.preventDefault();
             onPastesChange([...pastes, text]);
           }}
+          onCompositionStart={() => {
+            composition.current.active = true;
+          }}
+          onCompositionEnd={(e) => {
+            composition.current = { active: false, endedAt: e.timeStamp };
+          }}
           onKeyDown={(e) => {
             const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+            // 変換に使われた Tab では、欄から出ない（フォーカスを次の欄へ移さない）。変換していないときの Tab は、今までどおり欄を出る
+            if (e.key === 'Tab' && (composing || composition.current.active || e.timeStamp - composition.current.endedAt < IME_TAB_MS)) {
+              e.preventDefault();
+              return;
+            }
             if (suggestions.length > 0 && !composing) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
