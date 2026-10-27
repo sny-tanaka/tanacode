@@ -146,6 +146,31 @@ describe('起動', () => {
     expect(state.quit).not.toHaveBeenCalled();
   });
 
+  it('裏で起動した 2 つめ（TANACODE_BACKGROUND=1）からの知らせでは、前に出さない。ふつうに起動した 2 つめは、何も添えない', async () => {
+    await boot();
+    expect(state.requestSingleInstanceLock).toHaveBeenCalledWith(undefined);
+    const win = mainWindow();
+    win.minimized = true;
+    state.app.emit('second-instance', fakeEvent(), [], '/', { background: true });
+    expect(win.restore).not.toHaveBeenCalled();
+    expect(win.show).not.toHaveBeenCalled();
+    expect(win.focus).not.toHaveBeenCalled();
+    // 添えたものが違えば、ふだんどおり前に出す
+    state.app.emit('second-instance', fakeEvent(), [], '/', { background: 'yes' });
+    expect(win.show).toHaveBeenCalledTimes(1);
+  });
+
+  it('裏で起動したアプリは、2 つめになったときに、裏で起動したことを 1 つめに添える', async () => {
+    await boot({
+      before: (s) => {
+        process.env.TANACODE_BACKGROUND = '1';
+        s.singleInstanceLock = false;
+      },
+    });
+    expect(state.requestSingleInstanceLock).toHaveBeenCalledWith({ background: true });
+    expect(state.quit).toHaveBeenCalledTimes(1);
+  });
+
   it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。前に出す頼みは、ウインドウを作ったあとで行う', async () => {
     const adopting = pending<undefined>();
     await boot({ noWait: true, before: (s) => s.adopt.mockReturnValue(adopting.promise) });

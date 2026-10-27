@@ -211,6 +211,8 @@ function freshState() {
     quit: vi.fn((..._args: unknown[]) => undefined),
     // 同じ userData で動いているアプリが、ほかに無い（app.requestSingleInstanceLock。false は 2 つめの起動）
     singleInstanceLock: true,
+    // app.requestSingleInstanceLock に渡したもの（1 つめのアプリの second-instance に届く）
+    requestSingleInstanceLock: vi.fn((_data?: unknown) => undefined),
     // 終わったあとに起動し直す（app.relaunch）
     relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
@@ -315,7 +317,10 @@ export const electronModule = {
     getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
-    requestSingleInstanceLock: () => state.singleInstanceLock,
+    requestSingleInstanceLock: (data?: unknown) => {
+      state.requestSingleInstanceLock(data);
+      return state.singleInstanceLock;
+    },
     relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;

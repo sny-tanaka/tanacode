@@ -10,6 +10,7 @@ import type { PermissionMode } from '@shared/screen';
 import { type HostMessage, PROTOCOL } from '../../src/main/pty-host-protocol';
 import { socketPathIn } from '../../src/main/socket-path';
 import { type Conversation, MockApi } from '../cli/mock-api';
+import { backgroundElectron } from '../../scripts/background-electron';
 
 // アプリ本体を通しで動かす（E2E）。ビルドしたアプリ（out/）か、パッケージした .app（TANACODE_E2E_APP）を Playwright で起動し、
 // 画面を人と同じように操作する。claude は本物（TANACODE_CLAUDE_BIN、無ければ PATH の claude）で、API はモック（test/cli/mock-api.ts）。
@@ -32,6 +33,9 @@ export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
 // 作業中のアプリから前面を奪う。画面を見ながら確かめるときは TANACODE_E2E_SHOW=1。CI では、配る形のまま前に出す
 // （テストからも読む。前に出して流すときは、別ウインドウなども画面に出るため）
 export const BACKGROUND = process.platform === 'darwin' && !process.env.CI && process.env.TANACODE_E2E_SHOW !== '1';
+// 裏で起動するときの Electron（ビルドしたアプリを起動するとき）。LSUIElement を足した写しにして、起動の直後も Dock に出さず、前面を奪わない
+// （scripts/background-electron.ts）。パッケージした .app（TANACODE_E2E_APP）は写さない
+const ELECTRON_BIN = (BACKGROUND && !process.env.TANACODE_E2E_APP ? backgroundElectron(REPO) : null) ?? (createRequire(join(REPO, 'package.json'))('electron') as string);
 
 type Options = {
   // モックの API の台本。作業フォルダのパスを入れるため、フォルダを受け取って返す
@@ -167,7 +171,7 @@ export class E2EApp {
   // timeoutMs のうちに終わらなければ、止めて null を返す
   async launchAgain(timeoutMs = TIMEOUT_MS): Promise<number | null> {
     const packaged = process.env.TANACODE_E2E_APP;
-    const bin = packaged ?? (createRequire(join(REPO, 'package.json'))('electron') as string);
+    const bin = packaged ?? ELECTRON_BIN;
     const child = spawn(bin, packaged ? this.launchArgs() : [...this.launchArgs(), REPO], { cwd: this.root, env: this.env, stdio: 'ignore' });
     return await new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -191,7 +195,7 @@ export class E2EApp {
       // ビルドしたアプリは、リポジトリのフォルダを渡して起動する（package.json の main から out/main/index.js を読む。npm run dev と同じ）。
       // out/main/index.js を直に渡すと、アプリのフォルダ（app.getAppPath()）が out/main になり、macOS では開発中のアイコン
       // （build/icon.png）を読めずに起動が止まる
-      ...(packaged ? { executablePath: packaged, args } : { args: [...args, REPO] }),
+      ...(packaged ? { executablePath: packaged, args } : { executablePath: ELECTRON_BIN, args: [...args, REPO] }),
       cwd: this.root,
       env: this.env,
       timeout: TIMEOUT_MS,
