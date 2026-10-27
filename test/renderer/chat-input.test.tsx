@@ -141,14 +141,22 @@ describe('送信のキー', () => {
       expect(tab(1500)).toBe(true);
     });
 
-    it('Tab で確定して、compositionend のすぐあとに isComposing が false で届いた Tab も止める', () => {
+    it('確定した（compositionend）あとの Tab は、すぐあとでも止めない（速く打って欄を出る・候補を採る Tab を消さない）', () => {
       render(<Harness initial="変換" />);
       start(1000);
       end(1500);
-      expect(tab(1505)).toBe(true);
+      expect(tab(1505)).toBe(false);
     });
 
-    it('変換していないときの Tab と、確定してしばらくたってからの Tab は止めない（キーで欄を出られる）', () => {
+    it('変換の途中でフォーカスが出入りしたら（compositionend が届かなくても）、そのあとの Tab は止めない', () => {
+      render(<Harness initial="へんかん" />);
+      start(1000);
+      fireEvent.blur(box());
+      fireEvent.focus(box());
+      expect(tab(1500)).toBe(false);
+    });
+
+    it('変換していないときの Tab と、確定してからの Tab は止めない（キーで欄を出られる）', () => {
       render(<Harness initial="直して" />);
       expect(tab(1000)).toBe(false);
       start(2000);

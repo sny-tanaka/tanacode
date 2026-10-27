@@ -2,8 +2,10 @@ import type { FocusLostReport } from '@shared/ipc';
 
 // チャットの入力欄から、人の操作でないのにフォーカスが外れたら、知らせる（main がアプリのログ userData/focus.log に書く）。
 // 「打っている途中で急にフォーカスが外れる」不具合の原因を突き止められなかったので、次に起きたときに読めるようにする。
-// - 人の操作とみなすもの: 外れる直前（HUMAN_MS 以内）にマウス・タッチで押した、か、入力欄で変換していないキーを押した（Tab・ショートカットで出た）。
-//   変換中のキー（予測変換の候補を選ぶ Tab など）のあとに外れたものは残す
+// - 人の操作とみなすもの: 外れる直前（HUMAN_MS 以内）にマウス・タッチで押した、入力欄で変換していないキーを押した（Tab で出た）、
+//   ショートカットをキー・メニューで動かした（markHumanAction）。変換中のキー（予測変換の候補を選ぶ Tab など）のあとに外れたものは残す
+// - 個人の情報を残さない: 要素は種類・役割・aria-label・場所のクラスだけ（title にはページの題と URL・シェルの題が入るので使わない）。
+//   印字できる 1 文字のキーは「文字」とだけ書く
 // - ウインドウごと離れた（ほかのアプリへ移った）ときは残さない
 // - 入力欄が消えた・押せなくなった・隠れたときは、focusout が届かないことがある。外れた知らせが無いまま、キーが body に届いたら、そのときに残す
 // 重くしない: 聞くのは、押す・キー・変換の始まりと終わり・フォーカスの出入りだけ（どれも、控えを書き換えるだけ）。調べて送るのは外れたときだけ。
@@ -31,13 +33,23 @@ type Options = {
 export function describeElement(el: Element | null): string {
   if (!el) return 'null';
   if (el === document.body) return 'body';
-  const id = el.id ? `#${el.id}` : '';
   const classes = typeof el.className === 'string' && el.className ? `.${el.className.trim().split(/\s+/).slice(0, 3).join('.')}` : '';
-  const label = (el.getAttribute('aria-label') ?? el.getAttribute('title') ?? '').slice(0, 60);
+  const role = el.getAttribute('role');
+  const label = [role && `role=${role}`, el.getAttribute('aria-label')?.slice(0, 60)].filter(Boolean).join(' ');
   const pane = el.closest('.terminal-panel, .preview-pane, .editor-pane, .diff-pane, .chat-list, .sidebar, .side-panel, .overlay, .menu-card, .claude-header');
   const where = pane && pane !== el ? ` in .${String(pane.className).trim().split(/\s+/)[0]}` : '';
-  return `${el.tagName.toLowerCase()}${id}${classes}${label ? `[${label}]` : ''}${where}`;
+  return `${el.tagName.toLowerCase()}${classes}${label ? `[${label}]` : ''}${where}`;
 }
+
+// ショートカットをキー・メニューで動かした時刻（layout/shortcuts.ts の runShortcut が付ける）。キーは、ショートカットが window の capture で
+// 止めるので、ここまで届かないことがある。メニューから来たものは、キーのイベントそのものが無い
+let shortcutAt = Number.NEGATIVE_INFINITY;
+export function markHumanAction(at = performance.now()): void {
+  shortcutAt = at;
+}
+
+// 押したキーの名前。印字できる 1 文字（打った文字）は伏せる
+const keyName = (key: string) => (key.length === 1 && key !== ' ' ? '文字' : key === ' ' ? 'Space' : key);
 
 const isVisible = (el: HTMLElement) => (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.getClientRects().length > 0);
 
@@ -57,7 +69,9 @@ export function watchChatFocus({
   let sentAt = Number.NEGATIVE_INFINITY;
 
   const human = (at: number) =>
-    (pointer !== null && at - pointer.at < HUMAN_MS) || (key !== null && key.inInput && !key.composing && at - key.at < HUMAN_MS);
+    (pointer !== null && at - pointer.at < HUMAN_MS) ||
+    (key !== null && key.inInput && !key.composing && at - key.at < HUMAN_MS) ||
+    at - shortcutAt < HUMAN_MS;
 
   const send = (reason: FocusLostReport['reason'], el: HTMLTextAreaElement, to: Element | null, stack: string | null, wasComposing: boolean) => {
     const at = now();
@@ -88,7 +102,7 @@ export function watchChatFocus({
   const onKeyDown = (e: KeyboardEvent) => {
     const modifiers = [e.metaKey && '⌘', e.ctrlKey && '⌃', e.altKey && '⌥', e.shiftKey && '⇧'].filter(Boolean).join('');
     const isComposing = e.isComposing || e.keyCode === 229;
-    key = { at: now(), key: e.key, code: e.code, keyCode: e.keyCode, isComposing, modifiers, inInput: e.target === input, composing: isComposing || composing };
+    key = { at: now(), key: keyName(e.key), code: e.key.length === 1 ? '' : e.code, keyCode: e.key.length === 1 ? 0 : e.keyCode, isComposing, modifiers, inInput: e.target === input, composing: isComposing || composing };
     // 外れた知らせが無いまま、キーが入力欄の外（body）に届いた: 入力欄が消えた・押せなくなった・隠れた
     if (input && document.activeElement !== input && (e.target === document.body || e.target === document.documentElement)) {
       const el = input;
@@ -133,10 +147,12 @@ export function watchChatFocus({
     ['focusin', onFocusIn as EventListener],
     ['focusout', onFocusOut as EventListener],
   ];
-  for (const [type, listener] of listeners) document.addEventListener(type, listener, { capture: true, passive: true });
+  // キーは window の capture で、ショートカット（layout/shortcuts.ts。あとから足す）より先に聞く
+  const target = (type: string): EventTarget => (type === 'keydown' ? window : document);
+  for (const [type, listener] of listeners) target(type).addEventListener(type, listener, { capture: true, passive: true });
   // 起動したときに、もう入力欄にフォーカスがある（autoFocus）
   if (document.activeElement instanceof HTMLTextAreaElement && document.activeElement.matches(INPUT)) input = document.activeElement;
   return () => {
-    for (const [type, listener] of listeners) document.removeEventListener(type, listener, { capture: true });
+    for (const [type, listener] of listeners) target(type).removeEventListener(type, listener, { capture: true });
   };
 }

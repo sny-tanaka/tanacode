@@ -25,6 +25,12 @@ describe('focus.log', () => {
     );
   });
 
+  it('同時に来た知らせも、来た順に 1 行ずつ書く（回すのと書くのがぶつからない）', async () => {
+    writeFileSync(path, 'old\n'.repeat(70_000));
+    await Promise.all([1, 2, 3, 4, 5].map((n) => appendFocusLog(path, { n }, new Date('2026-10-27T00:00:00.000Z'))));
+    expect(readFileSync(path, 'utf8')).toBe([1, 2, 3, 4, 5].map((n) => `2026-10-27T00:00:00.000Z {"n":${n}}\n`).join(''));
+  });
+
   it('長すぎる知らせは切る。ファイルが大きくなったら focus.log.1 に回して書き直す', async () => {
     await appendFocusLog(path, { stack: 'x'.repeat(20_000) });
     expect(readFileSync(path, 'utf8').length).toBeLessThan(9_000);

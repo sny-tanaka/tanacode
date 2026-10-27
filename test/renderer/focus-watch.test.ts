@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FocusLostReport } from '@shared/ipc';
-import { watchChatFocus } from '../../src/renderer/src/chat/focusWatch';
+import { markHumanAction, watchChatFocus } from '../../src/renderer/src/chat/focusWatch';
 
 // チャットの入力欄から、人の操作でないのにフォーカスが外れたら知らせる（main が focus.log に書く）。
 // 人がマウスで押した・入力欄で変換していないキーを押した直後のものと、ウインドウごと離れたものは知らせない
@@ -20,6 +20,8 @@ beforeEach(() => {
   reports = [];
   clock = 10_000;
   windowFocused = true;
+  // ショートカットの時刻は、モジュールに 1 つ（前のテストのものを残さない）
+  markHumanAction(Number.NEGATIVE_INFINITY);
   stop = watchChatFocus({ report: (r) => reports.push(r), now: () => clock, hasFocus: () => windowFocused, later: (run) => run() });
   input.focus();
 });
@@ -70,6 +72,25 @@ describe('チャットの入力欄のフォーカスの見張り', () => {
     clock += 30;
     other.focus();
     expect(reports).toEqual([]);
+  });
+
+  it('ショートカットをキー・メニューで動かして外れたものは、人の操作なので知らせない', () => {
+    clock += 5000;
+    markHumanAction(clock);
+    clock += 50;
+    other.focus();
+    expect(reports).toEqual([]);
+  });
+
+  it('個人の情報を残さない: 要素の title（ページの題・URL・シェルの題）は使わず、打った文字のキーは伏せる', () => {
+    other.setAttribute('title', 'https://example.com/?token=secret');
+    other.removeAttribute('aria-label');
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    key(input, { key: 'x', code: 'KeyX', keyCode: 88, isComposing: true });
+    clock += 20;
+    other.focus();
+    expect(JSON.stringify(reports)).not.toMatch(/secret|example|KeyX|88/);
+    expect(reports[0]).toMatchObject({ to: 'button in .terminal-panel', lastKey: { key: '文字', code: '', keyCode: 0 } });
   });
 
   it('ウインドウごと離れた（ほかのアプリへ移った）ときは知らせない', () => {

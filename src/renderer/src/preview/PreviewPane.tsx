@@ -331,11 +331,11 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
     if (shown && !url && !claude[shown]?.active) addressRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, sessionId]);
-  // タブはマウスを押したときに選ぶので、押した既定の動き（フォーカスを外す）のあとで置く
+  // 直す前の effect と同じく、その場で置く（タブはマウスを押したときに選ぶので、押した既定の動きで外れる。直す前と同じ動き）
   const focusAddressIfEmpty = (sid: string) => {
     const tabId = activeRef.current.get(sid);
     const next = tabId ? pages[tabId]?.url : undefined;
-    if (!next || next === 'about:blank') requestAnimationFrame(() => addressRef.current?.focus());
+    if (!next || next === 'about:blank') addressRef.current?.focus();
   };
 
   // セッションやタブを切り替えたり閉じたりしたら、要素選びをやめる

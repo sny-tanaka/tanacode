@@ -50,6 +50,8 @@ describe('人の操作でないのに、チャットの入力欄からフォー�
     );
   // シェルにタイトルを変えさせる（zsh の precmd などと同じ OSC 0）
   const setTitle = (title: string) => writeToShell(`printf '\\033]0;${title}\\007'\r`);
+  // 見えている xterm にフォーカスが入るのを待つ
+  const inXterm = () => app.page.waitForFunction(() => !!document.activeElement?.closest('.terminal-panel .terminal-instance:not([hidden])'));
   const typeInChat = async (text: string) => {
     await input().focus();
     await app.page.keyboard.type(text);
@@ -144,11 +146,21 @@ describe('人の操作でないのに、チャットの入力欄からフォー�
     expect(await input().inputValue()).toBe('変換');
   });
 
-  it('チャットに打っている間に、パネルの高さが変わっても、入力欄からフォーカスが外れない', async () => {
+  it('チャットに打っている間に、ほかのプロファイルの画面でパネルの高さが変わっても、入力欄からフォーカスが外れない', async () => {
     await input().focus();
-    await dragResizer(-40);
+    const panel = app.page.locator('.terminal-panel');
+    await app.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.send('prefs:changed', { key: 'tanacode.terminalHeight', value: '333' }),
+    );
+    await expect.poll(() => panel.evaluate((el) => (el as HTMLElement).style.height)).toBe('333px');
     await app.rendered();
     expect(await focused()).toBe('chat');
+  });
+
+  it('チャットにいるときに、境目をマウスで動かして高さを変えると、xterm にフォーカスが入る（直す前と同じ）', async () => {
+    await input().focus();
+    await dragResizer(-40);
+    await inXterm();
   });
 
   it('xterm で打っている間に、パネルの高さやタイトルが変わっても、xterm のフォーカスはそのまま', async () => {
@@ -170,6 +182,19 @@ describe('人の操作でないのに、チャットの入力欄からフォー�
     await terminalTab(0).click();
     await app.page.waitForFunction(() => !!document.activeElement?.closest('.terminal-panel .terminal-instance:not([hidden])'));
     expect(await terminalTab(0).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('今のタブを × で閉じると残ったタブの xterm へ、最後のタブを × で閉じると開き直した新しいシェルへ、フォーカスが入る（直す前と同じ）', async () => {
+    expect(await terminalTab(0).getAttribute('aria-selected')).toBe('true');
+    await terminalTab(0).locator('[aria-label="このターミナルを閉じる"]').click();
+    await expect.poll(() => app.page.locator('.terminal-panel .terminal-tab').count()).toBe(1);
+    await inXterm();
+    // 最後のシェルの xterm が片付いて、開き直した新しいシェルの xterm が出るのを待つ
+    const last = await shell().elementHandle();
+    await terminalTab(0).locator('[aria-label="このターミナルを閉じる"]').click();
+    await app.page.waitForFunction((el) => !el?.isConnected, last);
+    await shell().locator('.xterm-rows').waitFor();
+    await inXterm();
   });
 
   it('チャットで ⌘J を押してパネルを閉じて開くと、xterm にフォーカスが入る', async () => {
@@ -198,6 +223,18 @@ describe('人の操作でないのに、チャットの入力欄からフォー�
     await input().focus();
     await app.page.click('.preview-pane [aria-label="新しいタブ"]');
     await app.page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '開く URL');
+  });
+
+  // 直す前は、選んだときにアドレス欄へ移したあと、押した既定の動き（タブはフォーカスできない）で body へ外れていた。その動きを変えない
+  it('チャットにいるときに、ブラウザの空のタブをマウスで押したときの動きは、直す前と同じ（アドレス欄には残らず body へ）', async () => {
+    const tab = (n: number) => app.page.locator('.preview-pane .preview-tab').nth(n);
+    await tab(0).click();
+    await expect.poll(() => tab(0).getAttribute('aria-selected')).toBe('true');
+    await input().focus();
+    await tab(1).click();
+    await expect.poll(() => tab(1).getAttribute('aria-selected')).toBe('true');
+    await app.rendered();
+    expect(await focused()).toMatch(/^body/);
   });
 
   // 原因を突き止められなかったときのため、次に起きたときに読めるログ（userData/focus.log）

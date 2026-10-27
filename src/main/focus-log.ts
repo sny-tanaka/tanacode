@@ -7,7 +7,16 @@ const MAX_BYTES = 256 * 1024;
 // 1 行の長さの上限（スタックが長いときなど。画面から来たものなので、大きすぎるものは切る）
 const MAX_LINE = 8 * 1024;
 
-export async function appendFocusLog(path: string, report: unknown, now = new Date()): Promise<void> {
+// 書き込みは順に並べる（いくつかのプロファイルの画面から同時に来ても、回す（rename）のと書くのがぶつからないように）
+let queue: Promise<void> = Promise.resolve();
+
+export function appendFocusLog(path: string, report: unknown, now = new Date()): Promise<void> {
+  const run = queue.then(() => write(path, report, now));
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+async function write(path: string, report: unknown, now: Date): Promise<void> {
   if (!report || typeof report !== 'object' || Array.isArray(report)) return;
   let json = JSON.stringify(report);
   if (json.length > MAX_LINE) json = JSON.stringify({ truncated: json.slice(0, MAX_LINE) });

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { matchShortcut, REPEATING, type Shortcut } from '@shared/shortcuts';
+import { markHumanAction } from '../chat/focusWatch';
 import { chosenItem, syncKeyLists } from './keyRow';
 
 // メニューバーの「移動」のショートカット（shared/shortcuts.ts）を、画面で動かす。
@@ -25,6 +26,8 @@ export function useShortcuts(handler: Handler): void {
 
 // ダイアログ（.overlay）を開いている間は、何もしない（後ろの画面を動かさない）
 export function runShortcut(shortcut: Shortcut): void {
+  // キー・メニューで人が動かした（チャットの入力欄から移しても、focus.log に残さない）
+  markHumanAction();
   if (document.querySelector('.overlay')) return;
   for (const handler of [...handlers]) if (handler(shortcut)) return;
 }

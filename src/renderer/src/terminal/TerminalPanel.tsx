@@ -85,16 +85,18 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
   // アプリが開いたコマンドのタブのうち、終わってもタブを残すもの（× で止めたものは外し、終わったら閉じる）
   const taskIds = useRef(new Set<string>());
 
-  // xterm へフォーカスを移すのは、人がパネルを出した（ボタン・⌘J・チャットの「実行」）・タブを選んだ・新しいタブを開いたときだけ。
-  // 移すと決めたら、出すシェルができたときに移す（パネルを開いてから、最初のシェルを開くまでの間もある）。
-  // シェルのタイトル・終了コード・パネルの高さが変わったときや、アプリ（Claude）がタブを開いたときは移さない（チャットに打っている途中で奪わない）
+  // xterm へフォーカスを移すのは、人の操作のときだけ: パネルを出した（ボタン・⌘J・チャットの「実行」）・開いたままセッションを替えた・
+  // タブを選んだ・今のタブを × で閉じた・新しいタブを開いた・境目をマウスで動かして高さを変えた・exit を打って閉じた。
+  // 移すと決めたら印を付け、出すシェルができたときに移して消す（パネルを開いてから、最初のシェルを開くまでの間もある）。
+  // シェルのタイトル・終了コードが変わった・ほかのプロファイルの画面で高さが変わった・アプリ（Claude）がタブを開いたときは移さない
+  // （チャットに打っている途中で奪わない）
   const focusRequested = useRef(false);
   const requestFocus = () => {
     focusRequested.current = true;
   };
-  const wasOpen = useRef(open);
-  if (open && !wasOpen.current) focusRequested.current = true;
-  wasOpen.current = open;
+  const shownFor = useRef<{ open: boolean; sessionId: string | null }>({ open: false, sessionId: null });
+  if (open && (!shownFor.current.open || shownFor.current.sessionId !== sessionId)) focusRequested.current = true;
+  shownFor.current = { open, sessionId };
 
   // xterm を作ってパネルに置く（まだ見せない）
   const makeXterm = useCallback((): Xterm => {
@@ -433,7 +435,10 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
         onPointerMove={(e) => {
           if (!drag.current) return;
           const max = window.innerHeight - 200;
-          setHeight(Math.round(Math.max(MIN_HEIGHT, Math.min(max, drag.current.height + drag.current.y - e.clientY))));
+          const next = Math.round(Math.max(MIN_HEIGHT, Math.min(max, drag.current.height + drag.current.y - e.clientY)));
+          // 高さを変えたら、xterm へ移す（直す前と同じ。変わらなければ印を付けない）
+          if (next !== height) requestFocus();
+          setHeight(next);
         }}
         onPointerUp={(e) => {
           if (!drag.current) return;
@@ -452,7 +457,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
               aria-selected={tab.id === activeShell?.id}
               className={`terminal-tab${tab.id === activeShell?.id ? ' active' : ''}`}
               onClick={() => {
-                if (!sessionId) return;
+                // 今のタブを押しても、何もしない（直す前と同じ。印を残さない）
+                if (!sessionId || tab.id === activeShell?.id) return;
                 requestFocus();
                 setActive((prev) => ({ ...prev, [sessionId]: tab.id }));
               }}
@@ -466,6 +472,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
                 tip={tab.task && tab.exitCode === undefined ? t('terminal.tabs.stopAndClose') : t('terminal.tabs.close')}
                 onClick={(e) => {
                   e.stopPropagation();
+                  // 今のタブを閉じたら、替わった先（最後のタブなら、開き直す新しいシェル）へ移す。裏のタブを閉じても移さない（直す前と同じ）
+                  if (tab.id === activeShell?.id) requestFocus();
                   if (tab.task && tab.exitCode !== undefined) closeTask(tab.id);
                   else {
                     // 動いているコマンドを止めて閉じる。出力を見られるようタブを残すのは、ひとりでに終わったときだけ
