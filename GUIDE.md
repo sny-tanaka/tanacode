@@ -1445,7 +1445,7 @@ Claude は、スマホ向けの Web アプリを、Playwright などをほかに
 
 ## 制限
 
-- tanacode で動作確認済の Claude Code のバージョンは 2.1.309（ステータスバーのバージョンの印で、入っているものと同じかが分かります）。tanacode は Claude Code の会話ログと、Claude Code とのやりとりの形（stream-json）に頼って動くため、Claude Code の更新で、一部の表示や操作が動かなくなる場合あり。
+- tanacode で動作確認済の Claude Code のバージョンは 2.1.311（ステータスバーのバージョンの印で、入っているものと同じかが分かります）。tanacode は Claude Code の会話ログと、Claude Code とのやりとりの形（stream-json）に頼って動くため、Claude Code の更新で、一部の表示や操作が動かなくなる場合あり。
 - tanacode のチャットで始めた会話は、手元のターミナルの会話の一覧（ID を付けない `claude --resume` と、Claude Code の中の `/resume`）に出ず、`claude --continue` でも選ばれません。Claude Code が、SDK（`claude -p` の stream-json）で始めた会話を、手元の一覧から外すため（2.1.302 で確かめた）。
   - 一覧に出ないので、タイトルで探すこともできません。
   - ターミナルモードや、外のターミナルで続けても、外れたまま（会話の始まりで決まるため）。
