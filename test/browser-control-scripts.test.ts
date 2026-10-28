@@ -258,7 +258,7 @@ describe('入力（type）の clear', () => {
     input.setSelectionRange(2, 2);
     expect(await call('type', { text: '新しい名前', clear: true })).toEqual(textResult('Typed into the focused element'));
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, '前の名前'.length]);
-    expect(page.debugger.sent('Input.dispatchKeyEvent')[0].params).toMatchObject({ key: 'Backspace' });
-    expect(page.debugger.sent('Input.insertText')[0].params).toEqual({ text: '新しい名前' });
+    expect(page.debugger.sent('Electron.sendInputEvent')[0].params).toMatchObject({ type: 'keyDown', keyCode: 'Backspace' });
+    expect(page.debugger.sent('Electron.insertText')[0].params).toEqual({ text: '新しい名前' });
   });
 });

@@ -33,10 +33,29 @@ const found = (rect: { x: number; y: number; width: number; height: number }, de
 });
 
 // マウスとキーの CDP の命令を、確かめやすい形にする
+// フォーカスのある別オリジンの iframe。child を渡すと別プロセス（そのセッションの今の URL が url）、渡さなければ同じプロセス（フレームの木の URL が url）。
+// フォーカスの目印から、iframe の要素（O1）とそのフレームの ID（child の targetId か F2）を答える
+const focusInFrame = (page: ReturnType<ReturnType<typeof setup>['open']>, src: string, url: string, child?: string, answers: Parameters<typeof answerCdp>[1] = {}) => {
+  page.page.focus = () => ({ src });
+  const frameId = child ? `T-${child}` : 'F2';
+  answerCdp(
+    page,
+    {
+      'Runtime.evaluate': (params) => (String(params?.expression).includes('data-tanacode-focus') ? { result: { objectId: 'O1' } } : {}),
+      'DOM.describeNode': (params) => (params?.objectId === 'O1' ? { node: { frameId } } : {}),
+      'Page.getFrameTree': () => ({ frameTree: { frame: { id: 'F0', url: 'http://localhost:3000/' }, childFrames: child ? [] : [{ frame: { id: 'F2', url } }] } }),
+      ...answers,
+    },
+    child ? { [child]: url } : {},
+  );
+  if (child) addChildFrame(page, child);
+};
+
+// ページへの入力。CDP の命令（Input.*）と、ページそのものに届けるキー・文字（webContents の sendInputEvent・insertText）を、送った順に
 const inputs = (page: ReturnType<ReturnType<typeof setup>['open']>): Record<string, unknown>[] =>
   page.debugger.commands
-    .filter((c) => c.method.startsWith('Input.'))
-    .map((c) => ({ method: c.method.replace('Input.', ''), ...c.params, ...(c.child ? { child: c.child } : {}) }));
+    .filter((c) => c.method.startsWith('Input.') || c.method.startsWith('Electron.'))
+    .map((c) => ({ method: c.method.replace(/^(Input|Electron)\./, ''), ...c.params, ...(c.child ? { child: c.child } : {}) }));
 
 describe('ページを読むツールの前に（今のページ）', () => {
   it('今のタブが空・許していない先なら、ページに触れずに断る（URL はオリジンだけ）', async () => {
@@ -890,9 +909,7 @@ describe('許していない先の iframe の中（不具合の確かめ）', ()
   it('type: フォーカスのある、許していない先の iframe の今の URL は、オリジンだけを伝える', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.focus = () => 'https://pay.example.com/card';
-    answerCdp(page, {}, { C1: 'https://pay.example.com/card/3ds?session=secret' });
-    addChildFrame(page, 'C1');
+    focusInFrame(page, 'https://pay.example.com/card', 'https://pay.example.com/card/3ds?session=secret', 'C1');
     const refused = await call('type', { text: '4242' });
     expect(refused).toEqual(textResult('Cannot type because the focus is inside an iframe not allowed for Claude (https://pay.example.com).', true));
     expect(inputs(page)).toEqual([]);
@@ -913,7 +930,7 @@ describe('人がタブで許した、許す先の外のオリジンと iframe', 
     await ctx.call('navigate', { url: 'http://localhost:3000/' });
     page.page.point = () => ({ cross: true, src: 'https://pay.example.com/checkout', frame: { x: 0, y: 0 }, description: 'iframe#pay' });
     expect((await ctx.call('click', { x: 10, y: 10 })).isError).toBe(true);
-    page.page.focus = () => 'https://pay.example.com/card';
+    focusInFrame(page, 'https://pay.example.com/card', 'https://pay.example.com/card');
     expect((await ctx.call('type', { text: '4242' })).isError).toBe(true);
     expect(inputs(page)).toEqual([]);
     page.page.text = () => ({ title: 'トップ', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] });
@@ -953,9 +970,13 @@ describe('入力（type）', () => {
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'insertText', text: 'たなか' },
-      { method: 'dispatchKeyEvent', type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0, text: '\r', unmodifiedText: '\r' },
-      { method: 'dispatchKeyEvent', type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 },
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+      { method: 'sendInputEvent', type: 'char', keyCode: 'Enter', modifiers: [] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Enter', modifiers: [] },
     ]);
+    // 文字とキーは、CDP（アプリ全体でフォーカスのある所に届く）では送らない
+    expect(page.debugger.sent('Input.insertText')).toEqual([]);
+    expect(page.debugger.sent('Input.dispatchKeyEvent')).toEqual([]);
   });
 
   it('selector が無ければ、今フォーカスのある場所に入れる。文字が空なら入れない', async () => {
@@ -974,9 +995,11 @@ describe('入力（type）', () => {
     page.page.clear = () => undefined;
     await call('type', { text: '新しい', clear: true });
     expect(page.scriptsOf('clear')).toHaveLength(1);
-    expect(inputs(page).map((i) => `${i.method}:${String(i.type ?? i.text)}:${String(i.key ?? '')}`)).toEqual([
-      'dispatchKeyEvent:rawKeyDown:Backspace',
-      'dispatchKeyEvent:keyUp:Backspace',
+    // sendInputEvent・insertText は送りっぱなしなので、ページに届いた（keyup・input）のを待ってから次を送る（待ち受けを付ける・待つ を 2 回ずつ）
+    expect(page.scriptsOf('inputWait')).toHaveLength(4);
+    expect(inputs(page).map((i) => `${i.method}:${String(i.type ?? i.text)}:${String(i.keyCode ?? '')}`)).toEqual([
+      'sendInputEvent:keyDown:Backspace',
+      'sendInputEvent:keyUp:Backspace',
       'insertText:新しい:',
     ]);
   });
@@ -984,12 +1007,10 @@ describe('入力（type）', () => {
   it('フォーカスが別オリジンの iframe（許す先・別プロセス）の中なら、消すのも入れるのも、その iframe のセッションに送る', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.focus = () => 'http://127.0.0.1:5173/form';
-    answerCdp(page, {}, { C1: 'http://127.0.0.1:5173/form?step=2' });
-    addChildFrame(page, 'C1');
+    focusInFrame(page, 'http://127.0.0.1:5173/form', 'http://127.0.0.1:5173/form?step=2', 'C1');
     await call('type', { text: 'abc', clear: true, submit: true });
     expect(page.scriptsOf('clear')).toEqual([]);
-    const select = page.debugger.sent('Runtime.evaluate').find((c) => c.params?.expression !== 'location.href');
+    const select = page.debugger.sent('Runtime.evaluate').find((c) => c.child === 'C1' && c.params?.expression !== 'location.href');
     expect(select?.child).toBe('C1');
     expect(String(select?.params?.expression)).toContain('selectAllChildren');
     expect(inputs(page).map((i) => `${String(i.type ?? i.method)}:${String(i.key ?? i.text)}:${String(i.child)}`)).toEqual([
@@ -1004,7 +1025,7 @@ describe('入力（type）', () => {
   it('フォーカスが別オリジンの iframe（許す先）でも、同じプロセスならページに送る', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.focus = () => 'http://127.0.0.1:5173/form';
+    focusInFrame(page, 'http://127.0.0.1:5173/form', 'http://127.0.0.1:5173/form');
     await call('type', { text: 'abc' });
     expect(inputs(page)).toEqual([{ method: 'insertText', text: 'abc' }]);
   });
@@ -1012,44 +1033,86 @@ describe('入力（type）', () => {
   it('フォーカスが許していない先の iframe の中なら、入力しない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.focus = () => 'https://pay.example.com/card';
+    focusInFrame(page, 'https://pay.example.com/card', 'https://pay.example.com/card');
     const refused = await call('type', { text: '4242' });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toMatch(/^Cannot type because the focus is inside an iframe not allowed for Claude \(https:\/\/pay\.example\.com.*\)\.$/);
     expect(inputs(page)).toEqual([]);
   });
+
+  // 直す前: src のオリジンで iframe のセッションを探していたので、iframe が別のオリジンへ移った・src が無いときは、ページに送って
+  // キーが黙って失われ（別プロセスの iframe には、ページに送ったキーは届かない）、「Typed」と返していた
+  it('フォーカスのある iframe が src と別のオリジンへ移っていても、フレームから iframe のセッションを見つけて送る', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    focusInFrame(page, 'http://127.0.0.1:5173/start', 'http://localhost:5174/after-redirect', 'C1');
+    await call('type', { text: 'abc' });
+    expect(inputs(page)).toEqual([{ method: 'insertText', text: 'abc', child: 'C1' }]);
+  });
+
+  it('フォーカスのある iframe のフレームが分からなければ、送らずにエラーで返す（黙って失わない）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    // src が無い iframe で、目印から要素が見つからない（ページが目印を消したなど）
+    focusInFrame(page, '', 'http://127.0.0.1:5173/form', undefined, { 'Runtime.evaluate': () => ({}) });
+    const typed = await call('type', { text: 'abc' });
+    expect(typed.isError).toBe(true);
+    expect(textOf(typed)).toBe('Cannot type because the focus is inside an iframe that could not be identified. Click the field with the x and y of click, then type again.');
+    // フレームは分かったが、別プロセスのセッションにも、ページと同じプロセスのフレームの木にも無い
+    focusInFrame(page, '', 'http://127.0.0.1:5173/form', undefined, { 'Page.getFrameTree': () => ({ frameTree: { frame: { id: 'F0', url: 'http://localhost:3000/' } } }) });
+    expect((await call('press_key', { key: 'a' })).isError).toBe(true);
+    expect(inputs(page)).toEqual([]);
+    // 目印は外す
+    expect(page.scriptsOf('unmark')).toHaveLength(2);
+  });
 });
 
 describe('キー（press_key）', () => {
-  it('キーと一緒に押すキーを CDP で送る。Shift なら文字も入れる', async () => {
+  // CDP の Input.dispatchKeyEvent は、アプリ全体でフォーカスのある所に届く（人がチャットの入力欄にいると、そこに入る）ので使わない
+  it('キーと一緒に押すキーを、ページそのものに送る（sendInputEvent）。Shift なら文字も入れる', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     expect(await call('press_key', { key: 'Enter', modifiers: ['shift'] })).toEqual(textResult('Pressed shift+Enter'));
     expect(inputs(page)).toEqual([
-      { method: 'dispatchKeyEvent', type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8, text: '\r', unmodifiedText: '\r' },
-      { method: 'dispatchKeyEvent', type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8 },
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] },
+      { method: 'sendInputEvent', type: 'char', keyCode: 'Enter', modifiers: ['shift'] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] },
     ]);
+    expect(page.debugger.sent('Input.dispatchKeyEvent')).toEqual([]);
   });
 
-  it('Ctrl・⌘ と一緒なら文字を入れない（rawKeyDown）。知らない修飾キーは数えない', async () => {
+  it('Ctrl・⌘ と一緒なら文字を入れない。知らない修飾キーは数えない。矢印・Space は Electron のキーの名前にする', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     expect(textOf(await call('press_key', { key: 'a', modifiers: ['control', 'meta', 'hyper', 3] }))).toBe('Pressed control+meta+hyper+a');
-    expect(inputs(page)[0]).toEqual({ method: 'dispatchKeyEvent', type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 6 });
+    expect(inputs(page)).toEqual([
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'a', modifiers: ['control', 'meta'] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'a', modifiers: ['control', 'meta'] },
+    ]);
+    page.debugger.commands.length = 0;
+    // Object のもとからある名前（toString など）も、修飾キーとして数えない
+    await call('press_key', { key: 'a', modifiers: ['toString', 'constructor'] });
+    expect(inputs(page)[0]).toEqual({ method: 'sendInputEvent', type: 'keyDown', keyCode: 'a', modifiers: [] });
     page.debugger.commands.length = 0;
     await call('press_key', { key: 'a', modifiers: ['alt'] });
-    expect(inputs(page)[0]).toMatchObject({ type: 'keyDown', modifiers: 1, text: 'a' });
+    expect(inputs(page)[1]).toEqual({ method: 'sendInputEvent', type: 'char', keyCode: 'a', modifiers: ['alt'] });
     page.debugger.commands.length = 0;
     await call('press_key', { key: 'Tab', modifiers: 'shift' });
-    expect(inputs(page)[0]).toMatchObject({ type: 'rawKeyDown', key: 'Tab', modifiers: 0 });
+    expect(inputs(page)).toEqual([
+      { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Tab', modifiers: [] },
+      { method: 'sendInputEvent', type: 'keyUp', keyCode: 'Tab', modifiers: [] },
+    ]);
+    page.debugger.commands.length = 0;
+    await call('press_key', { key: 'ArrowDown' });
+    await call('press_key', { key: 'space' });
+    expect(inputs(page).map((i) => `${String(i.type)}:${String(i.keyCode)}`)).toEqual(['keyDown:Down', 'keyUp:Down', 'keyDown:Space', 'char: ', 'keyUp:Space']);
   });
 
   it('フォーカスが別プロセスの iframe（許す先）の中なら、その iframe に送る', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.focus = () => 'http://127.0.0.1:5173/form';
-    answerCdp(page, {}, { C1: 'http://127.0.0.1:5173/form' });
-    addChildFrame(page, 'C1');
+    focusInFrame(page, 'http://127.0.0.1:5173/form', 'http://127.0.0.1:5173/form', 'C1');
     await call('press_key', { key: 'Escape' });
     expect(inputs(page).map((i) => i.child)).toEqual(['C1', 'C1']);
   });

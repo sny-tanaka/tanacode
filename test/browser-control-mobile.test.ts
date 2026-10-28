@@ -4,7 +4,7 @@ import { BROWSER_DEVICES } from '../src/shared/browser-tools';
 import { IpcChannel, type BrowserThrottleChange, type BrowserViewportChange } from '../src/shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { FakeImage, HOST, images } from './helpers/fake-electron';
-import { answerCdp, setup, textOf } from './helpers/browser-control';
+import { answerCdp, realTime, setup, textOf } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
 
@@ -467,6 +467,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('画素密度を決めたタブは、先に CDP で撮る（その画素密度の大きさで撮れる）。Claude には CSS の px に縮めて返す', async () => {
+    realTime();
     const { call, open, state } = setup();
     const page = open('http://localhost:3000/');
     page.page.viewport = () => ({ width: 393, height: 852, dpr: 3 });
@@ -513,6 +514,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('画素密度を決めたタブを CDP で撮った絵が、画面の絵と合わなければ（崩れた絵）、画面の画素密度で撮り、保存するときはそう伝える', async () => {
+    realTime();
     const { call, open, state } = setup();
     const page = open('http://localhost:3000/');
     page.page.viewport = () => ({ width: 393, height: 852, dpr: 3 });
@@ -545,6 +547,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('save: 撮ったままの大きさの PNG を保存し、パスと大きさを返す', async () => {
+    realTime();
     const { call, open, state } = setup();
     const page = open('http://localhost:3000/');
     page.shot = new FakeImage(1600, 1200);
@@ -565,6 +568,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('save: 新しいもの 100 枚を残して、古いものから消す（ほかのファイルには触れない）', async () => {
+    realTime();
     const { call, open, state } = setup();
     open('http://localhost:3000/');
     mkdirSync(state.screenshotDir, { recursive: true });
@@ -584,6 +588,7 @@ describe('スクリーンショットの撮り直しと保存', () => {
   });
 
   it('save: 保存できなければ、そう断る', async () => {
+    realTime();
     const { call, open, state } = setup();
     open('http://localhost:3000/');
     // 保存先と同じ名前のファイルがあって、フォルダを作れない

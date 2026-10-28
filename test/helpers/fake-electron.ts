@@ -88,13 +88,15 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
   ['locate', "error: 'hidden'"],
   ['point', "error: 'outside'"],
-  ['focus', 'return el.src || null'],
+  ['focus', "return { src: el.src || '' }"],
+  ['unmark', "removeAttribute('data-tanacode-focus')"],
+  ['inputWait', '__tanacodeInputWaits'],
   ['text', 'const textOf ='],
   ['inspect', 'const props ='],
   ['scroll', 'scrollBy('],
@@ -175,6 +177,16 @@ export class FakeContents extends EventEmitter {
     return this.type;
   }
 
+  // ページそのものに届けるキー・文字（sendInputEvent・insertText）。CDP の命令と並べて確かめるため、debugger の控えに
+  // Electron.sendInputEvent・Electron.insertText として書く
+  sendInputEvent(event: Record<string, unknown>): void {
+    this.debugger.commands.push({ method: 'Electron.sendInputEvent', params: event });
+  }
+
+  async insertText(text: string): Promise<void> {
+    this.debugger.commands.push({ method: 'Electron.insertText', params: { text } });
+  }
+
   getURL(): string {
     return this.url;
   }
@@ -224,6 +236,7 @@ export class FakeContents extends EventEmitter {
     if (kind === 'frames') return true;
     if (kind === 'size') return { laidOutWidth: 800, laidOutHeight: 600 };
     if (kind === 'focus') return null;
+    if (kind === 'unmark' || kind === 'inputWait') return undefined;
     throw new Error(`テストが答えを決めていないスクリプトです（${kind ?? '不明'}）`);
   }
 

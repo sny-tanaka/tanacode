@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
+import { nativeImage, webContents as allWebContents, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import {
   BROWSER_DEVICES,
   BROWSER_MCP,
@@ -19,6 +19,7 @@ import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
+import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
 
@@ -27,7 +28,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
 // ページが開くポップアップ（features 付きの window.open など）は、アプリ内ブラウザの外の別ウインドウで開く（browser-windows.ts）。
 // 別ウインドウは Claude の操作の対象にしない。Claude の操作で開いたときは、そのことを伝える（allowsPopup）。
-// クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
+// クリックは CDP（Input.*）で送る。キーと文字は、ページそのもの（webContents）に sendInputEvent・insertText で送る（key の説明）。
+// どちらもウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
 // その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）。
@@ -184,8 +186,9 @@ type Guest = {
   // CDP（debugger）をつないだか
   cdp: boolean;
   // 別プロセスで動く iframe（別サイトのもの）の CDP のセッション（Target.setAutoAttach でつなぐ）。
-  // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る
-  children: Set<string>;
+  // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る。
+  // セッションの ID → その iframe のフレームの ID（CDP の targetId。DOM.describeNode の frameId と同じ）
+  children: Map<string, string>;
   // 人が、このタブで開くことを許した、許す先の外のオリジン（タブを閉じるまで残す）
   granted: Set<string>;
   // このタブに CDP で決めた画面の大きさ（Emulation。セッションの viewport を写したもの。決めていなければ null）。
@@ -359,7 +362,7 @@ export class BrowserControl {
       contents,
       logs: this.track(contents),
       cdp: false,
-      children: new Set(),
+      children: new Map(),
       granted,
       stopped: null,
       emulated: null,
@@ -378,8 +381,8 @@ export class BrowserControl {
         this.sendThrottle(sessionId, guest);
       }
     });
-    contents.debugger.on('message', (_event, method, params: { sessionId?: string; targetInfo?: { type?: string } }) => {
-      if (method === 'Target.attachedToTarget' && params.sessionId && params.targetInfo?.type === 'iframe') guest.children.add(params.sessionId);
+    contents.debugger.on('message', (_event, method, params: { sessionId?: string; targetInfo?: { type?: string; targetId?: string } }) => {
+      if (method === 'Target.attachedToTarget' && params.sessionId && params.targetInfo?.type === 'iframe') guest.children.set(params.sessionId, params.targetInfo.targetId ?? '');
       if (method === 'Target.detachedFromTarget' && params.sessionId) guest.children.delete(params.sessionId);
     });
     contents.once('destroyed', () => {
@@ -1368,7 +1371,7 @@ export class BrowserControl {
       );
       await this.key(guest, 'Backspace', []);
     }
-    if (text) await this.cdp(guest, 'Input.insertText', { text }, child);
+    if (text) await this.insertText(guest, text, child);
     if (args.submit === true) await this.key(guest, 'Enter', [], child);
     await settle(guest.contents);
     return textResult(`Typed into ${where}${args.submit === true ? ' and pressed Enter' : ''}`);
@@ -1380,15 +1383,77 @@ export class BrowserControl {
     return textResult(`Pressed ${[...modifiers, key].join('+')}`);
   }
 
+  // キーと文字は、ページ（webview の中身）そのものに届ける（webContents.sendInputEvent・insertText）。CDP の Input.dispatchKeyEvent・
+  // Input.insertText は、ページのタブに送っても、アプリ全体でフォーカスのある所に届く。人がチャットの入力欄などへ戻っていると、
+  // Claude がページで打つつもりのキーが、人の入力として入ってしまう（⌘Enter なら、人の発言として送られうる）。
+  // sendInputEvent は、webview にフォーカスを渡さず、人のフォーカスも動かさない。
+  // ただし、sendInputEvent はページのいちばん外のフレームにしか届かないので、フォーカスが別プロセスの iframe の中なら、その iframe の CDP の
+  // セッション（child）に送る（その iframe そのものに届き、人のフォーカスがある所には入らないことを確かめた）
   private async key(guest: Guest, name: string, modifiers: string[], child?: string): Promise<void> {
     const spec = keySpec(name);
     if (!spec) throw new ToolError(`Unknown key: ${name}`);
-    const bits = modifiers.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
+    const held = modifiers.filter((m) => Object.hasOwn(MODIFIER_BITS, m));
+    const bits = held.reduce((sum, m) => sum | MODIFIER_BITS[m], 0);
     // Ctrl・⌘ と一緒に押すときは、文字を入れない
     const text = bits & (MODIFIER_BITS.control | MODIFIER_BITS.meta) ? undefined : spec.text;
-    const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, modifiers: bits };
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) }, child);
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, child);
+    if (child) {
+      const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, modifiers: bits };
+      await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) }, child);
+      await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, child);
+      return;
+    }
+    const keyCode = electronKeyCode(spec);
+    const mods = held as KeyboardInputEvent['modifiers'];
+    // sendInputEvent は送りっぱなしなので、ページが離したキー（keyup）を受けるまで待つ（このあとの文字・キーと順番が入れ替わらないように）
+    await this.afterPage(guest, 'keyup', () => {
+      if (guest.contents.isDestroyed()) throw new ToolError('The tab was closed.');
+      // Claude の送ったキーは、アプリのショートカットにしない（claude-input.ts）
+      sendAsClaude(guest.contents, { type: 'keyDown', keyCode, modifiers: mods });
+      // 文字を入れるキーは、続けて文字（char）を送る（Enter の char は、フォームを送るなどの既定の動きになる）
+      if (text) sendAsClaude(guest.contents, { type: 'char', keyCode: text === '\r' ? 'Enter' : text, modifiers: mods });
+      sendAsClaude(guest.contents, { type: 'keyUp', keyCode, modifiers: mods });
+    });
+  }
+
+  // send でページに入力を送り、ページのフォーカスのある文書に event（keyup・input）が届くまで待つ（届かなければ INPUT_WAIT_MS で諦める）。
+  // 待ち受けは、送る前に付けておく
+  private async afterPage(guest: Guest, event: 'keyup' | 'input', send: () => void | Promise<void>): Promise<void> {
+    const id = JSON.stringify(randomUUID());
+    await this.world(
+      guest,
+      `(() => {
+        let w = window;
+        let el = document.activeElement;
+        while (el && /^(IFRAME|FRAME)$/.test(el.tagName)) {
+          let d = null;
+          try { d = el.contentDocument; } catch (e) {}
+          if (!d) break;
+          w = d.defaultView;
+          el = d.activeElement;
+        }
+        const waits = (window.__tanacodeInputWaits ??= {});
+        waits[${id}] = new Promise((resolve) => {
+          const done = () => { clearTimeout(timer); resolve(true); };
+          const timer = setTimeout(() => { w.removeEventListener(${JSON.stringify(event)}, done, true); resolve(false); }, ${INPUT_WAIT_MS});
+          w.addEventListener(${JSON.stringify(event)}, done, { once: true, capture: true });
+        });
+      })()`,
+    );
+    await send();
+    await this.world(guest, `(async () => { const waits = window.__tanacodeInputWaits || {}; await waits[${id}]; delete waits[${id}]; })()`).catch(() => undefined);
+  }
+
+  // 文字を、ページのフォーカスのある欄に入れる（IME で確定したのと同じ。日本語・絵文字も 1 回で入る）。届け先は key と同じ
+  private async insertText(guest: Guest, text: string, child?: string): Promise<void> {
+    if (child) {
+      await this.cdp(guest, 'Input.insertText', { text }, child);
+      return;
+    }
+    // 入った（input が届いた）まで待つ（このあとの Enter などと順番が入れ替わらないように）
+    await this.afterPage(guest, 'input', async () => {
+      if (guest.contents.isDestroyed()) throw new ToolError('The tab was closed.');
+      await guest.contents.insertText(text);
+    });
   }
 
   private async scroll(guest: Guest, selector: string | undefined, deltaX: number, deltaY: number): Promise<ToolResult> {
@@ -1937,7 +2002,7 @@ export class BrowserControl {
   private async childFrames(guest: Guest): Promise<{ child: string; url: string }[]> {
     await this.cdp(guest, 'Target.getTargets').catch(() => undefined);
     const frames: { child: string; url: string }[] = [];
-    for (const child of guest.children) {
+    for (const child of guest.children.keys()) {
       const result = (await this.cdp(guest, 'Runtime.evaluate', { expression: 'location.href', returnByValue: true }, child).catch(() => null)) as { result?: { value?: unknown } } | null;
       if (typeof result?.result?.value === 'string') frames.push({ child, url: result.result.value });
     }
@@ -1951,26 +2016,92 @@ export class BrowserControl {
     return (await this.childFrames(guest)).find((f) => originOf(f.url) === origin) ?? null;
   }
 
-  // 今キーボードのフォーカスがある、別プロセスの iframe のセッション（ページの中なら undefined）。許していない先なら断る
+  // 今キーボードのフォーカスがある、別プロセスの iframe のセッション（ページの中なら undefined）。許していない先なら断る。
+  // フォーカスが別オリジンの iframe の中なら、その iframe の要素から、CDP でフレームを確かめる（src のオリジンでは決めない。iframe は
+  // 転送などで src と別のオリジンへ移り、src が無いまま・about:blank からスクリプトで移ることもある）。
+  // 別プロセスなら、その iframe のセッション。同じプロセスなら、ページに送ったキーが届くので undefined。
+  // どちらとも分からなければ、送ったキーが黙って失われるので、断る
   private async focusedChild(guest: Guest): Promise<string | undefined> {
-    const src = (await this.world(
+    const mark = `tc-${randomUUID()}`;
+    const found = (await this.world(
       guest,
       `(() => {
         let el = document.activeElement;
         while (el && /^(IFRAME|FRAME)$/.test(el.tagName)) {
           let d = null;
           try { d = el.contentDocument; } catch (e) {}
-          if (!d) return el.src || null;
+          if (!d) { el.setAttribute('data-tanacode-focus', ${JSON.stringify(mark)}); return { src: el.src || '' }; }
           el = d.activeElement;
         }
         return null;
       })()`,
-    )) as string | null;
-    if (!src) return undefined;
-    const frame = await this.childFor(guest, src);
-    const url = frame?.url ?? src;
+    )) as { src: string } | null;
+    if (!found) return undefined;
+    const frameId = await this.markedFrame(guest, mark);
+    const unknown = () =>
+      new ToolError('Cannot type because the focus is inside an iframe that could not be identified. Click the field with the x and y of click, then type again.');
+    if (!frameId) throw unknown();
+    const child = [...guest.children].find(([, targetId]) => targetId === frameId)?.[0];
+    let url: string | null = null;
+    if (child) {
+      const result = (await this.cdp(guest, 'Runtime.evaluate', { expression: 'location.href', returnByValue: true }, child).catch(() => null)) as { result?: { value?: unknown } } | null;
+      if (typeof result?.result?.value === 'string') url = result.result.value;
+    } else {
+      url = await this.frameUrl(guest, frameId);
+    }
+    if (url === null) throw unknown();
     if (!this.allowed(url)) throw new ToolError(`Cannot type because the focus is inside an iframe not allowed for Claude (${frameShown(url)}).`);
-    return frame?.child;
+    return child;
+  }
+
+  // 目印（data-tanacode-focus）を付けた iframe の要素の中のフレームの ID。目印は外す。見つからなければ null
+  private async markedFrame(guest: Guest, mark: string): Promise<string | null> {
+    const selector = JSON.stringify(`[data-tanacode-focus="${mark}"]`);
+    try {
+      const found = (await this.cdp(guest, 'Runtime.evaluate', {
+        expression: `(() => {
+          const find = (doc) => {
+            const el = doc.querySelector(${selector});
+            if (el) return el;
+            for (const frame of doc.querySelectorAll('iframe, frame')) {
+              let d = null;
+              try { d = frame.contentDocument; } catch (e) {}
+              const inner = d && find(d);
+              if (inner) return inner;
+            }
+            return null;
+          };
+          return find(document);
+        })()`,
+      }).catch(() => null)) as { result?: { objectId?: string } } | null;
+      const objectId = found?.result?.objectId;
+      if (!objectId) return null;
+      const described = (await this.cdp(guest, 'DOM.describeNode', { objectId }).catch(() => null)) as { node?: { frameId?: string } } | null;
+      await this.cdp(guest, 'Runtime.releaseObject', { objectId }).catch(() => undefined);
+      return described?.node?.frameId ?? null;
+    } finally {
+      await this.world(
+        guest,
+        `(() => { const strip = (doc) => { for (const el of doc.querySelectorAll(${selector})) el.removeAttribute('data-tanacode-focus');
+          for (const frame of doc.querySelectorAll('iframe, frame')) { let d = null; try { d = frame.contentDocument; } catch (e) {} if (d) strip(d); } }; strip(document); })()`,
+      ).catch(() => undefined);
+    }
+  }
+
+  // ページと同じプロセスで動くフレームの今の URL（Page.getFrameTree。別プロセスのフレームは入らない）。無ければ null
+  private async frameUrl(guest: Guest, frameId: string): Promise<string | null> {
+    type Node = { frame?: { id?: string; url?: string; urlFragment?: string }; childFrames?: Node[] };
+    const tree = (await this.cdp(guest, 'Page.getFrameTree').catch(() => null)) as { frameTree?: Node } | null;
+    const find = (node: Node | undefined): string | null => {
+      if (!node) return null;
+      if (node.frame?.id === frameId) return (node.frame.url ?? '') + (node.frame.urlFragment ?? '');
+      for (const child of node.childFrames ?? []) {
+        const url = find(child);
+        if (url !== null) return url;
+      }
+      return null;
+    };
+    return find(tree?.frameTree);
   }
 
   private async viewport(guest: Guest): Promise<{ width: number; height: number; dpr: number }> {
@@ -2255,6 +2386,8 @@ function tabNumber(tabId: string): number {
 }
 
 const MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 };
+// ページに送ったキー・文字が、ページに届いた（keyup・input）のを待つ長さの上限（届かないもの: 文字を入れられない所に入れたなど）
+const INPUT_WAIT_MS = 1000;
 
 type KeySpec = { key: string; code: string; keyCode: number; text?: string };
 
@@ -2280,6 +2413,18 @@ const NAMED_KEYS: Record<string, KeySpec> = {
   pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
   pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
 };
+
+// sendInputEvent に渡すキーの名前（Electron のアクセラレーターのキーの名前。文字のキーはその文字）
+const ELECTRON_KEYS: Record<string, string> = {
+  ' ': 'Space',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+};
+export function electronKeyCode(spec: KeySpec): string {
+  return ELECTRON_KEYS[spec.key] ?? spec.key;
+}
 
 export function keySpec(name: string): KeySpec | null {
   const named = NAMED_KEYS[name.toLowerCase()];
