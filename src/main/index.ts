@@ -14,6 +14,7 @@ import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
+import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
@@ -854,6 +855,11 @@ function registerIpc(): void {
   listen(IpcChannel.PrefsSet, (e, key: SharedPrefKey, value: string) => {
     P(e);
     if (sharedPrefs.set(key, value)) sharePrefs(e.sender, [{ key, value }]);
+  });
+  // チャットの入力欄から、人の操作でないのにフォーカスが外れた（どのプロファイルの画面のものも、同じファイルに書く）
+  listen(IpcChannel.FocusLost, (e, report) => {
+    P(e);
+    void appendFocusLog(join(app.getPath('userData'), 'focus.log'), report).catch(() => undefined);
   });
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));

@@ -156,6 +156,9 @@ export function ChatInput({
   owner = '',
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 日本語入力で変換している途中か（compositionstart〜compositionend）。この間の Tab は、変換に使われたもの（予測変換の候補を選ぶ Tab）。
+  // 欄からフォーカスが出入りしたときも下ろす（compositionend が届かないまま残って、Tab で欄を出られなくならないように）
+  const composingRef = useRef(false);
   const [caret, setCaret] = useState(0);
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null);
@@ -387,8 +390,27 @@ export function ChatInput({
             e.preventDefault();
             onPastesChange([...pastes, text]);
           }}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
+          onFocus={() => {
+            composingRef.current = false;
+          }}
+          onBlur={() => {
+            composingRef.current = false;
+          }}
           onKeyDown={(e) => {
             const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+            // 変換に使われた Tab では、欄から出ない（フォーカスを次の欄へ移さない）。変換していないときの Tab は、今までどおり欄を出る。
+            // 確定から何 ms 以内、のように時間では切らない（速く打つ人の、欄を出る Tab・候補を採る Tab が黙って消えるため）。
+            // Chromium（Electron）は、変換を確定するキーも、keyCode 229・isComposing で compositionend より先に届ける
+            if (e.key === 'Tab' && (composing || composingRef.current)) {
+              e.preventDefault();
+              return;
+            }
             if (suggestions.length > 0 && !composing) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();

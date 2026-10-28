@@ -43,18 +43,26 @@ describe('「移動」のショートカット', () => {
   const selectedTitle = () => app.page.locator('.session-list .session-row.active .session-title').textContent();
   const windows = () => app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   // アプリ内ブラウザのページ（今のタブ）にフォーカスを置き、そこでキーを押す（ページより先に main が受ける）
-  const pressInPage = (keyCode: string, modifiers: string[]) =>
-    app.app.evaluate(
-      ({ webContents }, { keyCode, modifiers }) => {
-        const guests = webContents.getAllWebContents().filter((w) => w.getType() === 'webview' && !w.isDestroyed());
-        const guest = guests.find((w) => w.isFocused()) ?? guests.at(-1);
-        if (!guest) throw new Error('アプリ内ブラウザのページがありません');
-        guest.focus();
+  // ページにフォーカスを置いて（人がページを押したときと同じく、アプリの画面では出しているタブの webview の要素に、Electron ではそのページに）、
+  // ページでキーを押す。webContents.focus() だけでは、アプリの画面のフォーカスは webview の要素に移らない
+  const pressInPage = async (keyCode: string, modifiers: string[]) => {
+    const id = await app.page.evaluate(() => {
+      const shown = [...document.querySelectorAll<HTMLElement & { getWebContentsId(): number }>('.preview-pane webview')].find((el) => el.getClientRects().length > 0);
+      if (!shown) throw new Error('出しているアプリ内ブラウザのページがありません');
+      shown.focus();
+      return shown.getWebContentsId();
+    });
+    await app.page.waitForFunction(() => document.activeElement?.tagName === 'WEBVIEW');
+    await app.app.evaluate(
+      ({ webContents }, { id, keyCode, modifiers }) => {
+        const guest = webContents.fromId(id);
+        if (!guest || guest.isDestroyed()) throw new Error('アプリ内ブラウザのページがありません');
         guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers: modifiers as never });
         guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers: modifiers as never });
       },
-      { keyCode, modifiers },
+      { id, keyCode, modifiers },
     );
+  };
   const browserTabs = () => app.page.locator('.preview-pane .preview-tab');
 
   beforeAll(async () => {
