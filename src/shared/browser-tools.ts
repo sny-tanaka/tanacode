@@ -175,8 +175,9 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'A link that opens a new window (target=_blank) opens in a new tab, which becomes the current tab. ' +
       'A popup the page opens (window.open with window features, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate. ' +
       'The click is normally done with JavaScript inside the page (pointer and mouse events, focus, then click), so that it does not take the keyboard focus away from where the user is typing in tanacode. ' +
-      'A <select>, a file input, a link or form that opens a new window, a draggable element, a position inside a cross-origin iframe, and the right or middle button are pressed with a real mouse press automatically. ' +
-      'Set real to true only when the JavaScript click does not work as expected: the page ignores it (for example, it checks event.isTrusted) or needs a real press for something else. A real press briefly moves the focus to the page and then returns it to where the user was.',
+      'It reaches into open shadow DOM, and places the caret at the clicked position in contenteditable. ' +
+      'A <select>, a file input, an <input> of type range, number, date, time or color, media controls, a link or form that opens a new window, a draggable element, a custom element whose inside JavaScript cannot reach (closed shadow DOM), a position inside a cross-origin iframe, and the right or middle button are pressed with a real mouse press automatically. ' +
+      'Set real to true only when the JavaScript click does not work as expected: the page ignores it (for example, it checks event.isTrusted), the result says the page threw an error, or it needs a real press for something else. A real press briefly moves the focus to the page and then returns it to where the user was.',
     inputSchema: {
       type: 'object',
       properties: {

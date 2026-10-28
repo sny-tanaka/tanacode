@@ -21,7 +21,7 @@ function place(el: Element, rect: Rect): void {
 const runInPage = (code: string): unknown => (0, eval)(code);
 
 function usePage(page: Tab): void {
-  for (const kind of ['viewport', 'locate', 'point', 'press', 'focus', 'text', 'inspect', 'wait', 'clear'] as const) page.page[kind] = runInPage;
+  for (const kind of ['viewport', 'locate', 'point', 'pressDecide', 'press', 'focus', 'text', 'inspect', 'wait', 'clear'] as const) page.page[kind] = runInPage;
 }
 
 // jsdom に無いもの（描かないので、innerText は textContent で代える）を、window ごとに補う（iframe の中は別の window）
@@ -186,8 +186,9 @@ describe('位置で押す（pointAt）', () => {
       return doc.getElementById('link');
     };
     expect(textOf(await call('click', { x: 130, y: 70 }))).toBe('Clicked: a#link "次へ" (inside iframe about:blank) at x=130 y=70');
-    // 探すときと、押すとき（押す位置の要素を、もう一度その位置で探す）
+    // 探すとき・押し方を決めるとき・押すとき（押す位置の要素を、その位置で探し直す）
     expect(asked).toEqual([
+      [30, 20],
       [30, 20],
       [30, 20],
     ]);

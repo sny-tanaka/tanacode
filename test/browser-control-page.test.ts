@@ -722,6 +722,10 @@ describe('クリック', () => {
     expect(press).toHaveLength(1);
     expect(press[0].code).toContain('const x = 201, y = 70;');
     expect(press[0].userGesture).toBe(true);
+    // 押し方を決めるのは、人の操作の印なしで（本物で押すと決まったときに、押していないのに印を与えない）
+    const decide = page.scripts.filter((s) => s.kind === 'pressDecide');
+    expect(decide).toHaveLength(1);
+    expect(decide[0].userGesture).toBeUndefined();
     expect(inputs(page)).toEqual([]);
     expect(page.debugger.attachCount).toBe(0);
     expect(activities()).toEqual([
@@ -747,11 +751,23 @@ describe('クリック', () => {
       { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 201, y: 70, button: 'left', clickCount: 1 },
     ]);
     page.debugger.commands.length = 0;
-    page.page.press = () => ({ real: 'because it is a <select>' });
+    page.page.pressDecide = () => ({ real: 'because it is a <select>' });
     expect(await call('click', { selector: '#go' })).toEqual(textResult('Clicked: button#go "送る" (with a real mouse press, because it is a <select>)'));
+    // 本物で押すと決まったら、ページの中では押さない（人の操作の印も与えない）
+    expect(page.scriptsOf('press')).toEqual([]);
     expect(inputs(page).map((i) => String(i.type))).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
     expect(page.debugger.attachCount).toBe(1);
     expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(0);
+  });
+
+  it('ページの中で押したときに、ページの処理がエラーを投げたら、real で押し直すよう添える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 });
+    page.page.press = () => ({ real: null, errors: ['NotFoundError: Failed to execute setPointerCapture'] });
+    expect(textOf(await call('click', { selector: '#go' }))).toBe(
+      'Clicked: button#go "送る"\nThe page threw an error while handling the JavaScript click (NotFoundError: Failed to execute setPointerCapture). If the click did not work, click again with real: true.',
+    );
   });
 
   it('double はダブルクリック。right・middle はそのボタン、知らないボタンは left', async () => {

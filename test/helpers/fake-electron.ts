@@ -88,13 +88,14 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'press' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'pressDecide' | 'press' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
   ['locate', "error: 'hidden'"],
   ['point', "error: 'outside'"],
-  ['press', 'const focusable = '],
+  ['pressDecide', 'return { real: __realReason(hit) };'],
+  ['press', 'const real = __realReason(hit);'],
   ['focus', "return { src: el.src || '' }"],
   ['unmark', "removeAttribute('data-tanacode-focus')"],
   ['inputWait', '__tanacodeInputWaits'],
@@ -240,6 +241,8 @@ export class FakeContents extends EventEmitter {
     if (kind === 'unmark' || kind === 'inputWait') return undefined;
     // 押す（ページの中の JavaScript で押せた）。押したことでページに起きること（テストが CDP の mouseReleased の答えに書いたもの。
     // ページを移す・新しいタブを開くなど）は、JavaScript で押したときも起こす
+    // 押し方を決める（ページの中の JavaScript で押せる）
+    if (kind === 'pressDecide') return { real: null };
     if (kind === 'press') {
       this.debugger.handler('Input.dispatchMouseEvent', { type: 'mouseReleased', byScript: true }, undefined);
       return { real: null };
