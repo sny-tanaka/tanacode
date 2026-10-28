@@ -8,9 +8,13 @@ import { E2EApp } from './app';
 // Claude がアプリ内ブラウザのページで打つキー（press_key・type）は、ページに届き、人がいるチャットの入力欄には入らない。
 // 直す前: キーを CDP（Input.dispatchKeyEvent・Input.insertText）で送っていた。CDP は、ブラウザ全体でフォーカスのある所へキーを届けるので、
 // webview にフォーカスが無い（人がチャットへ戻った）と、Claude のキーが人の入力欄に入った（⌘Enter なら、人の発言として送られうる）。
-// 日本語・修飾キー・Enter・Tab・Backspace も、ページで今までどおり効くこと
+// 日本語・修飾キー・Enter・Tab・Backspace・clear・ASCII 以外の 1 文字のキーも、ページで今までどおり効くこと。
+// Claude が送った ⌘ のキーは、アプリのショートカット（⌘W・⌘1・⌘2・⌃⌘↓）にならず、人の画面を動かさないこと。
+// フォーカスが別プロセスの iframe（別サイト）の中なら、その iframe に入り、人の入力欄には入らないこと
 
 const START = 'ページでキーを打つ準備をしてください';
+const OTHER = 'ほかの作業のセッションです';
+const OTHER_READY = 'ほかの準備ができました';
 const READY = '準備できました';
 const DRAFT = '人の下書き';
 const tool = (id: string, name: string, input: Record<string, unknown>): Block => ({ type: 'tool_use', id, name: browserToolId(name), input });
@@ -25,11 +29,24 @@ const rounds = [
   { name: 'type（submit で Enter）', call: ['type', { text: 'q', submit: true }] },
   { name: 'press_key（Enter で改行）', call: ['press_key', { key: 'Enter' }] },
   { name: 'type（セレクタあり）', call: ['type', { selector: '#area', text: 'sel' }] },
+  { name: 'type（clear）', call: ['type', { text: 'new', clear: true }] },
+  { name: 'press_key（é）', call: ['press_key', { key: 'é' }] },
+  { name: 'press_key（あ）', call: ['press_key', { key: 'あ' }] },
+  { name: 'press_key（絵文字）', call: ['press_key', { key: '😀' }] },
+  { name: 'press_key（⌘W）', call: ['press_key', { key: 'w', modifiers: ['meta'] }] },
+  { name: 'press_key（⌘2）', call: ['press_key', { key: '2', modifiers: ['meta'] }] },
+  { name: 'press_key（⌘1）', call: ['press_key', { key: '1', modifiers: ['meta'] }] },
+  { name: 'press_key（⌃⌘↓）', call: ['press_key', { key: 'ArrowDown', modifiers: ['control', 'meta'] }] },
+  // 別プロセスの iframe の中の欄を、位置で押す（iframe は左上 0,200 に置き、中の欄は iframe の左上）
+  { name: 'click（iframe の中の欄）', call: ['click', { x: 20, y: 210 }] },
+  { name: 'press_key（iframe）', call: ['press_key', { key: 'z' }] },
+  { name: 'type（iframe）', call: ['type', { text: 'frame' }] },
 ].map((r, i) => ({ ...r, prompt: `ページでキーを打ってください ${i}`, hold: `キーを打ちます ${i}`, done: `打ちました ${i}` }));
 
 describe('Claude がページで打つキーは、ページに届き、人の入力欄には入らない', () => {
   let app: E2EApp;
   let server: Server;
+  let frameServer: Server;
   let origin: string;
   const holds = new Map<string, { reached: Promise<void>; reach: () => void; release: () => void }>();
   const input = () => app.page.locator('.chat-input textarea');
@@ -47,6 +64,15 @@ describe('Claude がページで打つキーは、ページに届き、人の入
             active: document.activeElement.id, submitted: Number(document.body.dataset.submitted || 0), keys: __keys.slice() })`,
       ) as Promise<{ name: string; second: string; area: string; active: string; submitted: number; keys: string[] }>;
     });
+  // 別プロセスの iframe の中の欄の文字（アプリの画面からは読めないので、main で読む）
+  const innerValue = () =>
+    app.app.evaluate(async ({ webContents }) => {
+      const guest = webContents.getAllWebContents().find((w) => w.getType() === 'webview' && !w.isDestroyed());
+      const frame = guest?.mainFrame.frames.find((f) => f !== guest.mainFrame);
+      return frame ? ((await frame.executeJavaScript('document.querySelector("#inner").value')) as string) : null;
+    });
+  const browserTabs = () => app.page.locator('.preview-pane .preview-tab');
+  const activeSession = () => app.page.locator('.session-list .session-row.active').textContent();
   // 止めたところで、人がチャットの入力欄で下書きを打っている。そこで Claude に打たせ、ツールの結果が返るまで待つ
   const runWhileInChat = async (index: number) => {
     const round = rounds[index];
@@ -65,11 +91,18 @@ describe('Claude がページで打つキーは、ページに届き、人の入
   };
 
   beforeAll(async () => {
+    frameServer = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><body style="margin:0"><input id="inner" aria-label="iframe の欄" style="margin:0;width:200px;height:30px">');
+    });
+    await new Promise<void>((resolve) => frameServer.listen(0, 'localhost', resolve));
+    const frameUrl = `http://localhost:${(frameServer.address() as AddressInfo).port}/`;
     server = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(`<!doctype html><title>キーのページ</title>
 <form id="f"><input id="name" aria-label="名前"><input id="second" aria-label="二つ目"><button>送る</button></form>
 <textarea id="area" aria-label="欄"></textarea>
+<iframe src="${frameUrl}" style="position:absolute;left:0;top:200px;width:320px;height:80px;border:0"></iframe>
 <script>
   window.__keys = [];
   document.addEventListener('keydown', (e) => __keys.push([e.key, e.ctrlKey, e.metaKey, e.altKey, e.shiftKey, e.isTrusted].join(':')), true);
@@ -95,6 +128,7 @@ describe('Claude がページで打つキーは、ページに届き、人の入
             ]),
           ],
         },
+        { match: OTHER, steps: [[{ type: 'text', text: OTHER_READY }]] },
       ],
     });
     for (const r of rounds) {
@@ -108,6 +142,9 @@ describe('Claude がページで打つキーは、ページに届き、人の入
       entry.reach();
       return new Promise<void>((resolve) => (entry.release = resolve));
     };
+    // ⌃⌘↓ でセッションが替わるかを見るため、ほかのセッションを先に作っておく
+    await app.startSession(OTHER, { mode: 'manual' });
+    await app.byText('.chat-list', OTHER_READY).waitFor();
     await app.startSession(START, { mode: 'manual' });
     await app.byText('.chat-list', READY).waitFor();
     expect((await page()).active).toBe('name');
@@ -121,6 +158,7 @@ describe('Claude がページで打つキーは、ページに届き、人の入
     for (const entry of holds.values()) entry.release();
     await app?.close();
     await new Promise((resolve) => server?.close(resolve));
+    await new Promise((resolve) => frameServer?.close(resolve));
   });
 
   it('type（セレクタ無し）: ページのフォーカスのある欄に入り、人の入力欄には入らない。人のフォーカスも動かない', async () => {
@@ -174,6 +212,50 @@ describe('Claude がページで打つキーは、ページに届き、人の入
   it('type（セレクタあり）: 押した欄に入り、人の入力欄には入らない', async () => {
     await runWhileInChat(8);
     expect((await page()).area).toBe('sel');
+  });
+
+  it('type（clear）: 欄の文字を消してから入れる（消すのと入れるのが入れ替わらない）', async () => {
+    await runWhileInChat(9);
+    expect((await page()).area).toBe('new');
+  });
+
+  it('press_key（ASCII 以外の 1 文字）: é・あ・絵文字もページの欄に入る', async () => {
+    await runWhileInChat(10);
+    await runWhileInChat(11);
+    await runWhileInChat(12);
+    expect((await page()).area).toBe('newéあ😀');
+    // ページが受ける keydown の key は空になる（sendInputEvent には key を決める項目が無く、Electron がこれらの文字のキーを知らないため。
+    // 直す前の CDP では、key がその文字だった）。文字は入る
+    expect((await page()).keys.slice(-3).map((k) => k.split(':')[0])).toEqual(['', '', '']);
+    expect(await focused()).toBe('chat');
+  });
+
+  it('press_key（⌘W・⌘2・⌘1・⌃⌘↓）: Claude の送ったキーは、アプリのショートカットにならない（タブを閉じない・人のフォーカスもセッションも動かない）。ページには届く', async () => {
+    const session = await activeSession();
+    const before = (await page()).keys.length;
+    await runWhileInChat(13);
+    expect(await browserTabs().count()).toBe(1);
+    await runWhileInChat(14);
+    expect(await focused()).toBe('chat');
+    await runWhileInChat(15);
+    expect(await focused()).toBe('chat');
+    await runWhileInChat(16);
+    expect(await activeSession()).toBe(session);
+    expect(await focused()).toBe('chat');
+    expect((await page()).keys.slice(before).filter((k) => k.endsWith(':true'))).toEqual([
+      'w:false:true:false:false:true',
+      '2:false:true:false:false:true',
+      '1:false:true:false:false:true',
+      'ArrowDown:true:true:false:false:true',
+    ]);
+  });
+
+  it('別プロセスの iframe（別サイト）の中の欄: press_key・type が iframe の欄に入り、人の入力欄には入らない', async () => {
+    await runWhileInChat(17);
+    await runWhileInChat(18);
+    await runWhileInChat(19);
+    expect(await innerValue()).toBe('zframe');
+    expect(await focused()).toBe('chat');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

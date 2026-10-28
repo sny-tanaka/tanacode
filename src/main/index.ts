@@ -13,6 +13,7 @@ import { instructionDirs, instructionFiles } from './project-instructions';
 import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
+import { isClaudeInput } from './claude-input';
 import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
@@ -357,7 +358,8 @@ function setupAppContents(contents: WebContents, id: string): void {
     // ページにフォーカスがあっても、「移動」のショートカットを効かせる。ページより先に受ける（ページがキーを使うと、メニューまで届かないため）。
     // アプリの画面で押したキーは、画面が自分で受ける（renderer の layout/shortcuts.ts）
     guest.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return;
+      // Claude がページに送ったキーは、ショートカットにしない（ページにだけ届ける。claude-input.ts）
+      if (input.type !== 'keyDown' || isClaudeInput(guest)) return;
       const shortcut = matchShortcut({ code: input.code, key: input.key, meta: input.meta, ctrl: input.control, shift: input.shift, alt: input.alt });
       if (!shortcut) return;
       event.preventDefault();

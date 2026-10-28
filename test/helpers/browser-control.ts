@@ -161,8 +161,9 @@ export function sentBy(page: FakeContents, origin = new URL(page.url).origin, to
 }
 
 // 別プロセスの iframe につながった（URL は Runtime.evaluate の location.href で答える）
-export function addChildFrame(page: FakeContents, child: string, type = 'iframe'): void {
-  page.debugger.message('Target.attachedToTarget', { sessionId: child, targetInfo: { type } });
+// targetId: その iframe のフレームの ID（DOM.describeNode の frameId と同じ）
+export function addChildFrame(page: FakeContents, child: string, type = 'iframe', targetId = `T-${child}`): void {
+  page.debugger.message('Target.attachedToTarget', { sessionId: child, targetInfo: { type, targetId } });
 }
 
 // CDP の命令に、名前ごとの答えを返す（child ごとの location.href も）
