@@ -114,6 +114,67 @@ describe('送信のキー', () => {
     expect(onSend).toHaveBeenCalledTimes(2);
   });
 
+  // 日本語入力で、予測変換の候補を選ぶ Tab。本物の IME は出せないので、ブラウザに届くイベントの並びを作って確かめる。
+  // at: イベントの時刻（timeStamp。ms）。戻り値: Tab の既定の動き（次の欄へフォーカスを移す）を止めたか
+  describe('変換に使われた Tab では、欄から出ない', () => {
+    const fire = (event: Event, at: number) => {
+      Object.defineProperty(event, 'timeStamp', { value: at });
+      return !box().dispatchEvent(event);
+    };
+    const start = (at: number) => fire(new CompositionEvent('compositionstart', { bubbles: true, data: '' }), at);
+    const end = (at: number) => fire(new CompositionEvent('compositionend', { bubbles: true, data: '変換' }), at);
+    const tab = (at: number, init: KeyboardEventInit & { keyCode?: number } = {}) => {
+      const event = new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', bubbles: true, cancelable: true, ...init });
+      Object.defineProperty(event, 'keyCode', { value: init.keyCode ?? 9 });
+      return fire(event, at);
+    };
+
+    it('変換中の Tab（isComposing・keyCode 229）は止める', () => {
+      render(<Harness initial="へんかん" />);
+      start(1000);
+      expect(tab(1010, { isComposing: true, keyCode: 229 })).toBe(true);
+    });
+
+    it('compositionstart〜compositionend の間に、isComposing が false・keyCode 9 で届いた Tab も止める', () => {
+      render(<Harness initial="へんかん" />);
+      start(1000);
+      expect(tab(1500)).toBe(true);
+    });
+
+    it('確定した（compositionend）あとの Tab は、すぐあとでも止めない（速く打って欄を出る・候補を採る Tab を消さない）', () => {
+      render(<Harness initial="変換" />);
+      start(1000);
+      end(1500);
+      expect(tab(1505)).toBe(false);
+    });
+
+    it('変換の途中でフォーカスが出入りしたら（compositionend が届かなくても）、そのあとの Tab は止めない', () => {
+      render(<Harness initial="へんかん" />);
+      start(1000);
+      fireEvent.blur(box());
+      fireEvent.focus(box());
+      expect(tab(1500)).toBe(false);
+    });
+
+    it('変換していないときの Tab と、確定してからの Tab は止めない（キーで欄を出られる）', () => {
+      render(<Harness initial="直して" />);
+      expect(tab(1000)).toBe(false);
+      start(2000);
+      end(2500);
+      expect(tab(3000)).toBe(false);
+      expect(tab(3100, { shiftKey: true })).toBe(false);
+    });
+
+    it('補完の候補が出ていても、変換中の Tab では候補を選ばない', async () => {
+      render(<Harness />);
+      type('@app');
+      await waitFor(() => expect(suggestions()).toEqual(['app.ts']));
+      start(1000);
+      expect(tab(1010, { isComposing: true, keyCode: 229 })).toBe(true);
+      expect(box().value).toBe('@app');
+    });
+  });
+
   it('送信のボタン。送れない状態では押せず、作業中は中断のボタンに変わる', () => {
     const onSend = vi.fn();
     const onInterrupt = vi.fn();

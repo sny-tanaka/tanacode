@@ -22,6 +22,7 @@
   "test/e2e/editor-pdf.test.ts": 8,
   "test/e2e/elicitation.test.ts": 8,
   "test/e2e/first-prompt-order.test.ts": 12,
+  "test/e2e/focus-steal.test.ts": 12,
   "test/e2e/keyboard.test.ts": 11,
   "test/e2e/mcp.test.ts": 13,
   "test/e2e/merged-parent.test.ts": 20,

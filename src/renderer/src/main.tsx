@@ -3,6 +3,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import { setLanguage } from '@shared/i18n';
 import { App } from './App';
+import { watchChatFocus } from './chat/focusWatch';
 import { syncSharedPrefs } from './sharedPrefs';
 import './global.css';
 
@@ -11,6 +12,9 @@ import './global.css';
 const lang = window.tanacode.language();
 setLanguage(lang);
 document.documentElement.lang = lang;
+
+// チャットの入力欄から、人の操作でないのにフォーカスが外れたら、アプリのログ（userData/focus.log）に残す
+watchChatFocus({ report: (report) => window.tanacode.diagnostics.focusLost(report) });
 
 // プロファイルをまたいで同じにする表示設定（カラムの幅など）は、描く前にそろえる（描いてから幅が変わらないように）
 void syncSharedPrefs().then(() => createRoot(document.getElementById('root')!).render(<App />));

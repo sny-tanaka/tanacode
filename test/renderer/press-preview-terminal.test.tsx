@@ -511,6 +511,85 @@ describe('TerminalPanel: Claude へ送る', () => {
   });
 });
 
+// xterm へフォーカスを移すのは、人の操作のときだけ（直す前と同じ）。シェルのタイトル・終了コード・ほかのプロファイルでの高さの変化・
+// アプリが開いたタブでは移さない（チャットに打っている途中で奪わない）。focused: その xterm の focus() を呼んだ回数
+describe('TerminalPanel: フォーカス', () => {
+  const focusCount = () => xterm.FakeTerminal.all.map((term) => term.focused);
+  const moved = (before: number[], index: number) => (termOf(index).focused ?? 0) > (before[index] ?? 0);
+
+  function Switchable({ sessionId }: { sessionId: string }) {
+    return <TerminalPanel sessionId={sessionId} liveOwners={['s1', 's2']} open onOpen={() => {}} onClose={() => {}} />;
+  }
+
+  it('人の操作では移す: 開いた・新しいタブ・ほかのタブを押した・今のタブを × で閉じた・最後のタブを × で閉じた・境目で高さを変えた・セッションを替えた', async () => {
+    Element.prototype.setPointerCapture ??= () => {};
+    Element.prototype.releasePointerCapture ??= () => {};
+    const { rerender } = render(<Switchable sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    expect(termOf(0).focused).toBeGreaterThan(0);
+    await newShell();
+    expect(termOf(1).focused).toBeGreaterThan(0);
+
+    let before = focusCount();
+    fireEvent.click(tabs()[0]);
+    expect(moved(before, 0)).toBe(true);
+    // 今のタブを押しても、何もしない
+    before = focusCount();
+    fireEvent.click(tabs()[0]);
+    expect(focusCount()).toEqual(before);
+
+    // 今のタブ（sh1）を × で閉じると、残ったタブ（sh2）へ
+    before = focusCount();
+    fireEvent.click(closeOf(0));
+    act(() => api.emit('shell.onExit', { id: 'sh1', exitCode: 0 }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(moved(before, 1)).toBe(true);
+    // 最後のタブを × で閉じると、開き直した新しいシェル（sh3）へ
+    fireEvent.click(closeOf(0));
+    act(() => api.emit('shell.onExit', { id: 'sh2', exitCode: 0 }));
+    await waitFor(() => expect(xterm.FakeTerminal.all).toHaveLength(3));
+    await waitFor(() => expect(termOf(2).focused).toBeGreaterThan(0));
+
+    before = focusCount();
+    const edge = screen.getByRole('separator');
+    fireEvent.pointerDown(edge, { clientY: 500, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientY: 450, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientY: 450, pointerId: 1 });
+    expect(moved(before, 2)).toBe(true);
+
+    // ほかのセッションへ替えて（シェルを開く）、戻る
+    rerender(<Switchable sessionId="s2" />);
+    await waitFor(() => expect(xterm.FakeTerminal.all).toHaveLength(4));
+    await waitFor(() => expect(termOf(3).focused).toBeGreaterThan(0));
+    before = focusCount();
+    rerender(<Switchable sessionId="s1" />);
+    expect(moved(before, 2)).toBe(true);
+  });
+
+  it('人の操作でなければ移さない: シェルのタイトル・コマンドの終了コード・ほかのプロファイルでの高さの変化・アプリが開いたタブ（今のタブを押したあとも）', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    // 人がチャットへ移った
+    const chat = document.createElement('textarea');
+    document.body.appendChild(chat);
+    chat.focus();
+    const before = focusCount();
+
+    act(() => termOf(0).emitTitle('~/work'));
+    act(() => api.emit('prefs.onChanged', { key: 'tanacode.terminalHeight', value: '333' }));
+    fireEvent.click(tabs()[0]);
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install', task: true }));
+    act(() => api.emit('shell.onExit', { id: 'task1', exitCode: 1 }));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'shell-9', name: 'zsh', task: false }));
+
+    expect(tabNames()).toHaveLength(3);
+    expect(tabNames()[0]).toBe('~/work');
+    expect(xterm.FakeTerminal.all.map((term) => term.focused)).toEqual([...before, 0, 0]);
+    expect(document.activeElement).toBe(chat);
+    chat.remove();
+  });
+});
+
 describe('TerminalPanel: パネルの高さ・閉じる', () => {
   it('上の縁をドラッグしてパネルの高さを変え、離すと覚える（次に開いたときもその高さ）', async () => {
     // jsdom は押さえる（pointer capture）を持たない

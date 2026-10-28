@@ -115,6 +115,9 @@ const api: TanacodeApi = {
     cancel: (id) => invoke(IpcChannel.ScheduledCancel, id),
     onChanged: (listener) => subscribe(IpcChannel.ScheduledChanged, listener),
   },
+  diagnostics: {
+    focusLost: (report) => send(IpcChannel.FocusLost, report),
+  },
   prefs: {
     sync: (local) => invoke(IpcChannel.PrefsSync, local),
     set: (key, value) => send(IpcChannel.PrefsSet, key, value),

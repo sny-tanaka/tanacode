@@ -489,6 +489,7 @@ export class DemoBackend {
         onChanged: () => () => {},
       },
       // デモはプロファイル 1 つだけなので、ほかの画面に配らない（値は localStorage にある）
+      diagnostics: { focusLost: () => {} },
       prefs: { sync: (local) => ok(local), set: () => {}, onChanged: () => () => {} },
       notifications: {
         get: () => ok(this.notificationsOn),

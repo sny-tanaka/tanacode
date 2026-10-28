@@ -55,6 +55,7 @@ type Props = {
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
 // App は応答中に何度も描き直すので、props が変わったときだけ描き直す
 export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, onOpen, onClose }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -83,6 +84,19 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
 
   // アプリが開いたコマンドのタブのうち、終わってもタブを残すもの（× で止めたものは外し、終わったら閉じる）
   const taskIds = useRef(new Set<string>());
+
+  // xterm へフォーカスを移すのは、人の操作のときだけ: パネルを出した（ボタン・⌘J・チャットの「実行」）・開いたままセッションを替えた・
+  // タブを選んだ・今のタブを × で閉じた・新しいタブを開いた・境目をマウスで動かして高さを変えた・exit を打って閉じた。
+  // 移すと決めたら印を付け、出すシェルができたときに移して消す（パネルを開いてから、最初のシェルを開くまでの間もある）。
+  // シェルのタイトル・終了コードが変わった・ほかのプロファイルの画面で高さが変わった・アプリ（Claude）がタブを開いたときは移さない
+  // （チャットに打っている途中で奪わない）
+  const focusRequested = useRef(false);
+  const requestFocus = () => {
+    focusRequested.current = true;
+  };
+  const shownFor = useRef<{ open: boolean; sessionId: string | null }>({ open: false, sessionId: null });
+  if (open && (!shownFor.current.open || shownFor.current.sessionId !== sessionId)) focusRequested.current = true;
+  shownFor.current = { open, sessionId };
 
   // xterm を作ってパネルに置く（まだ見せない）
   const makeXterm = useCallback((): Xterm => {
@@ -156,6 +170,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
       }
       const x = xterms.current.get(id);
       if (!x) exitedEarly.current?.set(id, exitCode);
+      // exit を打って閉じた（xterm にフォーカスがあった）ときは、移った先のタブへフォーカスを移す
+      if (x?.element.contains(document.activeElement)) focusRequested.current = true;
       x?.term.dispose();
       x?.element.remove();
       xterms.current.delete(id);
@@ -330,6 +346,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     const owner = requested ?? sessionId;
     if (!owner || owner !== sessionId) return false;
     queued.current = { owner, command };
+    requestFocus();
     onOpen();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (queued.current) void newShell(owner);
@@ -344,19 +361,38 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     if (attached && open && sessionId && !waiting && tabs.length === 0) void newShell(sessionId);
   }, [attached, open, sessionId, waiting, tabs.length, newShell, discarded]);
 
-  // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
-  // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
+  // 移す前に、人がパネルの外で押した・打った・ほかの欄へ移ったら（シェルを開くのを待つ間に、チャットで打ち続けたなど）、あとから奪わない。
+  // パネルを開いたキー（⌘J）は、ショートカットが先に受けて止めるので、ここには届かない
   useEffect(() => {
-    for (const [id, x] of xterms.current) x.element.hidden = !open || id !== activeShell?.id;
-    const x = open && activeShell ? xterms.current.get(activeShell.id) : undefined;
+    const cancel = (e: Event) => {
+      if (!(e.target instanceof Node && panelRef.current?.contains(e.target))) focusRequested.current = false;
+    };
+    const types = ['focusin', 'keydown', 'pointerdown'] as const;
+    for (const type of types) document.addEventListener(type, cancel);
+    return () => {
+      for (const type of types) document.removeEventListener(type, cancel);
+    };
+  }, []);
+
+  // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
+  // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）。
+  // 見せるシェルを替えたとき、パネルの中（それまでの xterm・タブの ×）にフォーカスがあれば、替えた先へ移す（隠した xterm にフォーカスを残さない）
+  const activeId = activeShell?.id ?? null;
+  const shownId = useRef<string | null>(null);
+  useEffect(() => {
+    const inTerminal = !!panelRef.current?.contains(document.activeElement);
+    for (const [id, x] of xterms.current) x.element.hidden = !open || id !== activeId;
+    const x = open && activeId ? xterms.current.get(activeId) : undefined;
     if (!x) {
       setHasSelection(false);
       return;
     }
     x.fit.fit();
-    x.term.focus();
+    if (focusRequested.current || (inTerminal && shownId.current !== activeId)) x.term.focus();
+    focusRequested.current = false;
+    shownId.current = activeId;
     setHasSelection(x.term.hasSelection());
-  }, [open, activeShell, height]);
+  }, [open, activeId, height]);
 
   // ショートカット（layout/shortcuts.ts）。ターミナルにフォーカスがあるとき、⌃Tab・⌃⇧Tab でタブを順に送る
   // （選んだシェルには、上で xterm にフォーカスを移す）。⌘W では、ターミナルのタブを閉じない（エディタ・ブラウザのタブも閉じない）
@@ -365,7 +401,10 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     if (shortcut === 'closeTab') return true;
     if (shortcut !== 'nextTab' && shortcut !== 'previousTab') return false;
     const next = stepIn(tabs, activeShell, shortcut === 'nextTab' ? 1 : -1, true);
-    if (next && next !== activeShell) setActive((prev) => ({ ...prev, [sessionId]: next.id }));
+    if (next && next !== activeShell) {
+      requestFocus();
+      setActive((prev) => ({ ...prev, [sessionId]: next.id }));
+    }
     return true;
   });
 
@@ -381,7 +420,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
   const saveHeight = () => writeSharedPref(HEIGHT_KEY, String(height));
 
   return (
-    <div className="terminal-panel" hidden={!open || !sessionId} style={{ height }}>
+    <div ref={panelRef} className="terminal-panel" hidden={!open || !sessionId} style={{ height }}>
       <div
         className="terminal-resizer"
         role="separator"
@@ -396,7 +435,10 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
         onPointerMove={(e) => {
           if (!drag.current) return;
           const max = window.innerHeight - 200;
-          setHeight(Math.round(Math.max(MIN_HEIGHT, Math.min(max, drag.current.height + drag.current.y - e.clientY))));
+          const next = Math.round(Math.max(MIN_HEIGHT, Math.min(max, drag.current.height + drag.current.y - e.clientY)));
+          // 高さを変えたら、xterm へ移す（直す前と同じ。変わらなければ印を付けない）
+          if (next !== height) requestFocus();
+          setHeight(next);
         }}
         onPointerUp={(e) => {
           if (!drag.current) return;
@@ -414,7 +456,12 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
               role="tab"
               aria-selected={tab.id === activeShell?.id}
               className={`terminal-tab${tab.id === activeShell?.id ? ' active' : ''}`}
-              onClick={() => sessionId && setActive((prev) => ({ ...prev, [sessionId]: tab.id }))}
+              onClick={() => {
+                // 今のタブを押しても、何もしない（直す前と同じ。印を残さない）
+                if (!sessionId || tab.id === activeShell?.id) return;
+                requestFocus();
+                setActive((prev) => ({ ...prev, [sessionId]: tab.id }));
+              }}
               title={tab.title ?? tab.name}
             >
               <span>{terminalLabel({ task: !!tab.task, name: tab.name, title: tab.title, exitCode: tab.exitCode ?? null, position: i + 1 })}</span>
@@ -425,6 +472,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
                 tip={tab.task && tab.exitCode === undefined ? t('terminal.tabs.stopAndClose') : t('terminal.tabs.close')}
                 onClick={(e) => {
                   e.stopPropagation();
+                  // 今のタブを閉じたら、替わった先（最後のタブなら、開き直す新しいシェル）へ移す。裏のタブを閉じても移さない（直す前と同じ）
+                  if (tab.id === activeShell?.id) requestFocus();
                   if (tab.task && tab.exitCode !== undefined) closeTask(tab.id);
                   else {
                     // 動いているコマンドを止めて閉じる。出力を見られるようタブを残すのは、ひとりでに終わったときだけ
@@ -440,7 +489,11 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
             size="sm"
             label={t('terminal.tabs.new')}
             disabled={!!waiting}
-            onClick={() => sessionId && void newShell(sessionId)}
+            onClick={() => {
+              if (!sessionId) return;
+              requestFocus();
+              void newShell(sessionId);
+            }}
           />
         </div>
         <IconButton

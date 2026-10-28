@@ -320,10 +320,23 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
 
   useEffect(() => setAddress(url ?? ''), [sessionId, activeTab, url]);
 
-  // まだ何も開いていなければ（空のタブも）、すぐ URL を貼れるようにアドレス欄にカーソルを置く
+  // 人がブラウザを出したとき・セッションを替えたときに、まだ何も開いていなければ（空のタブも）、すぐ URL を貼れるようにアドレス欄にカーソルを置く。
+  // Claude が操作を始めてブラウザが出たときや、Claude がタブを開く・選ぶ・閉じたときは置かない（チャットに打っている途中で奪わない）。
+  // 人がタブを選んだ・閉じた・開いたときは、それぞれのところで置く
+  const shownFor = useRef<string | null>(null);
   useEffect(() => {
-    if (visible && !url) addressRef.current?.focus();
-  }, [visible, url, sessionId, activeTab]);
+    const shown = visible ? sessionId : null;
+    if (shown === shownFor.current) return;
+    shownFor.current = shown;
+    if (shown && !url && !claude[shown]?.active) addressRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, sessionId]);
+  // 直す前の effect と同じく、その場で置く（タブはマウスを押したときに選ぶので、押した既定の動きで外れる。直す前と同じ動き）
+  const focusAddressIfEmpty = (sid: string) => {
+    const tabId = activeRef.current.get(sid);
+    const next = tabId ? pages[tabId]?.url : undefined;
+    if (!next || next === 'about:blank') addressRef.current?.focus();
+  };
 
   // セッションやタブを切り替えたり閉じたりしたら、要素選びをやめる
   useEffect(() => {
@@ -342,6 +355,13 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   };
   const focusPageRef = useRef(focusPage);
   focusPageRef.current = focusPage;
+  // タブを送った・閉じたあと、描き終えてからページへ移す。それまでに人がほかへ移っていたら（ウインドウが裏にあって描くのが遅れ、
+  // その間に ⌘1 などで一覧へ移ったなど）、あとから奪わない。移してよいのは、閉じたタブと一緒にフォーカスが落ちた（body）か、ブラウザの中にあるときだけ
+  const focusPageLater = () =>
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || paneRef.current?.contains(active)) focusPageRef.current();
+    });
   useShortcuts((shortcut) => {
     if (!sessionId) return false;
     const pane = focusedPane();
@@ -356,7 +376,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         const next = stepIn(tabsRef.current.get(sessionId) ?? [], activeTab, shortcut === 'nextTab' ? 1 : -1, true);
         if (next && next !== activeTab) {
           activate(sessionId, next);
-          requestAnimationFrame(() => focusPageRef.current());
+          focusPageLater();
         }
         return true;
       }
@@ -364,7 +384,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         if (pane !== 'browser') return false;
         if (activeTab) closeTab(sessionId, activeTab);
         // 閉じたタブにフォーカスがあったので、移った先のタブへ（続けて ⌘W・⌃Tab を押せるように）
-        requestAnimationFrame(() => focusPageRef.current());
+        focusPageLater();
         return true;
       default:
         return false;
@@ -437,8 +457,15 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         <TabStrip
           tabs={sessionTabs.map((id) => ({ id, title: pages[id]?.title ?? '', url: pages[id]?.url ?? '', loading: pages[id]?.loading ?? false }))}
           active={activeTab}
-          onSelect={(tabId) => activate(sessionId, tabId)}
-          onClose={(tabId) => closeTab(sessionId, tabId)}
+          onSelect={(tabId) => {
+            if (tabId === activeTab) return;
+            activate(sessionId, tabId);
+            focusAddressIfEmpty(sessionId);
+          }}
+          onClose={(tabId) => {
+            closeTab(sessionId, tabId);
+            if (tabId === activeTab) focusAddressIfEmpty(sessionId);
+          }}
           onNew={newTab}
         />
       )}
