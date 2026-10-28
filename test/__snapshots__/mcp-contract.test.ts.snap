@@ -187,6 +187,9 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
           "double": {
             "type": "boolean",
           },
+          "real": {
+            "type": "boolean",
+          },
           "selector": {
             "type": "string",
           },
@@ -207,6 +210,9 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
       "inputSchema": {
         "properties": {
           "clear": {
+            "type": "boolean",
+          },
+          "real": {
             "type": "boolean",
           },
           "selector": {

@@ -1306,23 +1306,15 @@ export class BrowserControl {
     const selector = optionalString(args.selector);
     const double = args.double === true;
     const button = optionalString(args.button) ?? 'left';
-    let target: { rect: BrowserRect; description: string; covered: string | null; child?: { session: string; x: number; y: number } };
+    let target: Target;
     if (selector) target = await this.locate(guest, selector);
     else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
     else throw new ToolError('Provide selector, or x and y.');
     const before = guest.contents.getURL();
     await this.highlight(sessionId, target.rect);
-    // 別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
-    const { x, y } = target.child ?? center(target.rect);
-    const child = target.child?.session;
-    const pressButton = button === 'right' || button === 'middle' ? button : 'left';
-    await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, child);
-    for (let count = 1; count <= (double ? 2 : 1); count++) {
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: pressButton, clickCount: count }, child);
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: pressButton, clickCount: count }, child);
-    }
+    const real = await this.press(guest, target, { double, button: button === 'right' || button === 'middle' ? button : 'left', real: args.real === true });
     await settle(guest.contents);
-    const lines = [`${double ? 'Double-clicked' : 'Clicked'}: ${target.description}`];
+    const lines = [`${double ? 'Double-clicked' : 'Clicked'}: ${target.description}${real ? ` (with a real mouse press, ${real})` : ''}`];
     if (target.covered) lines.push(`(another element, ${target.covered}, was covering the clicked position)`);
     const after = guest.contents.getURL();
     // 移る前に止められなかった形（ページの「戻る」ボタンの history.back など）で許していない先へ移ったときは、オリジンだけを伝える
@@ -1330,17 +1322,147 @@ export class BrowserControl {
     return textResult(lines.join('\n'));
   }
 
+  // 要素を押す。ふだんは、ページの中の JavaScript で押す（マウスの押下の順のイベントを送り、押した要素にページの中でフォーカスを移し、click を
+  // 送る）。本物の押下（CDP の Input.dispatchMouseEvent）は、Chromium が押されたページを持つ webview にフォーカスを移すので、人がチャットの
+  // 入力欄などで打っていると、そのフォーカスを奪ってしまうため（ページが mousedown を止めても移る）。
+  // JavaScript では効かないもの（<select> の一覧・ファイルを選ぶ窓・新しい窓を開くリンク・ドラッグ）と、別オリジンの iframe の中・右や真ん中の
+  // ボタン・Claude が real を指定したときは、本物の押下で押し、押したらすぐ人のフォーカスを元の場所へ戻す（keepHumanFocus）。
+  // 本物の押下で押したときは、その理由を返す（ページで押したときは null）
+  private async press(guest: Guest, target: Target, options: { double: boolean; button: 'left' | 'right' | 'middle'; real: boolean }): Promise<string | null> {
+    const point = center(target.rect);
+    let reason: string | null = options.real ? 'as requested' : options.button !== 'left' ? `because it is the ${options.button} button` : null;
+    if (target.cross) reason = 'because it is inside a cross-origin iframe';
+    if (!reason) {
+      const result = (await this.world(
+        guest,
+        `(() => {${FRAMES}
+          const x = ${point.x}, y = ${point.y};
+          const hit = __hit(x, y);
+          if (!hit.el) return { real: 'because there was no element to press with JavaScript' };
+          if (hit.cross) return { real: 'because it is inside a cross-origin iframe' };
+          const el = hit.el;
+          const doc = el.ownerDocument;
+          // JavaScript では効かないものは、本物で押す
+          if (el.closest('select')) return { real: 'because it is a <select>' };
+          const label = el.closest('label');
+          if (el.closest('input[type=file]') || (label && label.control && label.control.type === 'file')) return { real: 'because it is a file input' };
+          const newWindow = (t) => !!t && !/^_(self|parent|top)$/i.test(t);
+          const base = (doc.querySelector('base[target]') || {}).target || '';
+          const link = el.closest('a[href], area[href]');
+          if (link && newWindow(link.target || base)) return { real: 'because the link opens a new window' };
+          const submit = el.closest('button, input[type=submit], input[type=image]');
+          if (submit && submit.form && (submit.type === 'submit' || submit.type === 'image') && newWindow(submit.formTarget || submit.form.target || base)) {
+            return { real: 'because the form opens a new window' };
+          }
+          if (el.closest('[draggable="true"]')) return { real: 'because the element is draggable' };
+          // 押す（いちばん外のページの位置を、押す要素の文書の中の位置に直す）
+          const o = __offset(doc);
+          const view = doc.defaultView;
+          const Pointer = view.PointerEvent || view.MouseEvent;
+          const at = { bubbles: true, cancelable: true, composed: true, clientX: x - o.ox, clientY: y - o.oy, screenX: x - o.ox, screenY: y - o.oy, button: 0 };
+          const pointer = { ...at, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 };
+          const focusable = 'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], area[href], iframe, summary, [tabindex], [contenteditable=""], [contenteditable="true"], audio[controls], video[controls]';
+          for (let count = 1; count <= ${options.double ? 2 : 1}; count++) {
+            const down = el.dispatchEvent(new Pointer('pointerdown', { ...pointer, buttons: 1, pressure: 0.5, detail: count }));
+            // pointerdown を止められたら、マウスの互換のイベント（mousedown・mouseup）は送らない（ブラウザと同じ）
+            const mouse = down && el.dispatchEvent(new view.MouseEvent('mousedown', { ...at, buttons: 1, detail: count }));
+            if (mouse) {
+              // 本物の押下と同じく、押した要素（か、フォーカスできる祖先）にフォーカスを移す。無ければ、今のフォーカスを外す
+              const to = el.closest(focusable);
+              if (to) to.focus({ preventScroll: true });
+              else if (doc.activeElement && doc.activeElement !== doc.body) doc.activeElement.blur();
+            }
+            el.dispatchEvent(new Pointer('pointerup', { ...pointer, buttons: 0, pressure: 0, detail: count }));
+            if (down) el.dispatchEvent(new view.MouseEvent('mouseup', { ...at, buttons: 0, detail: count }));
+            el.dispatchEvent(new view.MouseEvent('click', { ...at, buttons: 0, detail: count }));
+          }
+          if (${options.double}) el.dispatchEvent(new view.MouseEvent('dblclick', { ...at, buttons: 0, detail: 2 }));
+          return { real: null };
+        })()`,
+        // 押したボタンの処理が、ポップアップを開く・全画面にするなど、人の操作が要るものも使えるように
+        true,
+      )) as { real: string | null };
+      if (!result.real) return null;
+      reason = result.real;
+    }
+    // 本物の押下。別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
+    const { x, y } = target.child ?? point;
+    const child = target.child?.session;
+    await this.keepHumanFocus(guest, async () => {
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, child);
+      for (let count = 1; count <= (options.double ? 2 : 1); count++) {
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: options.button, clickCount: count }, child);
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: options.button, clickCount: count }, child);
+      }
+    });
+    return reason;
+  }
+
+  // 本物の押下（send）で、アプリの画面のフォーカスが webview へ移ったら、すぐ元の場所へ戻す。人のフォーカスがページ（webview）にあれば戻さない。
+  // 押す前に、アプリの画面で今のフォーカスを覚え、そこから外れた（focusout）ことを聞いておく。webview には focusin が届かない
+  // （外れた要素の focusout だけが届く）ので、押したあとに、今のフォーカスが webview かを見る。押し終えたときにまだ移っていなければ、
+  // 外れるのを KEEP_FOCUS_WAIT_MS まで待つ（Electron 44 では、押し終えたときにはもう移っていた）
+  private async keepHumanFocus(guest: Guest, send: () => Promise<void>): Promise<void> {
+    const host = guest.contents.hostWebContents as WebContents | null;
+    if (!host || host.isDestroyed()) {
+      await send();
+      return;
+    }
+    const id = JSON.stringify(randomUUID());
+    const armed = await host
+      .executeJavaScript(
+        `(() => {
+          const el = document.activeElement;
+          if (el && el.tagName === 'WEBVIEW') return false;
+          const keep = (window.__tanacodeKeepFocus ??= {});
+          const watched = el && el !== document.body ? el : null;
+          keep[${id}] = {
+            el,
+            left: new Promise((resolve) => {
+              if (!watched) return resolve(false);
+              const done = (left) => { watched.removeEventListener('focusout', on); clearTimeout(timer); resolve(left); };
+              const on = () => done(true);
+              const timer = setTimeout(() => done(false), ${KEEP_FOCUS_WAIT_MS});
+              watched.addEventListener('focusout', on);
+            }),
+          };
+          return true;
+        })()`,
+      )
+      .catch(() => false);
+    try {
+      await send();
+    } finally {
+      if (armed === true) {
+        await host
+          .executeJavaScript(
+            `(async () => {
+              const keep = window.__tanacodeKeepFocus || {};
+              const k = keep[${id}];
+              delete keep[${id}];
+              if (!k) return;
+              const onPage = () => document.activeElement && document.activeElement.tagName === 'WEBVIEW';
+              if (!onPage() && (!(await k.left) || !onPage())) return;
+              const now = document.activeElement;
+              if (k.el && k.el !== document.body && k.el.isConnected) k.el.focus({ preventScroll: true });
+              else now.blur();
+            })()`,
+          )
+          .catch(() => undefined);
+      }
+    }
+  }
+
   private async type(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
     const text = typeof args.text === 'string' ? args.text : '';
     const selector = optionalString(args.selector);
     let where = 'the focused element';
     if (selector) {
+      // 欄を押してから打つ。押すのは click と同じ（ふだんはページの中の JavaScript で押し、人のフォーカスを奪わない）
       const target = await this.locate(guest, selector);
       await this.highlight(sessionId, target.rect);
-      const { x, y } = center(target.rect);
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-      where = target.description;
+      const real = await this.press(guest, target, { double: false, button: 'left', real: args.real === true });
+      where = `${target.description}${real ? ` (pressed with a real mouse press, ${real})` : ''}`;
     }
     // フォーカスが別プロセスの iframe の中なら、そのセッションに送る
     const child = await this.focusedChild(guest);
@@ -1977,8 +2099,9 @@ export class BrowserControl {
     });
   }
 
-  private world(guest: Guest, code: string): Promise<unknown> {
-    return guest.contents.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]);
+  // userGesture: 人の操作として動かす（押したボタンの処理が、ポップアップを開くなど、人の操作が要るものを使えるように）
+  private world(guest: Guest, code: string, userGesture = false): Promise<unknown> {
+    return userGesture ? guest.contents.executeJavaScriptInIsolatedWorld(WORLD, [{ code }], true) : guest.contents.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]);
   }
 
   // CDP の命令を送る。child: 別プロセスの iframe のセッション（無ければページ）
@@ -2146,7 +2269,7 @@ export class BrowserControl {
     guest: Guest,
     x: number,
     y: number,
-  ): Promise<{ rect: BrowserRect; description: string; covered: string | null; child?: { session: string; x: number; y: number } }> {
+  ): Promise<Target> {
     const found = (await this.world(
       guest,
       `(() => {${FRAMES}
@@ -2177,6 +2300,7 @@ export class BrowserControl {
       rect,
       description: `x=${x} y=${y} (inside cross-origin iframe ${url})`,
       covered: null,
+      cross: true,
       child: frame && found.frame ? { session: frame.child, x: x - found.frame.x, y: y - found.frame.y } : undefined,
     };
   }
@@ -2386,6 +2510,10 @@ function tabNumber(tabId: string): number {
 }
 
 const MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 };
+// 本物の押下のあと、アプリの画面のフォーカスが webview へ移るのを待つ長さの上限（keepHumanFocus。移らなければ、そのまま）
+const KEEP_FOCUS_WAIT_MS = 1000;
+// 押す要素（locate・pointAt）。cross: 別オリジンの iframe の中（スクリプトからは押せない）。child: その iframe が別プロセスなら、そのセッションと中の位置
+type Target = { rect: BrowserRect; description: string; covered: string | null; cross?: boolean; child?: { session: string; x: number; y: number } };
 // ページに送ったキー・文字が、ページに届いた（keyup・input）のを待つ長さの上限（届かないもの: 文字を入れられない所に入れたなど）
 const INPUT_WAIT_MS = 1000;
 

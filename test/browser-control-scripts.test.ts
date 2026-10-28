@@ -21,7 +21,7 @@ function place(el: Element, rect: Rect): void {
 const runInPage = (code: string): unknown => (0, eval)(code);
 
 function usePage(page: Tab): void {
-  for (const kind of ['viewport', 'locate', 'point', 'focus', 'text', 'inspect', 'wait', 'clear'] as const) page.page[kind] = runInPage;
+  for (const kind of ['viewport', 'locate', 'point', 'press', 'focus', 'text', 'inspect', 'wait', 'clear'] as const) page.page[kind] = runInPage;
 }
 
 // jsdom に無いもの（描かないので、innerText は textContent で代える）を、window ごとに補う（iframe の中は別の window）
@@ -87,8 +87,13 @@ describe('要素を探して押す（locate）', () => {
     const go = document.getElementById('go')!;
     place(go, { x: 100, y: 50, width: 200, height: 40 });
     document.elementFromPoint = () => go;
+    const events: string[] = [];
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) go.addEventListener(type, (e) => events.push(`${type}:${(e as MouseEvent).clientX},${(e as MouseEvent).clientY}`));
     expect(await call('click', { selector: 'button' })).toEqual(textResult('Clicked: button#go.primary.big "送る"'));
-    expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ type: 'mousePressed', x: 200, y: 70 });
+    // ページの中で、本物の押下と同じ順にイベントを送り、押した要素にフォーカスを移す。CDP の押下は送らない
+    expect(events).toEqual(['pointerdown:200,70', 'mousedown:200,70', 'pointerup:200,70', 'mouseup:200,70', 'click:200,70']);
+    expect(document.activeElement).toBe(go);
+    expect(page.debugger.sent('Input.dispatchMouseEvent')).toEqual([]);
   });
 
   it('パスワードの欄は、入っている値を説明に使わない（ほかの欄は値を使う）', async () => {
@@ -144,9 +149,15 @@ describe('要素を探して押す（locate）', () => {
     frame.style.paddingTop = '3px';
     place(frame, { x: 100, y: 50, width: 400, height: 300 });
     place(doc.getElementById('inner')!, { x: 10, y: 10, width: 20, height: 20 });
+    const inner = doc.getElementById('inner')!;
+    doc.elementFromPoint = () => inner;
+    document.elementFromPoint = () => frame;
+    let at = '';
+    inner.addEventListener('click', (e) => (at = `${e.clientX},${e.clientY}`));
     expect(textOf(await call('click', { selector: '#inner' }))).toBe('Clicked: button#inner "中のボタン" (inside iframe about:blank)');
-    // 100 + 5 + 10 + 10、50 + 3 + 10 + 10
-    expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ type: 'mousePressed', x: 125, y: 73 });
+    // 押すのは、いちばん外の 100 + 5 + 10 + 10、50 + 3 + 10 + 10。iframe の中の要素には、iframe の中の位置（10 + 10、10 + 10）で届く
+    expect(page.scriptsOf('press')[0]).toContain('const x = 125, y = 73;');
+    expect(at).toBe('20,20');
   });
 });
 
@@ -175,7 +186,11 @@ describe('位置で押す（pointAt）', () => {
       return doc.getElementById('link');
     };
     expect(textOf(await call('click', { x: 130, y: 70 }))).toBe('Clicked: a#link "次へ" (inside iframe about:blank) at x=130 y=70');
-    expect(asked).toEqual([[30, 20]]);
+    // 探すときと、押すとき（押す位置の要素を、もう一度その位置で探す）
+    expect(asked).toEqual([
+      [30, 20],
+      [30, 20],
+    ]);
   });
 
   it('別オリジンの iframe（中が見えない）は、src で許す先かを決める', async () => {
@@ -192,7 +207,9 @@ describe('位置で押す（pointAt）', () => {
     let src = 'http://127.0.0.1:5173/widget';
     Object.defineProperty(frame, 'src', { get: () => src });
     document.elementFromPoint = () => frame;
-    expect(textOf(await call('click', { x: 150, y: 60 }))).toBe('Clicked: x=150 y=60 (inside cross-origin iframe http://127.0.0.1:5173/widget)');
+    expect(textOf(await call('click', { x: 150, y: 60 }))).toBe(
+      'Clicked: x=150 y=60 (inside cross-origin iframe http://127.0.0.1:5173/widget) (with a real mouse press, because it is inside a cross-origin iframe)',
+    );
     expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ x: 150, y: 60 });
     src = 'https://pay.example.com/checkout';
     expect((await call('click', { x: 150, y: 60 })).isError).toBe(true);

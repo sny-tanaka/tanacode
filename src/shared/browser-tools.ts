@@ -173,7 +173,10 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'Scrolls the element matching a selector (the first visible one; same-origin iframes are searched too) into view and clicks it. ' +
       'For what a selector cannot reach (inside a cross-origin iframe, a canvas and so on), click at x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
       'A link that opens a new window (target=_blank) opens in a new tab, which becomes the current tab. ' +
-      'A popup the page opens (window.open with window features, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate.',
+      'A popup the page opens (window.open with window features, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate. ' +
+      'The click is normally done with JavaScript inside the page (pointer and mouse events, focus, then click), so that it does not take the keyboard focus away from where the user is typing in tanacode. ' +
+      'A <select>, a file input, a link or form that opens a new window, a draggable element, a position inside a cross-origin iframe, and the right or middle button are pressed with a real mouse press automatically. ' +
+      'Set real to true only when the JavaScript click does not work as expected: the page ignores it (for example, it checks event.isTrusted) or needs a real press for something else. A real press briefly moves the focus to the page and then returns it to where the user was.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -182,6 +185,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
         y: { type: 'number', description: 'y of the position to click (instead of selector, in CSS px)' },
         double: { type: 'boolean', description: 'Double-click' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button to press (default left)' },
+        real: { type: 'boolean', description: 'Press with a real mouse press instead of the JavaScript click (only when the JavaScript click does not work)' },
       },
       additionalProperties: false,
     },
@@ -189,7 +193,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'type',
     kind: 'act',
-    description: 'Types text. With selector, clicks that element first (without it, types into the focused field; for a field inside a cross-origin iframe, click it first with the x and y of click). clear deletes the existing text first, and submit presses Enter at the end.',
+    description: 'Types text. With selector, clicks that element first in the same way as click (without it, types into the focused field; for a field inside a cross-origin iframe, click it first with the x and y of click). clear deletes the existing text first, and submit presses Enter at the end.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -197,6 +201,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
         selector: selector('the field to type into'),
         clear: { type: 'boolean', description: "Delete the field's text before typing" },
         submit: { type: 'boolean', description: 'Press Enter after typing' },
+        real: { type: 'boolean', description: 'With selector, press the field with a real mouse press instead of the JavaScript click (only when the JavaScript click does not work; see click)' },
       },
       required: ['text'],
       additionalProperties: false,
