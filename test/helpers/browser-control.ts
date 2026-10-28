@@ -16,8 +16,9 @@ import { FakeContents, FakeSession, HOST, type RequestSender } from './fake-elec
 // タブ 1 つ（webview の中身と、画面が付けたタブの ID）
 export type Tab = FakeContents & { tabId: string };
 
-// 呼び出しが終わるまで、時間を少しずつ進める
+// 呼び出しが終わるまで、時間を少しずつ進める。本物の時計で動かしているテスト（realTime）では、そのまま待つ
 export async function finish<T>(promise: Promise<T>, step = 50): Promise<T> {
+  if (!vi.isFakeTimers()) return promise;
   let done = false;
   void promise.then(
     () => (done = true),
@@ -25,6 +26,13 @@ export async function finish<T>(promise: Promise<T>, step = 50): Promise<T> {
   );
   for (let i = 0; !done && i < 20_000; i++) await vi.advanceTimersByTimeAsync(step);
   return promise;
+}
+
+// 本物のファイルの読み書きを待つテストは、本物の時計で動かす（setup より先に呼ぶ）。偽物の時計を少しずつ進める finish では、
+// 読み書きが終わる前に、偽物の時間がツールの時間切れ（60 秒）まで進んでしまうことがある（CI の遅い台で、スクリーンショットの保存が
+// 「Did not finish within 60 seconds.」になって落ちた。読み書きの速さで結果が変わる）
+export function realTime(): void {
+  vi.useRealTimers();
 }
 
 // 待っている約束の続き（マイクロタスク）を進める。時間は進めない
