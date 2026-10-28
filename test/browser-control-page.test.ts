@@ -711,12 +711,37 @@ describe('要素の HTML とスタイル（inspect）', () => {
 });
 
 describe('クリック', () => {
-  it('selector: 枠を出してから、要素の真ん中を CDP で押す。CDP は最初の 1 回だけつなぐ', async () => {
+  // 本物の押下（CDP）は、Chromium が webview にフォーカスを移し、人がチャットの入力欄などで打っているフォーカスを奪うので、ふだんは使わない
+  it('selector: 枠を出してから、要素の真ん中をページの中の JavaScript で押す（人の操作として動かす）。CDP の押下は送らない', async () => {
     const { call, open, activities } = setup();
     const page = open('http://localhost:3000/');
     const rect = { x: 100, y: 50, width: 201, height: 40 };
     page.page.locate = () => found(rect);
     expect(await call('click', { selector: '#go' })).toEqual(textResult('Clicked: button#go "送る"'));
+    const press = page.scripts.filter((s) => s.kind === 'press');
+    expect(press).toHaveLength(1);
+    expect(press[0].code).toContain('const x = 201, y = 70;');
+    expect(press[0].userGesture).toBe(true);
+    // 押し方を決めるのは、人の操作の印なしで（本物で押すと決まったときに、押していないのに印を与えない）
+    const decide = page.scripts.filter((s) => s.kind === 'pressDecide');
+    expect(decide).toHaveLength(1);
+    expect(decide[0].userGesture).toBeUndefined();
+    expect(inputs(page)).toEqual([]);
+    expect(page.debugger.attachCount).toBe(0);
+    expect(activities()).toEqual([
+      { sessionId: 'S1', active: true, label: 'クリック', box: null },
+      { sessionId: 'S1', active: true, label: null, box: rect },
+      { sessionId: 'S1', active: true, label: null, box: null },
+    ]);
+  });
+
+  it('real・JavaScript では効かないもの（ページが本物で押すよう答えた）は、本物の押下（CDP）で押し、理由を添える。CDP は最初の 1 回だけつなぐ', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 100, y: 50, width: 201, height: 40 });
+    expect(await call('click', { selector: '#go', real: true })).toEqual(textResult('Clicked: button#go "送る" (with a real mouse press, as requested)'));
+    // real のときは、ページの中では押さない
+    expect(page.scriptsOf('press')).toEqual([]);
     expect(page.debugger.attachCount).toBe(1);
     expect(page.debugger.versions).toEqual(['1.3']);
     expect(page.debugger.commands[0]).toEqual({ method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, child: undefined });
@@ -725,21 +750,31 @@ describe('クリック', () => {
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 201, y: 70, button: 'left', clickCount: 1 },
       { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 201, y: 70, button: 'left', clickCount: 1 },
     ]);
-    expect(activities()).toEqual([
-      { sessionId: 'S1', active: true, label: 'クリック', box: null },
-      { sessionId: 'S1', active: true, label: null, box: rect },
-      { sessionId: 'S1', active: true, label: null, box: null },
-    ]);
-    await call('click', { selector: '#go' });
+    page.debugger.commands.length = 0;
+    page.page.pressDecide = () => ({ real: 'because it is a <select>' });
+    expect(await call('click', { selector: '#go' })).toEqual(textResult('Clicked: button#go "送る" (with a real mouse press, because it is a <select>)'));
+    // 本物で押すと決まったら、ページの中では押さない（人の操作の印も与えない）
+    expect(page.scriptsOf('press')).toEqual([]);
+    expect(inputs(page).map((i) => String(i.type))).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
     expect(page.debugger.attachCount).toBe(1);
-    expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(1);
+    expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(0);
+  });
+
+  it('ページの中で押したときに、ページの処理がエラーを投げたら、real で押し直すよう添える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 });
+    page.page.press = () => ({ real: null, errors: ['NotFoundError: Failed to execute setPointerCapture'] });
+    expect(textOf(await call('click', { selector: '#go' }))).toBe(
+      'Clicked: button#go "送る"\nThe page threw an error while handling the JavaScript click (NotFoundError: Failed to execute setPointerCapture). If the click did not work, click again with real: true.',
+    );
   });
 
   it('double はダブルクリック。right・middle はそのボタン、知らないボタンは left', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 });
-    expect(textOf(await call('click', { selector: '#a', double: true, button: 'right' }))).toBe('Double-clicked: button#go "送る"');
+    expect(textOf(await call('click', { selector: '#a', double: true, button: 'right' }))).toBe('Double-clicked: button#go "送る" (with a real mouse press, because it is the right button)');
     expect(inputs(page).map((i) => `${String(i.type)}:${String(i.button)}:${String(i.clickCount)}`)).toEqual([
       'mouseMoved:undefined:undefined',
       'mousePressed:right:1',
@@ -750,9 +785,11 @@ describe('クリック', () => {
     page.debugger.commands.length = 0;
     await call('click', { selector: '#a', button: 'middle' });
     expect(inputs(page)[1]).toMatchObject({ type: 'mousePressed', button: 'middle' });
+    // 知らないボタンは left（ページの中で押す）。double は 2 回押してから dblclick
     page.debugger.commands.length = 0;
-    await call('click', { selector: '#a', button: 'back' });
-    expect(inputs(page)[1]).toMatchObject({ type: 'mousePressed', button: 'left' });
+    await call('click', { selector: '#a', button: 'back', double: true });
+    expect(inputs(page)).toEqual([]);
+    expect(page.scriptsOf('press').at(-1)).toContain('count <= 2');
   });
 
   it('要素が無い・見えていない・セレクタの書き方が違うときは押さない', async () => {
@@ -825,7 +862,8 @@ describe('クリック', () => {
     page.page.point = () => ({ cross: false, src: null, frame: null, description: 'canvas#board' });
     expect(textOf(await call('click', { x: 120, y: 80 }))).toBe('Clicked: canvas#board at x=120 y=80');
     expect(page.scriptsOf('point')[0]).toContain('const x = 120, y = 80;');
-    expect(inputs(page)[1]).toEqual({ method: 'dispatchMouseEvent', type: 'mousePressed', x: 120, y: 80, button: 'left', clickCount: 1 });
+    expect(page.scriptsOf('press')[0]).toContain('const x = 120, y = 80;');
+    expect(inputs(page)).toEqual([]);
     expect(activities()[1].box).toEqual({ x: 110, y: 70, width: 20, height: 20 });
   });
 
@@ -855,7 +893,7 @@ describe('クリック', () => {
     answerCdp(page, {}, { C9: 'http://localhost:4000/other', C1: 'http://127.0.0.1:5173/widget/page' });
     addChildFrame(page, 'C9');
     addChildFrame(page, 'C1');
-    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget/page)');
+    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget/page) (with a real mouse press, because it is inside a cross-origin iframe)');
     expect(inputs(page)).toEqual([
       { method: 'dispatchMouseEvent', type: 'mouseMoved', x: 50, y: 60, child: 'C1' },
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 50, y: 60, button: 'left', clickCount: 1, child: 'C1' },
@@ -867,7 +905,7 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.point = () => ({ cross: true, src: 'http://127.0.0.1:5173/widget', frame: { x: 300, y: 200 }, description: 'iframe#w' });
-    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget)');
+    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget) (with a real mouse press, because it is inside a cross-origin iframe)');
     expect(inputs(page)[0]).toEqual({ method: 'dispatchMouseEvent', type: 'mouseMoved', x: 350, y: 260 });
     page.debugger.commands.length = 0;
     page.page.point = () => ({ cross: true, src: 'http://127.0.0.1:5173/widget', frame: null, description: 'iframe#w' });
@@ -966,9 +1004,9 @@ describe('入力（type）', () => {
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 10, y: 20, width: 100, height: 20 }, 'input#name');
     expect(await call('type', { selector: '#name', text: 'たなか', submit: true })).toEqual(textResult('Typed into input#name and pressed Enter'));
+    // 欄は click と同じく、ページの中の JavaScript で押す（人のフォーカスを奪わない）
+    expect(page.scriptsOf('press')[0]).toContain('const x = 60, y = 30;');
     expect(inputs(page)).toEqual([
-      { method: 'dispatchMouseEvent', type: 'mousePressed', x: 60, y: 30, button: 'left', clickCount: 1 },
-      { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'insertText', text: 'たなか' },
       { method: 'sendInputEvent', type: 'keyDown', keyCode: 'Enter', modifiers: [] },
       { method: 'sendInputEvent', type: 'char', keyCode: 'Enter', modifiers: [] },
@@ -1721,9 +1759,9 @@ describe('CDP のつなぎ方', () => {
       if (method === 'Target.setAutoAttach') throw new Error('使えない命令です');
       return {};
     };
-    expect(textOf(await call('click', { selector: '#go' }))).toBe('Clicked: button#go "送る"');
+    expect(textOf(await call('click', { selector: '#go', real: true }))).toBe('Clicked: button#go "送る" (with a real mouse press, as requested)');
     expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(1);
-    await call('click', { selector: '#go' });
+    await call('click', { selector: '#go', real: true });
     expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(1);
   });
 

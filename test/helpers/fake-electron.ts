@@ -88,12 +88,14 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'pressDecide' | 'press' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
   ['locate', "error: 'hidden'"],
   ['point', "error: 'outside'"],
+  ['pressDecide', 'return { real: __realReason(hit) };'],
+  ['press', 'const real = __realReason(hit);'],
   ['focus', "return { src: el.src || '' }"],
   ['unmark', "removeAttribute('data-tanacode-focus')"],
   ['inputWait', '__tanacodeInputWaits'],
@@ -129,7 +131,7 @@ export class FakeContents extends EventEmitter {
   readonly debugger = new FakeDebugger();
   // ページの中のスクリプトへの答え（種類ごと）。決めていない種類は、見えている範囲（viewport）・タブの大きさ（size）・フォーカス（focus）・描かれるのを待つ（frames）以外はエラー
   page: PageHandlers = {};
-  readonly scripts: { world: number; kind: PageScript | null; code: string }[] = [];
+  readonly scripts: { world: number; kind: PageScript | null; code: string; userGesture?: boolean }[] = [];
   // evaluate（executeJavaScript）への答え
   evaluate: (expression: string) => unknown = () => undefined;
   readonly evaluated: string[] = [];
@@ -226,10 +228,10 @@ export class FakeContents extends EventEmitter {
     return this.evaluate(expression);
   }
 
-  async executeJavaScriptInIsolatedWorld(world: number, scripts: { code: string }[]): Promise<unknown> {
+  async executeJavaScriptInIsolatedWorld(world: number, scripts: { code: string }[], userGesture?: boolean): Promise<unknown> {
     const code = scripts[0].code;
     const kind = scriptKind(code);
-    this.scripts.push({ world, kind, code });
+    this.scripts.push({ world, kind, code, ...(userGesture ? { userGesture } : {}) });
     const handler = kind ? this.page[kind] : undefined;
     if (handler) return handler(code);
     if (kind === 'viewport') return { width: 800, height: 600, dpr: 1 };
@@ -237,6 +239,14 @@ export class FakeContents extends EventEmitter {
     if (kind === 'size') return { laidOutWidth: 800, laidOutHeight: 600 };
     if (kind === 'focus') return null;
     if (kind === 'unmark' || kind === 'inputWait') return undefined;
+    // 押す（ページの中の JavaScript で押せた）。押したことでページに起きること（テストが CDP の mouseReleased の答えに書いたもの。
+    // ページを移す・新しいタブを開くなど）は、JavaScript で押したときも起こす
+    // 押し方を決める（ページの中の JavaScript で押せる）
+    if (kind === 'pressDecide') return { real: null };
+    if (kind === 'press') {
+      this.debugger.handler('Input.dispatchMouseEvent', { type: 'mouseReleased', byScript: true }, undefined);
+      return { real: null };
+    }
     throw new Error(`テストが答えを決めていないスクリプトです（${kind ?? '不明'}）`);
   }
 

@@ -216,8 +216,10 @@ describe('タッチ（touch）', () => {
       { type: 'touchStart', points: [[1184.5, 280]] },
       { type: 'touchEnd', points: [] },
     ]);
-    expect(HOST.scripts).toHaveLength(1);
+    // webview の位置を読むのと、指を置く・離す前に人のフォーカスを覚える（keepHumanFocus。指を置く・離すと webview にフォーカスが移るので、戻すため）
+    expect(HOST.scripts).toHaveLength(3);
     expect(HOST.scripts[0]).toContain('webview[data-tab-id="tab-1"]');
+    expect(HOST.scripts.slice(1).every((code) => code.includes('__tanacodeKeepFocus'))).toBe(true);
     // 指の位置は、タブの中の位置で見せる（画面はタブの上に重ねる）
     expect(activities().filter((a) => a.touches)).toEqual([{ sessionId: 'S1', active: true, label: null, box: null, touches: [{ x: 120, y: 120 }] }]);
     // 終わったら、指の丸は消す
