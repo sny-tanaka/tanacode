@@ -72,7 +72,8 @@ describe('Claude がページで打つキーは、ページに届き、人の入
       return frame ? ((await frame.executeJavaScript('document.querySelector("#inner").value')) as string) : null;
     });
   const browserTabs = () => app.page.locator('.preview-pane .preview-tab');
-  const activeSession = () => app.page.locator('.session-list .session-row.active').textContent();
+  // 選んでいるセッションの ID（行の文字には「作業中」などの様子も入り、ターンの終わりで変わるので、ID で比べる）
+  const activeSession = () => app.page.locator('.session-list .session-row.active').getAttribute('data-key-id');
   // 止めたところで、人がチャットの入力欄で下書きを打っている。そこで Claude に打たせ、ツールの結果が返るまで待つ
   const runWhileInChat = async (index: number) => {
     const round = rounds[index];
@@ -232,6 +233,7 @@ describe('Claude がページで打つキーは、ページに届き、人の入
 
   it('press_key（⌘W・⌘2・⌘1・⌃⌘↓）: Claude の送ったキーは、アプリのショートカットにならない（タブを閉じない・人のフォーカスもセッションも動かない）。ページには届く', async () => {
     const session = await activeSession();
+    expect(session).toBeTruthy();
     const before = (await page()).keys.length;
     await runWhileInChat(13);
     expect(await browserTabs().count()).toBe(1);
