@@ -198,7 +198,7 @@ export const ChatRow = memo(function ChatRow({
   }
   if (item.answers) return <AnswersCard answers={item.answers} />;
   if (item.sentFiles) {
-    return <SentFilesCard files={item.sentFiles} failed={item.status === 'error'} onOpenFile={onOpenFile} />;
+    return <SentFilesCard files={item.sentFiles} failed={item.status === 'error'} onOpenFile={onOpenFile} sessionId={sessionId} />;
   }
   if (item.name === 'Workflow') {
     const run = workflows.get(item.id);
