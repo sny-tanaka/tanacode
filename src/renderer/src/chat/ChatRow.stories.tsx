@@ -407,3 +407,40 @@ export const 本文_英語_コードブロックで始まる: Story = {
   args: { item: { kind: 'text', id: 't8', text: '```bash\nnpm run typecheck && npm test\n```\n\nBoth commands passed. I will open a pull request next.' } },
   beforeEach: translated,
 };
+
+// Claude が SendUserFile で送ったファイル。画像は絵で、ほかは名前で出す
+// 見本の画像（スクリーンショットの代わり）。canvas で描いて PNG にする
+function samplePng(): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 480;
+  canvas.height = 300;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#2d6cdf';
+    ctx.fillRect(0, 0, 480, 300);
+    ctx.fillStyle = '#fff';
+    ctx.font = '40px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('screenshot', 240, 165);
+  }
+  return canvas.toDataURL('image/png');
+}
+const sentFiles = (paths: string[], caption: string | null): Story['args'] => ({
+  item: { kind: 'tool', id: 'sf1', name: 'SendUserFile', target: '', status: 'done', input: '{}', sentFiles: { paths, caption } },
+  sessionId: 's1',
+});
+const readSentImages: Story['beforeEach'] = () =>
+  mockApi({
+    'workspace.readFile': (_id, path) =>
+      Promise.resolve((path as string).includes('missing') ? { kind: 'binary' } : { kind: 'image', url: samplePng() }),
+  });
+
+export const 届いたファイル_画像: Story = {
+  args: sentFiles(['/tmp/tl-icon/02-icons-big.png', '/tmp/tl-icon/10-battle-status.png', '/tmp/tl-icon/missing.png', '/x/docs/report.md'], '系統アイコンの見本'),
+  beforeEach: readSentImages,
+};
+
+export const 届いたファイル_画像_長い名前: Story = {
+  args: sentFiles(['/Users/you/work/tanacode/design/screenshots/a-very-long-file-name-for-the-readme-screenshot.png'], null),
+  beforeEach: readSentImages,
+};

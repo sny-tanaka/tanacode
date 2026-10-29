@@ -7156,6 +7156,18 @@ body.resizing-rows webview {
   font-size: 11px;
   cursor: default;
 }
+/* 画像と、その下に添えるもの（Claude から届いた画像のファイル名）。名前は画像の幅に合わせて切る */
+.chat-image-with-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  max-width: 242px;
+  min-width: 0;
+}
+.chat-image-with-footer > .chat-image {
+  align-self: flex-start;
+}
 /* 画像の拡大表示。背景の暗幕は、決めてある例外の rgba を使う */
 .image-zoom {
   position: fixed;
