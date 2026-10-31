@@ -7,7 +7,8 @@ import type { Inventory } from './transcript-inventory';
 //
 // 台本（test/cli）で出せない種類は、目録に無いので入れられない（読んでいても、ここでは確かめられない）:
 // - bridge-session の bridgeSessionId・system/bridge_status の url（Remote Control。claude.ai へのログインが要る）・pr-link（PR へのリンク）
-// - system/model_fallback・model_refusal_fallback の originalModel・fallbackModel・retractedMessageUuids、system/memory_saved の
+// - system/model_fallback・model_refusal_fallback の originalModel・fallbackModel・retractedMessageUuids（user・assistant の
+//   retractedMessageUuids も。形の壊れたツールの呼び出しを取り直すときに書かれる。2.1.314 の目録の user には出たが、どの台本で決まって出るかは確かめていない）、system/memory_saved の
 //   writtenPaths、system/informational の content、attachment/relevant_memories の memories・instructions の files・
 //   compact_file_reference の filename
 // - toolUseResult/TaskCreate の task.id（API キーでは ToDo のツールが出ない）・SendMessage の resumedAgentId・前で動かした Agent の

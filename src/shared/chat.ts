@@ -231,7 +231,7 @@ export type TranscriptEntry = {
   // model_fallback・model_refusal_fallback: 元のモデルと、切り替えた先のモデル（ID）
   originalModel?: unknown;
   fallbackModel?: unknown;
-  // model_refusal_fallback: 断られて取り消された応答の行の uuid（チャットから外す。retractedUuidsOf）
+  // model_refusal_fallback と、形の壊れたツールの呼び出しを取り直すときの user の行: 取り消された応答の行の uuid（チャットから外す。retractedUuidsOf）
   retractedMessageUuids?: unknown;
   // memory_saved: 保存したメモリのファイル（絶対パス）
   writtenPaths?: unknown;
@@ -705,11 +705,14 @@ function modelLabel(id: unknown): string | null {
   return typeof id === 'string' && id ? (modelName(id) ?? id) : null;
 }
 
-// 断られて取り消された応答の行の uuid（model_refusal_fallback の retractedMessageUuids）。その行から作ったイベントは、チャットから外す
-// （main の chat-log.ts の retract）。Claude Code も、会話を再開するときに、会話ログからこの行を外す（2.1.302 の本体）。
-// 2.1.302 は、取り消した応答を会話ログに書かない（実測）が、書かれていても同じに見えるようにする
+// 取り消された応答の行の uuid（retractedMessageUuids）。その行から作ったイベントは、チャットから外す（main の chat-log.ts の retract）。
+// - system/model_refusal_fallback: モデルが断った応答（2.1.302 から）
+// - user・assistant: 形の壊れたツールの呼び出しを取り直すときに、Claude Code が書く isMeta の user の行など（2.1.314 から）
+// Claude Code も、会話を再開するときに、この 3 つの行の retractedMessageUuids が指す行を外す（2.1.314 の本体）。
+// 2.1.302 は、断られた応答を会話ログに書かない（実測）が、書かれていても同じに見えるようにする
 export function retractedUuidsOf(entry: TranscriptEntry): string[] {
-  if (entry.type !== 'system' || entry.subtype !== 'model_refusal_fallback' || !Array.isArray(entry.retractedMessageUuids)) return [];
+  const carries = entry.type === 'user' || entry.type === 'assistant' || (entry.type === 'system' && entry.subtype === 'model_refusal_fallback');
+  if (!carries || !Array.isArray(entry.retractedMessageUuids)) return [];
   return entry.retractedMessageUuids.filter((uuid): uuid is string => typeof uuid === 'string' && uuid !== '');
 }
 
