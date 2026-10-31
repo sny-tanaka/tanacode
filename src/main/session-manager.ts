@@ -3908,8 +3908,8 @@ export class SessionManager {
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
   }
 
-  // モデルが断って取り消された応答（model_refusal_fallback の retractedMessageUuids）が、もうチャットに出ていたら外す。
-  // 2.1.302 は取り消した応答を会話ログに書かない（実測）が、書かれていても、会話ログから作り直したチャット（chat-log.ts）と同じにする
+  // 取り消された応答（model_refusal_fallback と、形の壊れたツールの呼び出しを取り直す user の行などの retractedMessageUuids）が、
+  // もうチャットに出ていたら外す。書かれていても、会話ログから作り直したチャット（chat-log.ts）と同じにする
   private followRetraction(id: string, rt: Runtime, entry: ConversationEntry, isHistory: boolean): void {
     this.retractEntries(id, rt, retractedUuidsOf(entry), isHistory);
   }
