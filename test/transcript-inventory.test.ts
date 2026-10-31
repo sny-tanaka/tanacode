@@ -181,6 +181,23 @@ describe('scripts/inventory-diff.mjs', () => {
     expect(text).toContain('### 揺れる種類\n\n- 揺れる種類（比べない）: `permission-mode`（ターミナルモードの TUI が、止められるときに書く');
   });
 
+  it('会話ログで、アプリが捨てる種類（transcript-line.ts の一覧）が消えただけなら差にせず、ほかに差があれば書き添える', () => {
+    const prev = { transcript: { user: ['type'], 'attachment/total_tokens_reminder': ['type'], 'system/away_summary': [], 'last-prompt': [] }, stream: {} };
+    const base = { transcript: { user: ['type'] }, stream: {} };
+    expect(run(write('a.json', prev), write('b.json', base)).status).toBe('same');
+    // 増えたときは差にする（捨てる一覧にあっても、増えたのは Claude Code の変化）
+    expect(run(write('c.json', base), write('d.json', prev)).status).toBe('changed');
+    // 捨てない種類と、チャットには出さないがほかで読む種類（読むフィールドの一覧にある attachment/file）が消えたら差にする
+    const used = run(write('e.json', { transcript: { ...base.transcript, 'attachment/queued_command': [], 'attachment/file': [] }, stream: {} }), write('f.json', base)).text;
+    expect(used).toContain('- 消えた種類: `attachment/queued_command`');
+    expect(used).toContain('- 消えた種類: `attachment/file`');
+    // stream-json では比べる
+    expect(run(write('g.json', { transcript: {}, stream: { 'system/away_summary': [] } }), write('h.json', { transcript: {}, stream: {} })).status).toBe('changed');
+    const { text } = run(write('i.json', prev), write('j.json', { transcript: { user: ['type', 'promptId'] }, stream: {} }));
+    expect(text).toContain('- `user` に増えたフィールド: `promptId`');
+    expect(text).toContain('### 消えた、アプリが捨てる種類\n\n- 消えた種類（アプリが捨てる種類なので比べない）: `attachment/total_tokens_reminder`');
+  });
+
   it('前の目録が無ければ、changed と、比べられないことを書く。新しい目録が無ければ失敗にする', () => {
     const next = write('b.json', { transcript: { user: [] }, stream: {} });
     const { status, text } = run(join(dir, 'none.json'), next);
