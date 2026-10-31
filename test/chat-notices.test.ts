@@ -128,11 +128,30 @@ describe('断られた応答の取り直し（model_refusal_fallback）', () => 
     expect(retract([], [], ['a'])).toBeNull();
   });
 
-  it('retractedUuidsOf: model_refusal_fallback の行の、文字の uuid だけ', () => {
+  it('retractedUuidsOf: model_refusal_fallback・user・assistant の行の、文字の uuid だけ', () => {
     expect(retractedUuidsOf(system('model_refusal_fallback', { retractedMessageUuids: ['a', '', 3, 'b'] }))).toEqual(['a', 'b']);
     expect(retractedUuidsOf(system('model_refusal_fallback', { retractedMessageUuids: 'a' }))).toEqual([]);
     expect(retractedUuidsOf(system('model_fallback', { retractedMessageUuids: ['a'] }))).toEqual([]);
-    expect(retractedUuidsOf({ type: 'assistant', subtype: 'model_refusal_fallback', retractedMessageUuids: ['a'] })).toEqual([]);
+    expect(retractedUuidsOf({ type: 'user', isMeta: true, retractedMessageUuids: ['a'] })).toEqual(['a']);
+    expect(retractedUuidsOf({ type: 'assistant', retractedMessageUuids: ['a', 1] })).toEqual(['a']);
+    expect(retractedUuidsOf({ type: 'attachment', retractedMessageUuids: ['a'] })).toEqual([]);
+  });
+
+  it('形の壊れたツールの呼び出しを取り直したとき、取り消された応答が会話ログに残っていても、チャットから外す（2.1.314）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tanacode-notices-'));
+    try {
+      const file = join(dir, 'log.jsonl');
+      const lines = [
+        { type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: '調べて' } },
+        { type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: '<invoke name="Bash">壊れた呼び出し' }] } },
+        { type: 'user', uuid: 'm2', parentUuid: 'u1', isMeta: true, retractedMessageUuids: ['a1'], message: { role: 'user', content: 'Your previous response was malformed.' } },
+        { type: 'assistant', uuid: 'a2', parentUuid: 'm2', message: { id: 'm3', role: 'assistant', content: [{ type: 'text', text: '取り直した答え' }] } },
+      ];
+      writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+      expect((await readChatLog(file, CWD)).map(brief)).toEqual(['user:調べて', 'assistant-text:取り直した答え', 'turn-end']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('stream の行は、どれも読める（知らない種類・形の違う行が無い）。取り消された応答の uuid の形が違えば、読めない行', () => {
