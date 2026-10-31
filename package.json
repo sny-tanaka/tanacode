@@ -68,7 +68,7 @@
     "@xterm/xterm": "^6.0.0",
     "ast-v8-to-istanbul": "^1.0.7",
     "dompurify": "^3.4.17",
-    "electron": "^44.9.0",
+    "electron": "^44.10.0",
     "electron-builder": "^26.17.0",
     "electron-vite": "^6.0.0",
     "istanbul-lib-coverage": "^3.2.2",
