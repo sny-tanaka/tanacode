@@ -1019,6 +1019,11 @@ body.resizing * {
   text-overflow: ellipsis;
   cursor: default;
 }
+/* Claude の設定ファイルの見出し。ワークスペースのファイルとは別のものなので、線で区切る */
+.tree-section.divided {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
 /* Claude がフォルダの外で読んだファイルの、入っているフォルダ（名前の右に薄く。狭ければ、名前より先に縮める） */
 .tree-read-dir {
   flex: 0 1000 auto;
@@ -1147,6 +1152,11 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+}
+/* ファイルを上に持ってきている間（落とすと開く） */
+.editor.dropping {
+  outline: 2px solid var(--ide);
+  outline-offset: -2px;
 }
 .editor-tabs {
   height: 36px;

@@ -141,6 +141,7 @@ export const IpcChannel = {
   WorkspaceRemoveFolder: 'workspace:remove-folder',
   WorkspaceKeepReadFolder: 'workspace:keep-read-folder',
   WorkspaceDismissRead: 'workspace:dismiss-read',
+  WorkspaceClaudeSettings: 'workspace:claude-settings',
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
@@ -546,6 +547,10 @@ export type WriteResult = { ok: true } | { ok: false; disk: FileContent };
 // paths は root からの相対パス
 export type FilesChanged = { root: string; paths: string[] };
 
+// Claude Code が読み込む設定ファイル。path: 絶対パス。scope: 管理者（managed-settings）/ 登録した設定ファイル（--settings）/
+// プロジェクトの .claude/settings.local.json / .claude/settings.json / ユーザー（設定のフォルダ）の settings.json
+export type ClaudeSettingsFile = { path: string; scope: 'managed' | 'registered' | 'local' | 'project' | 'user' };
+
 // ブランチの基点から変わったファイル（差分の行数）。binary は行数を数えられないファイル
 export type FileChange = { kind: 'added' | 'modified' | 'deleted'; added: number; removed: number; binary?: boolean };
 // 基点での内容。exists: false は基点の後に作られたファイル
@@ -899,6 +904,8 @@ export type TanacodeApi = {
     keepReadFolder(sessionId: string, folder: string): Promise<string[]>;
     // Claude がフォルダの外で読んだもの（readFolders・readFiles のどれか）をエクスプローラーから消す。Claude がまた触れれば出直す
     dismissRead(sessionId: string, path: string): Promise<void>;
+    // このセッション（か、新規セッションの画面のフォルダ）で Claude Code が読む設定ファイル。あるものだけを、強い順に返す
+    claudeSettings(sessionId: string): Promise<ClaudeSettingsFile[]>;
     onFilesChanged(listener: (payload: FilesChanged) => void): () => void;
     // エディタで開いているタブ（エディタのフォルダ → タブのパス）。main は、フォルダの監視では知らせが来ないもの（フォルダの外・
     // 監視しないフォルダの中・リンク越し）をファイルごとに見張り、変わったら onFilesChanged で知らせる。開いているタブが変わるたびに送る
@@ -1106,6 +1113,7 @@ export type IpcInvoke = {
   [IpcChannel.WorkspaceRemoveFolder]: Api['workspace']['removeFolder'];
   [IpcChannel.WorkspaceKeepReadFolder]: Api['workspace']['keepReadFolder'];
   [IpcChannel.WorkspaceDismissRead]: Api['workspace']['dismissRead'];
+  [IpcChannel.WorkspaceClaudeSettings]: Api['workspace']['claudeSettings'];
   [IpcChannel.ListDir]: Api['workspace']['listDir'];
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];

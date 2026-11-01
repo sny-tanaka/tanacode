@@ -622,6 +622,7 @@ export class DemoBackend {
         removeFolder: () => ok([]),
         keepReadFolder: () => ok([]),
         dismissRead: () => ok(undefined),
+        claudeSettings: () => ok([]),
       },
       git: {
         state: () => ok(this.gitState()),

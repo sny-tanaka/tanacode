@@ -70,7 +70,9 @@ describe('Claude がフォルダの外で読んだものを、エクスプロー
     await app.page.locator(`.tree-row[title="${repo}"]`).waitFor();
     // ファイルの行には、読んだ印が付く
     await app.page.locator(`.tree-row[title="${memo}"] .tree-know.read`).waitFor();
-    expect(await app.page.locator(`.tree-row[title*="/home/.claude"]`).count()).toBe(0);
+    // ~/.claude/settings.json は、Claude が読んだものとしては出さない（「Claude の設定ファイル」の欄にだけ出る）
+    const configRows = app.page.locator(`.tree-row[title*="/home/.claude"]`);
+    expect(await configRows.count()).toBe(await app.page.locator(`.tree-section.divided ~ .tree-row[title*="/home/.claude"]`).count());
     // リポジトリは閉じて始め、開くと中身を読む。中のファイルにも読んだ印が付く
     await app.page.click(`.tree-row[title="${repo}"]`);
     await app.page.click(`.tree-row[title="${repo}/src"]`);
@@ -99,7 +101,8 @@ describe('Claude がフォルダの外で読んだものを、エクスプロー
     await row.hover();
     await row.locator('[aria-label="一覧から消す"]').click();
     await row.waitFor({ state: 'detached' });
-    expect(await app.page.locator('.tree-section').count()).toBe(0);
+    // 残るのは「Claude の設定ファイル」の見出しだけ
+    expect(await app.page.locator('.tree-section:not(.divided)').count()).toBe(0);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

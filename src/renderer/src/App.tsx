@@ -10,6 +10,7 @@ import { chatFromEvents, statusBarStatus, useSessionChats, withStatus, type Chat
 import { usePendingSends, type PendingSend } from './chat/pendingSends';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
+import { useClaudeSettings } from './explorer/useClaudeSettings';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
 import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
@@ -229,6 +230,8 @@ export function App() {
   const readFolders = useMemo(() => (readFoldersKey ? readFoldersKey.split('\0') : NO_FOLDERS), [readFoldersKey]);
   const readFilesKey = (selected?.readFiles ?? NO_FOLDERS).join('\0');
   const readFiles = useMemo(() => (readFilesKey ? readFilesKey.split('\0') : NO_FOLDERS), [readFilesKey]);
+  // このセッションで Claude Code が読み込む設定ファイル（エクスプローラーのいちばん下に並べる）
+  const claudeSettings = useClaudeSettings(viewId, cwd, selected?.settingsFile ?? null);
   // フォルダを追加・外せるか（アーカイブしたセッションと、worktree の準備を待っている間は変えない）
   const canEditFolders = !!viewId && !selected?.archived && !folderWait;
   // 選択中のセッションのタスク。ほかのセッションのタスクが動いても、ここは変わらない（stableRuns で参照が保たれる）
@@ -922,6 +925,8 @@ export function App() {
     [pendingSends.take],
   );
   const openPath = useCallback((path: string, line?: number) => void openFile(path, line), [openFile]);
+  // エディタに落としたファイル（絶対パス）を開く。いくつも落としたら、すべてタブで開く
+  const openDropped = useCallback((paths: string[]) => paths.forEach((path) => openAbsolute(path)), [openAbsolute]);
   const openScmDiff = useCallback((path: string, staged: boolean) => setDiffView({ source: 'scm', path, staged }), []);
   const openTaskEntry = useCallback((t: TaskEntry) => openTask(t.ref), [openTask]);
   const activatePath = useCallback(
@@ -1174,6 +1179,7 @@ export function App() {
                     readFiles={readFiles}
                     onKeepReadFolder={canEditFolders ? keepReadFolder : undefined}
                     onDismissRead={canEditFolders ? dismissRead : undefined}
+                    claudeSettings={claudeSettings}
                   />
                 )}
               </div>
@@ -1323,6 +1329,7 @@ export function App() {
               mergeBase={branchChanges?.base.mergeBase ?? null}
               onShowDiff={openBranchDiff}
               onOpenFile={openPath}
+              onDropFiles={openDropped}
               reveal={editor.reveal}
               onActivate={activatePath}
               onClose={closeFile}

@@ -1786,6 +1786,8 @@
       "readFoldersTip": "Git repositories containing files Claude read or wrote outside the folder\nNot passed to Claude Code as working folders",
       "readFiles": "Files Claude Read or Wrote Outside the Folder",
       "readFilesTip": "Files Claude read or wrote outside the folder that aren't in a git repository",
+      "claudeSettings": "Claude Settings Files",
+      "claudeSettingsTip": "Settings files Claude Code loads in this session (higher ones take precedence). Click to open in the editor",
       "keepReadFolder": "Add to Workspace",
       "keepReadFolderTip": "Add to workspace\nLike a folder you added yourself, Claude Code can work in it too",
       "dismissRead": "Remove from List",
@@ -1805,6 +1807,13 @@
       "trashUnsaved": "Move “{name}” to the Trash?\nTabs with unsaved changes stay open (saving them creates the files again).",
       "saveBeforeRename": "“{name}” has unsaved changes. Save them and rename?",
       "saveFailed": "Some files couldn't be saved, so nothing was renamed."
+    },
+    "settingsScope": {
+      "managed": "Managed",
+      "registered": "Registered",
+      "local": "Local",
+      "project": "Project",
+      "user": "User"
     },
     "knowledge": {
       "read": "Read by Claude (contents known in the current conversation)",

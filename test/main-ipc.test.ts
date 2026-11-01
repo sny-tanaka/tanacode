@@ -632,6 +632,15 @@ describe('ワークスペースに追加するフォルダ', () => {
     expect(manager().removeOutsideRead.mock.calls).toEqual([['s1', '/Users/me/memo.txt']]);
   });
 
+  it('Claude Code が読み込む設定ファイルは、選んでいる登録した設定ファイルを入れて返す', async () => {
+    await boot();
+    const cwd = join(state.root, 'settings-repo');
+    mkdirSync(join(cwd, '.claude'), { recursive: true });
+    writeFileSync(join(cwd, '.claude', 'settings.json'), '{}');
+    manager().cwdOf.mockReturnValue(cwd);
+    await expect(invoke(IpcChannel.WorkspaceClaudeSettings, 's1')).resolves.toContainEqual({ path: join(cwd, '.claude', 'settings.json'), scope: 'project' });
+  });
+
   it('新規セッションの画面のフォルダでは、アプリが一覧を覚えて見張る。外す・画面を閉じると見張りをやめる', async () => {
     await boot();
     const project = join(state.root, 'project');
