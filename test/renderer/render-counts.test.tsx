@@ -91,6 +91,7 @@ beforeEach(() => {
     'sessions.snapshot': () => Promise.resolve({ sessionId: 's1', fromSeq: 0, events: [] }),
     'workspace.info': () => Promise.resolve({ root: '/repo', name: 'repo', branch: 'main' }),
     'workspace.watchOpenFiles': () => () => {},
+    'workspace.claudeSettings': () => Promise.resolve([]),
     'walkthrough.viewing': () => () => {},
     'walkthrough.list': () => Promise.resolve([]),
     'browser.asks': () => Promise.resolve([]),

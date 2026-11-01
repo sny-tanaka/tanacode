@@ -466,3 +466,59 @@ describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
     expect(config.foreignClaudeMdExcludes()).toEqual(excludes);
   });
 });
+
+describe('Claude Code が読み込む設定ファイル（loadedSettingsFiles。エクスプローラーに並べる）', () => {
+  afterEach(() => {
+    process.env.CLAUDE_CONFIG_DIR = '';
+  });
+
+  // 使い捨てのフォルダに、names のファイルを置く
+  const place = (dir: string, names: string[]) => {
+    for (const name of names) {
+      mkdirSync(join(dir, name, '..'), { recursive: true });
+      writeFileSync(join(dir, name), '{}');
+    }
+  };
+
+  it('強い順（管理者 → 登録した設定 → settings.local.json → settings.json → ユーザー）に、あるものだけを返す', () => {
+    const root = mkdtempSync(join(home, 'loaded-'));
+    const cwd = join(root, 'repo');
+    const managed = join(root, 'managed');
+    const profile = join(root, 'profile');
+    const registered = join(root, 'litellm.json');
+    place(managed, ['managed-settings.json', 'managed-settings.d/20-b.json', 'managed-settings.d/10-a.json', 'managed-settings.d/.hidden.json', 'managed-settings.d/notes.txt']);
+    place(cwd, ['.claude/settings.local.json', '.claude/settings.json']);
+    place(profile, ['settings.json']);
+    place(root, ['litellm.json']);
+    expect(config.loadedSettingsFiles(cwd, registered, profile, managed)).toEqual([
+      { path: join(managed, 'managed-settings.json'), scope: 'managed' },
+      { path: join(managed, 'managed-settings.d', '10-a.json'), scope: 'managed' },
+      { path: join(managed, 'managed-settings.d', '20-b.json'), scope: 'managed' },
+      { path: registered, scope: 'registered' },
+      { path: join(cwd, '.claude', 'settings.local.json'), scope: 'local' },
+      { path: join(cwd, '.claude', 'settings.json'), scope: 'project' },
+      { path: join(profile, 'settings.json'), scope: 'user' },
+    ]);
+  });
+
+  it('無いファイルは出さない。プロファイルを渡さなければ、ユーザーの設定は設定のフォルダ（~/.claude か CLAUDE_CONFIG_DIR）のもの', () => {
+    const root = mkdtempSync(join(home, 'loaded-'));
+    const cwd = join(root, 'repo');
+    place(cwd, ['.claude/settings.json']);
+    const none = join(root, 'no-managed');
+    expect(config.loadedSettingsFiles(cwd, join(root, 'missing.json'), null, none)).toEqual([{ path: join(cwd, '.claude', 'settings.json'), scope: 'project' }]);
+    const env = join(root, 'env');
+    place(env, ['settings.json']);
+    process.env.CLAUDE_CONFIG_DIR = env;
+    expect(config.loadedSettingsFiles(cwd, null, null, none).map((file) => file.scope)).toEqual(['project', 'user']);
+  });
+
+  it('登録した設定ファイルにプロジェクトの設定そのものを選んでいたら、強いほう（登録した設定）に 1 つだけ出す', () => {
+    const root = mkdtempSync(join(home, 'loaded-'));
+    const cwd = join(root, 'repo');
+    place(cwd, ['.claude/settings.json']);
+    expect(config.loadedSettingsFiles(cwd, join(cwd, '.claude', 'settings.json'), null, join(root, 'none'))).toEqual([
+      { path: join(cwd, '.claude', 'settings.json'), scope: 'registered' },
+    ]);
+  });
+});

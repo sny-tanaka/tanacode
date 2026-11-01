@@ -237,6 +237,50 @@ describe('EditorPane（エディタ）', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  describe('ドロップで開く', () => {
+    // Finder から落としたファイル（isDir: フォルダ）と、エクスプローラーの行（tree: その絶対パス）の DataTransfer の代わり
+    const transfer = (files: { name: string; isDir?: boolean }[], tree?: string) => ({
+      types: [...(files.length > 0 ? ['Files'] : []), ...(tree ? ['application/x-tanacode-file'] : [])],
+      items: files.map((f) => ({ kind: 'file', webkitGetAsEntry: () => ({ isDirectory: !!f.isDir }), getAsFile: () => new File([''], f.name) })),
+      getData: (type: string) => (type === 'application/x-tanacode-file' && tree) || '',
+      dropEffect: 'none',
+    });
+    const section = () => document.querySelector<HTMLElement>('section.editor')!;
+
+    it('Finder から落としたファイルを、絶対パスで開くよう頼む。フォルダは除き、上にある間は枠に色を付ける', () => {
+      mockApi({ pathForFile: (file: never) => `/Users/me/${(file as File).name}` }).install();
+      const onDropFiles = vi.fn();
+      render(<EditorPane {...props({ onDropFiles })} />);
+      const data = transfer([{ name: 'a.ts' }, { name: 'docs', isDir: true }, { name: 'b.md' }]);
+      fireEvent.dragOver(section(), { dataTransfer: data });
+      expect(section().classList.contains('dropping')).toBe(true);
+      fireEvent.drop(section(), { dataTransfer: data });
+      expect(onDropFiles.mock.calls).toEqual([[['/Users/me/a.ts', '/Users/me/b.md']]]);
+      expect(section().classList.contains('dropping')).toBe(false);
+    });
+
+    it('エクスプローラーの行を落としたら、その行のファイルを開くよう頼む。フォルダだけを落としたら何もしない', () => {
+      mockApi({ pathForFile: (file: never) => `/Users/me/${(file as File).name}` }).install();
+      const onDropFiles = vi.fn();
+      render(<EditorPane {...props({ onDropFiles })} />);
+      fireEvent.drop(section(), { dataTransfer: transfer([], '/Users/me/work/shop/src/tax.ts') });
+      fireEvent.drop(section(), { dataTransfer: transfer([{ name: 'docs', isDir: true }]) });
+      expect(onDropFiles.mock.calls).toEqual([[['/Users/me/work/shop/src/tax.ts']]]);
+    });
+
+    it('ファイルでないもの（文字など）のドラッグは受けない（Monaco に任せる）。onDropFiles が無ければ受けない', () => {
+      mockApi().install();
+      const onDropFiles = vi.fn();
+      const { unmount } = render(<EditorPane {...props({ onDropFiles })} />);
+      const text = { types: ['text/plain'], items: [], getData: () => 'hello', dropEffect: 'none' };
+      expect(fireEvent.dragOver(section(), { dataTransfer: text })).toBe(true);
+      unmount();
+      render(<EditorPane {...props()} />);
+      expect(fireEvent.dragOver(section(), { dataTransfer: transfer([{ name: 'a.ts' }]) })).toBe(true);
+      expect(section().classList.contains('dropping')).toBe(false);
+    });
+  });
+
   describe('PDF', () => {
     const pdf = (path: string, bytes: number[]): OpenFile => ({ path, content: { kind: 'pdf', data: new Uint8Array(bytes) } });
     const viewer = () => document.querySelector<HTMLIFrameElement>('.editor-pdf iframe');

@@ -6,6 +6,7 @@ import { LineComments, type RangeQuestion, type ReviewComment } from '../review/
 import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
 import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, ExternalLinkIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
 import { DiffDecorations } from './diffDecorations';
+import { droppedPaths, isFileDrag } from './dropFiles';
 import { MarkdownPreview } from './MarkdownPreview';
 import { PdfView } from './PdfView';
 import { SvgPreview } from './SvgPreview';
@@ -51,6 +52,8 @@ type Props = {
   onShowDiff: (path: string) => void;
   // Markdown プレビューのリンクから、リポジトリ内のファイルを開く
   onOpenFile: (path: string, line?: number) => void;
+  // Finder のファイルやエクスプローラーの行を落としたとき、そのファイル（絶対パス）を開く。無ければ落とせない
+  onDropFiles?: (paths: string[]) => void;
   reveal: RevealRequest | null;
   onActivate: (path: string) => void;
   onClose: (path: string) => void;
@@ -79,6 +82,7 @@ export const EditorPane = memo(function EditorPane({
   mergeBase,
   onShowDiff,
   onOpenFile,
+  onDropFiles,
   reveal,
   onActivate,
   onClose,
@@ -94,6 +98,8 @@ export const EditorPane = memo(function EditorPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // ファイルを上に持ってきている間（枠に色を付ける）
+  const [dropping, setDropping] = useState(false);
   const diffRef = useRef<DiffDecorations | null>(null);
   const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
   const revealedSeq = useRef<number | null>(null);
@@ -371,7 +377,29 @@ export const EditorPane = memo(function EditorPane({
   }, [change, activeText, activePath, baseline]);
 
   return (
-    <section className="editor" ref={sectionRef}>
+    // ドロップは、中の Monaco より先に（キャプチャで）受ける。Monaco に渡すと、パスを文字として入れてしまう
+    <section
+      className={`editor${dropping ? ' dropping' : ''}`}
+      ref={sectionRef}
+      onDragOverCapture={(e) => {
+        if (!onDropFiles || !isFileDrag(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDropCapture={(e) => {
+        if (!onDropFiles || !isFileDrag(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDropping(false);
+        const paths = droppedPaths(e.dataTransfer);
+        if (paths.length > 0) onDropFiles(paths);
+      }}
+    >
       <div className="editor-tabs">
         {files.map((f) => (
           <div

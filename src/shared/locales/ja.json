@@ -1730,6 +1730,8 @@
       "readFoldersTip": "Claude がフォルダの外で読んだ・書いたファイルの入っている git のリポジトリ\nClaude Code には作業できるフォルダとして渡していません",
       "readFiles": "フォルダ外で Claude が読み書きしたファイル",
       "readFilesTip": "Claude がフォルダの外で読んだ・書いたファイルのうち、git のリポジトリに入っていないもの",
+      "claudeSettings": "Claude の設定ファイル",
+      "claudeSettingsTip": "このセッションの Claude Code が読み込んでいる設定ファイル（上ほど強い）。押すとエディタで開きます",
       "keepReadFolder": "ワークスペースに追加",
       "keepReadFolderTip": "ワークスペースに追加\n手で追加したフォルダと同じく、Claude Code にも作業できるフォルダとして渡します",
       "dismissRead": "一覧から消す",
@@ -1749,6 +1751,13 @@
       "trashUnsaved": "{name} をゴミ箱に入れますか？\n保存していない変更のあるタブは、開いたまま残します（保存すると、ファイルを作り直します）。",
       "saveBeforeRename": "{name} に、保存していない変更があります。保存してから名前を変えますか？",
       "saveFailed": "保存できなかったファイルがあるため、名前を変えませんでした。"
+    },
+    "settingsScope": {
+      "managed": "管理者",
+      "registered": "登録した設定",
+      "local": "ローカル",
+      "project": "プロジェクト",
+      "user": "ユーザー"
     },
     "knowledge": {
       "read": "Claude が読んだファイル（今の会話で中身を知っている）",

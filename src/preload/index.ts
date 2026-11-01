@@ -233,6 +233,7 @@ const api: TanacodeApi = {
     removeFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceRemoveFolder, sessionId, folder),
     keepReadFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceKeepReadFolder, sessionId, folder),
     dismissRead: (sessionId, path) => invoke(IpcChannel.WorkspaceDismissRead, sessionId, path),
+    claudeSettings: (sessionId) => invoke(IpcChannel.WorkspaceClaudeSettings, sessionId),
     onFilesChanged: (listener) => subscribe(IpcChannel.FilesChanged, listener),
     watchOpenFiles: (tabs) => send(IpcChannel.WatchOpenFiles, tabs),
     listFiles: (sessionId) => invoke(IpcChannel.ListFiles, sessionId),

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DirEntry, GitBranches, GitState, SearchResult } from '@shared/ipc';
+import type { ClaudeSettingsFile, DirEntry, GitBranches, GitState, SearchResult } from '@shared/ipc';
 import { Explorer, type ExplorerFileOps } from '../../src/renderer/src/explorer/Explorer';
 import { ScmPanel } from '../../src/renderer/src/scm/ScmPanel';
 import { QuickOpen } from '../../src/renderer/src/search/QuickOpen';
@@ -1056,6 +1056,85 @@ describe('Explorer（エクスプローラー）', () => {
         expect(p.onOpenFile).not.toHaveBeenCalled();
       });
     });
+  });
+});
+
+describe('Explorer の Claude の設定ファイルと、エディタへのドラッグ', () => {
+  type Props = ComponentProps<typeof Explorer>;
+  const props = (over: Partial<Props> = {}): Props => ({
+    sessionId: 'A',
+    root: '/work/shop',
+    rootName: 'shop',
+    activePath: null,
+    changes: {},
+    knowledge: {},
+    gitMarks: {},
+    onOpenFile: vi.fn(),
+    ...over,
+  });
+  const SETTINGS: ClaudeSettingsFile[] = [
+    { path: '/work/shop/.claude/settings.local.json', scope: 'local' },
+    { path: '/Users/me/.claude/settings.json', scope: 'user' },
+  ];
+  const rowOf = (name: string) => screen.getByText(name).closest<HTMLElement>('.tree-row')!;
+  // ドラッグを始めたときに入れたもの
+  const dragStart = (row: HTMLElement) => {
+    const data: Record<string, string> = {};
+    fireEvent.dragStart(row, { dataTransfer: { setData: (type: string, value: string) => (data[type] = value), effectAllowed: 'none' } });
+    return data;
+  };
+
+  it('見出しの下に強い順に並べ、種類を添える。セッションのフォルダの中のものは相対パスで、外のものは絶対パスで開く', async () => {
+    mockApi({ 'workspace.listDir': () => Promise.resolve([]) }).install();
+    const p = props({ claudeSettings: SETTINGS, activePath: '.claude/settings.local.json' });
+    render(<Explorer {...p} />);
+    expect(screen.getByText('Claude の設定ファイル').classList.contains('tree-section')).toBe(true);
+    const rows = [...document.querySelectorAll('.tree-section ~ .tree-row')].map((row) => row.textContent);
+    expect(rows).toEqual(['settings.local.jsonローカル', 'settings.jsonユーザー']);
+    expect(rowOf('settings.local.json').classList.contains('active')).toBe(true);
+    fireEvent.click(rowOf('settings.local.json'));
+    fireEvent.click(rowOf('settings.json'));
+    expect(vi.mocked(p.onOpenFile).mock.calls).toEqual([['.claude/settings.local.json'], ['/Users/me/.claude/settings.json']]);
+  });
+
+  it('無ければ見出しも出さない', () => {
+    mockApi({ 'workspace.listDir': () => Promise.resolve([]) }).install();
+    render(<Explorer {...props()} />);
+    expect(screen.queryByText('Claude の設定ファイル')).toBeNull();
+  });
+
+  it('右クリックでは、絶対パスのコピーと Finder で表示だけ', async () => {
+    const api = mockApi({ 'workspace.listDir': () => Promise.resolve([]) });
+    api.install();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<Explorer {...props({ claudeSettings: SETTINGS })} />);
+    fireEvent.contextMenu(rowOf('settings.local.json'));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['パスをコピー', 'Finder で表示']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'パスをコピー' }));
+    expect(writeText.mock.calls).toEqual([['/work/shop/.claude/settings.local.json']]);
+  });
+
+  it('ファイルの行は、絶対パスを入れてドラッグできる（文字としては入れない）。フォルダの行はドラッグしない', async () => {
+    mockApi({
+      'workspace.listDir': (_id: never, dir: never) =>
+        Promise.resolve(
+          (
+            {
+              '': [
+                { name: 'src', path: 'src', isDir: true },
+                { name: 'README.md', path: 'README.md', isDir: false },
+              ],
+            } as Record<string, DirEntry[]>
+          )[dir] ?? [],
+        ),
+    }).install();
+    render(<Explorer {...props({ claudeSettings: SETTINGS, readFiles: ['/Users/me/notes/memo.md'] })} />);
+    await screen.findByText('README.md');
+    expect(dragStart(rowOf('README.md'))).toEqual({ 'application/x-tanacode-file': '/work/shop/README.md' });
+    expect(dragStart(rowOf('memo.md'))).toEqual({ 'application/x-tanacode-file': '/Users/me/notes/memo.md' });
+    expect(dragStart(rowOf('settings.json'))).toEqual({ 'application/x-tanacode-file': '/Users/me/.claude/settings.json' });
+    expect(rowOf('src').draggable).toBe(false);
   });
 });
 

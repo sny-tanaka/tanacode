@@ -1,13 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DirEntry } from '@shared/ipc';
 import type { FileKnowledge } from '@shared/knowledge';
-import type { FileChange } from '@shared/ipc';
+import type { ClaudeSettingsFile, FileChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
 import { AddIcon, CloseIcon, DisclosureIcon, IconButton } from '../icons';
 import { errorMessage } from '../errorMessage';
 import { clickOnEnter, keyList, keyRow } from '../layout/keyRow';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { TREE_FILE_TYPE } from '../editor/dropFiles';
 
 // ファイル操作（名前の変更・ゴミ箱）に合わせて、開いているタブを直すもの（App）。path はツリーの行のパス（そのものと、その中のファイル）
 export type ExplorerFileOps = {
@@ -46,6 +47,8 @@ type Props = {
   // Claude が読んだリポジトリを、追加したフォルダに移す / Claude が読んだものを一覧から消す。無ければボタンを出さない
   onKeepReadFolder?: (folder: string) => void;
   onDismissRead?: (path: string) => void;
+  // このセッションで Claude Code が読み込んでいる設定ファイル（強い順）。見出しを分けて、いちばん下に 1 行ずつ並べる
+  claudeSettings?: ClaudeSettingsFile[];
 };
 
 // 右クリックした行。path はツリーの行のパス（フォルダそのものの行は base）。フォルダ外で Claude が読み書きしたファイルの行は、base が READ_FILES
@@ -57,8 +60,10 @@ const menuKey = (menu: MenuState) => `${menu.keyboard ? 'key' : 'mouse'}:${menu.
 type EditState = { base: string; kind: 'file' | 'dir'; dir: string } | { base: string; kind: 'rename'; path: string };
 
 const NO_FOLDERS: string[] = [];
-// フォルダ外で Claude が読み書きしたファイルの行の、メニューの base（ツリーの行のパスにはならない値）
+const NO_SETTINGS: ClaudeSettingsFile[] = [];
+// フォルダ外で Claude が読み書きしたファイルの行と、Claude Code の設定ファイルの行の、メニューの base（ツリーの行のパスにはならない値）
 const READ_FILES = '\0read-files';
+const CLAUDE_SETTINGS = '\0claude-settings';
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_MARKS: Record<string, GitMark> = {};
 
@@ -79,6 +84,7 @@ export const Explorer = memo(function Explorer({
   readFiles = NO_FOLDERS,
   onKeepReadFolder,
   onDismissRead,
+  claudeSettings = NO_SETTINGS,
 }: Props) {
   // メニューと名前を入れる行は、ツリーをまたいで一度に 1 つだけ
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -153,6 +159,7 @@ export const Explorer = memo(function Explorer({
           className={`tree-row${file === activePath ? ' active' : ''}${onDismissRead ? ' reveal-host' : ''}${menu?.base === READ_FILES && menu.path === file ? ' menu-target' : ''}`}
           style={{ paddingLeft: 10 }}
           onClick={() => onOpenFile(file)}
+          {...dragFile(file)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -171,8 +178,40 @@ export const Explorer = memo(function Explorer({
           {onDismissRead && <DismissButton onClick={() => onDismissRead(file)} />}
         </div>
       ))}
-      {/* フォルダ外のファイルは、どのツリーにも入っていないので、相対パスは無い。書き換えもさせない */}
-      {menu?.base === READ_FILES && (
+      {claudeSettings.length > 0 && (
+        <div className="tree-section divided" title={t('explorer.tree.claudeSettingsTip')}>
+          {t('explorer.tree.claudeSettings')}
+        </div>
+      )}
+      {claudeSettings.map(({ path: absolute, scope }) => {
+        // セッションのフォルダの中の設定ファイル（.claude/settings.json など）は、ツリーから開いたときと同じ相対パスで開く（タブを重ねない）
+        const file = absolute.startsWith(`${root}/`) ? absolute.slice(root.length + 1) : absolute;
+        return (
+        <div
+          key={absolute}
+          className={`tree-row${file === activePath ? ' active' : ''}${menu?.base === CLAUDE_SETTINGS && menu.path === absolute ? ' menu-target' : ''}`}
+          style={{ paddingLeft: 10 }}
+          onClick={() => onOpenFile(file)}
+          {...dragFile(absolute)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenu({ base: CLAUDE_SETTINGS, path: absolute, isDir: false, isRoot: false, x: e.clientX, y: e.clientY });
+          }}
+          {...keyRow}
+          onKeyDown={rowKeys((x, y) => setMenu({ base: CLAUDE_SETTINGS, path: absolute, isDir: false, isRoot: false, x, y, keyboard: true }))}
+          data-key-id={`${CLAUDE_SETTINGS}${absolute}`}
+          data-key-level={1}
+          title={absolute}
+        >
+          <span className="tree-chevron" />
+          <span className="tree-label">{baseName(file)}</span>
+          <span className="tree-read-dir">{t(`explorer.settingsScope.${scope}`)}</span>
+        </div>
+        );
+      })}
+      {/* フォルダ外のファイルと設定ファイルは、どのツリーにも入っていないので、相対パスは出さない（メニューのパスは絶対パス）。書き換えもさせない */}
+      {(menu?.base === READ_FILES || menu?.base === CLAUDE_SETTINGS) && (
         <ContextMenu
           key={menuKey(menu)}
           x={menu.x}
@@ -190,7 +229,7 @@ export const Explorer = memo(function Explorer({
   );
 });
 
-type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder' | 'readFolders' | 'readFiles' | 'onKeepReadFolder' | 'onDismissRead'> & {
+type RootProps = Omit<Props, 'rootName' | 'folders' | 'onRemoveFolder' | 'readFolders' | 'readFiles' | 'onKeepReadFolder' | 'onDismissRead' | 'claudeSettings'> & {
   // ツリーの行のパスの頭。セッションのフォルダは ''（相対パス）、追加したフォルダは、そのフォルダの絶対パス（行も絶対パスで持つ）
   base: string;
   name: string;
@@ -428,6 +467,7 @@ function RootTree({
                 if (entry.isDir) toggle(entry.path);
                 else onOpenFile(entry.path);
               }}
+              {...(entry.isDir || renaming ? {} : dragFile(absOf(entry.path)))}
               onContextMenu={(e) => openMenu(e, { path: entry.path, isDir: entry.isDir, isRoot: false })}
               {...keyRow}
               onKeyDown={keysOf({ path: entry.path, isDir: entry.isDir, isRoot: false })}
@@ -588,6 +628,17 @@ function rowKeys(open: (x: number, y: number) => void) {
       return;
     }
     clickOnEnter(e);
+  };
+}
+
+// ファイルの行をエディタへドラッグできるようにする（落とすと開く）。path は絶対パス
+function dragFile(path: string) {
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent<HTMLElement>) => {
+      e.dataTransfer.setData(TREE_FILE_TYPE, path);
+      e.dataTransfer.effectAllowed = 'copy';
+    },
   };
 }
 

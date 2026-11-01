@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { app, shell, type Session, type WebContents } from 'electron';
-import { IpcChannel, type ArchiveOptions, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
+import { IpcChannel, type ArchiveOptions, type ClaudeSettingsFile, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
 import { AWAY_ENDED, awayReminder } from '@shared/away-mode';
 import { sessionEventText } from '@shared/session-tools';
@@ -17,6 +17,7 @@ import { restartNoticeText, type AppRestart, type AppUpdateInfo, type RestartNot
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
+import { loadedSettingsFiles } from './claude-config';
 import { CompactNotice, type TurnNotice } from './compact-notice';
 import { PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { OptimizedCompact } from './optimized-compact';
@@ -465,6 +466,13 @@ export class Profile {
   // workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
   cwdOf(id: string): string {
     return this.folderViews.get(id) ?? this.manager.cwdOf(id);
+  }
+
+  // id のフォルダで Claude Code が読む設定ファイル（エクスプローラーに並べる）。セッションなら、選んでいる登録した設定ファイルも入れる
+  claudeSettingsOf(id: string): ClaudeSettingsFile[] {
+    const chosen = this.folderViews.has(id) ? null : this.manager.summary(id)?.settingsFile;
+    const registered = chosen ? (this.settingsFiles.list().find((file) => file.id === chosen)?.path ?? null) : null;
+    return loadedSettingsFiles(this.cwdOf(id), registered, this.claudeDir);
   }
 
   // ワークスペースに追加したフォルダ（セッションか、folders.open で開いたフォルダ）

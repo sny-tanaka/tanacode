@@ -908,6 +908,7 @@ function registerIpc(): void {
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
   handle(IpcChannel.WorkspaceKeepReadFolder, (e, id: string, folder: string) => P(e).keepReadFolder(id, folder));
   handle(IpcChannel.WorkspaceDismissRead, (e, id: string, path: string) => P(e).manager.removeOutsideRead(id, path));
+  handle(IpcChannel.WorkspaceClaudeSettings, (e, id: string) => P(e).claudeSettingsOf(id));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));

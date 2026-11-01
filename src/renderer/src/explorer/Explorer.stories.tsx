@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fireEvent, within } from 'storybook/test';
-import type { DirEntry, FileChange } from '@shared/ipc';
+import type { ClaudeSettingsFile, DirEntry, FileChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { AddIcon, IconButton } from '../icons';
@@ -13,6 +13,8 @@ import { Explorer, type ExplorerFileOps } from './Explorer';
 // リポジトリの行の ＋ で追加したフォルダに移し、× で一覧から消す。
 // 行を右クリックすると、ファイル操作のメニューを出す。新規作成・名前の変更は、ツリーの行の中で名前を入れる
 // （Claude が読んだものは、パスのコピーと Finder で表示だけ）
+// いちばん下には、このセッションの Claude Code が読み込んでいる設定ファイルを、強い順に見出しを分けて並べる。
+// ファイルの行は、エディタへドラッグして開ける
 
 const ROOT = '/Users/me/work/shop';
 const API = '/Users/me/work/shop-api';
@@ -22,6 +24,14 @@ const READ_FILES = ['/Users/me/Downloads/invoice-format.csv', '/Users/me/notes/2
 
 const dir = (parent: string, name: string): DirEntry => ({ name, path: parent ? `${parent}/${name}` : name, isDir: true });
 const file = (parent: string, name: string): DirEntry => ({ name, path: parent ? `${parent}/${name}` : name, isDir: false });
+
+const SETTINGS: ClaudeSettingsFile[] = [
+  { path: '/Library/Application Support/ClaudeCode/managed-settings.json', scope: 'managed' },
+  { path: '/Users/me/.claude/settings-litellm.json', scope: 'registered' },
+  { path: `${ROOT}/.claude/settings.local.json`, scope: 'local' },
+  { path: `${ROOT}/.claude/settings.json`, scope: 'project' },
+  { path: '/Users/me/.claude/settings.json', scope: 'user' },
+];
 
 const DIRS: Record<string, DirEntry[]> = {
   '': [dir('', 'src'), file('', 'package.json'), file('', 'README.md')],
@@ -38,9 +48,16 @@ const CHANGES: Record<string, FileChange> = { 'src/tax.ts': { kind: 'modified', 
 // タブを合わせる先（App）の代わり。何もしない
 const FILE_OPS: ExplorerFileOps = { beforeRename: async () => true, renamed: () => {}, hasUnsaved: () => false, trashed: () => {} };
 
-type DemoProps = { folders: string[]; readFolders?: string[]; readFiles?: string[]; editable?: boolean; activePath?: string | null };
+type DemoProps = {
+  folders: string[];
+  readFolders?: string[];
+  readFiles?: string[];
+  claudeSettings?: ClaudeSettingsFile[];
+  editable?: boolean;
+  activePath?: string | null;
+};
 
-function Demo({ folders, readFolders, readFiles, editable = true, activePath = null }: DemoProps) {
+function Demo({ folders, readFolders, readFiles, claudeSettings, editable = true, activePath = null }: DemoProps) {
   return (
     <div className="explorer" style={{ height: 520, border: '1px solid var(--border-subtle)' }}>
       <div className="side-panel">
@@ -65,6 +82,7 @@ function Demo({ folders, readFolders, readFiles, editable = true, activePath = n
             readFiles={readFiles}
             onKeepReadFolder={editable ? () => {} : undefined}
             onDismissRead={editable ? () => {} : undefined}
+            claudeSettings={claudeSettings}
           />
         </div>
       </div>
@@ -95,6 +113,8 @@ export const 追加したフォルダあり: Story = { args: { folders: [API, DE
 export const 変えられないとき: Story = { args: { folders: [API, DESIGN], editable: false } };
 // Claude がフォルダの外で読んだもの。リポジトリ（payment-sdk）は閉じて始め、それ以外のファイルは入っているフォルダを薄く添える
 export const Claudeが読んだもの: Story = { args: { folders: [API], readFolders: [READ_REPO], readFiles: READ_FILES } };
+// Claude Code の設定ファイル。上ほど強い。セッションのフォルダの .claude/settings.json を開いていれば、その行を選ぶ
+export const Claudeの設定ファイル: Story = { args: { folders: [], readFiles: READ_FILES, claudeSettings: SETTINGS, activePath: '.claude/settings.json' } };
 // アーカイブしたセッションでは、＋ も × も出さない
 export const Claudeが読んだもの_変えられないとき: Story = { args: { folders: [], readFolders: [READ_REPO], readFiles: READ_FILES, editable: false } };
 

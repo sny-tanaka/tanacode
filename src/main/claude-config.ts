@@ -1,6 +1,7 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type { ClaudeSettingsFile } from '@shared/ipc';
 
 // Claude Code の設定のフォルダと状態のファイルの場所。Claude Code 自身と同じ決め方にする（アプリを CLAUDE_CONFIG_DIR 付きで
 // 起動すると、アプリが起動する Claude Code もそれを受け継ぐので、アプリが読む場所もそろえる）。
@@ -60,4 +61,42 @@ export function settingsDefaultMode(cwd: string, flagFile: string | null, dir: s
     }
   }
   return null;
+}
+
+// 管理者の設定（macOS）。managed-settings.json と、managed-settings.d の *.json（名前の順）を Claude Code が読む（2.1.314 で確かめた）
+export const MANAGED_SETTINGS_DIR = '/Library/Application Support/ClaudeCode';
+
+// フォルダ cwd で起動する Claude Code が読む設定ファイル。強い順（管理者 → --settings で渡す登録した設定ファイル →
+// .claude/settings.local.json → .claude/settings.json → 設定のフォルダの settings.json）に、あるものだけを返す。
+// アプリが合わせて --settings に渡すファイル（statusLine やフックを足したもの）は、起動のたびに作り直すので含めず、元の登録したファイルを返す。
+// registered: セッションで選んでいる登録した設定ファイル（無ければ null）。managedDir はテストで差し替える
+export function loadedSettingsFiles(cwd: string, registered: string | null, dir: string | null = null, managedDir = MANAGED_SETTINGS_DIR): ClaudeSettingsFile[] {
+  const files: ClaudeSettingsFile[] = [
+    ...[join(managedDir, 'managed-settings.json'), ...jsonFilesIn(join(managedDir, 'managed-settings.d'))].map((path) => ({ path, scope: 'managed' as const })),
+    ...(registered ? [{ path: registered, scope: 'registered' as const }] : []),
+    { path: join(cwd, '.claude', 'settings.local.json'), scope: 'local' },
+    { path: join(cwd, '.claude', 'settings.json'), scope: 'project' },
+    { path: join(claudeConfigDir(dir), 'settings.json'), scope: 'user' },
+  ];
+  // 登録した設定ファイルに、プロジェクトやユーザーの設定ファイルそのものを選んでいることもある（強いほうに 1 つだけ出す）
+  return files.filter((file, i) => isFile(file.path) && files.findIndex((f) => f.path === file.path) === i);
+}
+
+function jsonFilesIn(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+      .filter((name) => name.endsWith('.json') && !name.startsWith('.'))
+      .sort()
+      .map((name) => join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
