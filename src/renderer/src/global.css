@@ -4825,11 +4825,11 @@ button.menu-tab:disabled {
     linear-gradient(var(--bg-hover), var(--bg-hover)) padding-box,
     var(--grad) border-box;
 }
-/* 右上の印。チャット欄の下地の色で枠線の上に重ね、枠線を少し切ったように見せる */
+/* 左上の印。チャット欄の下地の色で枠線の上に重ね、枠線を少し切ったように見せる */
 .prompt-suggestion-tag {
   position: absolute;
   top: -0.75em;
-  right: 10px;
+  left: 10px;
   padding: 0 4px;
   background: var(--bg-panel);
   color: var(--text-tertiary);
