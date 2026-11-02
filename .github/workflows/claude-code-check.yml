@@ -4,8 +4,8 @@
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しいバージョンへの追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
-# - 行の目録（行の種類とフィールド。test/transcript-inventory.ts）が、動作確認済のバージョンの目録と違えば、PR は作るがマージしない。
-#   差分を PR の本文に載せる（人が仕分けてからマージする）。tanacode が使うフィールドが目録から消えていたら、確認が落ちて Issue が立つ
+# - 行の目録（行の種類とフィールド。test/transcript-inventory.ts）が、動作確認済のバージョンの目録と違っても、PR の CI が通ればマージする
+#   （人の確かめを待たない）。差分は PR の本文に載せ、あとで仕分ける。tanacode が使うフィールドが目録から消えていたら、確認が落ちて Issue が立つ
 # - 同じ PR で、tanacode のバージョンと動作確認済のバージョンの対応表（compat.json）も書き換える（scripts/compat-table.mjs）。
 #   公開済みのアプリは develop の compat.json を読むので、マージすれば、リリースしなくても印が変わる。
 #   いまのアプリの行は、その行のバージョンと目録に差が無いときだけ上げ、差があれば据え置いて、次にリリースするバージョンから上げる
@@ -160,7 +160,7 @@ jobs:
           if [ "$action" = fixtures ]; then git checkout HEAD -- "test/fixtures/claude-code/$VERSION" 2> /dev/null || true; fi
           # 書き換えたあとも、控えで読み取りを確かめる（動作確認済のバージョンの控えがあるかも見る）
           npm test
-          # 行の目録を、動作確認済のバージョンの目録と比べる（バージョンを上げるときだけ）。差があれば（前の目録が無いときも）、PR は作るがマージしない
+          # 行の目録を、動作確認済のバージョンの目録と比べる（バージョンを上げるときだけ）。差があっても（前の目録が無いときも）マージし、差分を PR の本文に載せる
           inventory=same
           diff_file="$RUNNER_TEMP/inventory-diff.md"
           if [ "$action" = bump ]; then
@@ -184,7 +184,7 @@ jobs:
             deliver_note="- 控えを足すだけなので、アプリの動きは変わりません"
           fi
           if [ "$inventory" = changed ]; then
-            merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違うので、**自動ではマージしません**。下の差分を仕分けて（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ）、手元の本物の会話ログでも確かめてから（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）、マージしてください（CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
+            merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違います。PR の CI が通ったら、そのまま squash マージします。下の差分は、マージしたあとに仕分けます（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ。CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
           else
             merge_note="- PR の CI が通ったら、そのまま squash マージします。手元の Claude Code がこのバージョンになって数日使ったら、本物の会話ログでも確かめます（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）"
           fi
@@ -208,10 +208,9 @@ jobs:
           $(cat "$diff_file")"
           fi
           gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$body"
-          # 目録に差があれば、PR を開いたままにして終える（人が仕分けてからマージする）
+          # 目録に差があっても、CI が通ればマージする（人の確かめを待たない）。差があったことは警告に残し、あとで仕分ける
           if [ "$inventory" = changed ]; then
-            echo "::warning::行の目録が $verified と違うので、$branch の PR は自動ではマージしません。差分を仕分けてから、手でマージしてください"
-            exit 0
+            echo "::warning::行の目録が $verified と違います。$branch の PR は CI が通ればマージします。差分は PR の本文を見て、あとで仕分けてください"
           fi
           # PR の CI（必須のチェックを出す ci と demo-site）が動き始めるのを待ってから、終わるまで待つ。
           # 通らなかったときは、マージせずにジョブを失敗させる（PR は開いたまま残るので、人が見て直す）

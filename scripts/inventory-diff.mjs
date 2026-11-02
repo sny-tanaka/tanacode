@@ -1,5 +1,5 @@
 // Claude Code が書いた行の目録（test/fixtures/claude-code/<バージョン>/inventory.json。test/transcript-inventory.ts）を 2 つ比べる。
-// GitHub Actions（claude-code-check.yml）が、動作確認済のバージョンを上げる PR を作るときに呼ぶ。差があれば、PR を自動ではマージしない
+// GitHub Actions（claude-code-check.yml）が、動作確認済のバージョンを上げる PR を作るときに呼ぶ。差があっても PR はマージし、差分を PR の本文に載せる
 //   node scripts/inventory-diff.mjs <前の目録> <新しい目録> <差分の書き出し先>
 // 標準出力に、比べた結果を 1 語で書く（ワークフローがこれを見る）
 //   same:    差が無い
