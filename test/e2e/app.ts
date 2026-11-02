@@ -542,12 +542,29 @@ export class E2EApp {
         entries.push({ ...snapshot('scroll'), children: e.target.childElementCount });
       };
       document.addEventListener('scroll', scrolled, true);
+      // 押している間に高さの変わった一覧の行（どの行が伸び縮みして一覧が動いたかを見分ける。CI で、押している間だけ一覧の中身が
+      // 34px 縮んで押す位置がずれたことがあり、どの行かが分からなかった）。始めの高さは、観察を始めたときの知らせで覚える
+      const heights = new Map<Element, number>();
+      const rows = document.querySelector('.chat-list');
+      const resized = new ResizeObserver((records) => {
+        for (const record of records) {
+          const height = Math.round(record.borderBoxSize[0]?.blockSize ?? record.contentRect.height);
+          const before = heights.get(record.target);
+          heights.set(record.target, height);
+          if (before !== undefined && before !== height) {
+            const index = rows ? [...rows.children].indexOf(record.target) : -1;
+            entries.push({ ...snapshot('resize'), row: `${index}:${describe(record.target)}`, height: `${before}->${height}` });
+          }
+        }
+      });
+      if (rows) for (const row of rows.children) resized.observe(row);
       entries.push(snapshot('start'));
       w.__e2ePress = {
         entries,
         stop: () => {
           types.forEach((type) => window.removeEventListener(type, listener, true));
           document.removeEventListener('scroll', scrolled, true);
+          resized.disconnect();
         },
       };
     }, element);
