@@ -537,10 +537,10 @@ export const いちばん狭い列のヘッダー: Story = { args: { items: conv
 // 広い列（既定の 400px）では、ボタンを今までどおり並べる（「…」は出さない）
 export const 広い列のヘッダー: Story = { args: { items: conversation(4), width: 400, contextTokens: 92_000 } };
 
-// ターンの終わりに Claude Code が予想した次の発言（prompt_suggestion）。入力欄が空のときだけ、上にボタンで出す。押すと入力欄に入る
+// ターンの終わりに Claude Code が予想した次の発言（prompt_suggestion）。入力欄が空のときだけ、チャット欄の上にグラデーションの枠のボタンで出す。押すと入力欄に入る
 export const 次の返信の候補: Story = { args: { items: conversation(4), suggestion: 'テストも足して、npm test で通ることを確かめてください' } };
 
-// 長い候補は 1 行で切り、全文はツールチップで出す
+// 長い候補も、押してよいかを読んで決められるよう、省略せずに全文を折り返して出す
 export const 長い次の返信の候補: Story = {
   args: {
     items: conversation(4),

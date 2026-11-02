@@ -288,7 +288,7 @@ type Runtime = {
   aliveSince: number | null;
   // ターンの途中（Claude Code が作業中）。stream-json の行で決める（設計書 7 節）
   turnOpen: boolean;
-  // 次の発言の予想（prompt_suggestion）。入力欄の上にボタンで出す。次のターンが始まる・会話が変わる・起動し直すと消す
+  // 次の発言の予想（prompt_suggestion）。チャット欄の上にボタンで出す。人が消した・次のターンが始まる・会話が変わる・起動し直すと消す
   suggestion: string | null;
   // 今のターンの、本体の最後の行（応答か、ツールの結果）の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）。
   // ツールの切れ目でフックが止めたターンでは、最後の行はツールの結果（stream の user の行。uuid は会話ログの行と同じ。実測）
@@ -2358,6 +2358,14 @@ export class SessionManager {
   // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）。
   // 止めるターンが開いていたら true。ターンの合間（最適化圧縮の流れのすき間・ターンの終わりを会話ログが追いつくまで待っている間・
   // 送った発言がまだターンに取り込まれていない間）は、状態は作業中でも止めるターンが無いので false（中断は、今までどおり送る）
+  // 次の返信の候補を消す（人が押して使った・使わずに入力し始めた）。同じ候補は出し直さない
+  dismissSuggestion(id: string): void {
+    const rt = this.runtimes.get(id);
+    if (!rt?.suggestion) return;
+    rt.suggestion = null;
+    this.emitSessions();
+  }
+
   interrupt(id: string): boolean {
     const rt = this.runtimes.get(id);
     const client = rt?.process?.client;
