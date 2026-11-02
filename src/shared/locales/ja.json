@@ -955,6 +955,7 @@
     "input": {
       "suggestSession": "セッション",
       "suggestArchived": "アーカイブ済み",
+      "suggestTag": "suggest",
       "remove": "外す",
       "image": "画像 {name}",
       "schedule": "時刻を指定して送信",

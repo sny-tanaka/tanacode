@@ -31,6 +31,7 @@ const api: TanacodeApi = {
     snapshot: (id) => invoke(IpcChannel.SessionsSnapshot, id),
     submit: (id, text, attachments, pastes, options) => invoke(IpcChannel.SessionsSubmit, id, text, attachments, pastes, options),
     interrupt: (id) => send(IpcChannel.SessionsInterrupt, id),
+    dismissSuggestion: (id) => send(IpcChannel.SessionsDismissSuggestion, id),
     onChanged: (listener) => subscribe(IpcChannel.SessionsChanged, listener),
     onCreateFailed: (listener) => subscribe(IpcChannel.SessionsCreateFailed, listener),
     onSelect: (listener) => subscribe(IpcChannel.SessionsSelect, listener),

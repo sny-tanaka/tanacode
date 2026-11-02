@@ -992,6 +992,7 @@
     "input": {
       "suggestSession": "Session",
       "suggestArchived": "Archived",
+      "suggestTag": "suggest",
       "remove": "Remove",
       "image": "Image: {name}",
       "schedule": "Schedule message",
