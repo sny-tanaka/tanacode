@@ -76,6 +76,8 @@ type Props = {
   // 入力欄の持ち主（チャットではセッションの id。描き直して持ち主が変わったら、前の持ち主のために保存していた添付は、移った先に入れない）。
   // 省略は、持ち主が変わらない入力欄（新規セッションの画面は、フォルダを変えても同じ入力欄）
   owner?: string;
+  // Claude Code が予想した次の発言。入力欄が空のときだけ、上にボタンで出す（押すと入力欄に入る。直してから送れる）
+  suggestion?: string;
 };
 
 // 送るときに一緒に送る、コードへのコメント。入力欄の上と、ターミナルモードの画面の下に出す。押すと、そのコメントの場所を開く
@@ -154,6 +156,7 @@ export function ChatInput({
   onSchedule,
   canSchedule = false,
   owner = '',
+  suggestion,
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 日本語入力で変換している途中か（compositionstart〜compositionend）。この間の Tab は、変換に使われたもの（予測変換の候補を選ぶ Tab）。
@@ -348,6 +351,25 @@ export function ChatInput({
               <span className="suggest-detail">{s.detail}</span>
             </button>
           ))}
+        </div>
+      )}
+      {suggestion && !value && suggestions.length === 0 && (
+        <div className="attachments">
+          <button
+            className="attachment prompt-suggestion"
+            title={suggestion}
+            onClick={() => {
+              onChange(suggestion);
+              const el = inputRef.current;
+              if (!el) return;
+              el.focus();
+              // 描き直して文が入ってから、カーソルを終わりに置く
+              requestAnimationFrame(() => el.setSelectionRange(suggestion.length, suggestion.length));
+            }}
+          >
+            <span className="prompt-suggestion-label">{t('composer.input.suggestion')}</span>
+            <span className="prompt-suggestion-text">{suggestion}</span>
+          </button>
         </div>
       )}
       <CommentChips comments={comments} onRemove={onRemoveComment} onShow={onShowComment} />

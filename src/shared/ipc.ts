@@ -309,6 +309,8 @@ export type SessionSummary = {
   terminal?: boolean;
   // ターミナルモードで、TUI のターンの途中（会話ログと書くだけの Stop のフックで分かる）
   terminalWorking?: boolean;
+  // Claude Code が予想した次の発言（prompt_suggestion）。入力欄の上にボタンで出す。ターンの途中・ターミナルモード・無いときは無し
+  suggestion?: string;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可・プランの承認 /
   // browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
