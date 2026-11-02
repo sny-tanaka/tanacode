@@ -31,7 +31,12 @@ export type Conversation = {
   failures?: Record<number, ApiFailure>;
   cuts?: Record<number, Retracted>;
   malformed?: Record<number, Retracted>;
+  // ターンの終わりに Claude Code が頼む、次の発言の予想（prompt suggestion）への返事。無ければ空（Claude Code は予想を出さない）
+  suggestion?: string;
 };
+
+// Claude Code が次の発言の予想を頼むときの、最後の user の発言の書き出し（2.1.314）
+const SUGGESTION_MODE = '[SUGGESTION MODE:';
 
 // 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）。headers: 添える応答のヘッダー
@@ -101,6 +106,9 @@ export class MockApi {
   readonly toolResults: string[] = [];
   // ツールの一覧が付いた呼び出し（本体の会話）ごとの、頼まれたモデルとエフォート（モデル・エフォートの切り替えが届いたかを確かめる）
   readonly calls: { model: string | undefined; effort: unknown }[] = [];
+  // 次の発言の予想を頼まれた回数。予想の頼みは会話の続きとして届くが、ほかの記録（contexts・calls など）には数えない
+  // （ターンの終わりのあとに裏で届くので、数えると、呼び出しの数を確かめるテストが、届く時機しだいで変わる）
+  suggestionRequests = 0;
 
   // 応答に付ける入力のトークン数（コンテキストの使用量として statusLine と会話ログに出る。上限は 20 万）。
   // 大きくすると、コンテキストが埋まってきたときの動き（自動の最適化圧縮）を確かめられる
@@ -146,6 +154,21 @@ export class MockApi {
     return new Promise((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
   }
 
+  // 次の発言の予想の頼みに、台本の suggestion（無ければ空）を返す
+  private async suggest(res: ServerResponse, body: Body, messages: NonNullable<Body['messages']>): Promise<void> {
+    this.suggestionRequests += 1;
+    const reply = messages.findIndex((m) => m.role === 'assistant');
+    const first = (reply === -1 ? messages : messages.slice(0, reply))
+      .filter((m) => m.role === 'user')
+      .map(textOf)
+      .join('\n');
+    const conversation = this.conversations.find((c) => first.includes(c.match));
+    this.requests.push(`  ${conversation ? `「${conversation.match}」の会話` : '台本の無い会話'}の、次の発言の予想の頼み`);
+    const answer = { id: `msg_mock_${++this.count}`, model: body.model ?? 'claude-mock', content: [{ type: 'text' as const, text: conversation?.suggestion ?? '' }], stopReason: 'end_turn', inputTokens: this.inputTokens };
+    if (body.stream) await stream(res, answer, null, null);
+    else json(res, message(answer));
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 本文は、かたまり（Buffer）を集めてから 1 度に文字にする。かたまりごとに文字にすると、かたまりの区切り（およそ 64 KiB ごと）に
     // またがった 1 文字（日本語は 3 バイト）が、U+FFFD に化ける（4 万文字の再開の文で、Claude に届いた発言の 1 文字が化けて見えた）
@@ -162,6 +185,7 @@ export class MockApi {
     const tools = body.tools ?? [];
     const messages = body.messages ?? [];
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    if (textOf(lastUser).startsWith(SUGGESTION_MODE)) return this.suggest(res, body, messages);
     this.lastPrompts.push(textOf(lastUser));
     if (tools.length > 0) this.calls.push({ model: body.model, effort: body.output_config?.effort });
     if (Array.isArray(lastUser?.content)) for (const b of lastUser.content) if (b.type === 'tool_result') this.toolResults.push(resultText(b.content));

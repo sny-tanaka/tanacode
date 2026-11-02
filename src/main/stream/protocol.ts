@@ -287,6 +287,15 @@ export type CommandLifecycleMessage = {
   session_id: string;
 };
 
+// 次の発言の予想（SDKPromptSuggestionMessage）。initialize で promptSuggestions を有効にしたときだけ、ターンの終わりに出る。
+// ユーザーの設定（promptSuggestionEnabled: false）で切っていれば出ない
+export type PromptSuggestionMessage = {
+  type: 'prompt_suggestion';
+  suggestion: string;
+  uuid: string;
+  session_id: string;
+};
+
 // Claude Code からアプリへの制御の要求のうち、答えるもの（SDKControlPermissionRequest）。
 // 許可の確認・AskUserQuestion・ExitPlanMode・ワークフローを始める前の確認が、どれもこれで来る
 export type PermissionUpdate =
@@ -423,6 +432,7 @@ export type StreamMessage =
   | ToolProgressMessage
   | RateLimitEvent
   | CommandLifecycleMessage
+  | PromptSuggestionMessage
   // ほかの system の知らせ（task_progress・task_updated・hook_* など）。使わないものは種類だけを見る
   | { type: 'system'; subtype: string; uuid?: string; [key: string]: unknown };
 

@@ -51,6 +51,7 @@ import { Busy } from '../layout/Busy';
 import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
 import { keyList } from '../layout/keyRow';
+import { focusChat } from '../layout/shortcuts';
 
 // チャットの一覧のツールのカードを、キーで動かす（layout/keyRow.ts。Tab で入るのは、新しい方の端のカード）
 const chatKeys = keyList('last');
@@ -618,6 +619,19 @@ export const ClaudePane = memo(function ClaudePane({
     setAwayFromBottom(false);
   };
 
+  // Claude Code が予想した次の返信。入力欄が空のときだけ、チャット欄の上にボタンで出す。
+  // 押すと入力欄に入れて消し、使わずに入力し始めても消す（同じ候補は出し直さない）
+  const suggestion = !waiting && !hasContent ? session.suggestion : undefined;
+  const dismissSuggestion = () => {
+    if (session.suggestion) window.tanacode.sessions.dismissSuggestion(session.id);
+  };
+  const takeSuggestion = () => {
+    if (!suggestion) return;
+    setInput(suggestion);
+    dismissSuggestion();
+    focusChat();
+  };
+
   const send = () => {
     if (!canSend) return;
     onSend(composed(), attachments, pastes);
@@ -1055,6 +1069,14 @@ export const ClaudePane = memo(function ClaudePane({
       {!screenMode && <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} onStop={onStopTask} stopping={stoppingTasks} />}
       {!session.archived && (
         <div className="chat-input-wrap" hidden={screenMode}>
+          {suggestion && (
+            <button className="prompt-suggestion" onClick={takeSuggestion}>
+              <span className="prompt-suggestion-tag" aria-hidden="true">
+                {t('composer.input.suggestTag')}
+              </span>
+              {suggestion}
+            </button>
+          )}
           <ChatInput
             owner={session.id}
             working={running}
@@ -1063,11 +1085,20 @@ export const ClaudePane = memo(function ClaudePane({
             onShowComment={onShowComment}
             completion={completion}
             value={input}
-            onChange={setInput}
+            onChange={(value) => {
+              if (value) dismissSuggestion();
+              setInput(value);
+            }}
             attachments={attachments}
-            onAttachmentsChange={setAttachments}
+            onAttachmentsChange={(paths) => {
+              if (paths.length > 0) dismissSuggestion();
+              setAttachments(paths);
+            }}
             pastes={pastes}
-            onPastesChange={setPastes}
+            onPastesChange={(list) => {
+              if (list.length > 0) dismissSuggestion();
+              setPastes(list);
+            }}
             placeholder={waiting ? t('chat.pane.chooseAbove') : t('chat.pane.placeholder')}
             blocked={blocked}
             onSend={send}

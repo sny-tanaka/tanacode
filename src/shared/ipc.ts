@@ -43,6 +43,7 @@ export const IpcChannel = {
   SessionsSelect: 'sessions:select',
   SessionsSubmit: 'sessions:submit',
   SessionsInterrupt: 'sessions:interrupt',
+  SessionsDismissSuggestion: 'sessions:dismiss-suggestion',
   // 時刻を指定して送信（予約）。一覧・変わった（main → 画面）・予約する・時刻を変える・今すぐ送る・取り消す
   ScheduledList: 'scheduled:list',
   ScheduledChanged: 'scheduled:changed',
@@ -309,6 +310,8 @@ export type SessionSummary = {
   terminal?: boolean;
   // ターミナルモードで、TUI のターンの途中（会話ログと書くだけの Stop のフックで分かる）
   terminalWorking?: boolean;
+  // Claude Code が予想した次の発言（prompt_suggestion）。チャット欄の上にボタンで出す。ターンの途中・ターミナルモード・消したあと・無いときは無し
+  suggestion?: string;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可・プランの承認 /
   // browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
@@ -583,6 +586,8 @@ export type TanacodeApi = {
     submit(id: string, text: string, attachments: string[], pastes?: string[], options?: SubmitOptions): Promise<void>;
     // 作業を中断する（interrupt の要求）
     interrupt(id: string): void;
+    // 次の返信の候補（SessionSummary.suggestion）を消す。押して使った・使わずに入力し始めたとき
+    dismissSuggestion(id: string): void;
     // チャットとターミナルモードを切り替える（今の Claude Code を止めて、もう片方で --resume する）。手が空いているときだけ。
     // stopTasks: 裏のタスクが止まることを人が確かめた。切り替えられなければ理由を添えて失敗する
     setTerminalMode(id: string, on: boolean, options?: { stopTasks?: boolean }): Promise<void>;
@@ -1153,6 +1158,7 @@ export type IpcInvoke = {
 export type IpcSend = {
   [IpcChannel.SessionsFocus]: Api['sessions']['focus'];
   [IpcChannel.SessionsInterrupt]: Api['sessions']['interrupt'];
+  [IpcChannel.SessionsDismissSuggestion]: Api['sessions']['dismissSuggestion'];
   [IpcChannel.SessionsExportReveal]: Api['sessions']['revealExport'];
   [IpcChannel.PrefsSet]: Api['prefs']['set'];
   [IpcChannel.FocusLost]: Api['diagnostics']['focusLost'];

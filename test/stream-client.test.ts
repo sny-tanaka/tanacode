@@ -100,7 +100,7 @@ describe('StreamClient', () => {
       ...['ui_invalidate', 'ui_panes', 'ui_scroll', 'ui_focus', 'per_turn_effort_changed'],
     ];
     for (const subtype of subtypes) pipe.emit({ type: 'system', subtype, uuid: subtype });
-    for (const type of ['prompt_suggestion', 'auth_status', 'transcript_mirror', 'active_goal', 'autocompact_state', 'tool_use_summary']) pipe.emit({ type, uuid: type });
+    for (const type of ['auth_status', 'transcript_mirror', 'active_goal', 'autocompact_state', 'tool_use_summary']) pipe.emit({ type, uuid: type });
     expect(got.messages).toEqual([]);
     expect(got.unknowns).toEqual([]);
     expect([...client.unknown]).toEqual([]);
@@ -159,6 +159,7 @@ describe('StreamClient', () => {
       { type: 'tool_progress', tool_use_id: 't' },
       { type: 'rate_limit_event', rate_limit_info: {} },
       { type: 'command_lifecycle', command_uuid: 'u', state: 'queued' },
+      { type: 'prompt_suggestion', suggestion: 'x', uuid: 'u', session_id: 's' },
       { type: 'system', subtype: 'status' },
       // 圧縮の始まりと終わり（2.1.302 の実測の形）
       { type: 'system', subtype: 'status', status: 'compacting', compact_output_chars: 0 },
