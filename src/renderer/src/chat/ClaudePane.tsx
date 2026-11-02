@@ -1071,6 +1071,9 @@ export const ClaudePane = memo(function ClaudePane({
         <div className="chat-input-wrap" hidden={screenMode}>
           {suggestion && (
             <button className="prompt-suggestion" onClick={takeSuggestion}>
+              <span className="prompt-suggestion-tag" aria-hidden="true">
+                {t('composer.input.suggestTag')}
+              </span>
               {suggestion}
             </button>
           )}

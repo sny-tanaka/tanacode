@@ -36,7 +36,8 @@ describe('次の返信の候補', () => {
     await app.byText('.chat-list', ANSWER).waitFor();
     const button = app.page.locator('.chat-input-wrap > .prompt-suggestion');
     await button.waitFor();
-    expect(await button.textContent()).toBe(SUGGESTION);
+    // 右上の印（suggest）と、省略しない全文
+    expect(await button.textContent()).toBe(`suggest${SUGGESTION}`);
     expect(app.api.suggestionRequests).toBe(1);
     await button.click();
     expect(await app.page.inputValue('.chat-input textarea')).toBe(SUGGESTION);
