@@ -4,7 +4,7 @@ import { classifyLine } from '@shared/transcript-line';
 // Claude Code が書いた行の目録: 行の種類ごとに、出たフィールドの名前。互換性の確認（test/cli）が、台本で出た行（本体の会話ログ・
 // サブエージェントとワークフローのエージェントの会話ログ・stream-json の行）から作り、バージョンごとの控え
 // （test/fixtures/claude-code/<バージョン>/inventory.json）に残す。毎日の確認で、動作確認済のバージョンの目録と比べる
-// （scripts/inventory-diff.mjs）。差があれば、バージョンを上げる PR を自動ではマージしない
+// （scripts/inventory-diff.mjs）。差があっても、バージョンを上げる PR はマージし、差分を PR の本文に載せる
 //
 // 会話ログの種類の名前:
 // - 行: user・assistant・system/<subtype>・attachment/<type>・ほかの種類はその名前（@shared/transcript-line の分け方の、どの行も）
