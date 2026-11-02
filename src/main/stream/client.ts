@@ -387,7 +387,6 @@ const IGNORED_KINDS = new Set([
   'system/model_fallback',
   'system/memory_recall',
   // tanacode の起動のしかたでは出ない（その機能を有効にしない・SessionStore を使わない・side_question を送らない・モデルを選ばせない）
-  'prompt_suggestion',
   'auth_status',
   'transcript_mirror',
   'system/session_state_changed',
@@ -464,6 +463,8 @@ function messageOf(value: Record<string, unknown>): StreamMessage | 'unknown' | 
       return ok(isRecord(value.rate_limit_info));
     case 'command_lifecycle':
       return ok(str(value.command_uuid) && str(value.state));
+    case 'prompt_suggestion':
+      return ok(typeof value.suggestion === 'string');
     case 'system': {
       const check = str(value.subtype) ? SYSTEM_CHECKS[value.subtype] : undefined;
       return check ? ok(check(value)) : 'unknown';

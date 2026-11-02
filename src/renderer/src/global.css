@@ -4797,6 +4797,47 @@ button.menu-tab:disabled {
   color: var(--text-primary);
 }
 
+/* チャット欄の上の、次の返信の候補（Claude Code の prompt_suggestion）。強調するものなので枠をグラデーションにする。
+   押してよいかを読んで決められるよう、省略せずに全文を出す。候補なので文字は薄くし、マウスを載せたら濃くする。押すと入力欄に入る */
+.prompt-suggestion {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background:
+    linear-gradient(var(--bg-input), var(--bg-input)) padding-box,
+    var(--grad) border-box;
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.prompt-suggestion:hover {
+  color: var(--text-secondary);
+  background:
+    linear-gradient(var(--bg-hover), var(--bg-hover)) padding-box,
+    var(--grad) border-box;
+}
+/* 左上の印。チャット欄の下地の色で枠線の上に重ね、枠線を少し切ったように見せる */
+.prompt-suggestion-tag {
+  position: absolute;
+  top: -0.75em;
+  left: 10px;
+  padding: 0 4px;
+  background: var(--bg-panel);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
 /* 入力欄の上のコメント */
 .comment-chip {
   max-width: 100%;

@@ -288,6 +288,8 @@ type Runtime = {
   aliveSince: number | null;
   // ターンの途中（Claude Code が作業中）。stream-json の行で決める（設計書 7 節）
   turnOpen: boolean;
+  // 次の発言の予想（prompt_suggestion）。チャット欄の上にボタンで出す。人が消した・次のターンが始まる・会話が変わる・起動し直すと消す
+  suggestion: string | null;
   // 今のターンの、本体の最後の行（応答か、ツールの結果）の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）。
   // ツールの切れ目でフックが止めたターンでは、最後の行はツールの結果（stream の user の行。uuid は会話ログの行と同じ。実測）
   lastTurnLine: string | null;
@@ -579,6 +581,8 @@ export class SessionManager {
           // 止まっていても、ターミナルモードで起動したセッションはターミナルモードのまま（記録の terminal。チャットには人が戻す）
           terminal: rt?.process ? rt.terminal : !!r.terminal && !r.archived,
           terminalWorking: !!rt?.process && rt.terminal && rt.tuiTurn,
+          // ターミナルモードでは TUI が自分で出す
+          ...(rt?.process && !rt.terminal && !rt.turnOpen && rt.suggestion ? { suggestion: rt.suggestion } : {}),
           unread: !!rt?.unread,
           attention: rt?.process ? (rt.attention ?? (this.browserAsks.has(r.id) ? 'browser' : null)) : null,
           backgroundTasks: rt?.process ? rt.background : 0,
@@ -2354,6 +2358,14 @@ export class SessionManager {
   // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）。
   // 止めるターンが開いていたら true。ターンの合間（最適化圧縮の流れのすき間・ターンの終わりを会話ログが追いつくまで待っている間・
   // 送った発言がまだターンに取り込まれていない間）は、状態は作業中でも止めるターンが無いので false（中断は、今までどおり送る）
+  // 次の返信の候補を消す（人が押して使った・使わずに入力し始めた）。同じ候補は出し直さない
+  dismissSuggestion(id: string): void {
+    const rt = this.runtimes.get(id);
+    if (!rt?.suggestion) return;
+    rt.suggestion = null;
+    this.emitSessions();
+  }
+
   interrupt(id: string): boolean {
     const rt = this.runtimes.get(id);
     const client = rt?.process?.client;
@@ -2586,6 +2598,7 @@ export class SessionManager {
         size: DEFAULT_PTY_SIZE,
         aliveSince: null,
         turnOpen: false,
+        suggestion: null,
         lastTurnLine: null,
         turnPrompt: null,
         turnPromptFrom: null,
@@ -2893,6 +2906,7 @@ export class SessionManager {
       },
       adopted,
     );
+    rt.suggestion = null;
     rt.process = process;
     process.start();
     if (runtime.unsent.size > 0) {
@@ -2957,7 +2971,8 @@ export class SessionManager {
     let init: InitializeResponse;
     try {
       // MCP サーバー・SessionStart のフック・worktree の作成を待ってから答えるので、時間を区切らない（起動が遅いことは watchStart で知らせる）
-      init = await client.request<InitializeResponse>('initialize', { perTaskStopAffordance: true }, null);
+      // promptSuggestions: ターンの終わりに次の発言の予想（prompt_suggestion）を出させる（ユーザーの設定で切っていれば出ない）
+      init = await client.request<InitializeResponse>('initialize', { perTaskStopAffordance: true, promptSuggestions: true }, null);
     } catch (error) {
       // 答えずに終わった。終わりの知らせ（理由は標準エラー）で片付ける
       console.error('initialize に答えがありませんでした', error);
@@ -3226,13 +3241,23 @@ export class SessionManager {
         if (!past && message.rate_limit_info.status === 'rejected') rt.rejectedLimit = rejectedLimitOf(message);
         return;
       }
+      case 'prompt_suggestion': {
+        // 前のアプリの頃の行は控えていない（RETAIN_RULES に無い）が、念のため使わない
+        if (past) return;
+        const suggestion = message.suggestion.trim();
+        rt.suggestion = suggestion || null;
+        this.emitSessions();
+        return;
+      }
       case 'conversation_reset':
         // 新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）。
         // 新しい会話の最初の応答までは、コンテキストの量を分からないとする（ヘッダーのメーターは会話ログの量。無ければ空）
         if (past) return;
         rt.freshConversation = true;
+        rt.suggestion = null;
         rt.partial.clear();
         this.updateStatus(id, rt, { context: null });
+        this.emitSessions();
         return;
     }
   }
@@ -3447,6 +3472,7 @@ export class SessionManager {
   private openTurn(id: string, rt: Runtime, past: boolean): void {
     if (rt.turnOpen) return;
     rt.turnOpen = true;
+    rt.suggestion = null;
     rt.endedTurnLine = rt.turnEnding?.waitFor ?? rt.lateTurnEnd?.waitFor ?? null;
     if (rt.turnEnding) this.flushTurnEnd(id, rt, true);
     rt.lateTurnEnd = null;

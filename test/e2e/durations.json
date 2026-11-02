@@ -33,6 +33,7 @@
   "test/e2e/press-card.test.ts": 12,
   "test/e2e/press-chat.test.ts": 8,
   "test/e2e/press-preview.test.ts": 7,
+  "test/e2e/prompt-suggestion.test.ts": 10,
   "test/e2e/project-instructions.test.ts": 12,
   "test/e2e/reload.test.ts": 8,
   "test/e2e/restart-app.test.ts": 10,

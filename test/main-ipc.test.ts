@@ -269,6 +269,7 @@ describe('そのまま渡す受け口', () => {
   // [チャンネル, 画面から送る引数, 呼ばれる作り物, そのメソッド, 渡る引数]
   const listens: [string, unknown[], string, string, unknown[]][] = [
     [IpcChannel.SessionsInterrupt, ['s1'], 'SessionManager', 'interrupt', ['s1']],
+    [IpcChannel.SessionsDismissSuggestion, ['s1'], 'SessionManager', 'dismissSuggestion', ['s1']],
     [IpcChannel.SessionsFocus, ['s1'], 'SessionManager', 'focus', ['s1']],
     [IpcChannel.SessionsFocus, [null], 'SessionManager', 'focus', [null]],
     [IpcChannel.PtyWrite, ['s1', '\x1b[A'], 'SessionManager', 'write', ['s1', '\x1b[A']],

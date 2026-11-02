@@ -36,10 +36,10 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `rate_limit_event` | 利用枠の状態 | 有 | ✅ 利用枠の表示。`status` が `rejected` なら、枠が戻る時刻（`resetsAt`）を、利用枠で止まったときの補いに控える |
 | `conversation_reset` | /clear での新しい会話 | 有 | ✅ 書いている途中の文を捨て、コンテキストの量を空に |
 | `command_lifecycle` | 送った発言の受け付け（順番待ち・取り込み・終わり） | 無 | ✅ 送信中の表示 |
+| `prompt_suggestion` | 次の発言の予想（initialize の `promptSuggestions` で有効にしたときだけ、ターンの終わりに出る） | 有 | ✅ チャット欄の上の、次の返信の候補のボタン。人が押す・入力し始める・次のターンが始まると消す |
 | `control_request`・`control_response`・`control_cancel_request` | 制御の要求・返事・取り下げ | 有 | ✅ 3 節も参照 |
 | `keep_alive` | 時間ごとに出る、生きている知らせ | 無 | ⏭ 時間で出る知らせ（SDK も自分で捨てる） |
 | `tool_use_summary` | ツールの呼び出しのまとめの一言 | 有 | ⏭ 使い道がない（ツールの行はチャットで畳んで出している）。出る条件は不明で、試した場面では出なかった |
-| `prompt_suggestion` | 次の発言の予想 | 有 | ⏭ tanacode の起動のしかたでは出ない（`promptSuggestions` を有効にしたときだけ） |
 | `auth_status` | ログインの進み具合 | 有 | ⏭ tanacode の起動のしかたでは出ない（`enableAuthStatus` のときだけ） |
 | `transcript_mirror` | 会話ログの写し | 無 | ⏭ tanacode の起動のしかたでは出ない（SessionStore を使う SDK だけ） |
 | `active_goal` | /goal の目標の状態 | 無 | ⏭ クラウドの開発環境向け（その環境の変数を受け継いだときは、起動直後に出た。tanacode と同じ環境では出なかった） |

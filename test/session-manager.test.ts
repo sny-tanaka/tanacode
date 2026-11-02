@@ -26,8 +26,8 @@ describe('起動と送信', () => {
     expect(app.events(id).map((e) => e.type)).toContain('process-start');
     expect(app.manager.stateOf(id)).toBe('starting');
     await app.ready(id);
-    // 裏のサブエージェント・ワークフローを中断で止めない（TUI の Esc と同じ）
-    expect(pipe.requests('initialize').map((r) => r.request)).toEqual([{ subtype: 'initialize', perTaskStopAffordance: true }]);
+    // 裏のサブエージェント・ワークフローを中断で止めない（TUI の Esc と同じ）。ターンの終わりに次の発言の予想を出させる
+    expect(pipe.requests('initialize').map((r) => r.request)).toEqual([{ subtype: 'initialize', perTaskStopAffordance: true, promptSuggestions: true }]);
     expect(app.manager.summary(id)).toMatchObject({ running: true, state: 'idle', attention: null, backgroundTasks: 0 });
     expect(app.events(id).filter((e) => e.type === 'ready')).toHaveLength(1);
   });
@@ -121,6 +121,36 @@ describe('会話ログからのチャット', () => {
     await app.waitFor('完了の知らせ', () => app.turnsCompleted.length > 0);
     expect(app.turnsCompleted.map((s) => s.id)).toEqual([id]);
     expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
+  it('ターンの終わりの次の発言の予想（prompt_suggestion）を一覧に出し、人が消す・次のターンが始まる・/clear で新しい会話になると消す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(id, line.user('確認してください'), line.text('確認しました'));
+    await app.waitFor('応答', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    pipe.emit({ type: 'prompt_suggestion', suggestion: ' テストも足してください\n', uuid: 'ps1', session_id: 's' });
+    await app.waitFor('予想', () => app.manager.summary(id)?.suggestion === 'テストも足してください');
+    // 次のターンが始まったら消す
+    app.say(id, line.user('次'), line.text('はい'));
+    await app.waitFor('次のターン', () => app.manager.stateOf(id) === 'working');
+    expect(app.manager.summary(id)?.suggestion).toBeUndefined();
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 2);
+    pipe.emit({ type: 'prompt_suggestion', suggestion: 'コミットしてください', uuid: 'ps2', session_id: 's' });
+    await app.waitFor('予想', () => app.manager.summary(id)?.suggestion === 'コミットしてください');
+    // 人が消したら（押して使った・使わずに入力し始めた）、出さない
+    app.manager.dismissSuggestion(id);
+    expect(app.manager.summary(id)?.suggestion).toBeUndefined();
+    pipe.emit({ type: 'prompt_suggestion', suggestion: 'プッシュしてください', uuid: 'ps2b', session_id: 's' });
+    await app.waitFor('予想', () => app.manager.summary(id)?.suggestion === 'プッシュしてください');
+    pipe.emit({ type: 'conversation_reset', session_id: 's2' });
+    await app.waitFor('新しい会話', () => app.manager.summary(id)?.suggestion === undefined);
+    // 空の予想は出さない
+    pipe.emit({ type: 'prompt_suggestion', suggestion: '  ', uuid: 'ps3', session_id: 's2' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(app.manager.summary(id)?.suggestion).toBeUndefined();
   });
 
   it('今の claude の会話ログのターンの終わり（turn_duration）は使わない。ターンの終わりは result だけで決める', async () => {
