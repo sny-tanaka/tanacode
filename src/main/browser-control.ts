@@ -1889,16 +1889,17 @@ export class BrowserControl {
       done = action === 'tap' ? (fingers === 2 ? 'Tapped with two fingers' : 'Tapped') : `Long-pressed for ${duration} ms`;
     }
     const before = guest.contents.getURL();
-    // Input.dispatchTouchEvent の位置は、タブの中ではなく、アプリのウインドウの中の位置として読まれる（Electron 44.7 の webview で確かめた。
-    // タブの中の位置のまま送ると、webview の左上の分だけずれて届く。マウスの Input.dispatchMouseEvent は、タブの中の位置のまま届く）。
-    // それで、アプリの画面の中の webview の左上を足す（hostOffset）。別プロセスの iframe の中も、その iframe のセッションに、同じ位置で送る（実機では確かめていない）
+    // Input.dispatchTouchEvent の位置は、マウスの Input.dispatchMouseEvent と同じく、タブの中の位置として読まれる（Electron 45 の webview で確かめた。
+    // Electron 44 ではアプリのウインドウの中の位置として読まれたので webview の左上を足していたが、45 で足すと、その分だけずれて届く）。
+    // webview の左上（hostOffset）は、指の位置がアプリの画面に出ているかを見るのにだけ使う。
+    // 別プロセスの iframe の中も、その iframe のセッションに、同じ位置で送る（実機では確かめていない）
     const child = target.child?.session;
     let at: HostOffset;
     const send = (type: string, points: BrowserPoint[]) =>
       this.cdp(
         guest,
         'Input.dispatchTouchEvent',
-        { type, touchPoints: points.map((p, id) => ({ x: round(at.x + p.x * at.scale), y: round(at.y + p.y * at.scale), id })) },
+        { type, touchPoints: points.map((p, id) => ({ x: round(p.x * at.scale), y: round(p.y * at.scale), id })) },
         child,
       );
     const show = (points: BrowserPoint[]) => this.emit({ sessionId, active: true, label: null, box: null, touches: points.map((p) => ({ x: round(p.x), y: round(p.y) })) });
@@ -1949,8 +1950,10 @@ export class BrowserControl {
     return textResult(lines.join('\n'));
   }
 
-  // タッチを送る位置の決め方。送る位置 = 左上 + タブの中の位置 × scale。画面がタブの webview に付けた data-tab-id で探す。
-  // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）:
+  // タッチを送る位置の決め方。送る位置 = タブの中の位置 × scale。アプリの画面での位置 = 左上 + 送る位置（指が画面に出ているかを見るのに使う）。
+  // 画面がタブの webview に付けた data-tab-id で探す。
+  // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）。
+  // Electron 45 でも、送る位置の倍率は同じ（E2E で確かめた）:
   // - 左上は、アプリの画面の CSS の px のまま（拡大の倍率を掛けない）
   // - タブの中の位置は、CDP で大きさを決めていないタブではそのまま、決めたタブ（set_viewport の機種・数字）では倍率で割る
   // visible: webview のうち、アプリの画面に出ている所（アプリの画面の CSS の px。枠のスクロールなど、はみ出たものを切る入れ物と、ウインドウの端で切る）
