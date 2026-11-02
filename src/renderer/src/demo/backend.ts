@@ -389,6 +389,7 @@ export class DemoBackend {
           return ok(undefined);
         },
         interrupt: () => {},
+        dismissSuggestion: () => {},
         configure: () => ok(undefined),
         models: () => ok(null),
         restart: () => ok(undefined),

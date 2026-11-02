@@ -123,7 +123,7 @@ describe('会話ログからのチャット', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
   });
 
-  it('ターンの終わりの次の発言の予想（prompt_suggestion）を一覧に出し、次のターンが始まる・/clear で新しい会話になると消す', async () => {
+  it('ターンの終わりの次の発言の予想（prompt_suggestion）を一覧に出し、人が消す・次のターンが始まる・/clear で新しい会話になると消す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
     app.say(id, line.user('確認してください'), line.text('確認しました'));
@@ -140,6 +140,11 @@ describe('会話ログからのチャット', () => {
     await app.waitFor('ターンの終わり', () => turnEnds(id) === 2);
     pipe.emit({ type: 'prompt_suggestion', suggestion: 'コミットしてください', uuid: 'ps2', session_id: 's' });
     await app.waitFor('予想', () => app.manager.summary(id)?.suggestion === 'コミットしてください');
+    // 人が消したら（押して使った・使わずに入力し始めた）、出さない
+    app.manager.dismissSuggestion(id);
+    expect(app.manager.summary(id)?.suggestion).toBeUndefined();
+    pipe.emit({ type: 'prompt_suggestion', suggestion: 'プッシュしてください', uuid: 'ps2b', session_id: 's' });
+    await app.waitFor('予想', () => app.manager.summary(id)?.suggestion === 'プッシュしてください');
     pipe.emit({ type: 'conversation_reset', session_id: 's2' });
     await app.waitFor('新しい会話', () => app.manager.summary(id)?.suggestion === undefined);
     // 空の予想は出さない

@@ -673,6 +673,7 @@ function registerIpc(): void {
     return manager.submit(id, options?.asParent === true ? manager.withParentRole(id, body) : body, strings(attachments), strings(pastes));
   });
   listen(IpcChannel.SessionsInterrupt, (e, id: string) => P(e).manager.interrupt(id));
+  listen(IpcChannel.SessionsDismissSuggestion, (e, id: string) => P(e).manager.dismissSuggestion(id));
   handle(IpcChannel.ScheduledList, (e) => P(e).scheduled.list());
   handle(IpcChannel.ScheduledAdd, (e, sessionId: string, text: string, attachments: string[], at: number, pastes?: string[]) => {
     P(e).scheduled.add(String(sessionId), String(text ?? ''), strings(attachments), Number(at), strings(pastes));

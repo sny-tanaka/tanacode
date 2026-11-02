@@ -408,6 +408,7 @@ const SessionManager = fakeClass('SessionManager', {
   snapshot: echo('manager.snapshot'),
   submit: echo('manager.submit'),
   interrupt: echo('manager.interrupt'),
+  dismissSuggestion: echo('manager.dismissSuggestion'),
   rename: echo('manager.rename'),
   remove: echo('manager.remove'),
   summary: () => undefined,

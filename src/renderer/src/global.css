@@ -4797,28 +4797,31 @@ button.menu-tab:disabled {
   color: var(--text-primary);
 }
 
-/* 入力欄の上の、次の返信の候補（Claude Code の prompt_suggestion）。押すと入力欄に入る */
+/* チャット欄の上の、次の返信の候補（Claude Code の prompt_suggestion）。強調するものなので枠をグラデーションにする。
+   押してよいかを読んで決められるよう、省略せずに全文を出す。押すと入力欄に入る */
 .prompt-suggestion {
-  min-width: 0;
-  padding-right: 8px;
-  border: none;
-  border-left: 2px solid var(--claude);
-  cursor: pointer;
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background:
+    linear-gradient(var(--bg-input), var(--bg-input)) padding-box,
+    var(--grad) border-box;
+  color: var(--text-primary);
   font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
   text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
 }
 .prompt-suggestion:hover {
-  background: var(--bg-selected);
-}
-.prompt-suggestion-label {
-  flex: none;
-  color: var(--text-secondary);
-}
-.prompt-suggestion-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background:
+    linear-gradient(var(--bg-hover), var(--bg-hover)) padding-box,
+    var(--grad) border-box;
 }
 
 /* 入力欄の上のコメント */
