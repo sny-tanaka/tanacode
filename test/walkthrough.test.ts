@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage } from '../src/shared/i18n';
 import { allowedToolIds } from '../src/shared/mcp-tools';
 import { rangeQuestionText, restartRequestText, stepQuestionText, type Walkthrough, type WalkthroughShown } from '../src/shared/walkthrough';
@@ -177,11 +177,15 @@ describe('MCP のツール', () => {
         last = w;
       },
       comment: noPullRequests,
-      shownTimeoutMs: 20,
+      // 正しくない返事を送り終えるまで、待ち切れにならないだけの長さ（待ち切れになれば、返事を使わなかったことを確かめられない）
+      shownTimeoutMs: 500,
     });
     const pending = control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
-    await new Promise((r) => setTimeout(r, 5));
-    const w = last as unknown as Walkthrough;
+    // 画面に送ったウォークスルーが届くのを待つ（決まった時間を待つと、CI が遅いときに、まだ届いていない null を読んだ）
+    const w = await vi.waitFor(() => {
+      if (!last) throw new Error('まだ画面に送っていない');
+      return last as Walkthrough;
+    });
     control.shown(ME, 'another-walkthrough', w.seq, 'moved');
     control.shown(ME, w.id, w.seq - 1, 'moved');
     control.shown(ME, w.id, w.seq, 'nonsense' as WalkthroughShown);
