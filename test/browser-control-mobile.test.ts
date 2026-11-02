@@ -205,7 +205,7 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
 });
 
 describe('タッチ（touch）', () => {
-  it('タップ: 要素の真ん中に、アプリのウインドウの中の位置（webview の左上を足す）で、指を置いて離す。指の位置を画面に見せる', async () => {
+  it('タップ: 要素の真ん中に、タブの中の位置で（webview の左上を足さずに）、指を置いて離す。指の位置を画面に見せる', async () => {
     const { call, open, activities } = setup();
     const page = plain(open('http://localhost:3000/'));
     page.page.locate = () => found({ x: 0, y: 0, width: 240, height: 240 });
@@ -213,7 +213,7 @@ describe('タッチ（touch）', () => {
     const result = await call('touch', { action: 'tap', selector: '#pad' });
     expect(textOf(result)).toBe('Tapped: div#pad');
     expect(touches(page)).toEqual([
-      { type: 'touchStart', points: [[1184.5, 280]] },
+      { type: 'touchStart', points: [[120, 120]] },
       { type: 'touchEnd', points: [] },
     ]);
     // webview の位置を読むのと、指を置く・離す前に人のフォーカスを覚える（keepHumanFocus。指を置く・離すと webview にフォーカスが移るので、戻すため）
@@ -226,17 +226,17 @@ describe('タッチ（touch）', () => {
     expect(activities().at(-1)).toEqual({ sessionId: 'S1', active: true, label: null, box: null });
   });
 
-  it('アプリの画面を拡大しているとき: webview の左上はそのまま。タブの中の位置は、大きさを決めたタブでだけ倍率で割る（実機で測った決まり）', async () => {
+  it('アプリの画面を拡大しているとき: タブの中の位置は、大きさを決めたタブでだけ倍率で割る（実機で測った決まり）', async () => {
     const { call, open } = setup();
     const page = plain(open('http://localhost:3000/'));
     HOST.webviewAt = { x: 100, y: 50 };
     HOST.zoom = 1.25;
     await call('touch', { action: 'tap', x: 10, y: 20 });
-    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[110, 70]] });
+    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[10, 20]] });
     await call('set_viewport', { device: 'iPhone 15' });
     page.debugger.commands.length = 0;
     await call('touch', { action: 'tap', x: 10, y: 20 });
-    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[108, 66]] });
+    expect(touches(page)[0]).toEqual({ type: 'touchStart', points: [[8, 16]] });
   });
 
   it('2 本指のタップ: 横に 40px 離して 2 本置く', async () => {
