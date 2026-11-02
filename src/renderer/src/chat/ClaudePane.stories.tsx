@@ -81,6 +81,7 @@ function Pane({
   question = null,
   width,
   contextTokens = null,
+  suggestion,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -101,6 +102,7 @@ function Pane({
   question?: PendingQuestion | null;
   width?: number;
   contextTokens?: number | null;
+  suggestion?: string;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -112,7 +114,7 @@ function Pane({
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)', ...(width && { ['--w-claude' as string]: `${width}px` }) }}>
       <ClaudePane
-        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null, terminal: terminalOpen }}
+        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null, terminal: terminalOpen, suggestion }}
         sessions={child ? [PARENT, session] : [session]}
         onSelectSession={noop}
         chat={{
@@ -534,6 +536,18 @@ export const いちばん狭い列のヘッダー: Story = { args: { items: conv
 
 // 広い列（既定の 400px）では、ボタンを今までどおり並べる（「…」は出さない）
 export const 広い列のヘッダー: Story = { args: { items: conversation(4), width: 400, contextTokens: 92_000 } };
+
+// ターンの終わりに Claude Code が予想した次の発言（prompt_suggestion）。入力欄が空のときだけ、上にボタンで出す。押すと入力欄に入る
+export const 次の返信の候補: Story = { args: { items: conversation(4), suggestion: 'テストも足して、npm test で通ることを確かめてください' } };
+
+// 長い候補は 1 行で切り、全文はツールチップで出す
+export const 長い次の返信の候補: Story = {
+  args: {
+    items: conversation(4),
+    width: 360,
+    suggestion: 'このまま PR を作って、CI が通ったら squash でマージしてください。マージしたら develop を手元に取り込んでおいてください',
+  },
+};
 
 export const ターミナルモード: Story = {
   beforeEach: showClaudeScreen,

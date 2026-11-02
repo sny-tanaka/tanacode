@@ -1075,6 +1075,7 @@ export const ClaudePane = memo(function ClaudePane({
             canSchedule={hasContent}
             showInterrupt={running && !canSend && !waiting}
             onInterrupt={() => window.tanacode.sessions.interrupt(session.id)}
+            suggestion={waiting ? undefined : session.suggestion}
           />
           <div className="chat-options">
             <SettingsFileSelect
