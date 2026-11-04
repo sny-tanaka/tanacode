@@ -171,7 +171,10 @@ if (!existsSync(join(dir, 'index.html'))) {
 const server = await serve();
 // 台本の操作の足あとを出させる（止まったときに、どの操作の途中だったかを残す）
 const url = `http://127.0.0.1:${server.address().port}/${TRACE_QUERY}#${chapter}`;
-const browser = await webkit.launch();
+// GPU の無い Linux では、WebKit は Mesa のソフトウェアの GL で描く。既定の llvmpipe は、CI で描画のスレッド（llvmpipe-N）が
+// ときどき segfault し、ページの処理が応答しないまま落ちた（dmesg に、同じ場所での segfault が 2 回）。iPhone の Safari は Mesa を使わないので、
+// 確かめたいこととは関わりが無い。そこで、llvmpipe を通らない softpipe で描かせる（コンテナで、ツアーの時間はほとんど変わらなかった）
+const browser = await webkit.launch({ env: { ...process.env, GALLIUM_DRIVER: 'softpipe' } });
 const page = await (await browser.newContext({ ...devices[DEVICE] })).newPage();
 const errors = [];
 const trace = traceLog();
