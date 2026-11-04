@@ -177,10 +177,34 @@ jobs:
             { print "| `" $2 "` | `" $1 "` |" }
             END { print "\n確かめ方: ダウンロードしたファイルで `shasum -a 256 <ファイル>` を実行し、表の値との一致を確認（同じ内容は `SHA256SUMS.txt` にも）\n\n</details>" }
           ' release/SHA256SUMS.txt >> "$notes"
+      # 作るのが GitHub の 5xx で失敗扱いになっても、GitHub 側では下書きができていることがある（v2.8.1 で、添付の無い下書きが残り、
+      # 再実行で 2 つめができた。1 つめはしばらく一覧に出なかった）。このタグの下書きは、このワークフローしか作らず、公開もされていないので、
+      # 作る前と、失敗したあとに消してから作り直す。それでも遅れて出てくる残りは、公開（scripts/release-publish.sh）が添付で見分けて使わない
       - name: Releases の下書きを作る
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"
+        run: |
+          drafts() { gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"'; }
+          remove_drafts() {
+            local found
+            found=$(drafts)
+            while read -r id draft; do
+              [ -n "$id" ] || continue
+              if [ "$draft" != true ]; then echo "::error::$TAG はもう公開済みです"; exit 1; fi
+              echo "前の試みが残した下書き $id を消します"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            done <<< "$found"
+          }
+          create() { gh release create "$TAG" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"; }
+          remove_drafts
+          if ! create; then
+            echo "::warning::下書きを作れませんでした。GitHub 側にできかけの下書きが残っていないかを確かめて、作り直します"
+            sleep 30
+            remove_drafts
+            create
+          fi
+          echo "$TAG のリリース（id と下書きか）:"
+          drafts
       - name: 署名のキーチェーンを消す
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

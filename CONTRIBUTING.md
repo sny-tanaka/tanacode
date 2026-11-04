@@ -104,7 +104,7 @@ npm run dev
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
-- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）・Claude Code のイベントの調べ（`/claude-code-events`）の 4 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
+- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）・Claude Code のイベントの調べ（`/claude-code-events`）の 4 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。下書きの点検と公開は、どちらからも `scripts/release-publish.sh` で行います。公開したリリースは immutable で、添付もタグ名もあとから変えられないため、公開は、点検した下書きの ID とタグ名を指して行い、公開のあとにもタグ・添付・最新のリリースを確かめます。
 - 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。同じ App を、動作確認済の Claude Code を上げる PR にも使います（下の「Claude Code との互換性の確かめ方」）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
 
 ## 見た目の確かめ方
@@ -220,6 +220,11 @@ PR で、次のものを流します。develop への push では流しません
   - `npm ci` は、ubuntu のジョブと `cli` では、`node_modules` ごとキャッシュから戻して飛ばします（`.github/actions/npm-ci`。キーは OS・CPU・Node のメジャーバージョン・`package-lock.json`）。PR で作ったキャッシュはその PR からしか読めないので、develop で作っておきます（`deps-cache.yml`。依存が変わって develop に入ったときと、週 1 回）。`app` の台は Electron の本体も要り、準備は `build` の間に終わるので、`node_modules` はキャッシュしません。翻訳の補助プログラムは、元のファイル（`native/translate`・作るスクリプト）とランナーのイメージ（Xcode）が同じなら、前に作ったものを使います（作るのに 15〜50 秒かかり、遅い台では `build` の待ちに隠れきらなかったため。これも `deps-cache.yml` が develop で作ります）。`tour` でスマホのツアーに使う WebKit の依存（apt の `.deb`。185 個・140MB ほど）も、`deps-cache.yml` が develop で落としてキャッシュしておき、`tour` はそれを apt のキャッシュ（`/var/cache/apt/archives`）に戻してから入れます。ランナーの Ubuntu のミラーが極端に遅いことがあり、落としていると打ち切り（4 分を 2 回）に当たって落ちたためです。キーはランナーのイメージと Playwright のバージョンで、イメージが変わってまだ作られていないときは、前のイメージのものを戻します（バージョンの違う `.deb` だけをミラーから落とします）。ミラーから落とすときは、apt に任せる前に `scripts/prefetch-webkit-deps.sh` が、16 個を並べて、遅い（10 秒続けて 100KB/s を下回る）ミラーから次のミラー（`archive.ubuntu.com`・`mirrors.edge.kernel.org`）へ途中から切り替えながら落とします。apt は 1 つのミラーから 1 つずつ落とすので、つながり 1 つが 40KB/s ほどの日には、キャッシュを作る側も 20 分で落としきれなかったためです。
   - 同じものは 1 回だけ流します。アプリの JS は、カバレッジを測るためのソースマップ付きのビルドを 1 回だけ作り、そこから `.app` を作って E2E を流します（`.map` は `.app` に入りません）。デモのサイトも、PR では待ち時間 0 のビルド 1 回で、PC とスマホのツアーを流します。
   - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、どれか 1 つでも通っていなければ失敗にします。
+- CI の結果に関わらないファイルだけを変えた PR では、重いジョブ（`ci.yml` の `unit`・`storybook`・`cli`・`build`・`app` と、`demo-site.yml` の `tour`）を飛ばします。どちらのワークフローも、はじめに `changes` のジョブ（`.github/actions/changes`）が PR で変えたファイルの一覧を API で読み、すべて関わらないものなら飛ばします。
+  - 関わらないものは、`docs/`・`.claude/`（スキル）・いちばん上の Markdown（README・GUIDE・CONTRIBUTING など）・PR では動かないワークフロー（`release.yml`・`release-publish.yml`・`homebrew.yml`・`claude-code-check.yml`・`mutation.yml`）・`scripts/release-publish.sh` だけ。一覧は `.github/actions/changes/action.yml` の `ignored`。アプリ・テスト・ビルドが読むものは入れません（入れ忘れても CI が余分に動くだけですが、入れすぎると確かめ漏れになります）。`ci.yml`・`demo-site.yml`・アクションを変えた PR では、すべて流します。
+  - ワークフローごと `paths-ignore` で止めないのは、必須のチェック（`check`・`build`・`tour`）が届かずに、PR がマージできなくなるためです。条件で飛ばしたジョブは、必須のチェックでは通ったことになります。
+  - `check` は、`changes` が通って「関わらない」と出たときだけ、飛ばしたジョブを通ったことにします（カバレッジのまとめも飛ばす）。`changes` が落ちたときは失敗にします。`tour` は、`changes` が落ちたときは飛ばさずに流します（飛ばすと、確かめずに通ったことになるため）。
+  - コードスキャン（CodeQL の default setup）は GitHub の設定で動くので、この仕組みの外です。
 
 ### テストの部品
 

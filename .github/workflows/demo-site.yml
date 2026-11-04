@@ -21,7 +21,8 @@ on:
       - 'scripts/check-demo-tour-sp.mjs'
       - 'scripts/demo-tour-evidence.mjs'
       - '.github/workflows/demo-site.yml'
-  # build と tour は develop へのマージに必須のチェック。ワークフローが動かないと結果が届かずにマージできないので、PR では絞り込まずに毎回動かす
+  # build と tour は develop へのマージに必須のチェック。ワークフローが動かないと結果が届かずにマージできないので、PR では絞り込まずに毎回動かす。
+  # 文書・スキル・リリースのワークフローだけを変えた PR では、changes のジョブ（.github/actions/changes）が見て、tour を飛ばす
   pull_request:
   workflow_dispatch:
 
@@ -34,6 +35,22 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # PR で変えたファイルが、CI の結果に関わらないものだけかを調べる（関わらなければ tour を飛ばす。PR だけ）
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+      - id: changes
+        uses: ./.github/actions/changes
+
   # 公開するもののビルド（develop への push と手動の実行だけ）。
   # PR では、ビルドが通るかは tour のジョブのビルド（待ち時間の倍率のほかは同じ）で分かるので、作らない。
   # build は develop へのマージに必須のチェック。PR で条件によって飛ばしたジョブは、通ったことになる
@@ -65,7 +82,9 @@ jobs:
   # ページを落として読み込み直す。WebKit は Chromium と描き方が違い、縮めて見せている画面を端末の解像度のまま描いてメモリが膨らむことが
   # あるので（PC のツアーでは気づけない）、Playwright の WebKit で流す
   tour:
-    if: github.event_name == 'pull_request'
+    needs: changes
+    # changes が「関わらない」と出たときだけ飛ばす。changes が落ちたときは、飛ばすと確かめずに通ったことになるので、いつもどおり流す
+    if: ${{ github.event_name == 'pull_request' && !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run == 'true') }}
     runs-on: ubuntu-latest
     # ふだんは 2 分ほど。止まったときに既定の 6 時間待たない
     timeout-minutes: 30
