@@ -254,59 +254,52 @@ disable-model-invocation: true
    | 「バージョンを確かめる」で止まる | タグと `package.json` の `version` のずれ。タグを付けたコミットの取り違えか、バージョンを上げる PR がまだマージされていないかのどちらか。7 の手順でタグを付け直し |
    | 「翻訳の補助プログラムを作れませんでした」、または「翻訳の補助プログラムを確かめる」で止まる | チャットの翻訳の補助プログラム（Swift）を作れなかったか、アプリに入らなかった。ランナーの `swiftc`（Xcode）か `native/translate/main.swift` のコンパイルエラーをログで確かめ、直しを PR で入れ、7 の手順で作り直し |
    | `npm ci` やダウンロードの一時的な失敗 | コードを変えずに `gh run rerun <run の id> --failed` で再実行 |
+   | 「Releases の下書きを作る」で GitHub の 5xx | 返事がエラーでも、GitHub 側では下書きができていることがあり、すぐには一覧に出ません。このステップは、作り直す前に残った下書きを消し、もう一度作ります。それでも止まったときは、コードを変えずに `gh run rerun <run の id> --failed` で再実行（再実行でも、作る前に残りを消します）。あとから残りが出てきても、5 のスクリプトが添付で見分けます |
    | そのほか | ログの要点をユーザーに伝えて、どうするか AskUserQuestion で確かめます |
 
 ## 5. 下書きの点検
 
-下書きは `gh release view vX.Y.Z` では見つからないことがあるので、API で見ます。
+点検と公開は、`scripts/release-publish.sh` で行います（cloud の `release-publish.yml` も同じスクリプトを使います）。リリースを手で打った命令で公開しません。
 
-1. 下書きの中身を見ます。
+- **タグで選んで公開しない**（`gh release edit vX.Y.Z --draft=false` など）。同じタグに下書きが 2 つあると、点検していない方が選ばれます（v2.8.1 で、添付の無い方が公開された）
+- **ID で選ぶときも、タグ名を必ず渡す**。渡さないと、GitHub は下書きの仮の名前（`untagged-…`）でタグを作って公開します（v2.8.2 の 1 回目）
+- 公開したリリースは immutable で、添付もタグ名もあとから変えられず、消しても同じタグ名を使い直せません。だから点検は公開の前に、確かめは公開のあとにもします
+
+1. 下書きの様子を見ます。下書きは `gh release view vX.Y.Z` では見つからないことがあるので、API で見ます。
 
    ```bash
-   gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | {draft, name, html_url, assets: [.assets[].name], body}'
+   gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | {id, draft, html_url, assets: [.assets[].name]}'
    ```
 
-2. 確かめること
-   - `draft` が `true`
-   - 添付が次の 5 つ。ファイル名が README のダウンロードの表（`tanacode-<バージョン>-mac-arm64.pkg` など）と合っていること
+   下書きが 2 つ以上あるとき（失敗した試みの残り）も、スクリプトは添付が 5 つそろったものだけを選び、ほかは使わずに知らせます。残りを消すかは、公開のあとでユーザーに聞きます。
+
+2. 変更点（まとめ・「## 変更点」・「## 詳しく」）を、1 の 4 でまとめた形で一時ファイルに書きます。聞かずに毎回足します。
+
+3. スクリプトに渡します。点検がすべて通ったときだけ、説明の先頭に変更点を足して公開し、最新のリリースにします。
+
+   ```bash
+   scripts/release-publish.sh X.Y.Z <変更点のファイル>
+   ```
+
+   スクリプトが確かめること（どれかが合わなければ、何も変えずに `::error::` で止まります）
+   - このタグの公開済みのリリースが無いこと
+   - 添付が次の 5 つそろった下書きが、ちょうど 1 つあること。ファイル名が README のダウンロードの表と合っていること
      - `tanacode-X.Y.Z-mac-arm64.pkg`・`tanacode-X.Y.Z-mac-arm64.zip`
      - `tanacode-X.Y.Z-mac-x64.pkg`・`tanacode-X.Y.Z-mac-x64.zip`
      - `SHA256SUMS.txt`
-   - 説明が `## ダウンロード` から始まり、その後ろに「PR の一覧」と「SHA-256 のチェックサム」が `<details>` で畳んで置かれていること
-   - ダウンロードの表のファイル名が、添付と合っていること
-   - 説明の SHA-256 の表と `SHA256SUMS.txt` の値が一致。次のコマンドで「一致」と出れば問題無し
-
-     ```bash
-     diff <(gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | .body' \
-              | sed -nE 's/^\| `([^`]+)` \| `([0-9a-f]{64})` \|$/\2  \1/p' | sort) \
-          <(gh release download vX.Y.Z -R sny-tanaka/tanacode -p SHA256SUMS.txt -O - | sort) && echo 一致
-     ```
-
-     下書きで `gh release download` が失敗するときは、`SHA256SUMS.txt` の添付の id を 1 で見て、`gh api -H "Accept: application/octet-stream" repos/sny-tanaka/tanacode/releases/assets/<添付の id>` で読みます。
-
-3. 説明に変更点（まとめ・「## 変更点」・「## 詳しく」）を、聞かずに毎回足します。今の説明を一時ファイルに書き出し、いちばん先頭（`## ダウンロード` の前）に、1 の 4 でまとめたものを足してから反映します。ダウンロードの表と、畳んだ PR の一覧・SHA-256 の表は変えません。
-
-   ```bash
-   gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | .body' > <一時ファイル>
-   # 一時ファイルを編集
-   gh release edit vX.Y.Z --notes-file <一時ファイル>
-   ```
+   - 説明が `## ダウンロード` から始まり、ダウンロードの表のファイル名が添付と合うこと
+   - 説明の SHA-256 の表と `SHA256SUMS.txt` の値が一致すること
+   - 公開のあと: タグで引いたリリースが点検した下書き（同じ ID）で、下書きでなく、添付が 5 つあり、最新のリリースがそのタグであること
 
 **cloud では**
 
-- 説明は `mcp__github__list_releases`（`fields` は `tag_name`・`draft`・`html_url`・`body`）で読み、`tag_name` が `vX.Y.Z` のものを見ます。ここで `draft` が `true` か、説明の形が 2 のとおりかを確かめます。
-- 添付の名前と SHA-256 の一致は、MCP では見られません。6 の `release-publish.yml` が、公開の前に同じ点検をします（合わなければ何も変えずに止まります）。
-- 3 の変更点は、ここでは書き込まず、6 で `release-publish.yml` に渡します。
+- 下書きは `mcp__github__list_releases`（`fields` は `id`・`tag_name`・`draft`・`html_url`）で読み、`tag_name` が `vX.Y.Z` のものを見ます。
+- 点検と公開は、6 で `release-publish.yml` が `scripts/release-publish.sh` で行います。変更点は、ここでは書き込まず、6 で渡します。
 
 ## 6. 公開
 
-1. 5 の点検がすべて通っていれば、確認を挟まず公開します。期待と違うものがあれば、公開せずに止めて、結果と下書きの URL を見せ、AskUserQuestion でどうするか確かめます。
-2. 公開して、最新のリリースにします。
-
-   ```bash
-   gh release edit vX.Y.Z --draft=false --latest
-   ```
-
+1. 5 の 3 のスクリプトが公開まで行います。止まったときは公開されていません。`::error::` の行と下書きの URL を見せ、AskUserQuestion でどうするか確かめます。
+2. スクリプトが「公開を確かめられません」で止まったときは、公開の返事がエラーでも GitHub 側では公開されていることがあります。`gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.name == "vX.Y.Z") | {id, tag_name, draft, assets: [.assets[].name]}'` で、どのリリースがどの状態かを見て、ユーザーに伝えます（公開済みのものは直せないので、7 の「公開したあと」）。
 3. 新しいバージョンになったか確かめます。
 
    ```bash
@@ -335,7 +328,7 @@ disable-model-invocation: true
    | `ref` | `develop` |
    | `inputs` | `{"version": "X.Y.Z", "notes": "<1 の 4 でまとめた変更点（Markdown）>"}` |
 
-   - ワークフローは、下書きであること・添付の 5 つ・説明が `## ダウンロード` から始まること・ダウンロードの表のファイル名・SHA-256 の一致を確かめてから、`notes` を先頭に足して公開し、最新のリリースにします。
+   - ワークフローは、5 の 3 と同じスクリプト（`scripts/release-publish.sh`）で点検し、`notes` を先頭に足して公開し、最新のリリースにします。
    - どれかが合わなければ、何も変えずに止まります。ログの `::error::` の行を見て、公開せずにユーザーに伝え、AskUserQuestion でどうするか確かめます。
 2. 4 と同じ要領で run を見守ります（1 分ほどで終わります）。
 3. `mcp__github__get_latest_release` の `tag_name` が `vX.Y.Z` で、本文の先頭に変更点が入っていれば公開は完了。shields.io のバッジは `curl` で 3 と同じく確かめます。
@@ -361,8 +354,8 @@ disable-model-invocation: true
   git push origin :refs/tags/vX.Y.Z
   ```
 
-  失敗した run が作りかけの下書きを残していると、次の run の `gh release create` が止まります。5 の 1 のコマンドで下書きが残っていないか確かめ、残っていれば AskUserQuestion で確かめてから `gh release delete vX.Y.Z -R sny-tanaka/tanacode --yes` で消します（タグは別に消します）。
-- **cloud で公開する前**: タグと下書きは、cloud からは消せません。ユーザーに、手元で `git push origin :refs/tags/vX.Y.Z` を実行し、残った下書きを GitHub の Releases の画面で消してもらいます（どちらも AskUserQuestion で確かめてから頼みます）。消えたことを `git ls-remote --tags origin vX.Y.Z` と `mcp__github__list_releases` で確かめ、直しを PR で入れてから、3 の「cloud では」で起動し直します。
+  失敗した run が残した作りかけの下書きは、次の run の「Releases の下書きを作る」が、作る前に消します（このタグの下書きは、このワークフローしか作らないため）。
+- **cloud で公開する前**: タグと下書きは、cloud からは消せません。ユーザーに、手元で `git push origin :refs/tags/vX.Y.Z` を実行してもらいます（AskUserQuestion で確かめてから頼みます。残った下書きは、次の run が作る前に消します）。消えたことを `git ls-remote --tags origin vX.Y.Z` で確かめ、直しを PR で入れてから、3 の「cloud では」で起動し直します。
 - **公開したあと**: タグは付け直しません。直しを PR で入れ、バージョンを上げて（例: `X.Y.Z` の次の patch）、1 からやり直します。利用者がすでにダウンロードしているためです。
 
 ## 補足
