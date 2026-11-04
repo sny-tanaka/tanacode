@@ -13,6 +13,8 @@
 # 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml。
 # npm ci は、node_modules ごとキャッシュから戻して飛ばす（.github/actions/npm-ci。キャッシュは deps-cache.yml が develop で作る）
 # develop への push では流さない。develop にはルールセットで PR を通したものしか入らず、その PR で同じものを流しているため
+# 文書・スキル・リリースのワークフローだけを変えた PR では、changes のジョブ（.github/actions/changes）が見て、重いジョブを飛ばす。
+# ワークフローごと止めると、必須のチェック（check）が届かずにマージできないので、check は動かして、飛ばしたことを確かめて通す
 name: ci
 
 on:
@@ -20,6 +22,8 @@ on:
 
 permissions:
   contents: read
+  # changes のジョブが、PR で変えたファイルの一覧を読む
+  pull-requests: read
 
 # 新しいものが来たら古いものを取りやめる
 concurrency:
@@ -27,7 +31,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # PR で変えたファイルが、CI の結果に関わらないものだけかを調べる（関わらなければ、下の重いジョブを飛ばす）
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+      - id: changes
+        uses: ./.github/actions/changes
+
   unit:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -47,6 +65,8 @@ jobs:
           overwrite: true
 
   storybook:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -56,6 +76,8 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
 
   cli:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -100,6 +122,8 @@ jobs:
   # macOS のランナー（メモリ 7GB・3 コア）ではメモリをほぼ使い切り、かかる時間も 50 秒〜4 分半とぶれたので、ubuntu（16GB・4 コア）で作る。
   # ビルドの設定に OS で変わるところは無く、electron と node-pty は out/ に入らず外から読むので、ここで作ったものを macOS で .app に詰められる
   build:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -124,6 +148,9 @@ jobs:
   # build を needs で待たずに並べて始め、out/ の要らない準備（npm ci・翻訳の補助・Claude Code）を済ませてから、build を待つ
   # （build の 2 分ほどの間に準備が終わるので、その分だけ早く終わる）
   app:
+    # 待つのは changes だけ（10 秒ほど）。build は待たずに並べて始める
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -256,14 +283,23 @@ jobs:
   # カバレッジのファイルは、測ったランナー（ubuntu と macOS）の絶対パスで入っているが、
   # scripts/coverage-report.mjs と scripts/unpressed.mjs が src からのパスで突き合わせるので、ここ（ubuntu）で合わせられる
   check:
-    needs: [unit, storybook, cli, build, app]
+    needs: [changes, unit, storybook, cli, build, app]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      # changes が通って「関わらない」と出たときだけ、重いジョブが飛んだ（skipped）のを通ったことにする。
+      # changes が落ちたときは、ほかのジョブも飛ぶので、ここで落とす
       - name: ほかのジョブが全部通ったか確かめる
+        id: results
         env:
           RESULTS: ${{ toJSON(needs) }}
+          RUN: ${{ needs.changes.outputs.run }}
         run: |
+          if [ "$(echo "$RESULTS" | jq -r .changes.result)" = success ] && [ "$RUN" = false ]; then
+            echo "CI の結果に関わらないファイルだけの変更なので、重いジョブは飛ばしました"
+            echo skipped=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
           if [ -n "$failed" ]; then
             echo "::error::通っていないジョブがあります: $(echo "$failed" | paste -sd ' ' -)"
@@ -271,22 +307,28 @@ jobs:
           fi
       # マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
       - uses: actions/checkout@v7
+        if: steps.results.outputs.skipped != 'true'
         with:
           fetch-depth: 2
       - uses: ./.github/actions/npm-ci
+        if: steps.results.outputs.skipped != 'true'
       # 測ったカバレッジ（coverage-unit・coverage-cli・E2E は分割ごとに coverage-e2e-1 …）を、まとめて受け取り、
       # coverage/unit/・coverage/cli/・coverage/e2e-1/ … に置く（coverage:report と coverage:unpressed は、coverage/ の下にあるものを全部合わせる）
       - uses: actions/download-artifact@v8
+        if: steps.results.outputs.skipped != 'true'
         with:
           pattern: coverage-*
           path: coverage/
       - name: カバレッジを測ったものごとのフォルダに置く
+        if: steps.results.outputs.skipped != 'true'
         run: for dir in coverage/coverage-*; do mv "$dir" "coverage/${dir#coverage/coverage-}"; done
       # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる
+        if: steps.results.outputs.skipped != 'true'
         run: npm run coverage:report -- --diff HEAD^1
       # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
       # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
       - name: テストが押していないボタン・入力が無いか確かめる
+        if: steps.results.outputs.skipped != 'true'
         run: npm run coverage:unpressed -- --max 0

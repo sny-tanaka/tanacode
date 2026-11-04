@@ -220,6 +220,11 @@ PR で、次のものを流します。develop への push では流しません
   - `npm ci` は、ubuntu のジョブと `cli` では、`node_modules` ごとキャッシュから戻して飛ばします（`.github/actions/npm-ci`。キーは OS・CPU・Node のメジャーバージョン・`package-lock.json`）。PR で作ったキャッシュはその PR からしか読めないので、develop で作っておきます（`deps-cache.yml`。依存が変わって develop に入ったときと、週 1 回）。`app` の台は Electron の本体も要り、準備は `build` の間に終わるので、`node_modules` はキャッシュしません。翻訳の補助プログラムは、元のファイル（`native/translate`・作るスクリプト）とランナーのイメージ（Xcode）が同じなら、前に作ったものを使います（作るのに 15〜50 秒かかり、遅い台では `build` の待ちに隠れきらなかったため。これも `deps-cache.yml` が develop で作ります）。`tour` でスマホのツアーに使う WebKit の依存（apt の `.deb`。185 個・140MB ほど）も、`deps-cache.yml` が develop で落としてキャッシュしておき、`tour` はそれを apt のキャッシュ（`/var/cache/apt/archives`）に戻してから入れます。ランナーの Ubuntu のミラーが極端に遅いことがあり、落としていると打ち切り（4 分を 2 回）に当たって落ちたためです。キーはランナーのイメージと Playwright のバージョンで、イメージが変わってまだ作られていないときは、前のイメージのものを戻します（バージョンの違う `.deb` だけをミラーから落とします）。ミラーから落とすときは、apt に任せる前に `scripts/prefetch-webkit-deps.sh` が、16 個を並べて、遅い（10 秒続けて 100KB/s を下回る）ミラーから次のミラー（`archive.ubuntu.com`・`mirrors.edge.kernel.org`）へ途中から切り替えながら落とします。apt は 1 つのミラーから 1 つずつ落とすので、つながり 1 つが 40KB/s ほどの日には、キャッシュを作る側も 20 分で落としきれなかったためです。
   - 同じものは 1 回だけ流します。アプリの JS は、カバレッジを測るためのソースマップ付きのビルドを 1 回だけ作り、そこから `.app` を作って E2E を流します（`.map` は `.app` に入りません）。デモのサイトも、PR では待ち時間 0 のビルド 1 回で、PC とスマホのツアーを流します。
   - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、どれか 1 つでも通っていなければ失敗にします。
+- CI の結果に関わらないファイルだけを変えた PR では、重いジョブ（`ci.yml` の `unit`・`storybook`・`cli`・`build`・`app` と、`demo-site.yml` の `tour`）を飛ばします。どちらのワークフローも、はじめに `changes` のジョブ（`.github/actions/changes`）が PR で変えたファイルの一覧を API で読み、すべて関わらないものなら飛ばします。
+  - 関わらないものは、`docs/`・`.claude/`（スキル）・いちばん上の Markdown（README・GUIDE・CONTRIBUTING など）・PR では動かないワークフロー（`release.yml`・`release-publish.yml`・`homebrew.yml`・`claude-code-check.yml`・`mutation.yml`）・`scripts/release-publish.sh` だけ。一覧は `.github/actions/changes/action.yml` の `ignored`。アプリ・テスト・ビルドが読むものは入れません（入れ忘れても CI が余分に動くだけですが、入れすぎると確かめ漏れになります）。`ci.yml`・`demo-site.yml`・アクションを変えた PR では、すべて流します。
+  - ワークフローごと `paths-ignore` で止めないのは、必須のチェック（`check`・`build`・`tour`）が届かずに、PR がマージできなくなるためです。条件で飛ばしたジョブは、必須のチェックでは通ったことになります。
+  - `check` は、`changes` が通って「関わらない」と出たときだけ、飛ばしたジョブを通ったことにします（カバレッジのまとめも飛ばす）。`changes` が落ちたときは失敗にします。`tour` は、`changes` が落ちたときは飛ばさずに流します（飛ばすと、確かめずに通ったことになるため）。
+  - コードスキャン（CodeQL の default setup）は GitHub の設定で動くので、この仕組みの外です。
 
 ### テストの部品
 

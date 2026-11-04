@@ -1,0 +1,54 @@
+# PR で変えたファイルが、CI の結果に関わらないもの（下の ignored の一覧）だけかを調べる。ci.yml と demo-site.yml の重いジョブを飛ばすのに使う。
+# ワークフローごと paths-ignore で止めると、develop のルールセットの必須のチェック（check・build・tour）が届かずにマージできなくなるので、
+# ワークフローは動かしたまま、ジョブを飛ばす（条件で飛ばしたジョブは、必須のチェックでは通ったことになる）。
+# 一覧は、アプリ・テスト・ビルドが読まないものだけ。迷うものは入れない（入れ忘れても CI が余分に動くだけで、入れすぎると確かめ漏れになる）
+name: CI の要否
+description: PR で変えたファイルが、CI の結果に関わらないものだけなら run に false を返す（PR 以外では true）
+outputs:
+  run:
+    description: CI の重いジョブを動かすか（true / false）
+    value: ${{ steps.check.outputs.run }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        ignored() {
+          case "$1" in
+            # 文書（使う人向け・開発者向け・Claude Code のイベントの調べ）と、Claude Code のスキル（手順書）
+            docs/* | .claude/*) return 0 ;;
+            # リリースと、ほかの定期の確かめのワークフロー（PR の CI では動かない）。ci.yml・demo-site.yml・アクションは含めない
+            .github/workflows/release.yml | .github/workflows/release-publish.yml | .github/workflows/homebrew.yml) return 0 ;;
+            .github/workflows/claude-code-check.yml | .github/workflows/mutation.yml) return 0 ;;
+            # リリースの点検と公開のスクリプト（/release と release-publish.yml だけが使う）
+            scripts/release-publish.sh) return 0 ;;
+            # ほかのフォルダの中のものは、関わるものとして扱う
+            */*) return 1 ;;
+            # いちばん上の Markdown（README・GUIDE・CONTRIBUTING・SECURITY・AGENTS など）
+            *.md) return 0 ;;
+            *) return 1 ;;
+          esac
+        }
+        if [ -z "$PR" ]; then
+          echo "PR ではないので、CI を動かします"
+          echo run=true >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # 名前を変えたファイルは、前の名前も見る（アプリのファイルを docs/ へ移したときも、CI を動かす）
+        files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
+        [ -n "$files" ] || { echo "::error::PR #$PR の変えたファイルを読めませんでした"; exit 1; }
+        run=false
+        while read -r file; do
+          if ignored "$file"; then
+            echo "関わらない: $file"
+          else
+            echo "関わる: $file"
+            run=true
+          fi
+        done <<< "$files"
+        echo "CI の重いジョブを動かすか: $run"
+        echo "run=$run" >> "$GITHUB_OUTPUT"
