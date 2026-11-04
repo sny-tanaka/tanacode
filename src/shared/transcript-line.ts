@@ -98,6 +98,8 @@ const IGNORED_TYPES = new Set([
   'fork-context-ref',
   // セッションで使ったツールの名前の控え（2.1.311 から。使ったツールの集まりが増えたときだけ、名前の一覧を書く）
   'tools-used',
+  // セッションの持ち主（アカウントと組織の ID）の控え（2.1.318 から。セッションを開き直すときに、mode などと並んで書く）
+  'session-owner',
   // API の呼び出しの控え（2.1.301 から。前の応答と発言が、tool_use・tool_result も含めて、toolUseResult なしでもう一度入る。
   // 会話の行と読み違えると、裏のタスクの追跡などが壊れる）
   'api-request',
