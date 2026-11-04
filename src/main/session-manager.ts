@@ -53,6 +53,7 @@ import { tanacodeToolLabel } from '@shared/tool-label';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
+import { mcpServersOf, type SessionMcp } from '@shared/mcp-status';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -1708,6 +1709,20 @@ export class SessionManager {
     if (rt) return rt.context.current();
     const record = this.store.get(id);
     return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd) : { items: [] };
+  }
+
+  // 登録されている MCP サーバー（サイドパネルの「MCP」。見ているときだけ取りに来る）。Claude Code に mcp_status を聞く。
+  // 動いていないセッションと、ターミナルモード（制御の要求を送れない）は、聞かずにそう返す
+  async mcpStatus(id: string): Promise<SessionMcp> {
+    const rt = this.runtimes.get(id);
+    const client = rt?.process?.client;
+    if (!rt || !client) return { state: 'stopped' };
+    if (rt.terminal || rt.switching) return { state: 'terminal' };
+    try {
+      return { state: 'ready', servers: mcpServersOf(await client.request('mcp_status')) };
+    } catch (error) {
+      return { state: 'failed', message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   // 今の Claude Code の会話の ID（/clear で新しい会話になると変わる）。知らないセッションは null

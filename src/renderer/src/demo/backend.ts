@@ -35,6 +35,7 @@ import type { BashTask, TaskRef } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
 import type { ClaudeAccount } from '@shared/account';
 import { DEFAULT_PROFILE_ID, PROFILE_COLORS } from '@shared/profile';
+import { PERMISSION_SERVERS } from '@shared/tool-permissions';
 import type { WorkflowRun } from '@shared/workflow';
 
 // デモのサイトと Storybook の紹介画像用の、アプリの API（window.tanacode）の作り物。
@@ -549,6 +550,23 @@ export class DemoBackend {
         onChanged: (l) => this.ch.knowledge.on(l),
       },
       context: { get: (id) => ok({ items: [...s(id).context] }) },
+      // MCP: デモでは、tanacode が足すサーバーがつながっていることにする
+      mcp: {
+        status: () =>
+          ok({
+            state: 'ready' as const,
+            servers: PERMISSION_SERVERS.map(({ def }) => ({
+              name: def.name,
+              status: 'connected',
+              scope: 'tanacode',
+              serverName: def.name,
+              version: null,
+              transport: 'stdio',
+              error: null,
+              tools: def.tools.map((tool) => ({ name: tool.name, readOnly: false, destructive: false })),
+            })),
+          }),
+      },
       // 最適化圧縮。流れ（仕上げ → 会話を消す → 再開）は、台本が進める（onCompactStart）
       compact: {
         start: (id) => {

@@ -1302,6 +1302,8 @@
       "checklistTitle": "Checklist (a list you and Claude view and edit together; it survives compaction)",
       "contextLabel": "Context",
       "contextTitle": "Context (what's in the current conversation and how much space it takes)",
+      "mcpLabel": "MCP",
+      "mcpTitle": "MCP (servers registered in the session)",
       "browserTip": "Toggle browser\nOpen the page you're developing, pick an element, and have Claude fix it",
       "browser": "Browser",
       "terminalTip": "Toggle terminal (⌘J)",
@@ -1309,6 +1311,7 @@
       "tasksEmpty": "Background tasks run in the session will appear here",
       "checklistEmpty": "The session's checklist will appear here",
       "contextEmpty": "What's in the session's context will appear here",
+      "mcpEmpty": "MCP servers registered in the session will appear here",
       "addFolder": "Add Folder",
       "addFolderTip": "Add folder\nShows it in the Explorer and lets Claude Code work in it too",
       "addFolderFailed": "Couldn't add the folder: {error}",
@@ -2201,6 +2204,39 @@
       "title": "Tasks",
       "running": "{count} running",
       "more": "{count} more"
+    }
+  },
+  "mcp": {
+    "panel": {
+      "loading": "Loading…",
+      "stopped": "Claude Code isn't running, so the MCP servers can't be checked. Send a message to start it",
+      "terminal": "Can't be shown in terminal mode. Switch back to the chat to see it (in the terminal, use /mcp)",
+      "failed": "Couldn't check the MCP servers: {message}",
+      "count": "{count} servers · {connected} connected",
+      "reload": "Refresh",
+      "empty": "No MCP servers are registered in this session",
+      "tools": "{count} tools",
+      "noTools": "No tools",
+      "readOnly": "Read-only",
+      "destructive": "Destructive",
+      "note": "The MCP servers of this session, as reported by Claude Code. To add, remove or authenticate one, use /mcp in terminal mode or edit the settings files",
+      "count_one": "{count} server · {connected} connected",
+      "tools_one": "{count} tool"
+    },
+    "status": {
+      "connected": "Connected",
+      "pending": "Connecting",
+      "needsAuth": "Needs auth",
+      "failed": "Failed",
+      "disabled": "Disabled"
+    },
+    "scope": {
+      "tanacode": "tanacode",
+      "claudeai": "claude.ai",
+      "user": "User",
+      "project": "Project",
+      "local": "Local",
+      "plugin": "Plugin"
     }
   },
   "context": {
