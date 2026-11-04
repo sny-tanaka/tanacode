@@ -27,6 +27,7 @@ import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
 import type { McpEnabled, ToolPermission } from './tool-permissions';
 import type { McpToolGroup } from './mcp-tools';
+import type { SessionMcp } from './mcp-status';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
 
@@ -159,6 +160,7 @@ export const IpcChannel = {
   TasksStop: 'tasks:stop',
   KnowledgeGet: 'knowledge:get',
   ContextGet: 'context:get',
+  McpStatusGet: 'mcp:status',
   CompactStart: 'compact:start',
   CompactGet: 'compact:get',
   CompactChanged: 'compact:changed',
@@ -829,6 +831,10 @@ export type TanacodeApi = {
   context: {
     get(sessionId: string): Promise<SessionContext>;
   };
+  // セッションに登録されている MCP サーバー（サイドパネルの「MCP」）
+  mcp: {
+    status(sessionId: string): Promise<SessionMcp>;
+  };
   tasks: {
     // バックグラウンドで動かした Bash
     bash(sessionId: string): Promise<BashTask[]>;
@@ -1100,6 +1106,7 @@ export type IpcInvoke = {
   [IpcChannel.TranslateOpenSettings]: Api['translate']['openSettings'];
   [IpcChannel.KnowledgeGet]: Api['knowledge']['get'];
   [IpcChannel.ContextGet]: Api['context']['get'];
+  [IpcChannel.McpStatusGet]: Api['mcp']['status'];
   [IpcChannel.CompactStart]: Api['compact']['start'];
   [IpcChannel.CompactGet]: Api['compact']['get'];
   [IpcChannel.TasksBash]: Api['tasks']['bash'];

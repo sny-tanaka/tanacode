@@ -443,6 +443,7 @@ const SessionManager = fakeClass('SessionManager', {
   bashTasks: echo('manager.bashTasks'),
   knowledge: echo('manager.knowledge'),
   context: echo('manager.context'),
+  mcpStatus: echo('manager.mcpStatus'),
   statusLine: echo('manager.statusLine'),
   agentLog: echo('manager.agentLog'),
   stopTask: echo('manager.stopTask'),

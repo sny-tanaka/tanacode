@@ -187,6 +187,9 @@ const api: TanacodeApi = {
   context: {
     get: (sessionId) => invoke(IpcChannel.ContextGet, sessionId),
   },
+  mcp: {
+    status: (sessionId) => invoke(IpcChannel.McpStatusGet, sessionId),
+  },
   tasks: {
     bash: (sessionId) => invoke(IpcChannel.TasksBash, sessionId),
     onBashChanged: (listener) => subscribe(IpcChannel.TasksBashChanged, listener),

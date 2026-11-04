@@ -816,6 +816,7 @@ function registerIpc(): void {
   handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
   handle(IpcChannel.KnowledgeGet, (e, id: string) => P(e).manager.knowledge(id));
   handle(IpcChannel.ContextGet, (e, id: string) => P(e).manager.context(id));
+  handle(IpcChannel.McpStatusGet, (e, id: string) => P(e).manager.mcpStatus(String(id)));
   handle(IpcChannel.CompactStart, (e, id: string) => P(e).compact?.start(String(id)) ?? IDLE_COMPACT_STATUS);
   handle(IpcChannel.CompactGet, (e, id: string) => P(e).compact?.status(String(id)) ?? IDLE_COMPACT_STATUS);
   handle(IpcChannel.SettingsFilesList, (e) => P(e).settingsFiles.list());

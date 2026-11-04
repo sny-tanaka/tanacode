@@ -85,6 +85,15 @@ export const ContextIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// MCP: 2 本の刃のあるプラグと、そこから下へ延びるコード（Claude Code につなぐ外の道具）
+export const McpIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M9.5 3.5v4M14.5 3.5v4" />
+    <path d="M8.5 7.5h7a1.5 1.5 0 0 1 1.5 1.5v2a5 5 0 0 1-10 0V9a1.5 1.5 0 0 1 1.5-1.5z" />
+    <path d="M12 16v5" />
+  </Svg>
+);
+
 // チェックリスト: 板の上に、チェックの付いた行と付いていない行が並ぶ
 export const ChecklistIcon: IconComponent = (p) => (
   <Svg {...p}>

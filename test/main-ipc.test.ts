@@ -177,6 +177,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.TasksStop, ['s1', { kind: 'bash', id: 'b1' }], call('manager.stopTask', 's1', { kind: 'bash', id: 'b1' })],
     [IpcChannel.KnowledgeGet, ['s1'], call('manager.knowledge', 's1')],
     [IpcChannel.ContextGet, ['s1'], call('manager.context', 's1')],
+    [IpcChannel.McpStatusGet, ['s1'], call('manager.mcpStatus', 's1')],
     [IpcChannel.StatusLineGet, ['s1'], call('manager.statusLine', 's1')],
     [IpcChannel.ChatImage, ['img-key'], call('imageOf', 'img-key')],
     [IpcChannel.ScheduledList, [], call('scheduled.list')],

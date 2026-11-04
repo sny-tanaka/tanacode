@@ -44,10 +44,11 @@ import { StatusBar } from './StatusBar';
 import { useClaudeVersion, useVerifiedClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
+import { SessionMcpPanel } from './mcp/McpPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Busy } from './layout/Busy';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
-import { AddIcon, BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, IconButton, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
+import { AddIcon, BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, IconButton, McpIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
 import { CardPane } from './checklist/CardPane';
 import { ChecklistPanel } from './checklist/ChecklistPanel';
 import { useOpenChecklistCard, type CardTarget } from './checklist/openCard';
@@ -83,7 +84,7 @@ const NO_FOLDERS: string[] = [];
 // ウォークスルーを始めてからこの間に届いたファイルの変更は、始める前の Claude の書き込みとみなす（変更の知らせは少し遅れて届く）
 const WALK_STALE_GRACE_MS = 3000;
 
-type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context';
+type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context' | 'mcp';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）。名前（パネルの上の見出し）と説明（ツールチップ）は panelLabel・panelTitle で読む
 const SIDE_PANELS: { id: SidePanel; Icon: IconComponent }[] = [
   { id: 'files', Icon: FilesIcon },
@@ -92,6 +93,7 @@ const SIDE_PANELS: { id: SidePanel; Icon: IconComponent }[] = [
   { id: 'tasks', Icon: TasksIcon },
   { id: 'checklist', Icon: ChecklistIcon },
   { id: 'context', Icon: ContextIcon },
+  { id: 'mcp', Icon: McpIcon },
 ];
 const panelLabel = (id: SidePanel) => t(`app.sidePanel.${id}Label`);
 const panelTitle = (id: SidePanel) => t(`app.sidePanel.${id}Title`);
@@ -1242,6 +1244,13 @@ export function App() {
                   />
                 ) : (
                   <div className="scm-empty">{t('app.sidePanel.contextEmpty')}</div>
+                )}
+              </div>
+              <div hidden={shownPanel !== 'mcp'} className="side-body">
+                {selected ? (
+                  <SessionMcpPanel key={selected.id} sessionId={selected.id} visible={shownPanel === 'mcp'} />
+                ) : (
+                  <div className="scm-empty">{t('app.sidePanel.mcpEmpty')}</div>
                 )}
               </div>
               <div hidden={shownPanel !== 'search'} className="side-body">

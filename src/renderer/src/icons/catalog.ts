@@ -18,6 +18,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('TasksIcon', 'タスク'),
       item('ContextIcon', 'コンテキストの中身'),
       item('ChecklistIcon', 'チェックリスト'),
+      item('McpIcon', 'セッションに登録されている MCP サーバー'),
     ],
   },
   {
