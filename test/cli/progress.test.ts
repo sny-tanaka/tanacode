@@ -67,7 +67,10 @@ describe(`Claude Code ${version} の作業中の表示（判定待ち・圧縮�
       for (const text of [FILL, BLOCKED, COMPACTED]) if (prompt.includes(text)) return say(`${text}への返事`);
       return null;
     };
-    run = new ClaudeRun(baseUrl, { mode: 'auto', checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' } });
+    // Claude Code 2.1.319 から、auto モードの判定は既定でサーバー側（API の応答に判定が付いてくる）になり、モックの API では返せない
+    // （結果が無いと、手元の判定に回さずに断る。デバッグのログの server_no_result）。手元の判定の呼び出しを待つ間の表示を確かめるので、
+    // サーバー側の判定を切る（2.1.318 にもある変数で、効きは同じ）
+    run = new ClaudeRun(baseUrl, { mode: 'auto', env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' }, checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' } });
     await run.open();
   });
 
