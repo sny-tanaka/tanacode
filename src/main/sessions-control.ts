@@ -362,6 +362,8 @@ export class SessionsControl {
           return await this.startSession(caller, args, signal);
         case 'send_message':
           return await this.sendMessage(caller, args);
+        case 'rename_session':
+          return this.renameSession(caller, args);
         case 'answer_question':
           return await this.answerQuestion(caller, args);
         case 'answer_permission':
@@ -622,13 +624,20 @@ export class SessionsControl {
     if (state === 'exited' && child.terminal) {
       throw new ToolError(`${who} is stopped in terminal mode: it starts again in its Claude Code screen, where only the user can type, so it was not started and the message was not sent (and not kept for later). Tell the user, or send it again once the user has switched it back to the chat.`);
     }
+    // 名前は、送ると決まってから変える（断った指示の名前にしない）。送るのに失敗しても、名前は変えたまま（結果の name で伝える）
+    const name = this.renameArg(args.name);
+    if (name) host.rename(child.id, name);
+    const renamed = name ? { name } : {};
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ。送れなかった理由は、画面の言語の文でなく英語で返す
     if (state === 'idle' || state === 'background') {
       await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS, { nextStep }).catch((error: unknown) => {
-        throw error instanceof SendError ? new ToolError(`${who}: the message was not sent because ${SEND_FAILURE[error.reason]}. Check it with get_session, and send it again if needed.`) : error;
+        const renamedNote = name ? ` (It was renamed to "${name}".)` : '';
+        throw error instanceof SendError
+          ? new ToolError(`${who}: the message was not sent because ${SEND_FAILURE[error.reason]}. Check it with get_session, and send it again if needed.${renamedNote}`)
+          : error;
       });
-      return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Sent.' });
+      return json({ session_id: child.id, ...renamed, state: host.stateOf(child.id), note: 'Sent.' });
     }
     // 作業中・起動中・止まっている子にも、待たずに返す。起動中・止まっている子には、起動が終わるまでアプリが預かってから渡す。
     // 作業中の子には、すぐ渡す。既定（after_turn）は priority: later で渡し、Claude Code が今のターンの終わりまで順番待ちにする
@@ -645,6 +654,7 @@ export class SessionsControl {
     });
     return json({
       session_id: child.id,
+      ...renamed,
       state: host.stateOf(child.id),
       note:
         state === 'exited'
@@ -655,6 +665,23 @@ export class SessionsControl {
               ? `The child is working, so the instruction was queued. ${NEXT_STEP_NOTE} ${QUEUED_NOTE}`
               : `The child is working, so the instruction will arrive as soon as it finishes its current work (queued). ${QUEUED_NOTE}`,
     });
+  }
+
+  // 一覧に出す名前を変える（画面で名前を変えたときと同じ）。子の作業には何も届かないので、どの状態でも変える
+  private renameSession(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    const child = this.resolve(caller, args.session_id, true);
+    const name = this.renameArg(args.name);
+    if (!name) throw new ToolError('name (the new name) is empty.');
+    const before = nameOf(child);
+    this.deps.host.rename(child.id, name);
+    return json({ session_id: child.id, name, note: `Renamed "${before}" to "${name}".` });
+  }
+
+  // 新しい名前。省いた（undefined）なら null。文字列でなければ断る
+  private renameArg(raw: unknown): string | null {
+    if (raw === undefined) return null;
+    if (typeof raw !== 'string') throw new ToolError('Pass name as a string.');
+    return raw.trim() || null;
   }
 
   private async answerQuestion(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
