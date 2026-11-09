@@ -104,6 +104,7 @@ describe('中継と起動の引数', () => {
     expect(allowedSessionToolIds()).toContain(sessionToolId('answer_question'));
     expect(allowedSessionToolIds()).toContain(sessionToolId('end_session'));
     expect(allowedSessionToolIds()).toContain(sessionToolId('configure_session'));
+    expect(allowedSessionToolIds()).toContain(sessionToolId('rename_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('start_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
@@ -804,6 +805,35 @@ describe('ツールの実行（SessionsControl）', () => {
     await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'テストも書いて' });
     expect(host.opened).toEqual([CHILD]);
     expect(host.submitted).toEqual([{ id: CHILD, text: parentMessageText(PARENT, 'テストも書いて') }]);
+  });
+
+  it('send_message: name を渡すと、指示と一緒に子の名前も変える。断った指示では変えない', async () => {
+    host.set(CHILD, 'permission');
+    await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', name: '使われない名前' });
+    expect(host.renamed).toEqual([]);
+    host.set(CHILD, 'working');
+    const queued = jsonOf<{ name: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '次は設定画面を', name: ' 設定画面 ' }));
+    expect(queued.name).toBe('設定画面');
+    host.set(CHILD, 'idle');
+    const sent = jsonOf<{ name?: string; note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
+    expect(sent).toMatchObject({ note: 'Sent.' });
+    expect(sent.name).toBeUndefined();
+    expect(host.renamed).toEqual([{ id: CHILD, title: '設定画面' }]);
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x', name: 3 }))).toBe('Pass name as a string.');
+  });
+
+  it('rename_session: 自分の子の名前を、作業中でも変える。ほかのセッションと空の名前は断る', async () => {
+    host.set(CHILD, 'working');
+    const result = await control.handle(PARENT, 'rename_session', { session_id: CHILD, name: 'ログイン画面の修正' });
+    expect(result.isError).toBeFalsy();
+    expect(jsonOf(result)).toMatchObject({ session_id: CHILD, name: 'ログイン画面の修正' });
+    expect(host.renamed).toEqual([{ id: CHILD, title: 'ログイン画面の修正' }]);
+    // 子の作業には何も届かない
+    expect(host.submitted).toEqual([]);
+    expect(textOf(await control.handle(PARENT, 'rename_session', { session_id: PEER, name: 'x' }))).toContain('is not a child session');
+    expect(textOf(await control.handle(PARENT, 'rename_session', { session_id: CHILD, name: '  ' }))).toBe('name (the new name) is empty.');
+    expect(host.renamed).toHaveLength(1);
+    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('rename_session');
   });
 
   it('answer_question: 許可の確認には答えない。質問が出ていなければ答えない', async () => {
