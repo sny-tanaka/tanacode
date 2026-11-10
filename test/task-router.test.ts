@@ -60,7 +60,7 @@ const BASH_NOTICE = [
 function fakes() {
   const workflows = { add: vi.fn(), notified: vi.fn() };
   const subagents = { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn(), handback: vi.fn() };
-  const bashTasks = { start: vi.fn(), startMonitor: vi.fn(), event: vi.fn(), notified: vi.fn() };
+  const bashTasks = { start: vi.fn(), startMonitor: vi.fn(), event: vi.fn(), notified: vi.fn(), killed: vi.fn() };
   const router = new TaskRouter({
     workflows: workflows as unknown as WorkflowTracker,
     subagents: subagents as unknown as SubagentTracker,
@@ -189,6 +189,24 @@ describe('TaskRouter', () => {
     expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_mon', 'completed', null, '/tmp/claude-0/-work-app/s1/tasks/bus48501k.output');
     // 終わりの知らせの中身は、途中の知らせとして足さない（出力ファイルに入っている）
     expect(bashTasks.event).toHaveBeenCalledTimes(1);
+  });
+
+  it('TaskStop で止めたら、結果の行で止めたタスクの ID を渡す。失敗した結果・控え（api-request-blob）からは渡さない', () => {
+    const { router, bashTasks } = fakes();
+    // 2.1.319 の形。Monitor は止めても完了通知が届かない
+    router.track(assistant([toolUse('toolu_stop', 'TaskStop', { task_id: 'bg1yjw6nt' })]), false);
+    const toolUseResult = { message: 'Successfully stopped task: bg1yjw6nt (tail -f a.log)', task_id: 'bg1yjw6nt', task_type: 'local_bash', command: 'tail -f a.log' };
+    router.track(result('toolu_stop', JSON.stringify(toolUseResult), toolUseResult), false);
+    expect(bashTasks.killed).toHaveBeenCalledTimes(1);
+    expect(bashTasks.killed).toHaveBeenLastCalledWith('bg1yjw6nt');
+    // 控えに書き直された同じ呼び出しと結果（toolUseResult なし）では、もう一度渡さない
+    feed(router, blob('assistant', [toolUse('toolu_stop', 'TaskStop', { task_id: 'bg1yjw6nt' })]));
+    feed(router, blob('user', [resultBlock('toolu_stop', JSON.stringify(toolUseResult))]));
+    expect(bashTasks.killed).toHaveBeenCalledTimes(1);
+    // 止められなかったもの
+    router.track(assistant([toolUse('toolu_stop2', 'TaskStop', { task_id: 'bnone' })]), false);
+    router.track(result('toolu_stop2', 'No task found with ID: bnone', undefined, true), false);
+    expect(bashTasks.killed).toHaveBeenCalledTimes(1);
   });
 
   it('サブエージェントの報告（SubagentHandback）を、順番待ちの行・待機中の行・作業中の差し込みのどれからも渡す', () => {

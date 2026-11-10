@@ -195,6 +195,25 @@ describe('BashTaskTracker の起動・完了・出力', () => {
     expect(find('toolu_ng')).toBeUndefined();
   });
 
+  it('TaskStop で止めた Monitor は、完了通知が無くても止められたことにする。終わったもの・知らないものは変えない', async () => {
+    tracker.startMonitor('toolu_mon', { command: 'tail -f a.log', description: '見張り' }, { taskId: 'bmon', timeoutMs: 1800000, persistent: false }, false);
+    tracker.event('bmon', 'Importing a');
+    tracker.killed('bother');
+    tracker.killed('bmon');
+    await waitFor(() => find('toolu_mon')?.state === 'killed');
+    expect(find('toolu_mon')).toMatchObject({ state: 'killed', output: 'Importing a\n' });
+    expect(find('toolu_mon')?.endedAt).toEqual(expect.any(Number));
+    expect((tracker as unknown as { timer: unknown }).timer).toBeNull();
+    // 先に終わっていたもの（完了通知のあと）は、そのまま
+    const file = join(dir!, 'b1.output');
+    writeFileSync(file, 'done\n\n[exited with code 0]\n');
+    tracker.start('toolu_bg', { command: 'x' }, { backgroundTaskId: 'b1' }, text(file), false);
+    await waitFor(() => find('toolu_bg')?.state === 'completed');
+    tracker.killed('b1');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(find('toolu_bg')).toMatchObject({ state: 'completed', exitCode: 0 });
+  });
+
   it('過去の会話から読んだものは止まったものとして加え、時刻は分からない。完了通知が来ても終わりの時刻は付けない', async () => {
     const file = join(dir!, 'old.output');
     writeFileSync(file, 'old\n');

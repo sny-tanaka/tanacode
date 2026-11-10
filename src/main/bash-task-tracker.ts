@@ -89,6 +89,22 @@ export class BashTaskTracker {
     });
   }
 
+  // Claude が TaskStop で止めた（結果が成功だったもの）。Monitor は止めても完了通知が届かず、出力ファイルの場所も分からないので
+  // （終わりの「[killed]」を読めない。2.1.319）、ここで終わったことにする。Bash は出力ファイルの「[killed]」でも分かるが、同じに扱う。
+  // 出力ファイルが分かっていれば、最後まで読んでから終わったことにする
+  killed(taskId: string): void {
+    const t = [...this.tasks.values()].find((t) => t.task.taskId === taskId);
+    if (!t || t.task.state !== 'running') return;
+    const killedAt = Date.now();
+    t.size = -1;
+    void this.poll().then(() => {
+      if (t.task.state !== 'running') return;
+      t.task = { ...t.task, state: 'killed', endedAt: t.task.endedAt ?? (t.task.startedAt ? killedAt : null) };
+      if (![...this.tasks.values()].some((t) => t.task.state === 'running')) this.stopTimer();
+      this.onChange(this.all());
+    });
+  }
+
   stopRunning(): void {
     let changed = false;
     for (const t of this.tasks.values()) {
