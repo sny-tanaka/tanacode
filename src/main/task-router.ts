@@ -27,6 +27,8 @@ export class TaskRouter {
   // Bash は run_in_background のほか、時間切れ（timeout）で Claude Code が裏に回すこともあり、どちらも結果に backgroundTaskId が付く
   // （時間切れのものは input に run_in_background が無い。2.1.302）。Monitor は、見張りを始めると結果に taskId が付く
   private readonly shellCalls = new Map<string, { tool: 'Bash' | 'Monitor'; input: Record<string, unknown> }>();
+  // TaskStop の tool_use ID（結果の行が来たら捨てる）。止めたことは結果の行で知る（Monitor は止めても完了通知が届かない。2.1.319）
+  private readonly taskStopIds = new Set<string>();
 
   constructor(private readonly targets: Targets) {}
 
@@ -58,6 +60,11 @@ export class TaskRouter {
       }
       if (block.type === 'tool_use' && (block.name === 'Bash' || block.name === 'Monitor') && block.id && block.input) {
         this.shellCalls.set(block.id, { tool: block.name, input: block.input });
+      }
+      if (block.type === 'tool_use' && block.name === 'TaskStop' && block.id) this.taskStopIds.add(block.id);
+      if (block.type === 'tool_result' && block.tool_use_id && this.taskStopIds.delete(block.tool_use_id) && !block.is_error) {
+        const stopped = stoppedTaskOf(entry.toolUseResult);
+        if (stopped) bashTasks.killed(stopped);
       }
       const call = block.type === 'tool_result' && block.tool_use_id ? this.shellCalls.get(block.tool_use_id) : undefined;
       if (call) {
@@ -92,6 +99,12 @@ function handbackFrom(entry: KnownEntry) {
   const e = entry as { type: string; operation?: string; content?: unknown };
   if (e.type === 'queue-operation' && e.operation === 'enqueue') return handbackOfMessage(e.content);
   return null;
+}
+
+// TaskStop の結果から、止めたタスクの ID を読む（{"message":"Successfully stopped task: …","task_id":"…","task_type":"local_bash",…}）
+function stoppedTaskOf(toolUseResult: unknown): string | null {
+  const id = (toolUseResult as { task_id?: unknown } | null)?.task_id;
+  return typeof id === 'string' && id ? id : null;
 }
 
 // run_in_background は真偽値のほか、文字列の "true" で来ることもある
