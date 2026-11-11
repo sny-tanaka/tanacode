@@ -186,7 +186,7 @@ describe('scripts/inventory-diff.mjs', () => {
     const base = { transcript: { user: ['type'] }, stream: {} };
     expect(run(write('a.json', prev), write('b.json', base)).status).toBe('same');
     // 増えたときは差にする（捨てる一覧にあっても、増えたのは Claude Code の変化）
-    expect(run(write('c.json', base), write('d.json', prev)).status).toBe('changed');
+    expect(run(write('c.json', base), write('d.json', prev)).status).toBe('added');
     // 捨てない種類と、チャットには出さないがほかで読む種類（読むフィールドの一覧にある attachment/file）が消えたら差にする
     const used = run(write('e.json', { transcript: { ...base.transcript, 'attachment/queued_command': [], 'attachment/file': [] }, stream: {} }), write('f.json', base)).text;
     expect(used).toContain('- 消えた種類: `attachment/queued_command`');
@@ -196,6 +196,19 @@ describe('scripts/inventory-diff.mjs', () => {
     const { text } = run(write('i.json', prev), write('j.json', { transcript: { user: ['type', 'promptId'] }, stream: {} }));
     expect(text).toContain('- `user` に増えたフィールド: `promptId`');
     expect(text).toContain('### 消えた、アプリが捨てる種類\n\n- 消えた種類（アプリが捨てる種類なので比べない）: `attachment/total_tokens_reminder`');
+  });
+
+  it('種類かフィールドが増えただけなら added、消えたものがあれば changed と書く（どちらも差分は書く）', () => {
+    const base = { transcript: { user: ['type'] }, stream: { result: ['type'] } };
+    const added = run(write('a.json', base), write('b.json', { transcript: { user: ['type', 'promptId'], 'system/new': ['level'] }, stream: { result: ['type', 'extra'] } }));
+    expect(added.status).toBe('added');
+    expect(added.text).toContain('- 増えた種類: `system/new`');
+    // 消えたフィールド・消えた種類（stream-json でも）があれば changed
+    expect(run(write('c.json', base), write('d.json', { transcript: { user: ['type', 'promptId'] }, stream: { result: [] } })).status).toBe('changed');
+    expect(run(write('e.json', base), write('f.json', { transcript: { user: ['type'], 'system/new': [] }, stream: {} })).status).toBe('changed');
+    // 揺れる種類が消えた・アプリが捨てる種類が消えたのは、増えただけとみなす
+    const prev = { transcript: { user: ['type'], 'permission-mode': ['type'], 'system/away_summary': [] }, stream: { result: ['type'] } };
+    expect(run(write('g.json', prev), write('h.json', { transcript: { user: ['type', 'promptId'] }, stream: { result: ['type'] } })).status).toBe('added');
   });
 
   it('前の目録が無ければ、changed と、比べられないことを書く。新しい目録が無ければ失敗にする', () => {

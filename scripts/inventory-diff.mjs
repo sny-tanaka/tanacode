@@ -3,7 +3,9 @@
 //   node scripts/inventory-diff.mjs <前の目録> <新しい目録> <差分の書き出し先>
 // 標準出力に、比べた結果を 1 語で書く（ワークフローがこれを見る）
 //   same:    差が無い
-//   changed: 差がある（前の目録が無いときも）。差分を Markdown で書き出し先に書く（PR の本文に載せる）
+//   added:   種類かフィールドが増えただけ（消えたものが無い）。差分を Markdown で書き出し先に書く（PR の本文に載せる）。
+//            tanacode は知らない種類・フィールドを読み飛ばすので、アプリを直さなくても読める（compat-table.mjs が、公開済みのアプリの行も上げる）
+//   changed: 消えた種類かフィールドがある（前の目録が無いときも）。差分を Markdown で書き出し先に書く
 // 新しい目録が無ければ、失敗にする（控えが取れていない）
 // 会話ログで、アプリが捨てる種類（src/shared/transcript-line.ts の一覧にあり、読むフィールドの一覧 test/transcript-used-fields.ts に
 // 無いもの）が消えただけなら、差にしない（読んでいないので、消えても困らない）。ほかに差があるときは、書き添える
@@ -48,10 +50,12 @@ if (!existsSync(oldFile)) {
 const prev = JSON.parse(readFileSync(oldFile, 'utf8'));
 const unstable = [];
 const dropped = [];
+let removedAny = false;
 const sections = PARTS.flatMap(([key, title]) => {
   const ignored = key === 'transcript' ? isIgnoredKind : () => false;
-  const { lines, flapped, droppedIgnored } = diffPart(prev[key] ?? {}, next[key] ?? {}, prev.sources?.[key] ?? {}, next.sources?.[key] ?? {}, UNSTABLE_KINDS[key], ignored);
+  const { lines, flapped, droppedIgnored, removed } = diffPart(prev[key] ?? {}, next[key] ?? {}, prev.sources?.[key] ?? {}, next.sources?.[key] ?? {}, UNSTABLE_KINDS[key], ignored);
   unstable.push(...flapped.map((kind) => `- 揺れる種類（比べない）: \`${kind}\`（${UNSTABLE_KINDS[key][kind]}）`));
+  if (removed) removedAny = true;
   dropped.push(...droppedIgnored.map((kind) => `- 消えた種類（アプリが捨てる種類なので比べない）: \`${kind}\``));
   return lines.length > 0 ? [`### ${title}`, '', ...lines, ''] : [];
 });
@@ -64,16 +68,18 @@ if (sections.length === 0) {
 let text = sections.join('\n');
 if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS)}\n\n（長いので、ここで切りました。全部は、2 つの目録を比べて見てください）\n`;
 writeFileSync(outFile, text);
-console.log('changed');
+console.log(removedAny ? 'changed' : 'added');
 
 // 種類ごとのフィールドの名前の一覧どうしを比べて、Markdown の行にする。その種類が出た台本（目録の sources）も添える
 // （台本の揺れか、Claude Code の変化かを見分ける手がかり。消えたものは前の目録、ほかは新しい目録の台本）
 // unstable: 出た・出ないの違いを差にしない種類（UNSTABLE_KINDS）。flapped: そのうち、出た・出ないが違ったもの
 // ignored: 消えても差にしない種類か（アプリが捨てる種類）。droppedIgnored: そのうち、消えたもの
+// removed: 消えた種類かフィールドがあったか（増えただけのときは false）
 function diffPart(before, after, beforeSources, afterSources, unstable, ignored) {
   const code = (names) => names.map((name) => `\`${name}\``).join('・');
   const from = (sources, kind) => (sources[kind]?.length ? `［台本: ${sources[kind].join('・')}］` : '');
   const lines = [];
+  let anyMinus = false;
   const flapped = [...Object.keys(after), ...Object.keys(before)].filter((kind) => kind in unstable && (kind in before) !== (kind in after));
   const added = Object.keys(after).filter((kind) => !(kind in before) && !(kind in unstable));
   const gone = Object.keys(before).filter((kind) => !(kind in after) && !(kind in unstable));
@@ -85,9 +91,10 @@ function diffPart(before, after, beforeSources, afterSources, unstable, ignored)
     const plus = after[kind].filter((name) => !before[kind].includes(name));
     const minus = before[kind].filter((name) => !after[kind].includes(name));
     if (plus.length > 0) lines.push(`- \`${kind}\` に増えたフィールド: ${code(plus)}${from(afterSources, kind)}`);
+    if (minus.length > 0) anyMinus = true;
     if (minus.length > 0) lines.push(`- \`${kind}\` から消えたフィールド: ${code(minus)}${from(beforeSources, kind)}`);
   }
-  return { lines, flapped, droppedIgnored };
+  return { lines, flapped, droppedIgnored, removed: removed.length > 0 || anyMinus };
 }
 
 // 目録の会話ログの種類（行の type・system/<subtype>・attachment/<type>・assistant.content/<type> など。test/transcript-inventory.ts）が、
