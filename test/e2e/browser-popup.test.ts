@@ -11,7 +11,7 @@ import { BACKGROUND, E2EApp } from './app';
 // - 別ウインドウにも、タブと同じ守りが効く: Node もアプリの API（preload の window.tanacode）も無い（features で nodeIntegration=yes などを
 //   渡しても）・features で閉じられない・フォーカスできない・透明・動かせない・最前面などを指定しても、ふつうのウインドウ・トップのフレームは http(s) と about:blank だけ（file: にも blob: にも移れない）・プレビューのセッション
 // - 別ウインドウは、ページが画面の外の位置を指定しても、tanacode のウインドウがある画面の中に開く
-// - 別ウインドウは Claude の操作の対象にしない（タブの一覧に出ない）。Claude の操作で開いたら、そのことを Claude に伝える
+// - 別ウインドウは、タブの一覧に、タブのあとに「ポップアップ」として出る（Claude は選んで操作できる。今のタブは替わらない）。Claude の操作で開いたら、そのことを番号と一緒に Claude に伝える
 // - 人の操作（Claude の操作の外）で開いたものも、同じように開く
 // - 空のページ（window.open('')）を開いてから location を移すもの（MSAL などの OAuth）も、別ウインドウで開いて opener に届く
 // - Claude の操作で、許す先の外（[::1]）のポップアップは開かない
@@ -30,6 +30,8 @@ const BLOCK = '外のログインを押してください';
 const BLOCKED = '外のログインは開きませんでした';
 const BLANK_OUT = '空のページから外へ移すログインを押してください';
 const BLANK_BLOCKED = '空のページから外へは移りませんでした';
+const HOLD = '開いたままのポップアップを開いて、タブの一覧を見てください';
+const HELD = 'タブの一覧にポップアップがありました';
 // ポップアップが opener に送る報告（Node・アプリの API が無く、file: にも blob: にも移らなかった）
 const REPORT = 'popup node:undefined/undefined,app:undefined,stayed';
 // 作られた別ウインドウ。preview: プレビューのセッション / secure: 中身の設定が守りの値 / normal: ふつうのウインドウ（閉じられる・
@@ -61,6 +63,7 @@ const opener = (outside: string) => `<!doctype html><title>開く側</title><h1>
 <button id="blank-title" onclick="const w = window.open('', 'blank-title', 'width=480,height=400'); w.document.write('<title>tanacode の再ログイン</title><p>空のページに書いた画面</p>'); w.document.close();">空のページに題を書く</button>
 <button id="blank-plain" onclick="window.plain = window.open('', 'blank-plain', 'width=480,height=400')">空のページだけ</button>
 <button id="blank-outside" onclick="window.msal2 = window.open('', 'msal2', 'width=480,height=640'); window.msal2.location.assign('${outside}/')">空のページから外へ</button>
+<button id="hold" onclick="window.held = window.open('/hold', 'held', 'width=300,height=300')">開いたまま</button>
 <p id="result">まだ</p>
 <script>
   let count = 0;
@@ -137,7 +140,6 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
             tool('toolu_login', 'click', { selector: '#login' }),
             tool('toolu_wait', 'wait_for', { text: 'stayed', timeoutMs: 15_000 }),
             tool('toolu_read', 'get_text', { selector: '#result' }),
-            tool('toolu_tabs', 'list_tabs', {}),
             [{ type: 'text', text: DONE }],
             // 2 つめの発言（BLOCK）の応答
             tool('toolu_outside', 'click', { selector: '#outside-login' }),
@@ -145,6 +147,10 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
             // 3 つめの発言（BLANK_OUT）の応答
             tool('toolu_blank_outside', 'click', { selector: '#blank-outside' }),
             [{ type: 'text', text: BLANK_BLOCKED }],
+            // 4 つめの発言（HOLD）の応答。自分では閉じないポップアップを開いて、一覧を読む
+            tool('toolu_hold', 'click', { selector: '#hold' }),
+            tool('toolu_tabs', 'list_tabs', {}),
+            [{ type: 'text', text: HELD }],
           ],
         },
       ],
@@ -246,10 +252,8 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
   it('Claude が押して開いたポップアップは別ウインドウで開き、opener に届く。Node もアプリの API も無く、file: にも blob: にも移れない', async () => {
     await app.startSession(OPEN, { mode: 'manual' });
     await app.byText('.chat-list', DONE).waitFor();
-    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#login'))).toContain(`Opened a popup window outside the in-app browser (${origin})`);
+    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#login'))).toContain(`Opened a popup window (${origin}) in a separate window: tab 2 in list_tabs.`);
     expect(app.api.toolResults.find((r) => r.includes(REPORT))).toContain(`${REPORT} #1`);
-    // 別ウインドウは、タブの一覧に出ない
-    expect(app.api.toolResults.find((r) => r.startsWith('Tabs (* marks the current tab):'))).toBe(`Tabs (* marks the current tab):\n* 1. 開く側 — ${origin}/`);
     expect((await popups())[0]?.preview).toBe(true);
   });
 
@@ -410,8 +414,10 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await app.send(BLANK_OUT);
     await app.byText('.chat-list', BLANK_BLOCKED).waitFor();
     const clicked = app.api.toolResults.find((r) => r.startsWith('Clicked: button#blank-outside'));
-    expect(clicked).toContain('Opened a popup window outside the in-app browser (about:blank).');
-    expect(clicked).toContain(`Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${outside}).`);
+    expect(clicked).toMatch(/Opened a popup window \(about:blank\) in a separate window: tab \d+ in list_tabs\./);
+    // 一覧に入れたポップアップは、選んで continue で進められることも伝える
+    expect(clicked).toMatch(/Blocked an attempt to move the popup window \(tab \d+\) to a page not allowed for Claude/);
+    expect(clicked).toContain(`to a page not allowed for Claude (${outside}). To open it there, switch to the popup with select_tab`);
     expect(await popups()).toHaveLength(16);
     // ページは移ろうとしたが、止めたので、空のページのまま（Electron から見ても、開いたページから見ても）。許す先の外には通信していない
     await expect.poll(async () => (await popupState(15))?.loading, { timeout: 10_000 }).toBe(false);
@@ -421,6 +427,18 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     expect(outsideRequests).toBe(0);
     await runIn('/', 'window.msal2.close(); "closed"');
     await expect.poll(async () => (await popups())[15], { timeout: 10_000 }).toEqual({ ...GUARDED, closed: true });
+  });
+
+  // 一覧は、自分では閉じないポップアップ（/hold）で確かめる（POPUP は自分で閉じるので、一覧に残っているかが閉じる時刻しだいになる）
+  it('Claude が押して開いたポップアップは、タブの一覧のタブのあとに、開いたタブを添えて出る。今のタブは開いた側のまま', async () => {
+    await app.send(HOLD);
+    await app.byText('.chat-list', HELD).waitFor();
+    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#hold'))).toContain(`Opened a popup window (${origin}) in a separate window: tab `);
+    const tabs = app.api.toolResults.find((r) => r.startsWith('Tabs (* marks the current tab):'))!.split('\n');
+    expect(tabs[1]).toBe(`* 1. 開く側 — ${origin}/`);
+    // 開いた直後に読むので、題と URL は読み込みの途中のこともある。見るのは、開いたタブを添えたポップアップの行があること
+    expect(tabs.slice(2).some((line) => /^ {2}\d+\. \[popup window opened by tab 1\] /.test(line))).toBe(true);
+    await runIn('/', 'window.held.close(); "closed"');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

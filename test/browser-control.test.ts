@@ -1053,7 +1053,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     return ctx.call('click', { selector: '#login' });
   };
 
-  it('allowsPopup: ユーザーの操作のポップアップは開いてよい（知らない webview も）。Claude の操作の間は、許した先だけ開き、別ウインドウで開いたことをオリジンで伝える', async () => {
+  it('allowsPopup: ユーザーの操作のポップアップは開いてよい（知らない webview も）。Claude の操作の間は、許した先だけ開き、別ウインドウで開いたことをオリジンで伝える（一覧に入らなかったものは、操作できないと伝える）', async () => {
     const ctx = setup();
     const page = ctx.open('http://localhost:3000/');
     expect(ctx.control.allowsPopup(asWebContents(page), 'https://example.com/login')).toBe(true);
@@ -1066,7 +1066,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     );
     expect(result).toBe(
       'Clicked: button#login\n' +
-        'Opened a popup window outside the in-app browser (http://localhost:3000). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+        'Opened a popup window (http://localhost:3000) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.',
     );
     // 次の呼び出しには残らない
     expect(textOf(await ctx.call('get_console_logs'))).toBe('No console messages.');
@@ -1078,7 +1078,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'about:blank')).toBe(true)));
     expect(result).toBe(
       'Clicked: button#login\n' +
-        'Opened a popup window outside the in-app browser (about:blank). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+        'Opened a popup window (about:blank) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.',
     );
   });
 
@@ -1095,14 +1095,15 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     expect(ctx.sentOn(IpcChannel.BrowserNewTab)).toEqual([{ sessionId: 'S1', url: 'https://example.com/login?state=secret', background: false, openerTabId: page.tabId }]);
   });
 
-  it('blocksNavigation（ポップアップ）: Claude の操作の間は、開いたタブで許していない先への移動だけ止めて伝える。continue の先には控えない', async () => {
+  it('blocksNavigation（一覧に入れていないポップアップ）: Claude の操作の間は、開いたタブで許していない先への移動だけ止めて伝える。continue の先には控えない', async () => {
     const ctx = setup();
     const page = ctx.open('http://localhost:3000/');
-    expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/', true)).toBe(false);
+    const popup = asWebContents(new FakeContents({ type: 'window' }));
+    expect(ctx.control.blocksNavigation(popup, 'https://example.com/', asWebContents(page))).toBe(false);
     const result = textOf(
       await clickOpening(ctx, page, () => {
-        expect(ctx.control.blocksNavigation(asWebContents(page), 'http://localhost:3000/next', true)).toBe(false);
-        expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/callback?code=secret', true)).toBe(true);
+        expect(ctx.control.blocksNavigation(popup, 'http://localhost:3000/next', asWebContents(page))).toBe(false);
+        expect(ctx.control.blocksNavigation(popup, 'https://example.com/callback?code=secret', asWebContents(page))).toBe(true);
       }),
     );
     expect(result).toBe('Clicked: button#login\nBlocked an attempt to move a popup window opened by the page to a page not allowed for Claude (https://example.com).');

@@ -142,13 +142,18 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'list_tabs',
     kind: 'read',
-    description: 'Lists the tabs of the in-app browser (number, title and URL) and shows which one is current. The other tools act on the current tab.',
+    description:
+      'Lists the tabs of the in-app browser (number, title and URL) and shows which one is current. The other tools act on the current tab. ' +
+      'Popup windows that pages opened (such as login windows) are listed after the tabs, marked with the tab that opened them; they disappear from the list when they close.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'select_tab',
     kind: 'act',
-    description: "Switches the current tab (the user's screen switches too). index is the number from list_tabs (starting at 1).",
+    description:
+      "Switches the current tab (the user's screen switches too). index is the number from list_tabs (starting at 1). " +
+      "A popup window can be selected too, to read and operate it like a tab (the user's screen does not switch: the user sees the popup in its own window). " +
+      'set_viewport and throttle do not apply to a popup window.',
     inputSchema: {
       type: 'object',
       properties: { index: { type: 'number', description: 'Tab number (starting at 1)' } },
@@ -159,7 +164,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'close_tab',
     kind: 'act',
-    description: 'Closes a tab. Without index, closes the current tab.',
+    description: 'Closes a tab (or a popup window). Without index, closes the current tab.',
     inputSchema: {
       type: 'object',
       properties: { index: { type: 'number', description: 'Tab number (starting at 1)' } },
@@ -173,7 +178,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'Scrolls the element matching a selector (the first visible one; same-origin iframes are searched too) into view and clicks it. ' +
       'For what a selector cannot reach (inside a cross-origin iframe, a canvas and so on), click at x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
       'A link that opens a new window (target=_blank) opens in a new tab, which becomes the current tab. ' +
-      'A popup the page opens (window.open with window features, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate. ' +
+      'A popup the page opens (window.open with window features, such as a login window) opens in a separate window, which is listed by list_tabs but does not become the current tab (select it with select_tab to operate it). ' +
       'The click is normally done with JavaScript inside the page (pointer and mouse events, focus, then click), so that it does not take the keyboard focus away from where the user is typing in tanacode. ' +
       'It reaches into open shadow DOM, and places the caret at the clicked position in contenteditable. ' +
       'A <select>, a file input, an <input> of type range, number, date, time or color, media controls, a link or form that opens a new window, a draggable element, a custom element whose inside JavaScript cannot reach (closed shadow DOM), a position inside a cross-origin iframe, and the right or middle button are pressed with a real mouse press automatically. ' +
@@ -388,7 +393,7 @@ export const BROWSER_MCP_INSTRUCTIONS = [
   '- The file dialog cannot be operated, but you can attach files on this Mac with upload_file (do not serve them over HTTP and fetch them in the page instead).',
   '- For pages made for phones, emulate the phone here instead of installing another browser or automation tool: set_viewport with device (or width, height and deviceScaleFactor) for the size, touch for taps, swipes, long presses and pinches, and throttle for a slow CPU or connection. To show the user how it looks, take a screenshot with save and send them the file.',
   '- Selectors also search same-origin iframes (e.g. Storybook stories). Inside a cross-origin iframe, find the position with screenshot and press it with the x and y of click.',
-  '- There are tabs, and the tools act on the current tab. A link that opens a new window opens in a new tab, which becomes the current tab (list_tabs, select_tab, close_tab). A popup the page opens (such as a login window) opens in a separate window outside the in-app browser: you can neither read nor operate it, so ask the user to act there.',
+  '- There are tabs, and the tools act on the current tab. A link that opens a new window opens in a new tab, which becomes the current tab (list_tabs, select_tab, close_tab). A popup the page opens (such as a login window) opens in a separate window: list_tabs lists it after the tabs, and you can select it with select_tab to read and operate it like a tab (the same sites are allowed as in the tab that opened it). Popups often show a login page of another site, which is not allowed for Claude: ask the user to act there.',
   `- For what you cannot (or should not) do yourself, such as logging in, two-factor authentication or payment test screens, and for visual judgments you are not sure about, ask the user with ${BROWSER_ASK_TOOL} instead of stopping to ask in the chat. Write the request in the language the user is using, and never put values such as passwords in it.`,
 ].join('\n');
 

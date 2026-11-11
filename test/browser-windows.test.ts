@@ -115,6 +115,8 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null; foc
     isOperating: vi.fn(() => false),
     blocksNavigation: vi.fn(() => false),
     allowsPopup: vi.fn(() => true),
+    attachPopup: vi.fn(),
+    notOpened: vi.fn(),
   };
   const opened: string[] = [];
   // アプリの既定のセッション（プレビューのものではない）
@@ -184,7 +186,7 @@ describe('移る先', () => {
     expect(isPreviewDestination(url, isMainFrame)).toBe(expected);
   });
 
-  it('タブとポップアップの両方で、http(s) の外へは移らない。Claude の操作中の移動は、ポップアップなら開いたタブで許した先かを見る', () => {
+  it('タブとポップアップの両方で、http(s) の外へは移らない。Claude の操作中の移動は、ポップアップなら、それ自身と開いたタブを渡して見る', () => {
     const { browser, tab, popup } = setup();
     const guest = tab();
     const win = popup(guest);
@@ -205,8 +207,8 @@ describe('移る先', () => {
     expect(win.webContents.go('https://outside.test/', false)).toBe(false);
     expect(browser.blocksNavigation.mock.calls).toEqual([
       [guest, 'https://outside.test/'],
-      [guest, 'https://outside.test/', true],
-      [guest, 'https://inside.test/', true],
+      [win.webContents, 'https://outside.test/', guest],
+      [win.webContents, 'https://inside.test/', guest],
     ]);
   });
 
@@ -460,7 +462,7 @@ describe('新しいウインドウ', () => {
     expect(browser.allowsPopup).toHaveBeenLastCalledWith(guest, 'https://login.example.test/');
     browser.blocksNavigation.mockClear();
     nested.webContents.go('https://example.test/');
-    expect(browser.blocksNavigation.mock.calls).toEqual([[guest, 'https://example.test/', true]]);
+    expect(browser.blocksNavigation.mock.calls).toEqual([[nested.webContents, 'https://example.test/', guest]]);
   });
 
   it('開いたページと違うセッションのポップアップ（プレビューの守りが効かないもの）は、閉じる', () => {

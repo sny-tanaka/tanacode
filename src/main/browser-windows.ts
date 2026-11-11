@@ -6,7 +6,8 @@ import type { BrowserControl } from './browser-control';
 //   Claude の操作の間は、許した先へしか移らせない（BrowserControl.blocksNavigation）
 // - 新しいウインドウ: リンクの「新しいタブで開く」・features の無い window.open などは、アプリ内ブラウザの新しいタブで開く（openFromPage）。
 //   ポップアップ（disposition が new-window。window.open に features を付けたものなど）は、アプリ内ブラウザの外の別ウインドウで開き、
-//   開いたページ（window.opener）とつなぐ（OAuth のログインの窓のため）。別ウインドウは Claude の操作の対象にしない（ログインは人がする）
+//   開いたページ（window.opener）とつなぐ（OAuth のログインの窓のため）。別ウインドウは、開いたタブのアプリ内ブラウザの一覧に
+//   「ポップアップ」として入れ（attachPopup）、Claude も選んで操作できる。許していない先のページ（外の認証のページなど）は、タブと同じく読ませない
 // 別ウインドウにも、タブと同じ守りを付ける。Electron は、ポップアップの中身を、開いたページと同じセッション（プレビューのもの。どの権限も断り、
 // ダウンロードを止める）で作る。webPreferences の守りの値はここで決め、ページが window.open の features に書いた値（nodeIntegration=yes など）は効かない。
 // ウインドウは、Electron に作らせず、ここで作る（createWindow）。ページの features（closable=no・opacity=0・type=panel など）は使わず、
@@ -14,7 +15,7 @@ import type { BrowserControl } from './browser-control';
 // 見張り（移る先・新しいウインドウの扱い）は、中身ができたとき（web-contents-created）に付ける。ポップアップの最初の読み込みとページのスクリプトより前
 
 // アプリ内ブラウザの操作のうち、ここで使うもの
-export type PreviewBrowser = Pick<BrowserControl, 'track' | 'openFromPage' | 'isOperating' | 'blocksNavigation' | 'allowsPopup'>;
+export type PreviewBrowser = Pick<BrowserControl, 'track' | 'openFromPage' | 'isOperating' | 'blocksNavigation' | 'allowsPopup' | 'attachPopup' | 'notOpened'>;
 
 // ポップアップを置く画面。workArea: tanacode のウインドウ（タブはいつもこのウインドウの中）がある画面の、メニューバーと Dock を除いた範囲 /
 // around: tanacode のウインドウ（位置の指定が無いポップアップは、この真ん中に出す）
@@ -128,8 +129,9 @@ export class PreviewWindows {
   // タブ（webview）か、そのタブから開いたポップアップのトップのフレームが、Claude の操作で許していない先へ移ろうとしているか
   private blocks(contents: WebContents, url: string): boolean {
     const root = this.roots.get(contents);
-    // ポップアップは、開いたタブで Claude に許した先かを見る（どのプロファイルのタブかは、それぞれのアプリ内ブラウザが見分ける）
-    if (root) return this.deps.browsers().some((browser) => browser.blocksNavigation(root, url, true));
+    // ポップアップは、一覧に入れたものならそれ自身で、入れていないものは開いたタブで、Claude に許した先かを見る
+    // （どのプロファイルのタブかは、それぞれのアプリ内ブラウザが見分ける）
+    if (root) return this.deps.browsers().some((browser) => browser.blocksNavigation(contents, url, root));
     return this.deps.browsers().some((browser) => browser.blocksNavigation(contents, url));
   }
 
@@ -141,12 +143,18 @@ export class PreviewWindows {
     // 空のページ（window.open('')・about:blank）は、ポップアップでだけ開く（開いてから location を移す OAuth のため。中身は開いたページが書き、
     // 移るときは見張りが確かめる）
     const url = popup && (asked === '' || asked === 'about:blank') ? 'about:blank' : asked;
-    // ほかの http(s) でないもの（file:・mailto: など）は開かない
-    if (!/^https?:\/\//.test(url) && !(popup && url === 'about:blank')) return DENY;
     const root = this.roots.get(source) ?? source;
     const browser = this.owners.get(root);
+    // ほかの http(s) でないもの（file:・mailto: など）は開かない（Claude の操作なら、開かなかったことを伝える）
+    if (!/^https?:\/\//.test(url) && !(popup && url === 'about:blank')) {
+      browser?.notOpened(root, url, 'scheme');
+      return DENY;
+    }
     if (popup) {
-      if ((this.popups.get(root)?.size ?? 0) >= MAX_POPUPS) return DENY;
+      if ((this.popups.get(root)?.size ?? 0) >= MAX_POPUPS) {
+        browser?.notOpened(root, url, 'popup-limit');
+        return DENY;
+      }
       // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える）
       if (browser && !browser.allowsPopup(root, url)) return DENY;
       const screen = this.deps.screen();
@@ -215,6 +223,16 @@ export class PreviewWindows {
     list.add(win);
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
+    // アプリ内ブラウザの一覧に入れる（Claude が選んで操作できる）。閉じたら、中身が無くなったときに一覧から外れる
+    this.owners.get(root)?.attachPopup(root, win.webContents, {
+      close: () => {
+        if (!win.isDestroyed()) win.close();
+      },
+      size: () => {
+        const [width = 0, height = 0] = win.isDestroyed() ? [] : win.getContentSize();
+        return { width, height };
+      },
+    });
     showOrigin(win);
     // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める。
     // bounds は、Electron の説明（content bounds）と違い、枠を含むウインドウの位置と大きさ（ページの outerWidth・screenX と同じ。

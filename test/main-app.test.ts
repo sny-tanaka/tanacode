@@ -1134,10 +1134,13 @@ describe('ウインドウ', () => {
     expect(popupWindow.showInactive).toHaveBeenCalledTimes(1);
     expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: false, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
     expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
+    // 別ウインドウは、そのタブのアプリ内ブラウザの一覧に入れる（Claude が選んで操作できる）
+    expect(browser.attachPopup.mock.calls.map((c: unknown[]) => [c[0], c[1]])).toEqual([[guest, state.windows.at(-1)!.webContents]]);
     // Claude の操作で許していない先なら開かない
     browser.allowsPopup.mockReturnValueOnce(false);
     expect(open({ url: 'https://outside.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toEqual({ action: 'deny' });
     expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(browser.notOpened.mock.calls).toEqual([[guest, 'file:///etc/hosts', 'scheme']]);
     expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
 });
