@@ -68,6 +68,7 @@ beforeEach(() => {
   inserted = [];
   api = mockApi({
     'browser.asks': () => Promise.resolve([]),
+    'browser.logins': () => Promise.resolve([]),
     'attachments.save': (name: never) => Promise.resolve(`/tmp/attachments/0123abcd-${name as string}`),
   });
   api.install();
@@ -697,6 +698,7 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
 
   it('画面を作り直したときも頼まれている依頼を出し、切り替えた先のセッションの依頼に返す', async () => {
     api = mockApi({
+      'browser.logins': () => Promise.resolve([]),
       'browser.asks': () =>
         Promise.resolve([
           { sessionId: 's1', ask: { id: 'a1', message: 's1 への依頼' } },
