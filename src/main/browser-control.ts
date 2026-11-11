@@ -264,6 +264,8 @@ type Guest = {
   logs: Logs;
   // CDP（debugger）をつないだか
   cdp: boolean;
+  // 別プロセスの iframe にもつないだか（Target.setAutoAttach。connect の frames）。CDP が外れたら false に戻す
+  framesAttached?: boolean;
   // 別プロセスで動く iframe（別サイトのもの）の CDP のセッション（Target.setAutoAttach でつなぐ）。
   // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る。
   // セッションの ID → その iframe のフレームの ID（CDP の targetId。DOM.describeNode の frameId と同じ）
@@ -1050,7 +1052,7 @@ export class BrowserControl {
       }
       this.refusedLeave.set(contents, Date.now());
     });
-    void this.connect(guest).catch(() => undefined);
+    void this.connect(guest, false).catch(() => undefined);
   }
 
   // ツールの始めに、今のタブの CDP がつながっていなければ（DevTools を開いたなどで外れた）、つなぎ直してダイアログを見張る。
@@ -1059,7 +1061,7 @@ export class BrowserControl {
     if (name === 'list_tabs' || name === 'select_tab' || name === 'close_tab' || name === 'get_downloads') return;
     const guest = this.activeNow(sessionId);
     if (!guest || (guest.cdp && guest.contents.debugger.isAttached())) return;
-    await Promise.race([this.connect(guest).catch(() => undefined), sleep(WATCH_WAIT_MS)]);
+    await Promise.race([this.connect(guest, false).catch(() => undefined), sleep(WATCH_WAIT_MS)]);
   }
 
   // 呼び出しの間に、セッションのどれかのタブでダイアログが出たら、そのことを答える（opened）。stop で見張りをやめる
@@ -3006,8 +3008,11 @@ export class BrowserControl {
     return guest.contents.debugger.sendCommand(method, params, child);
   }
 
-  // CDP をつなぐ（つながっていれば何もしない）
-  private async connect(guest: Guest): Promise<void> {
+  // CDP をつなぐ（つながっていれば何もしない）。frames: 別プロセスの iframe にもつなぐ（Target.setAutoAttach）。
+  // タブができたとき・ツールの始め（ダイアログを知るため）は、iframe にはつながない。ページの読み込みの前や途中に setAutoAttach を送ると、
+  // 別サイトの iframe の読み込みが終わらなくなることがある（test/e2e/browser-failed.test.ts が 5 回に 4 回、navigate の読み込み待ちで止まった。
+  // Page.enable を外しても止まり、setAutoAttach を外すと止まらなかった。Electron 44.10）。iframe へは、CDP の命令を送るとき（cdp）につなぐ（前と同じ時機）
+  private async connect(guest: Guest, frames = true): Promise<void> {
     const dbg = guest.contents.debugger;
     if (!guest.cdp || !dbg.isAttached()) {
       try {
@@ -3016,10 +3021,15 @@ export class BrowserControl {
         if (!dbg.isAttached()) throw new ToolError(`Could not get ready to control the page (${error instanceof Error ? error.message : String(error)}).`);
       }
       guest.cdp = true;
-      // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
-      await dbg.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => undefined);
+      guest.framesAttached = false;
       // ページが出すダイアログを知らせてもらう（出てから送っても返らないので、つないだらすぐ。browser-dialogs.ts）
       await dbg.sendCommand('Page.enable').catch(() => undefined);
+      await sleep(150);
+    }
+    if (frames && !guest.framesAttached) {
+      guest.framesAttached = true;
+      // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
+      await dbg.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => undefined);
       await sleep(150);
     }
   }
