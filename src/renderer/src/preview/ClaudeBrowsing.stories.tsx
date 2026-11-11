@@ -195,11 +195,13 @@ export const あなたの番_狭い幅: Story = {
 const LOGIN = { id: 'login-1', origin: 'https://stg.example.com', realm: 'Staging', proxy: false, insecure: false, retry: false, popup: false };
 
 // ページが HTTP の認証（Basic 認証）を求めた。ページには 401 の本文が出ていて、その上に入力欄を出す。
-// 入れた値はページにだけ渡し、Claude には渡さない（Claude には、人に頼むよう伝える）
+// 入れた値はページにだけ渡し、Claude には渡さない（Claude には、1Password のリンクがあれば fill_credential で答え、無ければ人に頼むよう伝える）。
+// 1Password のアイテムのリンクを渡せば Claude が答えられることの案内を添える（「もう出さない」まで）
 export const サイトのログイン: Story = {
   args: { label: null },
+  beforeEach: () => localStorage.removeItem('tanacode.credentialHint.hidden'),
   render: () => (
-    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+    <div className="preview-pane" style={{ maxWidth: 760, height: 300, border: '1px solid var(--border-subtle)' }}>
       <LoginBar login={LOGIN} onAnswer={() => {}} />
       <div className="preview-body">
         <div className="preview-frame">
@@ -214,8 +216,9 @@ export const サイトのログイン: Story = {
 // Claude が ask_user_to_act で頼んでいるときは、「あなたの番です」の帯の下に出る
 export const サイトのログイン_警告と狭い幅: Story = {
   args: { label: null },
+  beforeEach: () => localStorage.removeItem('tanacode.credentialHint.hidden'),
   render: () => (
-    <div className="preview-pane" style={{ width: 380, height: 360, border: '1px solid var(--border-subtle)' }}>
+    <div className="preview-pane" style={{ width: 380, height: 640, border: '1px solid var(--border-subtle)' }}>
       <AskBar message="STG に Basic 認証でログインしてください" onAnswer={() => {}} />
       <LoginBar
         login={{ ...LOGIN, origin: 'http://very-long-branch-name-for-review.stg.internal.example.com:8080', realm: '社内の検証環境（アカウントは管理者に聞いてください）', insecure: true, retry: true }}
@@ -225,11 +228,12 @@ export const サイトのログイン_警告と狭い幅: Story = {
   ),
 };
 
-// プロキシの認証と、タブから開いた別ウインドウのページの認証
+// プロキシの認証と、タブから開いた別ウインドウのページの認証。プロキシの認証には fill_credential で答えられないので、1Password の案内を出さない
 export const サイトのログイン_プロキシと別ウインドウ: Story = {
   args: { label: null },
+  beforeEach: () => localStorage.removeItem('tanacode.credentialHint.hidden'),
   render: () => (
-    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+    <div className="preview-pane" style={{ maxWidth: 760, height: 320, border: '1px solid var(--border-subtle)' }}>
       <LoginBar login={{ ...LOGIN, origin: 'proxy.corp.example.com:3128', realm: '', proxy: true }} onAnswer={() => {}} />
       <LoginBar login={{ ...LOGIN, id: 'login-2', origin: 'https://sso.example.com', popup: true }} onAnswer={() => {}} />
     </div>

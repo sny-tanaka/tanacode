@@ -30,7 +30,7 @@ import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
 import { textResult, type ToolResult } from './mcp-bridge';
-import { CHECK_SCRIPT, CredentialGuard, fillScript, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, parseItemRef, type CredentialSource, type FillResult } from './browser-credentials';
+import { CHECK_SCRIPT, CredentialGuard, fillScript, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, parseItemRef, type CredentialSource, type FillResult, type Login } from './browser-credentials';
 import { linkForPage, normalizeSite, type CredentialLink } from '@shared/credential-links';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
@@ -1283,6 +1283,10 @@ export class BrowserControl {
     if (login.urls.length === 0) {
       throw new ToolError(`The 1Password item "${login.title}" has no website URL, so tanacode cannot check that it belongs to this page. Nothing was filled. Ask the user to add the site's URL to the item.`);
     }
+    // ページ（か、このタブから開いた別ウインドウ）が HTTP の認証（Basic など）を求めて、入力欄を出しているなら、そちらに答える
+    // （browser-logins.ts。照合する先は、ページではなく認証を求めた先）
+    const auth = this.logins.pendingFor(guest.contents);
+    if (auth) return this.fillHttpAuth(guest, auth, login, saved !== null);
     if (!matchingUrl(pageUrl, login.urls)) {
       const sites = [...new Set(login.urls.map((u) => webOrigin(/^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`) ?? u))].join(', ');
       throw new ToolError(`The 1Password item "${login.title}" is for ${sites}, not for this page (${origin}). Nothing was filled.`);
@@ -1310,6 +1314,20 @@ export class BrowserControl {
       `Filled the ${where} from the 1Password item "${login.title}" on ${origin}${saved ? ' (the item the user saved for this site)' : ''}. The values were not shown to you and are not in this result. ` +
         'Submit the form yourself (click or press_key). While this page stays open, evaluate is not available on it.' +
         hint,
+    );
+  }
+
+  // HTTP の認証の入力欄に、1Password のアイテムの値で答える。プロキシの認証には使わない（アイテムの URL と照合する先が無い）
+  private fillHttpAuth(guest: Guest, auth: { origin: string; proxy: boolean }, login: Login, saved: boolean): ToolResult {
+    if (auth.proxy) throw new ToolError(`The page is waiting for the sign-in to the proxy ${auth.origin}, which fill_credential cannot answer. Ask the user to sign in with the form using ask_user_to_act.`);
+    if (!matchingUrl(auth.origin, login.urls)) {
+      throw new ToolError(`The 1Password item "${login.title}" is not for ${auth.origin}, which is asking for HTTP authentication. Nothing was filled.`);
+    }
+    if (login.username === null || login.password === null) throw new ToolError(`The 1Password item "${login.title}" needs both a username and a password for HTTP authentication. Nothing was filled.`);
+    if (!this.logins.fill(guest.contents, login.username, login.password)) throw new ToolError('The HTTP authentication form was closed while waiting for 1Password, so nothing was filled.');
+    return textResult(
+      `Signed in to the HTTP authentication of ${auth.origin} with the 1Password item "${login.title}"${saved ? ' (the item the user saved for this site)' : ''}, and tanacode reloaded the page. ` +
+        'The values were not shown to you. Check the page to see whether the sign-in worked.',
     );
   }
 

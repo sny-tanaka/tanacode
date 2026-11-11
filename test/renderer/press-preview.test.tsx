@@ -692,6 +692,24 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
     localStorage.removeItem('tanacode.credentialHint.hidden');
   });
 
+  it('HTTP の認証の入力欄にも 1Password の案内を添える（プロキシの認証には出さない）。案内があっても、入れた値で答えられる', async () => {
+    localStorage.removeItem('tanacode.credentialHint.hidden');
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('stg.example.com');
+    const tab = activated()[0]![1] as string;
+    const login = { id: 'l1', origin: 'https://stg.example.com', realm: 'STG', proxy: false, insecure: false, retry: false, popup: false };
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login: { ...login, proxy: true, origin: 'proxy.corp:3128' } }));
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login: null }));
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login }));
+    expect(screen.getByRole('note', { name: '1Password から入力する案内' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('ユーザー名'), { target: { value: 'u' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'p' } });
+    fireEvent.click(screen.getByText('ログイン'));
+    expect(api.argsOf('browser.answerLogin')).toEqual([['s1', 'l1', { username: 'u', password: 'p' }]]);
+  });
+
   it('「できない」で理由の欄を出し、書いた理由（前後の空白を除く）を添えて返す。「戻る」と Esc で元のボタンに戻る', async () => {
     render(<Pane sessionId="s1" />);
     await act(async () => {});

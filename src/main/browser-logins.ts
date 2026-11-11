@@ -12,6 +12,7 @@ import type { BrowserLogin, BrowserLoginAnswer, BrowserLoginChange } from '@shar
 //    読み込み直したページの login が、同じ先（プロキシか・方式・ホスト・ポート・realm）なら、控えた値で答える。
 //    通ったあとは、Chromium がセッションの中で覚えて、同じ先には自分で送る（Cookie と同じく、ログインを共有する）
 // Claude には値を渡さない（ツールの引数でも受け取らない）。伝えるのは、認証を求められて人に入力欄を出したこと・人が入れたこと・断ったことだけ（notes）。
+// 1Password から入れる（fill_credential）ときは、取り出した値で、人が入れたときと同じように答える（fill。値は main の中だけで扱う）。
 // 守り:
 // - 入力欄は、タブごとに先に出したものだけ。出している間に、ページが別の先の認証を求めても、差し替えない
 //   （人が入れている最中に、相手の先を入れ替えて、別のサイトへ送らせないように）
@@ -100,8 +101,30 @@ export class BrowserLogins {
     const entry = [...this.pending.values()].find((e) => e.login.id === loginId && e.place?.sessionId === sessionId);
     const parsed = parseAnswer(answer);
     if (!entry || parsed === undefined) return;
-    this.close(entry);
     this.outcomes.set(entry.root, { where: describe(entry.login), entered: !!parsed });
+    this.submit(entry, parsed);
+  }
+
+  // そのタブで出している入力欄の先（1Password から入れるときに、アイテムの URL と照合する。出していなければ null）
+  pendingFor(root: WebContents): { origin: string; proxy: boolean } | null {
+    const entry = this.pending.get(root);
+    return entry ? { origin: entry.login.origin, proxy: entry.login.proxy } : null;
+  }
+
+  // 1Password から取り出した値で答える（人が入れたときと同じく、控えて読み込み直す）。結果は fill_credential が Claude に伝えるので、notes には残さない。
+  // 出していなければ（もう消えた）false
+  fill(root: WebContents, username: string, password: string): boolean {
+    const entry = this.pending.get(root);
+    const parsed = parseAnswer({ username, password });
+    if (!entry || !parsed) return false;
+    this.outcomes.delete(root);
+    this.submit(entry, parsed);
+    return true;
+  }
+
+  // 入力欄を消し、値があれば、求めたページに 1 回だけ使えるように控えて、読み込み直す
+  private submit(entry: Entry, parsed: BrowserLoginAnswer | null): void {
+    this.close(entry);
     if (!parsed || entry.asker.isDestroyed()) return;
     const saved: Saved = { key: entry.key, ...parsed, until: this.now() + SAVED_TTL_MS };
     this.saved.set(entry.asker, saved);
@@ -119,8 +142,11 @@ export class BrowserLogins {
     if (entry) {
       const page = entry.login.popup ? 'A popup window opened from this tab' : 'This page';
       return [
-        `${page} asked for HTTP authentication (${describe(entry.login)}). tanacode shows the user a sign-in form for it above the page; you can neither see nor fill it in. ` +
-          'Do not ask the user for the user name or password in the chat. To go on, ask the user to sign in with that form using ask_user_to_act.',
+        `${page} asked for HTTP authentication (${describe(entry.login)}). tanacode shows the user a sign-in form for it above the page; you can neither see nor type into it. ` +
+          (entry.login.proxy
+            ? 'Do not ask the user for the user name or password in the chat. To go on, ask the user to sign in with that form using ask_user_to_act.'
+            : 'If the user gave you a 1Password item link for this site (or saved one in tanacode), sign in with fill_credential (it answers this form without showing you the values). ' +
+              'Otherwise, do not ask the user for the user name or password in the chat; ask the user to sign in with that form using ask_user_to_act.'),
       ];
     }
     const outcome = this.outcomes.get(root);

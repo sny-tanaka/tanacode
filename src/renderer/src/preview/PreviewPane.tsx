@@ -714,10 +714,11 @@ function withLogin(prev: Record<string, BrowserLogin>, { tabId, login }: Browser
 
 // ページが求めた HTTP の認証（Basic など）の入力欄。人が入れた値は main がページにだけ渡し、Claude には渡さない。
 // 求めた先（オリジン）は省略せずに出す（ほかのサイトの認証と見分けられるように）。realm はサイトが自由に書けるので、サイトの言葉として括って出す。
-// 急に出ても、入れている途中の文字を取らないよう、フォーカスは移さない。Esc でキャンセル
+// 急に出ても、入れている途中の文字を取らないよう、フォーカスは移さない。Esc でキャンセル。1Password から入れられることの案内も添える（CredentialHint）
 export function LoginBar({ login, onAnswer }: { login: BrowserLogin; onAnswer: (answer: BrowserLoginAnswer) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const hint = useCredentialHint();
   const message = login.proxy ? 'preview.login.proxy' : login.popup ? 'preview.login.popup' : 'preview.login.page';
   const escape = (e: React.KeyboardEvent) => {
     if (!e.nativeEvent.isComposing && e.key === 'Escape') onAnswer(null);
@@ -769,6 +770,8 @@ export function LoginBar({ login, onAnswer }: { login: BrowserLogin; onAnswer: (
           {t('preview.login.cancel')}
         </button>
       </div>
+      {/* 1Password のアイテムのリンクを Claude に渡せば、Claude が fill_credential でこの入力欄に答えられる（プロキシの認証には答えられないので出さない） */}
+      {!login.proxy && hint.shown && <CredentialHint onHide={hint.hide} />}
     </form>
   );
 }
