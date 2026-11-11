@@ -359,7 +359,7 @@ describe('PreviewPane（セッションを切り替えた直後の「要素を�
 
   it('切り替えた先の「要素を選ぶ」が押せて、切り替えた先のページで選ぶ。前のページの返事で、切り替えた先の要素選びを止めない', async () => {
     const picks = fakeWebviews();
-    const api = mockApi({ 'browser.asks': () => Promise.resolve([]), 'browser.logins': () => Promise.resolve([]) });
+    const api = mockApi({ 'browser.asks': () => Promise.resolve([]), 'browser.logins': () => Promise.resolve([]), 'browser.remembers': () => Promise.resolve([]) });
     api.install();
     const view = render(<PreviewPane sessionId="A" visible liveSessionIds={['A', 'B']} onShow={noop} onClose={noop} />);
     act(() => {

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { CredentialHint } from './CredentialHint';
-import { AskBar, ClaudeBar, ClickBox, LoginBar, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
+import { AskBar, ClaudeBar, ClickBox, LoginBar, RememberBar, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
 
 // アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
 // Claude がユーザーに操作を頼んだときの「あなたの番です」の帯、ページが HTTP の認証（Basic など）を求めたときの入力欄。
@@ -165,6 +165,32 @@ export const あなたの番_ログイン_狭い幅: Story = {
   render: () => (
     <div className="preview-pane" style={{ width: 380, height: 320, border: '1px solid var(--border-subtle)' }}>
       <AskBar message="ステージングの管理画面にログインしてください" login onAnswer={() => {}} />
+    </div>
+  ),
+};
+
+// Claude がチャットで渡されたリンクで 1Password から入れたあと、そのサイトでは次からこのアイテムを使うかを聞く。
+// Claude は返事を待たずに続けている（ページの上には、入れたあとのページが出ている）。「使う」で、サイトごとの控えに足す
+export const 次からこのアイテムを使うか: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <RememberBar offer={{ id: 'r1', site: 'staging.example.com', title: 'ステージングのテスト用アカウント' }} onAnswer={() => {}} />
+      <div className="preview-body">
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>ダッシュボード</div>
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// 狭い幅では、ボタンが下の行に回る
+export const 次からこのアイテムを使うか_狭い幅: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ width: 380, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <RememberBar offer={{ id: 'r1', site: 'very-long-branch-name-for-review.stg.internal.example.com:8443', title: 'レビュー環境の管理者' }} onAnswer={() => {}} />
     </div>
   ),
 };

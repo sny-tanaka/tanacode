@@ -1084,6 +1084,26 @@ describe('アプリ内ブラウザ', () => {
     );
     await expect(invoke(IpcChannel.BrowserHostsGet)).resolves.toEqual(['ok.test']);
   });
+
+  it('サイトごとの 1Password のリンクは、サイトの書き方をそろえて保存する。一覧でなければ空にする', async () => {
+    await boot();
+    const link = 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba';
+    await expect(invoke(IpcChannel.BrowserCredentialLinksGet)).resolves.toEqual([]);
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, [{ site: 'https://Example.test/login', link }])).resolves.toEqual([{ site: 'example.test', link }]);
+    expect(JSON.parse(readFileSync(join(state.userData, 'settings.json'), 'utf8')).credentialLinks).toEqual([{ site: 'example.test', link }]);
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, 'nope')).resolves.toEqual([]);
+  });
+
+  it('サイトごとの 1Password のリンクに、書き方の違うサイト・リンクでないものがあれば、保存せずに断る', async () => {
+    await boot();
+    const link = 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba';
+    await invoke(IpcChannel.BrowserCredentialLinksSet, [{ site: 'ok.test', link }]);
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, [{ site: 'a b', link }])).rejects.toThrow('サイトの書き方が違います: a b');
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, [null])).rejects.toThrow('サイトの書き方が違います: ');
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, [{ site: 'ok.test', link: 'https://example.test/' }])).rejects.toThrow('1Password のアイテムのリンクではありません: https://example.test/');
+    await expect(invoke(IpcChannel.BrowserCredentialLinksSet, [{ site: 'ok.test' }])).rejects.toThrow('1Password のアイテムのリンクではありません: ');
+    await expect(invoke(IpcChannel.BrowserCredentialLinksGet)).resolves.toEqual([{ site: 'ok.test', link }]);
+  });
 });
 
 describe('Git の操作', () => {

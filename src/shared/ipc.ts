@@ -246,6 +246,9 @@ export const IpcChannel = {
   BrowserLogin: 'browser:login',
   BrowserLoginsGet: 'browser:logins-get',
   BrowserLoginAnswer: 'browser:login-answer',
+  BrowserRemember: 'browser:remember',
+  BrowserRemembersGet: 'browser:remembers-get',
+  BrowserRememberAnswer: 'browser:remember-answer',
   // チェックリスト。読む・書き換える・別のセッションへコピーする・変わった（main → 画面）・セッションごとの未読の数
   ChecklistGet: 'checklist:get',
   ChecklistApply: 'checklist:apply',
@@ -310,6 +313,10 @@ export type BrowserLogin = { id: string; origin: string; realm: string; proxy: b
 export type BrowserLoginChange = { sessionId: string; tabId: string; login: BrowserLogin | null };
 // 人の入力。null: 「キャンセル」
 export type BrowserLoginAnswer = { username: string; password: string } | null;
+// 1Password から入れたあと、そのサイトでは次からこのアイテムを使うかの問い（browser-credential-offers.ts）。site: 控えるサイト / title: 1Password のアイテムの名前
+export type BrowserRememberOffer = { id: string; site: string; title: string };
+// 聞いた・終わった（offer が null）
+export type BrowserRememberChange = { sessionId: string; offer: BrowserRememberOffer | null };
 
 export type SessionAttention = 'question' | 'permission' | 'browser' | null;
 
@@ -1033,6 +1040,10 @@ export type TanacodeApi = {
     onLogin(listener: (change: BrowserLoginChange) => void): () => void;
     logins(): Promise<BrowserLoginChange[]>;
     answerLogin(sessionId: string, loginId: string, answer: BrowserLoginAnswer): void;
+    // 1Password から入れたあとの「次からこのアイテムを使いますか？」。remembers: 今聞いているもの（画面を作り直したとき用）/ answerRemember: use は「使う」を押した
+    onRemember(listener: (change: BrowserRememberChange) => void): () => void;
+    remembers(): Promise<BrowserRememberChange[]>;
+    answerRemember(sessionId: string, offerId: string, use: boolean): void;
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
@@ -1187,6 +1198,7 @@ export type IpcInvoke = {
   [IpcChannel.BrowserCredentialLinksSet]: Api['browser']['setCredentialLinks'];
   [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
   [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
+  [IpcChannel.BrowserRemembersGet]: Api['browser']['remembers'];
 };
 
 // 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
@@ -1210,6 +1222,7 @@ export type IpcSend = {
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
   [IpcChannel.BrowserLoginAnswer]: Api['browser']['answerLogin'];
+  [IpcChannel.BrowserRememberAnswer]: Api['browser']['answerRemember'];
   [IpcChannel.BrowserViewportReset]: Api['browser']['resetViewport'];
   [IpcChannel.BrowserThrottleClear]: Api['browser']['clearThrottle'];
   [IpcChannel.WalkthroughShown]: Api['walkthrough']['shown'];
@@ -1262,6 +1275,7 @@ export type IpcEvent = {
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;
+  [IpcChannel.BrowserRemember]: Payload<Api['browser']['onRemember']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };
 

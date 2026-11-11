@@ -1984,6 +1984,13 @@
       "submit": "Sign In",
       "cancel": "Cancel"
     },
+    "remember": {
+      "label": "Use this 1Password item for this site?",
+      "question": "Use this 1Password item ({title}) for this site ({site}) from now on?",
+      "note": "If you do, Claude can fill it in without the link (only the link is saved; you can remove it in MCP Settings).",
+      "use": "Use",
+      "skip": "Don't Use"
+    },
     "credentialHint": {
       "label": "Filling from 1Password",
       "text": "Give Claude the link to a 1Password item, and Claude can fill in the login without seeing the password.",

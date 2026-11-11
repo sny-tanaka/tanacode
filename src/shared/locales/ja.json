@@ -1925,6 +1925,13 @@
       "submit": "ログイン",
       "cancel": "キャンセル"
     },
+    "remember": {
+      "label": "1Password のアイテムを控えるかの問い",
+      "question": "このサイト（{site}）では、次からこの 1Password のアイテム（{title}）を使いますか？",
+      "note": "使うと、Claude がリンクを書かなくても入力できるようになります（控えるのはリンクだけで、MCP の設定で消せます）。",
+      "use": "使う",
+      "skip": "使わない"
+    },
     "credentialHint": {
       "label": "1Password から入力する案内",
       "text": "1Password のアイテムのリンクを Claude に渡せば、Claude がパスワードを見ずに自動で入力できます。",

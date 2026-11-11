@@ -533,6 +533,7 @@ describe('部品から画面への知らせ', () => {
       closeTab: IpcChannel.BrowserCloseTab,
       ask: IpcChannel.BrowserAsk,
       login: IpcChannel.BrowserLogin,
+      remember: IpcChannel.BrowserRemember,
     });
     browser.send(IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' });
     expect(sentToRenderer()).toEqual([[IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' }]]);

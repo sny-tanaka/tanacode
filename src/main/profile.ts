@@ -185,6 +185,8 @@ export class Profile {
       credentials: {
         source: sdkSource(async () => (await import('@1password/sdk')) as unknown as SdkModule, app.getVersion()),
         links: () => this.appSettings.credentialLinks(),
+        // 入れたあとの帯で、人が「次からこのアイテムを使う」を選んだ
+        remember: (link) => this.appSettings.setCredentialLinks([...this.appSettings.credentialLinks().filter((l) => l.site !== link.site), link]),
       },
       channels: {
         open: IpcChannel.BrowserOpen,
@@ -196,6 +198,7 @@ export class Profile {
         closeTab: IpcChannel.BrowserCloseTab,
         ask: IpcChannel.BrowserAsk,
         login: IpcChannel.BrowserLogin,
+        remember: IpcChannel.BrowserRemember,
       },
     });
     this.browser.watchNetwork(options.preview);

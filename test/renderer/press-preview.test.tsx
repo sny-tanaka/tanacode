@@ -70,6 +70,7 @@ beforeEach(() => {
   api = mockApi({
     'browser.asks': () => Promise.resolve([]),
     'browser.logins': () => Promise.resolve([]),
+    'browser.remembers': () => Promise.resolve([]),
     'attachments.save': (name: never) => Promise.resolve(`/tmp/attachments/0123abcd-${name as string}`),
   });
   api.install();
@@ -710,6 +711,35 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
     expect(api.argsOf('browser.answerLogin')).toEqual([['s1', 'l1', { username: 'u', password: 'p' }]]);
   });
 
+  it('1Password から入れたあと「次からこのアイテムを使いますか？」を出し、「使う」「使わない」・Esc で返す。ほかのセッションのものは出さない', async () => {
+    api = mockApi({
+      'browser.asks': () => Promise.resolve([]),
+      'browser.logins': () => Promise.resolve([]),
+      'browser.remembers': () => Promise.resolve([{ sessionId: 's1', offer: { id: 'r0', site: 'old.test', title: '古いもの' } }]),
+    });
+    api.install();
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    // 画面を作り直したときも、今聞いているものを出す
+    expect(screen.getByText(/old\.test/)).toBeTruthy();
+    act(() => api.emit('browser.onRemember', { sessionId: 's2', offer: { id: 'x', site: 'other.test', title: 'ほか' } }));
+    expect(screen.queryByText(/other\.test/)).toBeNull();
+    act(() => api.emit('browser.onRemember', { sessionId: 's1', offer: { id: 'r1', site: 'example.com', title: 'テスト用' } }));
+    const bar = screen.getByRole('region', { name: '1Password のアイテムを控えるかの問い' });
+    expect(bar.textContent).toContain('このサイト（example.com）では、次からこの 1Password のアイテム（テスト用）を使いますか？');
+    fireEvent.click(screen.getByText('使う'));
+    fireEvent.click(screen.getByText('使わない'));
+    fireEvent.keyDown(bar, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(bar, { key: 'Escape' });
+    expect(api.argsOf('browser.answerRemember')).toEqual([
+      ['s1', 'r1', true],
+      ['s1', 'r1', false],
+      ['s1', 'r1', false],
+    ]);
+    act(() => api.emit('browser.onRemember', { sessionId: 's1', offer: null }));
+    expect(screen.queryByRole('region', { name: '1Password のアイテムを控えるかの問い' })).toBeNull();
+  });
+
   it('「できない」で理由の欄を出し、書いた理由（前後の空白を除く）を添えて返す。「戻る」と Esc で元のボタンに戻る', async () => {
     render(<Pane sessionId="s1" />);
     await act(async () => {});
@@ -740,6 +770,7 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
   it('画面を作り直したときも頼まれている依頼を出し、切り替えた先のセッションの依頼に返す', async () => {
     api = mockApi({
       'browser.logins': () => Promise.resolve([]),
+      'browser.remembers': () => Promise.resolve([]),
       'browser.asks': () =>
         Promise.resolve([
           { sessionId: 's1', ask: { id: 'a1', message: 's1 への依頼' } },

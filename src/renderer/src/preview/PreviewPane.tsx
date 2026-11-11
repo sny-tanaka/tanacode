@@ -1,10 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserLogin, BrowserLoginAnswer, BrowserLoginChange, BrowserPoint, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
+import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserLogin, BrowserLoginAnswer, BrowserLoginChange, BrowserPoint, BrowserRememberChange, BrowserRememberOffer, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
 import { focusedPane, stepIn, useShortcuts } from '../layout/shortcuts';
-import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
+import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, LockIcon, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
 import { codeBlock } from '../chat/sanitize';
 import { useOpenInBrowser } from './openInBrowser';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
@@ -108,6 +108,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const [asks, setAsks] = useState<Record<string, BrowserAsk>>({});
   // タブの ID → ページが求めた HTTP の認証の入力欄
   const [logins, setLogins] = useState<Record<string, BrowserLogin>>({});
+  // セッションの ID → 1Password から入れたあとの「次からこのアイテムを使いますか？」
+  const [remembers, setRemembers] = useState<Record<string, BrowserRememberOffer>>({});
   // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
   const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
   // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
@@ -126,6 +128,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const activity = sessionId ? claude[sessionId] : undefined;
   const ask = sessionId ? asks[sessionId] : undefined;
   const login = activeTab ? logins[activeTab] : undefined;
+  const remember = sessionId ? remembers[sessionId] : undefined;
 
   const update = (tabId: string, patch: Partial<PageState>) =>
     setPages((prev) => ({ ...prev, [tabId]: { ...(prev[tabId] ?? EMPTY_PAGE), ...patch } }));
@@ -259,7 +262,9 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         }),
       ),
       window.tanacode.browser.onLogin((change) => setLogins((prev) => withLogin(prev, change))),
+      window.tanacode.browser.onRemember((change) => setRemembers((prev) => withRemember(prev, change))),
     ];
+    void window.tanacode.browser.remembers().then((list) => setRemembers((prev) => list.reduce(withRemember, prev)));
     void window.tanacode.browser.logins().then((list) => setLogins((prev) => list.reduce(withLogin, prev)));
     // 画面を作り直したとき（ウィンドウを閉じて開き直した）も、頼まれている操作の帯を出す
     void window.tanacode.browser.asks().then((list) =>
@@ -562,6 +567,9 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
       {login && sessionId && (
         <LoginBar key={login.id} login={login} onAnswer={(answer) => window.tanacode.browser.answerLogin(sessionId, login.id, answer)} />
       )}
+      {remember && sessionId && (
+        <RememberBar key={remember.id} offer={remember} onAnswer={(use) => window.tanacode.browser.answerRemember(sessionId, remember.id, use)} />
+      )}
       {picking && <div className="preview-hint">{t('preview.hint.picking')}</div>}
       {page?.error && (
         <div className="preview-hint error">
@@ -706,6 +714,12 @@ export function AskBar({ message, login = false, onAnswer }: { message: string; 
 }
 
 // タブの入力欄の一覧に、出した・消した（login が null）を当てる
+function withRemember(prev: Record<string, BrowserRememberOffer>, { sessionId, offer }: BrowserRememberChange): Record<string, BrowserRememberOffer> {
+  if (offer) return { ...prev, [sessionId]: offer };
+  const { [sessionId]: _, ...rest } = prev;
+  return rest;
+}
+
 function withLogin(prev: Record<string, BrowserLogin>, { tabId, login }: BrowserLoginChange): Record<string, BrowserLogin> {
   if (login) return { ...prev, [tabId]: login };
   const { [tabId]: _, ...rest } = prev;
@@ -773,6 +787,36 @@ export function LoginBar({ login, onAnswer }: { login: BrowserLogin; onAnswer: (
       {/* 1Password のアイテムのリンクを Claude に渡せば、Claude が fill_credential でこの入力欄に答えられる（プロキシの認証には答えられないので出さない） */}
       {!login.proxy && hint.shown && <CredentialHint onHide={hint.hide} />}
     </form>
+  );
+}
+
+// 1Password から入れたあとの「このサイトでは、次からこのアイテムを使いますか？」の帯（browser-credential-offers.ts）。
+// 「使う」を押したときだけ、サイトごとの控え（MCP の設定の「サイトごとの 1Password のアイテム」）に足す。「使わない」・Esc で閉じる。
+// Claude は返事を待たずに続けているので、ほかの帯と違って急がせない色（ページの上の知らせ）にする。フォーカスは移さない
+export function RememberBar({ offer, onAnswer }: { offer: BrowserRememberOffer; onAnswer: (use: boolean) => void }) {
+  return (
+    <div
+      className="preview-remember"
+      role="region"
+      aria-label={t('preview.remember.label')}
+      onKeyDown={(e) => {
+        if (!e.nativeEvent.isComposing && e.key === 'Escape') onAnswer(false);
+      }}
+    >
+      <LockIcon size={14} />
+      <p className="preview-remember-text">
+        {t('preview.remember.question', { site: offer.site, title: offer.title })}
+        <span className="preview-remember-note">{t('preview.remember.note')}</span>
+      </p>
+      <div className="preview-ask-actions">
+        <button type="button" className="send-button" onClick={() => onAnswer(true)}>
+          {t('preview.remember.use')}
+        </button>
+        <button type="button" className="ghost-button" onClick={() => onAnswer(false)}>
+          {t('preview.remember.skip')}
+        </button>
+      </div>
+    </div>
   );
 }
 

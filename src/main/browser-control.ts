@@ -19,13 +19,14 @@ import {
   uploadPaths,
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRememberChange, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { describeDialog, PageDialogs } from './browser-dialogs';
 import { BrowserDownloads, describeDownload, MAX_DOWNLOAD_BYTES, MAX_DOWNLOADS_PER_CALL } from './browser-downloads';
 import { certificateErrorHint } from './browser-certificates';
 import { BrowserLogins, type LoginRequest } from './browser-logins';
+import { CredentialOffers } from './browser-credential-offers';
 import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
@@ -358,10 +359,11 @@ type Deps = {
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
   onAsk: (sessionId: string, ask: BrowserAsk | null) => void;
   // 1Password から入れる（fill_credential）。無ければ使えない。source: 値の取り出し役（SDK など）/
-  // links: サイトごとに控えたアイテムのリンク（人が足したもの）
+  // links: サイトごとに控えたアイテムのリンク（人が足したもの）/ remember: 人が帯で「使う」を押した（控えに足す。browser-credential-offers.ts）
   credentials?: {
     source: CredentialSource;
     links: () => CredentialLink[];
+    remember: (link: CredentialLink) => void;
   };
   channels: {
     open: typeof IpcChannel.BrowserOpen;
@@ -373,6 +375,7 @@ type Deps = {
     closeTab: typeof IpcChannel.BrowserCloseTab;
     ask: typeof IpcChannel.BrowserAsk;
     login: typeof IpcChannel.BrowserLogin;
+    remember: typeof IpcChannel.BrowserRemember;
   };
 };
 
@@ -402,6 +405,8 @@ export class BrowserControl {
   private readonly asks: BrowserAsks;
   // ページが求めた HTTP の認証の入力欄（人にだけ出す。browser-logins.ts）
   private readonly logins: BrowserLogins;
+  // 1Password から入れたあとの「次からこのアイテムを使いますか？」（browser-credential-offers.ts）
+  private readonly offers: CredentialOffers;
   // 人に確認した、許す先の外を開く印（セッションごと）
   private readonly marks = new Map<string, Mark[]>();
   // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
@@ -429,6 +434,10 @@ export class BrowserControl {
       this.deps.onAsk(sessionId, ask);
     });
     this.logins = new BrowserLogins((change) => this.deps.send(this.deps.channels.login, change));
+    this.offers = new CredentialOffers(
+      (change) => this.deps.send(this.deps.channels.remember, change),
+      (link) => this.deps.credentials?.remember(link),
+    );
   }
 
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
@@ -769,6 +778,15 @@ export class BrowserControl {
     this.logins.answer(sessionId, loginId, answer);
   }
 
+  // 今聞いている「次からこのアイテムを使いますか？」（画面を作り直したとき用）と、人の返事
+  pendingRemembers(): BrowserRememberChange[] {
+    return this.offers.list();
+  }
+
+  answerRemember(sessionId: string, offerId: unknown, use: unknown): void {
+    this.offers.answer(sessionId, offerId, use);
+  }
+
   // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）。
   // 人が許した、許す先の外のオリジンと、確認した印も捨てる（オンに戻したら、また人に許可を求める）
   turnOff(): void {
@@ -813,6 +831,7 @@ export class BrowserControl {
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
     this.logins.forget(sessionId);
+    this.offers.forget(sessionId);
     this.marks.delete(sessionId);
     this.evaluateMarks.delete(sessionId);
     this.leaveMarks.delete(sessionId);
@@ -1057,7 +1076,7 @@ export class BrowserControl {
       case 'upload_file':
         return this.uploadFile(sessionId, guest, args, toolUseId);
       case 'fill_credential':
-        return this.fillCredential(guest, args);
+        return this.fillCredential(sessionId, guest, args);
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -1256,20 +1275,20 @@ export class BrowserControl {
   // 値は Claude への答え・エラー文に入れない。1Password を待つ間にページが移ったら、入れない。人には確かめない（ユーザーの判断:
   // リンクを渡した時点で、そのアイテムを使うことを許している）。ページに書かれたリンクで別のサイトの値を入れさせないよう、オリジンは照合する。
   // item を省いたら、今のページのサイトに人が控えたリンクを使う（控えていなければ断る）
-  private async fillCredential(guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+  private async fillCredential(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
     const credentials = this.deps.credentials;
     if (!credentials) throw new ToolError('Filling credentials from 1Password is not available in this tanacode.');
     const started = Date.now();
     const usernameSelector = optionalString(args.usernameSelector);
     const passwordSelector = optionalString(args.passwordSelector);
     const pageUrl = guest.contents.getURL();
-    const origin = webOrigin(pageUrl);
-    if (!origin) throw new ToolError('The current page is not a web page, so nothing can be filled.');
+    // current() が通したページ（許す先か、人が許したオリジン）なので、いつも http(s) のオリジンがある
+    const origin = webOrigin(pageUrl)!;
     const given = optionalString(args.item);
     const saved = given ? null : linkForPage(credentials.links(), pageUrl);
     if (!given && !saved) {
       throw new ToolError(
-        `No 1Password item is saved for this site (${normalizeSite(pageUrl) ?? origin}). Ask the user for the item link (in 1Password, "Copy Private Link" on the item), ` +
+        `No 1Password item is saved for this site (${origin}). Ask the user for the item link (in 1Password, "Copy Private Link" on the item), ` +
           `or ask them to save one under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}.`,
       );
     }
@@ -1286,7 +1305,7 @@ export class BrowserControl {
     // ページ（か、このタブから開いた別ウインドウ）が HTTP の認証（Basic など）を求めて、入力欄を出しているなら、そちらに答える
     // （browser-logins.ts。照合する先は、ページではなく認証を求めた先）
     const auth = this.logins.pendingFor(guest.contents);
-    if (auth) return this.fillHttpAuth(guest, auth, login, saved !== null);
+    if (auth) return this.fillHttpAuth(guest, auth, login, saved !== null, () => this.offerToRemember(sessionId, given, pageUrl, login.title));
     if (!matchingUrl(pageUrl, login.urls)) {
       const sites = [...new Set(login.urls.map((u) => webOrigin(/^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`) ?? u))].join(', ');
       throw new ToolError(`The 1Password item "${login.title}" is for ${sites}, not for this page (${origin}). Nothing was filled.`);
@@ -1304,12 +1323,7 @@ export class BrowserControl {
     const result = (await this.world(guest, script).catch(() => ({ error: 'the page did not respond' }))) as FillResult | null;
     if (!result || 'error' in result) throw new ToolError(`Could not fill the credential: ${result?.error ?? 'the page did not respond'}. Nothing was filled.`);
     const where = result.filled.map((f) => `${f.field} into ${f.element}`).join(' and ');
-    // リンクを渡されて入れたサイトに、まだ控えが無ければ、控え方を伝える（Claude からは控えない。控えるのは人だけ）
-    const site = normalizeSite(pageUrl);
-    const hint =
-      given && site && !linkForPage(credentials.links(), pageUrl)
-        ? ` If the user wants to log in to ${site} without giving you the link next time, they can save it under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}.`
-        : '';
+    const hint = this.offerToRemember(sessionId, given, pageUrl, login.title);
     return textResult(
       `Filled the ${where} from the 1Password item "${login.title}" on ${origin}${saved ? ' (the item the user saved for this site)' : ''}. The values were not shown to you and are not in this result. ` +
         'Submit the form yourself (click or press_key). While this page stays open, evaluate is not available on it.' +
@@ -1317,17 +1331,29 @@ export class BrowserControl {
     );
   }
 
+  // チャットで渡されたリンクで入れたサイトに、まだ控えが無ければ、次からこのアイテムを使うかを帯で人に聞く（返事は待たない。browser-credential-offers.ts）。
+  // Claude には、帯で聞いたことを伝える文を返す（チャットで同じことを聞き直さないように）。聞かなければ空。人が「使う」を押す前に、入れる処理は呼ばない
+  private offerToRemember(sessionId: string, given: string | undefined, pageUrl: string, title: string): string {
+    const credentials = this.deps.credentials;
+    const site = normalizeSite(pageUrl);
+    if (!given || !site || !credentials || linkForPage(credentials.links(), pageUrl)) return '';
+    this.offers.offer(sessionId, site, given.trim(), title);
+    return ` tanacode is asking the user, in a banner in the in-app browser, whether to use this item for ${site} from now on (if they choose to, you can call fill_credential without item there next time). Do not ask about it in the chat.`;
+  }
+
   // HTTP の認証の入力欄に、1Password のアイテムの値で答える。プロキシの認証には使わない（アイテムの URL と照合する先が無い）
-  private fillHttpAuth(guest: Guest, auth: { origin: string; proxy: boolean }, login: Login, saved: boolean): ToolResult {
+  private fillHttpAuth(guest: Guest, auth: { origin: string; proxy: boolean }, login: Login, saved: boolean, offer: () => string): ToolResult {
     if (auth.proxy) throw new ToolError(`The page is waiting for the sign-in to the proxy ${auth.origin}, which fill_credential cannot answer. Ask the user to sign in with the form using ask_user_to_act.`);
     if (!matchingUrl(auth.origin, login.urls)) {
       throw new ToolError(`The 1Password item "${login.title}" is not for ${auth.origin}, which is asking for HTTP authentication. Nothing was filled.`);
     }
     if (login.username === null || login.password === null) throw new ToolError(`The 1Password item "${login.title}" needs both a username and a password for HTTP authentication. Nothing was filled.`);
-    if (!this.logins.fill(guest.contents, login.username, login.password)) throw new ToolError('The HTTP authentication form was closed while waiting for 1Password, so nothing was filled.');
+    // 入力欄があることは、呼ぶ側が待たずに確かめたばかり（pendingFor）なので、答えられる
+    this.logins.fill(guest.contents, login.username, login.password);
     return textResult(
       `Signed in to the HTTP authentication of ${auth.origin} with the 1Password item "${login.title}"${saved ? ' (the item the user saved for this site)' : ''}, and tanacode reloaded the page. ` +
-        'The values were not shown to you. Check the page to see whether the sign-in worked.',
+        'The values were not shown to you. Check the page to see whether the sign-in worked.' +
+        offer(),
     );
   }
 

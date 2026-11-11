@@ -6687,6 +6687,34 @@ button.menu-tab:disabled {
   gap: 4px;
   margin-left: auto;
 }
+/* 1Password から入れたあとの「次からこのアイテムを使いますか？」の帯（RememberBar）。急がせない知らせなので、地の色に近くする */
+.preview-remember {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-remember > .icon {
+  flex: none;
+  color: var(--text-tertiary);
+}
+.preview-remember-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.preview-remember-note {
+  display: block;
+  color: var(--text-tertiary);
+}
 /* Claude がこれから押す要素の枠（ページの上に重ねる） */
 .preview-click-box {
   position: absolute;

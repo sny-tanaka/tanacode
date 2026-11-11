@@ -96,6 +96,7 @@ beforeEach(() => {
     'walkthrough.list': () => Promise.resolve([]),
     'browser.asks': () => Promise.resolve([]),
     'browser.logins': () => Promise.resolve([]),
+    'browser.remembers': () => Promise.resolve([]),
     'workflows.get': () => Promise.resolve([]),
     'subagents.get': () => Promise.resolve([]),
     'tasks.bash': () => Promise.resolve([]),

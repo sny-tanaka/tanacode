@@ -17,7 +17,7 @@ import {
   type SdkModule,
 } from '../src/main/browser-credentials';
 import { cleanLinks, isItemLink, linkForPage, normalizeSite, type CredentialLink } from '../src/shared/credential-links';
-import { IpcChannel, type BrowserAskChange } from '../src/shared/ipc';
+import { IpcChannel, type BrowserAskChange, type BrowserRememberChange } from '../src/shared/ipc';
 import { setup, textOf, type Tab } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
@@ -43,6 +43,7 @@ describe('アイテムの参照', () => {
     expect(() => parseItemRef('https://start.1password.com/open/i?v=--vault&i=zyxwvutsrqponmlkjihgfedcba')).toThrow(/malformed/);
     expect(() => parseItemRef('https://start.1password.com/open/i?v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba')).toThrow(/missing the account/);
     expect(() => parseItemRef('op://Dev/Site')).toThrow(/not a 1Password item link/);
+    expect(() => parseItemRef('https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ')).toThrow(/missing the account, vault or item ID/);
     expect(() => parseItemRef('my password')).toThrow(/Pass a 1Password item link/);
   });
 });
@@ -129,7 +130,7 @@ describe('fill_credential', () => {
         return opResult;
       },
     };
-    return setup({ credentials: { source, links: () => links } });
+    return setup({ credentials: { source, links: () => links, remember: (link) => (links = [...links.filter((l) => l.site !== link.site), link]) } });
   };
 
   // ページの作り物: 入れるスクリプトを受け取って控え、入れた結果を返す
@@ -170,18 +171,57 @@ describe('fill_credential', () => {
     noLeak(ctx, textOf(result));
   });
 
-  it('localhost 以外でも人に確かめずに入れる（リンクを渡した時点で許している）。控えが無いサイトなら、控え方を Claude に伝える', async () => {
+  it('localhost 以外でも人に確かめずに入れる（リンクを渡した時点で許している）。控えが無いサイトなら、入れたあとに帯で控えるかを聞き、返事は待たない', async () => {
     const ctx = env();
     ctx.state.hosts = ['example.com'];
-    opResult = (item(['https://example.com']));
+    opResult = item(['https://example.com']);
     page(ctx, 'https://example.com/login');
+    const offers = () => ctx.sentOn<BrowserRememberChange>(IpcChannel.BrowserRemember);
     const result = await ctx.call('fill_credential', { item: LINK });
     expect(result.isError).toBeFalsy();
     expect(filled).toHaveLength(1);
-    expect(textOf(result)).toContain('they can save it under "サイトごとの 1Password のアイテム"');
+    expect(textOf(result)).toContain('tanacode is asking the user, in a banner in the in-app browser, whether to use this item for example.com from now on');
+    expect(textOf(result)).toContain('Do not ask about it in the chat.');
     noLeak(ctx, textOf(result));
-    links = [{ site: 'example.com', link: LINK }];
-    expect(textOf(await ctx.call('fill_credential', { item: LINK }))).not.toContain('they can save it');
+    expect(offers()).toEqual([{ sessionId: 'S1', offer: { id: expect.any(String), site: 'example.com', title: 'Example' } }]);
+    expect(ctx.control.pendingRemembers()).toEqual(offers());
+    // まだ控えていない（人が「使う」を押すまで）
+    expect(links).toEqual([]);
+    const id = offers()[0].offer!.id;
+    // 前の問いへの返事・形の違う返事は捨てる
+    ctx.control.answerRemember('S1', 'old', true);
+    ctx.control.answerRemember('S2', id, true);
+    expect(links).toEqual([]);
+    ctx.control.answerRemember('S1', id, true);
+    expect(links).toEqual([{ site: 'example.com', link: LINK }]);
+    expect(offers().at(-1)).toEqual({ sessionId: 'S1', offer: null });
+    expect(ctx.control.pendingRemembers()).toEqual([]);
+    // 控えたサイトでは、もう聞かない
+    const again = await ctx.call('fill_credential', { item: LINK });
+    expect(textOf(again)).not.toContain('asking the user');
+    expect(offers()).toHaveLength(2);
+  });
+
+  it('「使わない」・セッションを閉じたときは控えない。新しく聞いたら前の問いは消える', async () => {
+    const ctx = env();
+    ctx.state.hosts = ['example.com'];
+    opResult = item(['https://example.com']);
+    page(ctx, 'https://example.com/login');
+    const offers = () => ctx.sentOn<BrowserRememberChange>(IpcChannel.BrowserRemember);
+    await ctx.call('fill_credential', { item: LINK });
+    await ctx.call('fill_credential', { item: LINK });
+    const [first, second] = offers();
+    expect(first.offer!.id).not.toBe(second.offer!.id);
+    ctx.control.answerRemember('S1', first.offer!.id, true);
+    expect(links).toEqual([]);
+    ctx.control.answerRemember('S1', second.offer!.id, false);
+    expect(links).toEqual([]);
+    expect(offers().at(-1)).toEqual({ sessionId: 'S1', offer: null });
+    await ctx.call('fill_credential', { item: LINK });
+    ctx.control.forget('S1');
+    expect(offers().at(-1)).toEqual({ sessionId: 'S1', offer: null });
+    expect(ctx.control.pendingRemembers()).toEqual([]);
+    expect(links).toEqual([]);
   });
 
   it('1Password の答えが上限の近くまでかかったら入れない（時間切れを返したあとに入らないように）', async () => {
@@ -190,6 +230,7 @@ describe('fill_credential', () => {
         // 人が 1Password の承認を 56 秒たってから押した
         source: { read: () => new Promise((resolve) => setTimeout(() => resolve(item(['http://localhost:3000'])), 56_000)) },
         links: () => [],
+        remember: () => {},
       },
     });
     const tab = ctx.open('http://localhost:3000/login');
@@ -223,10 +264,44 @@ describe('fill_credential', () => {
     const result = await ctx.call('fill_credential', { item: LINK });
     expect(result.isError).toBeFalsy();
     expect(textOf(result)).toContain('Signed in to the HTTP authentication of https://stg.example.com with the 1Password item "Example"');
+    expect(textOf(result)).toContain('whether to use this item for stg.example.com from now on');
     expect(tab.calls).toContain('reload');
     expect(filled).toEqual([]);
     expect(ctx.control.pendingLogins()).toEqual([]);
     noLeak(ctx, textOf(result));
+  });
+
+  it('入れる途中の端: アイテムの URL が読めない・ページのスクリプトが答えない・null を返す', async () => {
+    const ctx = env();
+    const tab = page(ctx, 'http://localhost:3000/login');
+    opResult = item(['http://[bad', 'other.test']);
+    expect(textOf(await ctx.call('fill_credential', { item: LINK }))).toBe('The 1Password item "Example" is for http://[bad, https://other.test, not for this page (http://localhost:3000). Nothing was filled.');
+    // ユーザー名の欄だけ（パスワードは入れない）
+    opResult = item(['http://localhost:3000']);
+    tab.page.credentialFill = (code) => (filled.push(code), { filled: [{ field: 'username', element: 'input#email' }] });
+    expect(textOf(await ctx.call('fill_credential', { item: LINK, usernameSelector: '#email' }))).toContain('Filled the username into input#email');
+    expect(filled.at(-1)).toContain('"p":null');
+    opResult = item(['http://localhost:3000']);
+    tab.page.credentialFill = () => {
+      throw new Error('ページが答えない');
+    };
+    expect(textOf(await ctx.call('fill_credential', { item: LINK }))).toBe('Could not fill the credential: the page did not respond. Nothing was filled.');
+    tab.page.credentialFill = () => null;
+    expect(textOf(await ctx.call('fill_credential', { item: LINK }))).toBe('Could not fill the credential: the page did not respond. Nothing was filled.');
+  });
+
+  it('HTTP の認証: ユーザー名かパスワードの無いアイテムでは答えない。控えたリンクでも答え、控えたものと伝える', async () => {
+    const ctx = env();
+    ctx.state.hosts = ['stg.example.com'];
+    const tab = page(ctx, 'https://stg.example.com/');
+    ctx.control.requestLogin(tab as unknown as WebContents, tab as unknown as WebContents, { url: 'https://stg.example.com/', authInfo: { isProxy: false, scheme: 'basic', host: 'stg.example.com', port: 443, realm: 'STG' } }, () => {});
+    opResult = { ...item(['https://stg.example.com']), username: null };
+    expect(textOf(await ctx.call('fill_credential', { item: LINK }))).toBe('The 1Password item "Example" needs both a username and a password for HTTP authentication. Nothing was filled.');
+    links = [{ site: 'stg.example.com', link: LINK }];
+    opResult = item(['https://stg.example.com']);
+    const result = await ctx.call('fill_credential', {});
+    expect(textOf(result)).toContain('with the 1Password item "Example" (the item the user saved for this site)');
+    expect(textOf(result)).not.toContain('asking the user');
   });
 
   it('アイテムの URL と今のページが合わなければ入れない', async () => {
@@ -253,7 +328,7 @@ describe('fill_credential', () => {
 
     // 1Password を待つ間に、別のサイトへ移った
     let moved: Tab | null = null;
-    const other = setup({ credentials: { source: { read: async () => ((moved!.url = 'http://localhost:4000/'), item(['http://localhost:3000'])) }, links: () => [] } });
+    const other = setup({ credentials: { source: { read: async () => ((moved!.url = 'http://localhost:4000/'), item(['http://localhost:3000'])) }, links: () => [], remember: () => {} } });
     moved = other.open('http://localhost:3000/login');
     expect(textOf(await other.call('fill_credential', { item: LINK }))).toBe('The page changed while waiting for 1Password, so nothing was filled.');
     expect(moved.scriptsOf('credentialFill')).toEqual([]);
@@ -319,7 +394,7 @@ describe('fill_credential', () => {
     page(ctx, 'http://localhost:3000/login');
     const none = await ctx.call('fill_credential', {});
     expect(none.isError).toBe(true);
-    expect(textOf(none)).toMatch(/No 1Password item is saved for this site \(localhost:3000\)/);
+    expect(textOf(none)).toMatch(/No 1Password item is saved for this site \(http:\/\/localhost:3000\)/);
     expect(opCalls).toEqual([]);
     links = [{ site: 'localhost:3000', link: LINK }];
     const result = await ctx.call('fill_credential', {});
@@ -341,6 +416,15 @@ describe('fill_credential', () => {
       await pending;
       return change.ask!.login === true;
     };
+    // 頼みの文が文字でないもの（頼みは断られる）・タブの無いセッションでも、決めるのに失敗しない
+    await ctx.control.handle('S1', 'ask_user_to_act', { message: 123 });
+    const empty = env();
+    const pendingEmpty = empty.control.handle('S2', 'ask_user_to_act', { message: 'ログインしてください' });
+    await vi.advanceTimersByTimeAsync(0);
+    const emptyChange = empty.sentOn<BrowserAskChange>(IpcChannel.BrowserAsk).at(-1)!;
+    expect(emptyChange.ask!.login).toBe(true);
+    empty.control.answerAsk('S2', emptyChange.ask!.id, { done: true, reason: '' });
+    await pendingEmpty;
     expect(await askWith('Please log in with the test account')).toBe(true);
     expect(await askWith('テスト用のアカウントでサインインしてください')).toBe(true);
     expect(await askWith('2 段階認証のコードを入れてください')).toBe(false);
@@ -365,6 +449,16 @@ describe('CredentialGuard', () => {
     expect(await guard.refusal('evaluate', tab.id, async () => false)).toMatch(/evaluate is not available/);
     tab.emit('destroyed');
     expect(await guard.refusal('evaluate', tab.id, async () => false)).toBeNull();
+  });
+
+  it('iframe の中の移動・同じ文書の中の移動では、控えを捨てない', async () => {
+    const guard = new CredentialGuard();
+    const tab = new (await import('./helpers/fake-electron')).FakeContents({ url: 'http://localhost:3000/' });
+    guard.mark(tab as unknown as WebContents, tab.url);
+    guard.mark(tab as unknown as WebContents, tab.url);
+    tab.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
+    tab.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    expect(await guard.refusal('evaluate', tab.id, async () => false)).toMatch(/evaluate is not available/);
   });
 
   it('入れていないページでは何も断らない（ページで確かめもしない）', async () => {
@@ -459,6 +553,10 @@ describe('1Password SDK の取り出し役', () => {
     expect(sdkFailure(new Error('the vault is locked'))).toMatch(/is locked/);
     expect(sdkFailure(new Error('account not found'))).toMatch(/account in the link was not found/);
     expect(sdkFailure(new Error('item not found'))).toMatch(/item was not found/);
+  });
+
+  it('名前の無いアイテムは (untitled)、空の URL は除く', () => {
+    expect(loginFromSdkItem(sdkItem({ title: '', websites: [{ url: '' }, { url: 'https://a.test' }] }))).toMatchObject({ title: '(untitled)', urls: ['https://a.test'] });
   });
 
   it('組み込みの欄だけをユーザー名・パスワードにする', () => {

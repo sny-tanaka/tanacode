@@ -949,6 +949,8 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
   handle(IpcChannel.BrowserLoginsGet, (e) => P(e).browser.pendingLogins());
   listen(IpcChannel.BrowserLoginAnswer, (e, id: string, loginId: string, answer: unknown) => P(e).browser.answerLogin(id, loginId, answer));
+  handle(IpcChannel.BrowserRemembersGet, (e) => P(e).browser.pendingRemembers());
+  listen(IpcChannel.BrowserRememberAnswer, (e, id: string, offerId: string, use: unknown) => P(e).browser.answerRemember(id, offerId, use));
   handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
   handle(IpcChannel.BrowserCredentialLinksGet, () => settings.credentialLinks());

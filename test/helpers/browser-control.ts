@@ -114,6 +114,7 @@ export function setup(options: { credentials?: BrowserControlDeps['credentials']
       closeTab: IpcChannel.BrowserCloseTab,
       ask: IpcChannel.BrowserAsk,
       login: IpcChannel.BrowserLogin,
+      remember: IpcChannel.BrowserRemember,
     },
   });
 
