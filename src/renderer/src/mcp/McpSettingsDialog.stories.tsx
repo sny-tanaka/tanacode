@@ -1,21 +1,23 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { normalizeHostPattern } from '@shared/browser-tools';
+import { cleanLinks, isItemLink, normalizeSite, type CredentialLink } from '@shared/credential-links';
 import type { McpToolGroup } from '@shared/mcp-tools';
 import { toolPermissionsOf, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { McpSettingsDialog } from './McpSettingsDialog';
 
-// MCP の設定（メニューの「MCP の設定…」から開く）。入り・切り・確認の選択・許す先の追加と削除は、
+// MCP の設定（メニューの「MCP の設定…」から開く）。入り・切り・確認の選択・許す先とサイトごとの 1Password のリンクの追加と削除は、
 // ストーリーの中の値に反映される（main の代わりに返事を決めている）
 
 const noop = () => {};
 const ALL_ON: McpEnabled = { browser: true, sessions: true, checklist: true, walkthrough: true, terminal: true };
 
-function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record<string, ToolPermission>; parentAskRules?: boolean; hosts?: string[] }) {
+function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record<string, ToolPermission>; parentAskRules?: boolean; hosts?: string[]; links?: CredentialLink[] }) {
   let enabled: McpEnabled = { ...ALL_ON, ...initial.enabled };
   let permissions = initial.permissions ?? {};
   let parentAskRules = initial.parentAskRules ?? false;
   let hosts = initial.hosts ?? [];
+  let links = initial.links ?? [];
   mockApi({
     'mcpSettings.get': () => Promise.resolve({ enabled, permissions, parentAskRules, problem: null }),
     'mcpSettings.setEnabled': (server, on) => {
@@ -38,6 +40,14 @@ function registry(initial: { enabled?: Partial<McpEnabled>; permissions?: Record
       if (bad.length > 0) return Promise.reject(new Error(`Error invoking remote method 'browser:hosts-set': Error: 書き方が違います: ${bad.join('、')}`));
       hosts = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
       return Promise.resolve(hosts);
+    },
+    'browser.credentialLinks': () => Promise.resolve(links),
+    'browser.setCredentialLinks': (next) => {
+      const list = next as CredentialLink[];
+      const bad = list.find((l) => !normalizeSite(l.site) || !isItemLink(l.link));
+      if (bad) return Promise.reject(new Error(`Error invoking remote method 'browser:credential-links-set': Error: 書き方が違います: ${bad.site}`));
+      links = cleanLinks(list);
+      return Promise.resolve(links);
     },
   });
 }
@@ -75,5 +85,9 @@ export const 変えたもの: Story = {
       },
       parentAskRules: true,
       hosts: ['myapp.test', '*.staging.example.test'],
+      links: [
+        { site: 'myapp.test', link: 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba&h=my.1password.com' },
+        { site: 'localhost:3000', link: 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=0123456789abcdefghijklmnop&h=my.1password.com' },
+      ],
     }),
 };

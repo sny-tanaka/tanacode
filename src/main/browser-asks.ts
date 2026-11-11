@@ -33,14 +33,15 @@ export class BrowserAsks {
     return [...this.pending].map(([sessionId, { ask }]) => ({ sessionId, ask }));
   }
 
-  // 頼んで、返事を待つ。page: 返事をするときの今のページ（Claude に返す行）。signal: Claude Code が呼び出しを取り消した
-  wait(sessionId: string, message: unknown, page: () => string[], signal?: AbortSignal): Promise<ToolResult> {
+  // 頼んで、返事を待つ。page: 返事をするときの今のページ（Claude に返す行）。signal: Claude Code が呼び出しを取り消した。
+  // login: ログインを頼んでいるように見える（帯に 1Password の案内を添える）
+  wait(sessionId: string, message: unknown, page: () => string[], signal?: AbortSignal, login = false): Promise<ToolResult> {
     const text = typeof message === 'string' ? message.trim() : '';
     if (!text) return Promise.resolve(textResult('Provide message (what to ask the user to do).', true));
     if (this.pending.has(sessionId)) return Promise.resolve(textResult('You have already asked the user to act. Wait for that answer.', true));
     if (signal?.aborted) return Promise.resolve(textResult('Canceled.', true));
     return new Promise((resolve) => {
-      const ask: BrowserAsk = { id: randomUUID(), message: clip(text, MAX_MESSAGE) };
+      const ask: BrowserAsk = { id: randomUUID(), message: clip(text, MAX_MESSAGE), ...(login ? { login: true } : {}) };
       const finish = (result: ToolResult) => {
         if (this.pending.get(sessionId)?.ask !== ask) return;
         clearTimeout(timer);

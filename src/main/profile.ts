@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { app, shell, type Session, type WebContents } from 'electron';
 import { IpcChannel, type ArchiveOptions, type ClaudeSettingsFile, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
+import { isItemLink, normalizeSite, type CredentialLink } from '@shared/credential-links';
 import { AWAY_ENDED, awayReminder } from '@shared/away-mode';
 import { sessionEventText } from '@shared/session-tools';
 import { t } from '@shared/i18n';
@@ -11,6 +12,7 @@ import type { CustomPrompts } from '@shared/prompts';
 import type { AppSettings } from './app-settings';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
+import { sdkSource, type SdkModule } from './browser-credentials';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { restartNoticeText, type AppRestart, type AppUpdateInfo, type RestartNotice } from './app-restart';
@@ -179,6 +181,13 @@ export class Profile {
         this.manager?.browserAskChanged(id, !!ask);
         if (ask) options.notify(this, id, this.manager?.summary(id)?.title ?? null, t('main.notification.browserAsk', { message: snippet(ask.message) }), IpcChannel.BrowserShow);
       },
+      // 1Password から入れる（試作）。値は 1Password の SDK のデスクトップアプリ連携で取り出す
+      credentials: {
+        source: sdkSource(async () => (await import('@1password/sdk')) as unknown as SdkModule, app.getVersion()),
+        links: () => this.appSettings.credentialLinks(),
+        // 入れたあとの帯で、人が「次からこのアイテムを使う」を選んだ
+        remember: (link) => this.appSettings.setCredentialLinks([...this.appSettings.credentialLinks().filter((l) => l.site !== link.site), link]),
+      },
       channels: {
         open: IpcChannel.BrowserOpen,
         activity: IpcChannel.BrowserActivity,
@@ -189,6 +198,7 @@ export class Profile {
         closeTab: IpcChannel.BrowserCloseTab,
         ask: IpcChannel.BrowserAsk,
         login: IpcChannel.BrowserLogin,
+        remember: IpcChannel.BrowserRemember,
       },
     });
     this.browser.watchNetwork(options.preview);
@@ -543,6 +553,18 @@ export class Profile {
     const normalized = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
     this.appSettings.setBrowserHosts(normalized);
     return normalized;
+  }
+
+  // サイトごとに控える 1Password のアイテムのリンクを保存する。書き方の違うものがあれば、保存せずに断る
+  setCredentialLinks(links: unknown): CredentialLink[] {
+    const list = Array.isArray(links) ? links : [];
+    for (const entry of list) {
+      const { site, link } = (entry ?? {}) as { site?: unknown; link?: unknown };
+      if (typeof site !== 'string' || !normalizeSite(site)) throw new Error(t('main.credentialLinks.invalidSite', { site: String(site ?? '') }));
+      if (typeof link !== 'string' || !isItemLink(link)) throw new Error(t('main.credentialLinks.invalidLink', { link: String(link ?? '') }));
+    }
+    this.appSettings.setCredentialLinks(list as CredentialLink[]);
+    return this.appSettings.credentialLinks();
   }
 
   // 起動する Claude Code に足す、アプリ内ブラウザの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない

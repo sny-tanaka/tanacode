@@ -333,3 +333,26 @@ describe('Claude への知らせ', () => {
     expect(sentOn<BrowserLoginChange>(IpcChannel.BrowserLogin).at(-1)).toEqual({ sessionId: 'S1', tabId: page.tabId, login: null });
   });
 });
+
+describe('1Password から答える（fill）', () => {
+  it('出している入力欄の先を返し、取り出した値で人と同じように答える（読み込み直して、同じ先に 1 回だけ使う）。Claude への知らせは残さない', () => {
+    const { sent, logins, tab } = make();
+    expect(logins.pendingFor(as(tab))).toBeNull();
+    expect(logins.fill(as(tab), 'user', 'pass')).toBe(false);
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, answered().callback);
+    expect(logins.pendingFor(as(tab))).toEqual({ origin: 'https://stg.example.com', proxy: false });
+    expect(logins.fill(as(tab), 'user', 'pass')).toBe(true);
+    expect(sent.at(-1)).toEqual({ ...place, login: null });
+    expect(tab.calls).toEqual(['reload']);
+    expect(logins.notes(as(tab))).toEqual([]);
+    const again = answered();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, again.callback);
+    expect(again.calls).toEqual([['user', 'pass']]);
+  });
+
+  it('プロキシの入力欄は、プロキシと分かる形で返す', () => {
+    const { logins, tab } = make();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic({ isProxy: true, host: 'proxy.corp', port: 3128 }) }, answered().callback);
+    expect(logins.pendingFor(as(tab))).toEqual({ origin: 'proxy.corp:3128', proxy: true });
+  });
+});

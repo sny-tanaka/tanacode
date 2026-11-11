@@ -88,7 +88,7 @@ export class FakeDebugger extends EventEmitter {
 }
 
 // ページの中で動かすスクリプト（executeJavaScriptInIsolatedWorld）の種類。スクリプトの中の目印で見分ける
-export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'pressDecide' | 'press' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames';
+export type PageScript = 'viewport' | 'size' | 'locate' | 'point' | 'pressDecide' | 'press' | 'focus' | 'unmark' | 'inputWait' | 'text' | 'inspect' | 'scroll' | 'wait' | 'clear' | 'frames' | 'credentialFill' | 'credentialCheck' | 'hasPassword';
 const SCRIPT_MARKS: [PageScript, string][] = [
   ['viewport', 'dpr: devicePixelRatio'],
   ['size', 'laidOutWidth: innerWidth'],
@@ -105,6 +105,10 @@ const SCRIPT_MARKS: [PageScript, string][] = [
   ['wait', 'const state ='],
   ['clear', 'selectAllChildren(el)'],
   ['frames', 'requestAnimationFrame(() => requestAnimationFrame('],
+  // 1Password から入れる（browser-credentials.ts）
+  ['credentialFill', '__tanacodeCredentialFill'],
+  ['credentialCheck', '__tanacodeCredentialCheck'],
+  ['hasPassword', '__tanacodeHasPassword'],
 ];
 
 export function scriptKind(code: string): PageScript | null {

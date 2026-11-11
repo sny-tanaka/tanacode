@@ -3,6 +3,7 @@ import { AWAY_WAIT_MINUTES, DEFAULT_AWAY_WAIT_MINUTES } from '@shared/away-mode'
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
+import { cleanLinks, type CredentialLink } from '@shared/credential-links';
 import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
 import { toolPermissionsOf, type ToolPermission } from '@shared/tool-permissions';
 
@@ -16,6 +17,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
+// credentialLinks: サイトごとに控えた 1Password のアイテムのリンク（fill_credential。リンクだけで、秘密は控えない。shared/credential-links.ts）/
 // sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
 // sessionsStartConfirm: 前のバージョンの「セッションを始める前に許可を求める」（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置いた）。
 //   オフだったら、start_session の許可に「常に許可」として引き継ぐ（index.ts の setUpToolPermissions）/
@@ -38,6 +40,7 @@ type Values = {
   settingsFiles: StoredSettingsFile[];
   browserControl: boolean;
   browserHosts: string[];
+  credentialLinks: CredentialLink[];
   sessionsControl: boolean;
   sessionsStartConfirm: boolean;
   toolPermissions: Record<string, ToolPermission>;
@@ -103,6 +106,14 @@ export class AppSettings {
 
   browserHosts(): string[] {
     return this.values.browserHosts;
+  }
+
+  credentialLinks(): CredentialLink[] {
+    return this.values.credentialLinks;
+  }
+
+  setCredentialLinks(links: CredentialLink[]): void {
+    this.update({ credentialLinks: cleanLinks(links) });
   }
 
   sessionsControlEnabled(): boolean {
@@ -269,6 +280,7 @@ function load(file: string): Values {
       settingsFiles?: unknown;
       browserControl?: unknown;
       browserHosts?: unknown;
+      credentialLinks?: unknown;
       sessionsControl?: unknown;
       sessionsStartConfirm?: unknown;
       toolPermissions?: unknown;
@@ -290,6 +302,7 @@ function load(file: string): Values {
       settingsFiles: storedFiles(data.settingsFiles),
       browserControl: data.browserControl !== false,
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
+      credentialLinks: cleanLinks(data.credentialLinks),
       sessionsControl: data.sessionsControl !== false,
       sessionsStartConfirm: data.sessionsStartConfirm !== false,
       toolPermissions: toolPermissionsOf(data.toolPermissions),
@@ -305,7 +318,7 @@ function load(file: string): Values {
       profilesMerged: data.profilesMerged === true,
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, parentAskRules: false, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], credentialLinks: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, parentAskRules: false, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
   }
 }
 

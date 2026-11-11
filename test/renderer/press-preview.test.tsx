@@ -9,6 +9,7 @@ import { CANCEL_PICKER_SCRIPT, describePicked, type PickedElement } from '../../
 import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
 import './dom';
 import { mockApi } from './mock-api';
+import { onOpenMcpSettings } from '../../src/renderer/src/mcp/openMcpSettings';
 
 // アプリ内ブラウザ（PreviewPane）のボタン・入力を押して、効いたことを確かめる（Claude に許す先は press-mcp-settings.test.tsx）。
 // jsdom には Electron の <webview> が無いので、作られた webview の要素に、押したことを控えるだけの操作（戻る・読み込み直すなど）を足す
@@ -69,6 +70,7 @@ beforeEach(() => {
   api = mockApi({
     'browser.asks': () => Promise.resolve([]),
     'browser.logins': () => Promise.resolve([]),
+    'browser.remembers': () => Promise.resolve([]),
     'attachments.save': (name: never) => Promise.resolve(`/tmp/attachments/0123abcd-${name as string}`),
   });
   api.install();
@@ -669,6 +671,75 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
     expect(screen.queryByText('ログインしてください')).toBeNull();
   });
 
+  it('ログインの依頼には 1Password から入れられることの案内を添え、「サイトごとのリンクを控える…」で MCP の設定を開く。「もう出さない」で、それからは出さない', async () => {
+    localStorage.removeItem('tanacode.credentialHint.hidden');
+    const opened = vi.fn();
+    const off = onOpenMcpSettings(opened);
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    ask({ sessionId: 's1', ask: { id: 'a1', message: '2 段階認証のコードを入れてください' } });
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    ask({ sessionId: 's1', ask: { id: 'a2', message: 'ログインしてください', login: true } });
+    const hint = screen.getByRole('note', { name: '1Password から入力する案内' });
+    expect(hint.textContent).toContain('「プライベートリンクをコピー」');
+    fireEvent.click(screen.getByText('サイトごとのリンクを控える…'));
+    expect(opened).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('もう出さない'));
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    expect(api.argsOf('prefs.set')).toEqual([['tanacode.credentialHint.hidden', '1']]);
+    ask({ sessionId: 's1', ask: { id: 'a3', message: 'もう一度ログインしてください', login: true } });
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    off();
+    localStorage.removeItem('tanacode.credentialHint.hidden');
+  });
+
+  it('HTTP の認証の入力欄にも 1Password の案内を添える（プロキシの認証には出さない）。案内があっても、入れた値で答えられる', async () => {
+    localStorage.removeItem('tanacode.credentialHint.hidden');
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('stg.example.com');
+    const tab = activated()[0]![1] as string;
+    const login = { id: 'l1', origin: 'https://stg.example.com', realm: 'STG', proxy: false, insecure: false, retry: false, popup: false };
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login: { ...login, proxy: true, origin: 'proxy.corp:3128' } }));
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login: null }));
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId: tab, login }));
+    expect(screen.getByRole('note', { name: '1Password から入力する案内' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('ユーザー名'), { target: { value: 'u' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'p' } });
+    fireEvent.click(screen.getByText('ログイン'));
+    expect(api.argsOf('browser.answerLogin')).toEqual([['s1', 'l1', { username: 'u', password: 'p' }]]);
+  });
+
+  it('1Password から入れたあと「次からこのアイテムを使いますか？」を出し、「使う」「使わない」・Esc で返す。ほかのセッションのものは出さない', async () => {
+    api = mockApi({
+      'browser.asks': () => Promise.resolve([]),
+      'browser.logins': () => Promise.resolve([]),
+      'browser.remembers': () => Promise.resolve([{ sessionId: 's1', offer: { id: 'r0', site: 'old.test', title: '古いもの' } }]),
+    });
+    api.install();
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    // 画面を作り直したときも、今聞いているものを出す
+    expect(screen.getByText(/old\.test/)).toBeTruthy();
+    act(() => api.emit('browser.onRemember', { sessionId: 's2', offer: { id: 'x', site: 'other.test', title: 'ほか' } }));
+    expect(screen.queryByText(/other\.test/)).toBeNull();
+    act(() => api.emit('browser.onRemember', { sessionId: 's1', offer: { id: 'r1', site: 'example.com', title: 'テスト用' } }));
+    const bar = screen.getByRole('region', { name: '1Password のアイテムを控えるかの問い' });
+    expect(bar.textContent).toContain('このサイト（example.com）では、次からこの 1Password のアイテム（テスト用）を使いますか？');
+    fireEvent.click(screen.getByText('使う'));
+    fireEvent.click(screen.getByText('使わない'));
+    fireEvent.keyDown(bar, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(bar, { key: 'Escape' });
+    expect(api.argsOf('browser.answerRemember')).toEqual([
+      ['s1', 'r1', true],
+      ['s1', 'r1', false],
+      ['s1', 'r1', false],
+    ]);
+    act(() => api.emit('browser.onRemember', { sessionId: 's1', offer: null }));
+    expect(screen.queryByRole('region', { name: '1Password のアイテムを控えるかの問い' })).toBeNull();
+  });
+
   it('「できない」で理由の欄を出し、書いた理由（前後の空白を除く）を添えて返す。「戻る」と Esc で元のボタンに戻る', async () => {
     render(<Pane sessionId="s1" />);
     await act(async () => {});
@@ -699,6 +770,7 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
   it('画面を作り直したときも頼まれている依頼を出し、切り替えた先のセッションの依頼に返す', async () => {
     api = mockApi({
       'browser.logins': () => Promise.resolve([]),
+      'browser.remembers': () => Promise.resolve([]),
       'browser.asks': () =>
         Promise.resolve([
           { sessionId: 's1', ask: { id: 'a1', message: 's1 への依頼' } },

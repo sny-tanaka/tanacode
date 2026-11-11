@@ -8,6 +8,8 @@ export const SHARED_PREF_KEYS = [
   'tanacode.contextSort',
   'tanacode.checklist.notify',
   'tanacode.app-update.seen',
+  // アプリ内ブラウザの帯の 1Password の案内を「もう出さない」にした（preview/CredentialHint.tsx）
+  'tanacode.credentialHint.hidden',
 ] as const;
 
 export type SharedPrefKey = (typeof SHARED_PREF_KEYS)[number];

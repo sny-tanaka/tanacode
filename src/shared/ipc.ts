@@ -8,6 +8,7 @@ import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
 import type { ModelCatalog, SessionModel } from './models';
 import type { SettingsFile } from './settings-file';
+import type { CredentialLink } from './credential-links';
 import type { Shortcut } from './shortcuts';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
@@ -233,6 +234,8 @@ export const IpcChannel = {
   BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
   BrowserHostsSet: 'browser:hosts-set',
+  BrowserCredentialLinksGet: 'browser:credential-links-get',
+  BrowserCredentialLinksSet: 'browser:credential-links-set',
   // Claude がユーザーに操作を頼む（ask_user_to_act）。main → 画面: 頼んだ・終わった / 画面 → main: 今頼んでいるもの・返事 /
   // main → 画面: そのセッションのブラウザを開かせる（頼まれたときの通知をクリックした）
   BrowserAsk: 'browser:ask',
@@ -243,6 +246,9 @@ export const IpcChannel = {
   BrowserLogin: 'browser:login',
   BrowserLoginsGet: 'browser:logins-get',
   BrowserLoginAnswer: 'browser:login-answer',
+  BrowserRemember: 'browser:remember',
+  BrowserRemembersGet: 'browser:remembers-get',
+  BrowserRememberAnswer: 'browser:remember-answer',
   // チェックリスト。読む・書き換える・別のセッションへコピーする・変わった（main → 画面）・セッションごとの未読の数
   ChecklistGet: 'checklist:get',
   ChecklistApply: 'checklist:apply',
@@ -292,7 +298,8 @@ export type BrowserViewportChange = {
 export type BrowserThrottleChange = { sessionId: string; tabId: string; cpu: number; network: NetworkPresetName | null };
 
 // Claude がユーザーに頼んでいる操作（ask_user_to_act）。id: 頼むたびに変わる（返事をどの頼みへのものか見分ける）/ message: 頼む内容
-export type BrowserAsk = { id: string; message: string };
+// login: ログインを頼んでいるように見える（頼みの文・ページのパスワード欄から、控えめに決める）。帯に 1Password から入れられることの案内を添える
+export type BrowserAsk = { id: string; message: string; login?: boolean };
 // 頼んだ・終わった（ask が null）
 export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
 // ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
@@ -306,6 +313,10 @@ export type BrowserLogin = { id: string; origin: string; realm: string; proxy: b
 export type BrowserLoginChange = { sessionId: string; tabId: string; login: BrowserLogin | null };
 // 人の入力。null: 「キャンセル」
 export type BrowserLoginAnswer = { username: string; password: string } | null;
+// 1Password から入れたあと、そのサイトでは次からこのアイテムを使うかの問い（browser-credential-offers.ts）。site: 控えるサイト / title: 1Password のアイテムの名前
+export type BrowserRememberOffer = { id: string; site: string; title: string };
+// 聞いた・終わった（offer が null）
+export type BrowserRememberChange = { sessionId: string; offer: BrowserRememberOffer | null };
 
 export type SessionAttention = 'question' | 'permission' | 'browser' | null;
 
@@ -1015,6 +1026,10 @@ export type TanacodeApi = {
     hosts(): Promise<string[]>;
     // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
     setHosts(hosts: string[]): Promise<string[]>;
+    // サイトごとに控えた 1Password のアイテムのリンク（fill_credential。リンクだけで、秘密は控えない）
+    credentialLinks(): Promise<CredentialLink[]>;
+    // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
+    setCredentialLinks(links: CredentialLink[]): Promise<CredentialLink[]>;
     // Claude がユーザーに頼んでいる操作。asks: 今頼んでいるもの（画面を作り直したとき用）/ answer: ユーザーの返事 /
     // onShow: そのセッションを選んで、ブラウザを開く（頼まれたときの通知をクリックした）
     onAsk(listener: (change: BrowserAskChange) => void): () => void;
@@ -1025,6 +1040,10 @@ export type TanacodeApi = {
     onLogin(listener: (change: BrowserLoginChange) => void): () => void;
     logins(): Promise<BrowserLoginChange[]>;
     answerLogin(sessionId: string, loginId: string, answer: BrowserLoginAnswer): void;
+    // 1Password から入れたあとの「次からこのアイテムを使いますか？」。remembers: 今聞いているもの（画面を作り直したとき用）/ answerRemember: use は「使う」を押した
+    onRemember(listener: (change: BrowserRememberChange) => void): () => void;
+    remembers(): Promise<BrowserRememberChange[]>;
+    answerRemember(sessionId: string, offerId: string, use: boolean): void;
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
@@ -1175,8 +1194,11 @@ export type IpcInvoke = {
   [IpcChannel.BrowserOpenExternal]: Api['browser']['openExternal'];
   [IpcChannel.BrowserHostsGet]: Api['browser']['hosts'];
   [IpcChannel.BrowserHostsSet]: Api['browser']['setHosts'];
+  [IpcChannel.BrowserCredentialLinksGet]: Api['browser']['credentialLinks'];
+  [IpcChannel.BrowserCredentialLinksSet]: Api['browser']['setCredentialLinks'];
   [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
   [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
+  [IpcChannel.BrowserRemembersGet]: Api['browser']['remembers'];
 };
 
 // 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
@@ -1200,6 +1222,7 @@ export type IpcSend = {
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
   [IpcChannel.BrowserLoginAnswer]: Api['browser']['answerLogin'];
+  [IpcChannel.BrowserRememberAnswer]: Api['browser']['answerRemember'];
   [IpcChannel.BrowserViewportReset]: Api['browser']['resetViewport'];
   [IpcChannel.BrowserThrottleClear]: Api['browser']['clearThrottle'];
   [IpcChannel.WalkthroughShown]: Api['walkthrough']['shown'];
@@ -1252,6 +1275,7 @@ export type IpcEvent = {
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;
+  [IpcChannel.BrowserRemember]: Payload<Api['browser']['onRemember']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };
 

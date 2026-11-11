@@ -207,6 +207,10 @@
     "browserHosts": {
       "invalid": "書き方が違います: {hosts}（例: example.test・*.example.test・192.168.0.10）"
     },
+    "credentialLinks": {
+      "invalidSite": "サイトの書き方が違います: {site}（例: example.com・localhost:3000）",
+      "invalidLink": "1Password のアイテムのリンクではありません: {link}（1Password で、アイテムの「プライベートリンクをコピー」で取ったリンクを貼ってください）"
+    },
     "scheduled": {
       "cannotSchedule": "このセッションには予約できません",
       "empty": "送る内容がありません",
@@ -480,6 +484,7 @@
       "get_downloads": "ダウンロード",
       "evaluate": "JavaScript の実行",
       "upload_file": "ファイルの添付",
+      "fill_credential": "1Password から入力",
       "ask_user_to_act": "操作の依頼"
     },
     "sessions": {
@@ -1148,6 +1153,7 @@
     "switchLabel": "{server} を Claude に使わせる",
     "off": "切っています。入れ直すと、確認の選択はそのまま使います。",
     "hostsTitle": "Claude に許す先",
+    "credentialLinksTitle": "サイトごとの 1Password のアイテム",
     "parentAskRules": {
       "title": "設定の ask の規則で出た子の確認も、親に許させる",
       "description": "子セッションの許可の確認のうち、Claude Code の設定の permissions.ask の規則が出させたもの（例: Bash(rm:*)）も、親の Claude が中身を読んで「今回だけ許す」と答えられるようにします。切っているとき（既定）は、親は断ることだけできます。入れても、Claude Code が人に答えさせる確認（安全の確かめなど）とプランの承認は、これまでどおりあなただけが許せます。動いているセッションにもすぐ効きます。",
@@ -1185,6 +1191,7 @@
         "get_downloads": "Claude の操作でダウンロードしたファイルの一覧を読む",
         "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
         "upload_file": "localhost 以外のページに、この Mac のファイルを添付する（localhost では、いつも確認なしで添付する）",
+        "fill_credential": "1Password のアイテムのユーザー名とパスワードを、ログイン欄に入れる（値は Claude に見せない）",
         "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"
       },
       "sessions": {
@@ -1918,6 +1925,20 @@
       "submit": "ログイン",
       "cancel": "キャンセル"
     },
+    "remember": {
+      "label": "1Password のアイテムを控えるかの問い",
+      "question": "このサイト（{site}）では、次からこの 1Password のアイテム（{title}）を使いますか？",
+      "note": "使うと、Claude がリンクを書かなくても入力できるようになります（控えるのはリンクだけで、MCP の設定で消せます）。",
+      "use": "使う",
+      "skip": "使わない"
+    },
+    "credentialHint": {
+      "label": "1Password から入力する案内",
+      "text": "1Password のアイテムのリンクを Claude に渡せば、Claude がパスワードを見ずに自動で入力できます。",
+      "how": "リンクは、1Password でアイテムを右クリック →「プライベートリンクをコピー」で取れます。サイトごとに控えておくと、次からリンクを渡さなくても入力できます。",
+      "settings": "サイトごとのリンクを控える…",
+      "hide": "もう出さない"
+    },
     "hosts": {
       "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
       "empty": "（空）",
@@ -1925,6 +1946,18 @@
       "default": "既定",
       "placeholder": "例: myapp.test・*.example.test",
       "inputLabel": "足す先"
+    },
+    "credentialLinks": {
+      "description": "ここに控えたサイトでは、Claude がリンクを書かなくても、そのサイトの 1Password のアイテムでログイン欄を埋められます（値は Claude に見せません）。控えるのはリンクだけで、パスワードは控えません。リンクは、1Password でアイテムの「プライベートリンクをコピー」で取れます。",
+      "none": "まだありません",
+      "invalidSite": "サイトの書き方が違います: {site}（例: example.com・localhost:3000）",
+      "invalidLink": "1Password のアイテムのリンクではありません（1Password で、アイテムの「プライベートリンクをコピー」で取ったリンクを貼ってください）",
+      "sitePlaceholder": "例: example.com",
+      "siteLabel": "サイト",
+      "linkPlaceholder": "https://start.1password.com/open/i?…",
+      "linkLabel": "1Password のアイテムのリンク",
+      "add": "リンクを追加",
+      "remove": "{site} のリンクを削除"
     },
     "picked": {
       "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",
