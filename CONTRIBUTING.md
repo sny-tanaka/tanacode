@@ -1435,6 +1435,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - `alert`・`confirm` が出ている間は、ページの処理が止まり、CDP の `Input.dispatchMouseEvent` も `executeJavaScript`（別の世界のものも）も返りません（それまでは、ツールが 60 秒で時間切れになっていた）。
     - CDP の `Page.enable` をしておくと、出たときに `Page.javascriptDialogOpening`（種類・文言・出したフレームの URL）が届き、`Page.handleJavaScriptDialog` で答えられます（人に出ている Electron の窓も閉じ、止まっていた CDP の命令も返る）。別オリジンの iframe（別プロセス）が出したものも、トップのセッションに届き、トップのセッションで答えられます。
     - 出てから `Page.enable` を送っても返りません。なので、タブがつながったとき（`attach` の `watchDialogs`）に CDP をつないで `Page.enable` まで送り、つなぎ直すとき（`connect`）にも送ります。DevTools を開くなどで外れたときは、次のツールの始めにつなぎ直します（`watchPage`。2 秒まで待つ）。
+    - このとき、別プロセスの iframe へのつなぎ（`Target.setAutoAttach`）は送りません。ページの読み込みの前や途中に送ると、別サイトの iframe の読み込みが終わらなくなることがあったためです（`test/e2e/browser-failed.test.ts` が 5 回に 4 回、`navigate` の読み込み待ちで止まった。`Page.enable` を外しても止まり、`setAutoAttach` を外すと止まらなかった。Electron 44.10）。iframe へは、CDP の命令を送るとき（`cdp`）につなぎます（`connect` の `frames`。前と同じ時機）。
     - ツールの呼び出しの間に、セッションのどれかのタブで出たら、止まったページを待たずに、種類と文言を返します（`handle` の `dialogOpened`）。今のタブに出ている間は、タブの一覧などのほかは動かさずに伝えます（`dialogBlocks`）。文言は、出したフレームが許した先（`allowedIn`）のときだけ見せます。
     - `prompt` は Electron が出しません（ページに例外「prompt() is not supported.」が投げられる）。
   - 離れるのを拒むページ（`beforeunload`）: webview では `will-prevent-unload` が届き、`preventDefault` しなければ、窓を出さずに移動を取りやめます（`loadURL` は `ERR_ABORTED`）。人の操作では今までどおり留まります。Claude の操作で拒まれたら、タブに控え（`refusedLeave`）、結果の先頭で伝えます。`handle_dialog` の `accept: true` で、次の 1 回だけ `preventDefault` します（`leaveAllowed`。15 分まで）。拒んだ直後（数ミリ秒の間）に移ろうとすると `ERR_FAILED` になりますが、Claude の呼び出しの間なら起きません。

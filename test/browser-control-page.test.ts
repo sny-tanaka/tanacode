@@ -745,7 +745,9 @@ describe('クリック', () => {
     expect(page.scriptsOf('press')).toEqual([]);
     expect(page.debugger.attachCount).toBe(1);
     expect(page.debugger.versions).toEqual(['1.3']);
-    expect(page.debugger.commands[0]).toEqual({ method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, child: undefined });
+    // タブができたときはダイアログの見張り（Page.enable）だけ。別プロセスの iframe には、最初に CDP の命令を送るときにつなぐ
+    expect(page.debugger.commands[0]).toEqual({ method: 'Page.enable', params: undefined, child: undefined });
+    expect(page.debugger.sent('Target.setAutoAttach').map((c) => c.params)).toEqual([{ autoAttach: true, waitForDebuggerOnStart: false, flatten: true }]);
     expect(inputs(page)).toEqual([
       { method: 'dispatchMouseEvent', type: 'mouseMoved', x: 201, y: 70 },
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 201, y: 70, button: 'left', clickCount: 1 },
@@ -1782,7 +1784,7 @@ describe('CDP のつなぎ方', () => {
     expect(textOf(await call('get_text'))).toBe('Title: T\nURL: http://localhost:3000/\n\n本文');
     expect(page.debugger.attachCount).toBe(2);
     // つなぎ直したら、ダイアログの見張りも付け直す
-    expect(page.debugger.commands.map((c) => c.method)).toEqual(['Target.setAutoAttach', 'Page.enable', 'Target.getTargets']);
+    expect(page.debugger.commands.map((c) => c.method)).toEqual(['Page.enable', 'Target.setAutoAttach', 'Target.getTargets']);
   });
 
   it('別プロセスの iframe の今の URL が読めなければ、その iframe は数えない', async () => {

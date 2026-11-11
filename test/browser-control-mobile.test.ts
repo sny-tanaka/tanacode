@@ -251,8 +251,9 @@ describe('タッチ（touch）', () => {
     const { control, open } = setup();
     const page = plain(open('http://localhost:3000/'));
     const pending = control.handle('S1', 'touch', { action: 'long_press', x: 50, y: 60 });
-    // 指を置く場所を見せてから（400 ミリ秒）置く（CDP は、タブができたときにつないである）
-    await vi.advanceTimersByTimeAsync(450);
+    // 指を置く場所を見せてから（400 ミリ秒）置く（CDP は、タブができたときにつないである。別プロセスの iframe には、
+    // 最初に CDP の命令を送るときにつなぐので、そのぶん 150 ミリ秒待つ）
+    await vi.advanceTimersByTimeAsync(600);
     expect(touches(page).map((t) => t.type)).toEqual(['touchStart']);
     await vi.advanceTimersByTimeAsync(700);
     expect(touches(page).map((t) => t.type)).toEqual(['touchStart']);
