@@ -121,11 +121,11 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     expect(commands(page, 'Emulation.')).toEqual([]);
   });
 
-  it('full・mobile・tablet だけなら、前と同じく幅だけを変え、CDP はつながない', async () => {
+  it('full・mobile・tablet だけなら、前と同じく幅だけを変え、CDP では何も決めない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     await call('set_viewport', { width: 'mobile' });
-    expect(page.debugger.attachCount).toBe(0);
+    expect(commands(page, 'Emulation.')).toEqual([]);
   });
 
   it('セッションのどのタブにも当てる（あとで開いたタブにも）。full・mobile・tablet で、どのタブでもやめる', async () => {
@@ -143,7 +143,8 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     }
     // ほかのセッションのタブには当てない
     const other = open('http://localhost:3003/', { sessionId: 'S2' });
-    expect(other.debugger.attachCount).toBe(0);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(commands(other, 'Emulation.')).toEqual([]);
     await call('set_viewport', { width: 'tablet' });
     for (const page of [first, second, later]) {
       expect(commands(page, 'Emulation.').slice(-2), page.url).toEqual([
@@ -163,7 +164,7 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     expect(commands(page, 'Emulation.').slice(-2).map((c) => c.method)).toEqual(['Emulation.clearDeviceMetricsOverride', 'Emulation.setTouchEmulationEnabled']);
     const later = open('http://localhost:3001/', { activate: false });
     await vi.advanceTimersByTimeAsync(300);
-    expect(later.debugger.attachCount).toBe(0);
+    expect(commands(later, 'Emulation.')).toEqual([]);
     // 知らないセッションでは何もしない
     control.resetViewport('S9');
   });
@@ -185,7 +186,7 @@ describe('画面の大きさ（set_viewport の機種・数字）', () => {
     const { call, open, sentOn } = setup();
     const page = open('http://localhost:3000/');
     expect(textOf(await call('set_viewport', { width: 'full', mobile: false }))).toBe('Set the viewport to full (page width 800px, height 600px)');
-    expect(page.debugger.attachCount).toBe(0);
+    expect(commands(page, 'Emulation.')).toEqual([]);
     await call('set_viewport', { mobile: true });
     expect(commands(page, 'Emulation.setDeviceMetricsOverride')).toEqual([{ method: 'Emulation.setDeviceMetricsOverride', width: 0, height: 0, deviceScaleFactor: 0, mobile: true }]);
     expect(sentOn<BrowserViewportChange>(IpcChannel.BrowserViewport)).toEqual([
@@ -250,8 +251,8 @@ describe('タッチ（touch）', () => {
     const { control, open } = setup();
     const page = plain(open('http://localhost:3000/'));
     const pending = control.handle('S1', 'touch', { action: 'long_press', x: 50, y: 60 });
-    // 指を置く場所を見せてから（400 ミリ秒）、CDP をつないで（150 ミリ秒）置く
-    await vi.advanceTimersByTimeAsync(600);
+    // 指を置く場所を見せてから（400 ミリ秒）置く（CDP は、タブができたときにつないである）
+    await vi.advanceTimersByTimeAsync(450);
     expect(touches(page).map((t) => t.type)).toEqual(['touchStart']);
     await vi.advanceTimersByTimeAsync(700);
     expect(touches(page).map((t) => t.type)).toEqual(['touchStart']);

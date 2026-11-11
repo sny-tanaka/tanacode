@@ -1,4 +1,4 @@
-import { browserToolId, uploadPaths } from '@shared/browser-tools';
+import { BROWSER_DIALOG_TOOL, browserToolId, uploadPaths } from '@shared/browser-tools';
 import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
 import { t } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
@@ -10,6 +10,10 @@ import { alwaysAllowed, alwaysAllowOutput, isPlanMode } from './tool-permissions
 //   それ以外のページは、Claude Code の許可の確認を出させる（ask。添付は、送り先のページと添付するファイルを理由に書く）
 // - 開く（navigate）: 許す先の外のページを開くときは、権限モードによらず、毎回 Claude Code の許可の確認を出させる（ask）。
 //   許す先・そのタブで許可したオリジンを同じタブで開くときは、確認なしで開かせる（allow。plan のときは何も決めない）
+// - ダイアログに答える（handle_dialog）: localhost 以外のページが離れるのを拒んだ（beforeunload）とき、離れさせるなら、権限モードによらず
+//   毎回 Claude Code の許可の確認を出させる（ask。人が入力した内容を捨てることがあるため）。それ以外は何も決めない（ツールの許可のフックが決める。
+//   このツールには、ツールの許可のフックも付く。2 つのフックが答えると ask が勝つ）。アプリに聞けなかったときも何も決めない
+//   （アプリは、人に確認した印が無ければ、localhost 以外のページを離れさせない）
 // 「次から聞かない」で許可を残されていても、ask の確認は出る（実測は test/cli/browser.test.ts）。
 // ツールの許可（メニューの「MCP の設定…」の「確認」）で「常に許可」にしたツールは、どのページ・どの先でも allow を返す（tool-permissions.ts）。
 // どちらかは、アプリに聞く（中継とアプリの間のソケット）。ツールの名前と入力は、Claude Code がフックの標準入力に渡す JSON から読む。
@@ -27,6 +31,8 @@ export const BROWSER_GATE_COMMAND = `${BROWSER_GATE_HOOK_ENV}=1 ELECTRON_RUN_AS_
 export type GateAnswer = { local: boolean; url: string };
 // アプリが答える、開く先（navigate）。outside: 許す先の外で、人に確認するオリジン（null は、何も決めない）
 export type NavigateGateAnswer = { outside: string | null };
+// アプリが答える、ダイアログに答えるときの様子（handle_dialog）。leave: 人に確認して離れるページ（URL。許していない先ならオリジン。null は、何も決めない）
+export type LeaveGateAnswer = { leave: string | null };
 
 // フックの標準入力（Claude Code の PreToolUse の入力）のうち、使うもの。toolUseId: その呼び出しの ID（tool_use_id。無ければ付けない）
 export type GateInput = { tool: string; input: Record<string, unknown>; toolUseId?: string };
@@ -52,6 +58,12 @@ export function readAnswer(result: ToolResult): GateAnswer | null {
 export function readNavigateAnswer(result: ToolResult): NavigateGateAnswer | null {
   const value = readJson(result) as Partial<NavigateGateAnswer> | null;
   return value && (value.outside === null || typeof value.outside === 'string') ? { outside: value.outside } : null;
+}
+
+// アプリのエラーの返事や、形の違う返事は null（何も決めない）
+export function readLeaveAnswer(result: ToolResult): LeaveGateAnswer | null {
+  const value = readJson(result) as Partial<LeaveGateAnswer> | null;
+  return value && (value.leave === null || typeof value.leave === 'string') ? { leave: value.leave } : null;
 }
 
 function readJson(result: ToolResult): unknown {
@@ -87,14 +99,22 @@ export function navigateGateOutput(answer: NavigateGateAnswer | null, plan = fal
   return answer && !plan ? decide('allow', t('main.hooks.browserGateInside')) : '{}';
 }
 
+// ダイアログに答える。離れるのを拒んだ localhost 以外のページを離れるときだけ ask。ほかは何も決めない（空の JSON）
+export function leaveGateOutput(answer: LeaveGateAnswer | null): string {
+  return answer?.leave ? decide('ask', t('main.hooks.browserGateLeave', { url: answer.leave })) : '{}';
+}
+
 // フックの本体。アプリにツールの名前と入力を渡して聞き、標準出力に書く内容を返す。hookInput: 標準入力に届いた JSON
 export async function runGate(socketPath: string, session: string, timeoutMs: number, hookInput: string): Promise<string> {
   const { tool, input, toolUseId } = readGateInput(hookInput);
   const navigate = tool === browserToolId('navigate');
   const upload = tool === browserToolId('upload_file');
+  const dialog = tool === browserToolId(BROWSER_DIALOG_TOOL);
   // ほかのツールで呼ばれたら（フックの設定と合わない）、確認を出させる。localhost のページでも allow は返さない
-  if (!navigate && !upload && tool !== browserToolId('evaluate')) return gateOutput(null);
+  if (!navigate && !upload && !dialog && tool !== browserToolId('evaluate')) return gateOutput(null);
   const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input, ...(toolUseId ? { toolUseId } : {}) } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
+  // 離れる確認は、「常に許可」でも省かない（ツールの許可は、ダイアログに答えることへの許可。入力した内容を捨てることまでは許していない）
+  if (dialog) return leaveGateOutput(readLeaveAnswer(result));
   // ツールの許可で「常に許可」にしていれば、確認を出させない（アプリは上の問い合わせで、確認した印を控えてある。plan のときは既定のまま）
   if (alwaysAllowed(tool, hookInput)) return alwaysAllowOutput();
   const plan = isPlanMode(hookInput);

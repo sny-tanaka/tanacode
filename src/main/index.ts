@@ -114,7 +114,7 @@ const APP_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-read', 'clipboa
 // プレビューの webview（開発中の任意のページ）には何も許さない。主ウインドウには APP_PERMISSIONS だけを許す
 function restrictPermissions(): void {
   restrictAppSession(session.defaultSession);
-  restrictPreviewSession(session.fromPartition(PREVIEW_PARTITION));
+  restrictPreviewSession(session.fromPartition(PREVIEW_PARTITION), (item, contents) => previewWindows.download(item, contents));
 }
 
 // アプリの画面のセッション。アプリの画面（主ウインドウと、足したプロファイルの画面）にだけ APP_PERMISSIONS を許す
@@ -545,7 +545,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
   const dataDir = profileDataDir(app.getPath('userData'), info.id);
   if (!isDefault) {
     restrictAppSession(session.fromPartition(appPartition(info.id)));
-    restrictPreviewSession(session.fromPartition(previewPartition(info.id)));
+    restrictPreviewSession(session.fromPartition(previewPartition(info.id)), (item, contents) => previewWindows.download(item, contents));
   }
   const p = new Profile({
     id: info.id,

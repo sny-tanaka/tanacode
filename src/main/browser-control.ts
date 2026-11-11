@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
-import { nativeImage, webContents as allWebContents, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
+import { nativeImage, webContents as allWebContents, type DownloadItem, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import {
   BROWSER_DEVICES,
+  BROWSER_DIALOG_TOOL,
   BROWSER_MCP,
   browserTool,
   browserToolId,
@@ -21,6 +22,8 @@ import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
+import { describeDialog, PageDialogs } from './browser-dialogs';
+import { BrowserDownloads, describeDownload, MAX_DOWNLOAD_BYTES, MAX_DOWNLOADS_PER_CALL } from './browser-downloads';
 import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
@@ -40,6 +43,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // 許す先（isClaudeAllowedUrl）の外のページも開けるが、開くたびに人の許可を求める（フックが Claude Code の許可の確認を出させる。browser-gate.ts）。
 // 人が許したら、そのタブでそのオリジンを許可し、タブを閉じるまで、その中の操作（読む・押す・同じオリジンの中の移動）には許可を求めない。
 // 別のオリジンへ移ろうとしたら止め、続けるなら、また人に許可を求める（navigate の action: "continue"）。別オリジンの iframe には、許可は効かない。
+// ページが出すダイアログ（alert・confirm・離れるのを拒んだこと）は、止まったページを待たずに Claude に伝え、handle_dialog で答えさせる（browser-dialogs.ts）。
+// Claude の操作で起きたダウンロードは、許した先からのものだけ保存してパスを伝える（takeDownload・browser-downloads.ts）。
 // Claude に返す文は英語。画面の項目（メニュー・帯のボタン）の名前だけ、Claude が利用者に伝えられるよう t() で画面の言語にする
 
 // 要素を探したり読んだりするスクリプトを動かす、ページとは別の JavaScript の世界（ページのスクリプトに書き換えられない）
@@ -56,6 +61,10 @@ const MAX_IMAGE_SIDE = 1568;
 const MAX_FULL_PAGE_RATIO = 2.5;
 // 1 回の操作の上限。中継の待ち（90 秒）より短くする
 const TOOL_TIMEOUT_MS = 60_000;
+// 操作のあと、その操作で始まったダウンロードが終わるのを待つ上限
+const DOWNLOAD_WAIT_MS = 20_000;
+// ツールの始めに、外れた CDP をつなぎ直すのを待つ上限
+const WATCH_WAIT_MS = 2_000;
 // 撮るのを待つ上限。ふつうは数十ミリ秒で撮れる。返ってこないのは、アプリの画面が描かれていないとき（capture のコメント）なので、
 // 1 回の操作の上限まで待たずに、理由の見当を添えて断る
 const CAPTURE_TIMEOUT_MS = 15_000;
@@ -335,6 +344,8 @@ type Deps = {
   drawHost: () => () => void;
   // screenshot の save で、撮った画像を保存するフォルダ（アプリのデータの中）
   screenshotDir: string;
+  // Claude の操作で起きたダウンロードを保存するフォルダ（アプリのデータの中）
+  downloadDir: string;
   // あるセッションか（アーカイブしたものも含む）
   hasSession: (id: string) => boolean;
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
@@ -379,8 +390,22 @@ export class BrowserControl {
   private readonly marks = new Map<string, Mark[]>();
   // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
   private readonly evaluateMarks = new Map<string, EvaluateMark[]>();
+  // ページが出したダイアログ（alert・confirm）
+  private readonly dialogs = new PageDialogs();
+  // Claude の操作で、ページが離れるのを拒んだ（beforeunload）時刻（タブごと。離れるか、留まると答えるまで残す）
+  private readonly refusedLeave = new WeakMap<WebContents, number>();
+  // handle_dialog で、次の 1 回だけ離れてよいとしたタブと、その期限
+  private readonly leaveAllowed = new WeakMap<WebContents, number>();
+  // 離れることを人に確認した印（確認のフックが ask を返したときに控え、handle_dialog が 1 回だけ使う）。タブと期限
+  private readonly leaveMarks = new Map<string, { contents: WebContents; until: number }>();
+  // Claude の操作で起きたダウンロード
+  private readonly downloads: BrowserDownloads;
+  // 呼び出しごとに受け取ったダウンロードの数（セッションごと）と、呼び出しの間にダウンロードが始まった（止めたものも）セッション
+  private readonly callDownloads = new Map<string, number>();
+  private readonly downloadSeen = new Set<string>();
 
   constructor(private readonly deps: Deps) {
+    this.downloads = new BrowserDownloads(deps.downloadDir);
     this.asks = new BrowserAsks((sessionId, ask) => {
       this.deps.send(this.deps.channels.ask, { sessionId, ask } satisfies BrowserAskChange);
       this.deps.onAsk(sessionId, ask);
@@ -495,6 +520,8 @@ export class BrowserControl {
       if (guest.popup) this.popupGone(current, guest);
       current.tabs.delete(tabId);
     });
+    // ダイアログの見張り（タブにもポップアップにも付ける）
+    this.watchDialogs(guest);
   }
 
   // ---- ポップアップ ----
@@ -737,6 +764,11 @@ export class BrowserControl {
     if (request.tool === browserToolId('upload_file')) {
       return 'it asks to attach files on this Mac to a page in the in-app browser (which sends them to that site), and only the user can answer such a prompt.';
     }
+    if (request.tool === browserToolId(BROWSER_DIALOG_TOOL)) {
+      const mark = this.leaveMarks.get(sessionId);
+      if (!mark || mark.until <= Date.now()) return null;
+      return 'it asks to leave a page (other than localhost) that refused to be left, which may discard what the user entered, and only the user can answer such a prompt.';
+    }
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
@@ -746,6 +778,10 @@ export class BrowserControl {
     this.asks.cancel(sessionId);
     this.marks.delete(sessionId);
     this.evaluateMarks.delete(sessionId);
+    this.leaveMarks.delete(sessionId);
+    this.downloads.forget(sessionId);
+    this.callDownloads.delete(sessionId);
+    this.downloadSeen.delete(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -776,14 +812,17 @@ export class BrowserControl {
     this.begin(sessionId, mcpToolLabel(BROWSER_MCP, tool));
     const release = this.drawHost();
     let timer: NodeJS.Timeout | undefined;
+    // 呼び出しの間にページがダイアログを出したら、止まったページを待たずに返す
+    const dialog = this.dialogOpened(sessionId);
     try {
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new ToolError(`Did not finish within ${TOOL_TIMEOUT_MS / 1000} seconds.`)), TOOL_TIMEOUT_MS);
       });
-      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout]);
+      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout, dialog.opened]);
     } catch (error) {
       return textResult(error instanceof Error ? error.message : String(error), true);
     } finally {
+      dialog.stop();
       clearTimeout(timer);
       release();
       this.end(sessionId);
@@ -809,6 +848,10 @@ export class BrowserControl {
     if (request.tool === browserToolId('navigate')) {
       const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
       return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
+    }
+    if (request.tool === browserToolId(BROWSER_DIALOG_TOOL)) {
+      const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
+      return textResult(JSON.stringify({ leave: this.gateLeave(sessionId, input) }));
     }
     // メニューでオフのとき・知らないセッションには答えない（フックは、確認を出させる側に倒す）
     if (!this.deps.enabled() || !this.deps.hasSession(sessionId)) return textResult('The in-app browser is not available for this session.', true);
@@ -876,7 +919,16 @@ export class BrowserControl {
     session.popupBlocked = null;
     session.popupTabs = [];
     session.notOpened = [];
-    const result = await this.dispatch(sessionId, name, args, toolUseId);
+    const dialog = this.dialogBlocks(sessionId, name);
+    if (dialog) return dialog;
+    await this.watchPage(sessionId, name);
+    const startedAt = Date.now();
+    const since = this.downloads.next();
+    this.callDownloads.set(sessionId, 0);
+    this.downloadSeen.delete(sessionId);
+    // 失敗しても、それまでに起きたダウンロードは伝える（失敗の文は handle が返すものと同じ）
+    const result = await this.dispatch(sessionId, name, args, toolUseId).catch((error: unknown) => textResult(error instanceof Error ? error.message : String(error), true));
+    await this.afterCall(sessionId, result, startedAt, since);
     if (result.isError) return result;
     // 呼び出しの外で起きたこと（今のタブにしていたポップアップが閉じた など）
     for (const note of session.notes.splice(0)) result.content.push({ type: 'text', text: note });
@@ -904,6 +956,9 @@ export class BrowserControl {
     if (name === 'list_tabs') return this.listTabs(sessionId);
     if (name === 'select_tab') return this.selectTab(sessionId, args.index);
     if (name === 'close_tab') return this.closeTab(sessionId, args.index);
+    if (name === 'get_downloads') return this.listDownloads(sessionId);
+    // ダイアログが出ている間は、ページに何も送らない（画面の大きさを当てる CDP の命令も返らない）
+    if (name === 'handle_dialog') return this.answerDialog(sessionId, await this.current(sessionId), args.accept);
     const guest = await this.current(sessionId);
     const refused = this.popupRefuses(guest, name);
     if (refused) throw new ToolError(refused);
@@ -949,6 +1004,194 @@ export class BrowserControl {
         return this.uploadFile(sessionId, guest, args, toolUseId);
     }
     return textResult(`Unknown tool: ${name}`, true);
+  }
+
+  // ---- ダイアログ（browser-dialogs.ts） ----
+
+  // タブのダイアログと、離れるのを拒んだことを見張る。CDP は、ダイアログが出る前につないでおく（出てからは Page.enable が返らない）
+  private watchDialogs(guest: Guest): void {
+    const contents = guest.contents;
+    this.dialogs.watch(contents);
+    // ページが離れるのを拒んだ（beforeunload）。Claude の操作なら、handle_dialog で許していれば 1 回だけ離れる。
+    // 許していなければ留まり（Electron の webview は、何もしなければ移動を取りやめる）、Claude に伝える。人の操作は今までどおり（留まる）
+    contents.on('will-prevent-unload', (event: Electron.Event) => {
+      const found = this.find(contents);
+      if (!found || !this.operating(found.sessionId)) return;
+      const until = this.leaveAllowed.get(contents);
+      this.leaveAllowed.delete(contents);
+      if (until !== undefined && until > Date.now()) {
+        this.refusedLeave.delete(contents);
+        event.preventDefault();
+        return;
+      }
+      this.refusedLeave.set(contents, Date.now());
+    });
+    void this.connect(guest).catch(() => undefined);
+  }
+
+  // ツールの始めに、今のタブの CDP がつながっていなければ（DevTools を開いたなどで外れた）、つなぎ直してダイアログを見張る。
+  // ページが応えなくても（重い・見張る前に出たダイアログ）待ちすぎずに進める（どうなったかは、あとの操作が伝える）
+  private async watchPage(sessionId: string, name: string): Promise<void> {
+    if (name === 'list_tabs' || name === 'select_tab' || name === 'close_tab' || name === 'get_downloads') return;
+    const guest = this.activeNow(sessionId);
+    if (!guest || (guest.cdp && guest.contents.debugger.isAttached())) return;
+    await Promise.race([this.connect(guest).catch(() => undefined), sleep(WATCH_WAIT_MS)]);
+  }
+
+  // 呼び出しの間に、セッションのどれかのタブでダイアログが出たら、そのことを答える（opened）。stop で見張りをやめる
+  private dialogOpened(sessionId: string): { opened: Promise<ToolResult>; stop: () => void } {
+    let stop = () => {};
+    const opened = new Promise<ToolResult>((resolve) => {
+      stop = this.dialogs.onOpen((contents) => {
+        const found = this.find(contents);
+        if (found?.sessionId !== sessionId) return;
+        resolve(
+          textResult(
+            `${this.dialogText(found.guest)}\n` +
+              `The page is paused until the dialog is answered, so this action may not have finished. Answer it with ${BROWSER_DIALOG_TOOL} (accept true for OK, false for Cancel), then check the page.`,
+          ),
+        );
+      });
+    });
+    return { opened, stop: () => stop() };
+  }
+
+  // 出ているダイアログの説明（タブの番号と、許した先のフレームなら文言）
+  private dialogText(guest: Guest): string {
+    const dialog = this.dialogs.current(guest.contents);
+    if (!dialog) return '';
+    const session = this.find(guest.contents)?.session;
+    const tab = session && session.active !== guest.tabId ? ` (in tab ${[...session.tabs.keys()].indexOf(guest.tabId) + 1}, not the current tab)` : '';
+    return `${describeDialog(dialog, this.allowedIn(guest, dialog.url), originShown(dialog.url))}${tab}`;
+  }
+
+  // 今のタブにダイアログが出ていれば、ページを使うツールは動かさずに伝える（動かすと、返ってこない）
+  private dialogBlocks(sessionId: string, name: string): ToolResult | null {
+    if (name === BROWSER_DIALOG_TOOL || name === 'get_downloads' || name === 'list_tabs' || name === 'select_tab' || name === 'close_tab') return null;
+    const guest = this.activeNow(sessionId);
+    if (!guest || !this.dialogs.current(guest.contents)) return null;
+    return textResult(`${this.dialogText(guest)}\nThe page is paused until the dialog is answered. Answer it with ${BROWSER_DIALOG_TOOL} first (accept true for OK, false for Cancel).`, true);
+  }
+
+  // handle_dialog。今のタブのダイアログに答えるか、離れるのを拒んだページを（次の 1 回だけ）離れてよいことにする
+  private async answerDialog(sessionId: string, guest: Guest, accept: unknown): Promise<ToolResult> {
+    if (typeof accept !== 'boolean') throw new ToolError('accept must be true or false.');
+    const dialog = this.dialogs.current(guest.contents);
+    if (dialog) {
+      await this.cdp(guest, 'Page.handleJavaScriptDialog', { accept }).catch((error: unknown) => {
+        // 人が先に答えた・ページが移った
+        if (!/No dialog is showing/i.test(String(error))) throw new ToolError(`Could not answer the dialog (${error instanceof Error ? error.message : String(error)}).`);
+      });
+      this.dialogs.answered(guest.contents);
+      await settle(guest.contents);
+      const pressed = dialog.type === 'alert' ? 'OK' : accept ? 'OK' : 'Cancel';
+      return this.pageResult(guest, `Pressed ${pressed} in the ${dialog.type} dialog. Now`);
+    }
+    // ほかのタブに出ていれば、そのタブを教える
+    for (const other of this.tabsOf(sessionId).tabs.values()) {
+      if (other !== guest && !other.contents.isDestroyed() && this.dialogs.current(other.contents)) {
+        throw new ToolError(`There is no dialog in the current tab. ${this.dialogText(other)} Switch to that tab with select_tab first.`);
+      }
+    }
+    if (!this.refusedLeave.has(guest.contents)) throw new ToolError('There is no dialog in the current tab, and the page has not refused to be left.');
+    const mark = this.leaveMarks.get(sessionId);
+    this.leaveMarks.delete(sessionId);
+    if (!accept) {
+      this.refusedLeave.delete(guest.contents);
+      return textResult('Stayed on the page (what was entered is kept).');
+    }
+    // localhost 以外のページは、確認のフックが人に確認した印がいる（入力した内容を捨てることがあるため）
+    if (!isLocalUrl(guest.contents.getURL()) && !(mark && mark.contents === guest.contents && mark.until > Date.now())) {
+      throw new ToolError(
+        'Leaving this page (not on localhost) may discard what the user entered, so it needs the permission of the user, and tanacode has no permission from the user for this. ' +
+          `Call ${BROWSER_DIALOG_TOOL} again to ask the user. If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.`,
+      );
+    }
+    this.leaveAllowed.set(guest.contents, Date.now() + MARK_TTL_MS);
+    return textResult(
+      'The next action that leaves this page (navigate, a click on a link, a reload, ...) will leave it once, even though the page refuses, and what was entered may be lost. Repeat the action that tried to leave the page.',
+    );
+  }
+
+  // 確認のフック（handle_dialog）への答え。離れるのを拒んだ localhost 以外のページを離れるなら、人に確認させ（URL。許していない先ならオリジン）、
+  // 確認した印を控える。ほかは null（何も決めない）
+  private gateLeave(sessionId: string, input: Record<string, unknown>): string | null {
+    if (!this.deps.enabled() || !this.deps.hasSession(sessionId) || input.accept !== true) return null;
+    const guest = this.activeNow(sessionId);
+    if (!guest || this.dialogs.current(guest.contents) || !this.refusedLeave.has(guest.contents)) return null;
+    const url = guest.contents.getURL();
+    if (isLocalUrl(url)) return null;
+    this.leaveMarks.set(sessionId, { contents: guest.contents, until: Date.now() + MARK_TTL_MS });
+    return this.shownUrl(url, guest);
+  }
+
+  // 呼び出しのあと。離れるのを拒まれたこと（先頭に）と、ダウンロードを伝える
+  private async afterCall(sessionId: string, result: ToolResult, startedAt: number, since: number): Promise<void> {
+    const session = this.tabsOf(sessionId);
+    const refused = [...session.tabs.values()].some((g) => (this.refusedLeave.get(g.contents) ?? 0) >= startedAt);
+    if (refused) {
+      result.content.unshift({
+        type: 'text',
+        text:
+          'The page refused to be left (a beforeunload handler; it may have unsaved input), so tanacode stayed on the current page and did not leave it. ' +
+          `To leave it anyway, call ${BROWSER_DIALOG_TOOL} with accept true and repeat the action; to stay, call it with accept false.`,
+      });
+    }
+    const records = await this.downloads.settle(sessionId, since, DOWNLOAD_WAIT_MS);
+    for (const record of records) {
+      result.content.push({ type: 'text', text: describeDownload(record) });
+      if (record.state !== 'downloading') record.reported = true;
+    }
+  }
+
+  // ---- ダウンロード（browser-downloads.ts） ----
+
+  // プレビューのセッションでダウンロードが始まった（will-download）。受け取るなら保存先を決めて true（呼び出し元は止めない）。
+  // 受け取るのは、Claude の操作の間に、セッションのタブで起きたもので、そのタブで許した先（許す先か、人がそのタブで許したオリジン）からのものだけ。
+  // 許していない先からのものは止めて、そのタブに控える（navigate の action: "continue" で、人に許可を求めて受け取れる）。
+  // 人の操作のものと、ポップアップの別ウインドウのものは受け取らない（今までどおり止める）
+  takeDownload(contents: WebContents | null | undefined, item: DownloadItem): boolean {
+    const found = contents ? this.find(contents) : null;
+    if (!found || !this.operating(found.sessionId)) return false;
+    const { sessionId, guest } = found;
+    this.downloadSeen.add(sessionId);
+    const page = guest.contents.getURL();
+    const chain = item.getURLChain().length > 0 ? item.getURLChain() : [item.getURL()];
+    // ページが作ったもの（data:・blob:）は、そのページのものとして扱う
+    const sources = chain.map((url) => (/^data:/i.test(url) ? page : /^blob:/i.test(url) ? url.slice(5) : url));
+    const last = sources[sources.length - 1];
+    const origin = originShown(last);
+    const blocked = sources.findIndex((url) => !this.allowedIn(guest, url));
+    if (blocked !== -1) {
+      this.downloads.refuse(sessionId, item, originShown(sources[blocked]), 'blocked');
+      // 続ける先は、許していない最初の URL（転送の途中なら、そこから）。http(s) のときだけ（blob: はページの中でしか作れない）
+      if (/^https?:/i.test(chain[blocked])) guest.stopped = { url: chain[blocked], newWindow: false };
+      return false;
+    }
+    const taken = this.callDownloads.get(sessionId) ?? 0;
+    if (taken >= MAX_DOWNLOADS_PER_CALL) {
+      this.downloads.refuse(sessionId, item, origin, 'too-many');
+      return false;
+    }
+    if (item.getTotalBytes() > MAX_DOWNLOAD_BYTES) {
+      this.downloads.refuse(sessionId, item, origin, 'too-large');
+      return false;
+    }
+    try {
+      this.downloads.take(sessionId, item, origin);
+    } catch {
+      return false;
+    }
+    this.callDownloads.set(sessionId, taken + 1);
+    return true;
+  }
+
+  // get_downloads
+  private listDownloads(sessionId: string): ToolResult {
+    const records = this.downloads.list(sessionId);
+    if (records.length === 0) return textResult('No files have been downloaded by your actions in this session.');
+    for (const record of records) if (record.state !== 'downloading') record.reported = true;
+    return textResult(`Downloads (oldest first):\n${records.map((r, i) => `${i + 1}. ${describeDownload(r)}`).join('\n')}`);
   }
 
   // ---- 開く ----
@@ -1011,8 +1254,8 @@ export class BrowserControl {
     await current.contents.loadURL(url).catch((error: unknown) => {
       // 許していない先へのリダイレクトを止めた
       if (session.blocked) throw stoppedError(session.blocked);
-      // 移ったための中断（リダイレクトなど）は失敗にしない
-      if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
+      // 移ったための中断（リダイレクトなど）と、ダウンロードになったもの（本物では ERR_FAILED で終わる）は失敗にしない
+      if (!/ERR_ABORTED/.test(String(error)) && !this.downloadSeen.has(sessionId)) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
     });
     return current;
   }
@@ -2733,6 +2976,12 @@ export class BrowserControl {
 
   // CDP の命令を送る。child: 別プロセスの iframe のセッション（無ければページ）
   private async cdp(guest: Guest, method: string, params?: Record<string, unknown>, child?: string): Promise<unknown> {
+    await this.connect(guest);
+    return guest.contents.debugger.sendCommand(method, params, child);
+  }
+
+  // CDP をつなぐ（つながっていれば何もしない）
+  private async connect(guest: Guest): Promise<void> {
     const dbg = guest.contents.debugger;
     if (!guest.cdp || !dbg.isAttached()) {
       try {
@@ -2743,9 +2992,10 @@ export class BrowserControl {
       guest.cdp = true;
       // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
       await dbg.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => undefined);
+      // ページが出すダイアログを知らせてもらう（出てから送っても返らないので、つないだらすぐ。browser-dialogs.ts）
+      await dbg.sendCommand('Page.enable').catch(() => undefined);
       await sleep(150);
     }
-    return dbg.sendCommand(method, params, child);
   }
 
   // 別プロセスの iframe と、その今の URL

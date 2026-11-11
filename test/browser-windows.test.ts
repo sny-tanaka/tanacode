@@ -108,7 +108,8 @@ const asSession = (s: FakeSession) => s as unknown as Session;
 
 function setup(options: { background?: boolean; screen?: PopupScreen | null; focused?: boolean } = {}) {
   const preview = new FakeSession();
-  restrictPreviewSession(asSession(preview));
+  // ダウンロードは PreviewWindows.download に回す（windows は下で作る）
+  restrictPreviewSession(asSession(preview), (item, contents) => windows.download(item, contents));
   const browser = {
     track: vi.fn(),
     openFromPage: vi.fn(() => true),
@@ -117,6 +118,7 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null; foc
     allowsPopup: vi.fn(() => true),
     attachPopup: vi.fn(),
     notOpened: vi.fn(),
+    takeDownload: vi.fn(() => false),
   };
   const opened: string[] = [];
   // アプリの既定のセッション（プレビューのものではない）
@@ -170,6 +172,26 @@ describe('プレビューのセッション', () => {
     const download = { preventDefault: vi.fn() };
     preview.emit('will-download', download);
     expect(download.preventDefault).toHaveBeenCalled();
+  });
+
+  it('タブのダウンロードは、アプリ内ブラウザが受け取れば止めない。ポップアップの別ウインドウのものは聞かずに止める', () => {
+    const { preview, browser, tab } = setup();
+    const guest = tab();
+    const item = { getURL: () => 'http://localhost:3000/a.csv' };
+    const event = () => ({ preventDefault: vi.fn() });
+    const refused = event();
+    preview.emit('will-download', refused, item, guest);
+    expect(refused.preventDefault).toHaveBeenCalled();
+    expect(browser.takeDownload).toHaveBeenCalledWith(guest, item);
+    browser.takeDownload.mockReturnValue(true);
+    const taken = event();
+    preview.emit('will-download', taken, item, guest);
+    expect(taken.preventDefault).not.toHaveBeenCalled();
+    browser.takeDownload.mockClear();
+    const fromPopup = event();
+    preview.emit('will-download', fromPopup, item, new FakeContents('window', preview));
+    expect(fromPopup.preventDefault).toHaveBeenCalled();
+    expect(browser.takeDownload).not.toHaveBeenCalled();
   });
 });
 

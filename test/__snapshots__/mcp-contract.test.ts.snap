@@ -10,6 +10,7 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     "mcp__tanacode-browser__get_console_logs",
     "mcp__tanacode-browser__get_failed_requests",
     "mcp__tanacode-browser__list_tabs",
+    "mcp__tanacode-browser__get_downloads",
     "mcp__tanacode-browser__ask_user_to_act",
   ],
   "tools": [
@@ -509,6 +510,31 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
       "kind": "act",
       "label": "遅くする",
       "name": "throttle",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "accept": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "accept",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "ダイアログに答える",
+      "name": "handle_dialog",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "ダウンロード",
+      "name": "get_downloads",
     },
     {
       "inputSchema": {

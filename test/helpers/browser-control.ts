@@ -67,7 +67,9 @@ export function setup() {
     // アプリの画面を描かれる状態にするよう頼まれた・戻された（drawHost）
     draws: [] as ('頼む' | '戻す')[],
     // screenshot の save で保存するフォルダ（作るのは保存するとき。保存するテストが消す）
-    screenshotDir: join(tmpdir(), `tanacode-shots-${process.pid}-${++dirs}`),
+    screenshotDir: join(tmpdir(), `tanacode-shots-${process.pid}-${dirs + 1}`),
+    // Claude の操作で起きたダウンロードを保存するフォルダ（作るのは保存するとき。保存するテストが消す）
+    downloadDir: join(tmpdir(), `tanacode-downloads-${process.pid}-${++dirs}`),
   };
   let tabs = 0;
   // 画面の代わりが作ったタブ
@@ -95,6 +97,7 @@ export function setup() {
       return () => state.draws.push('戻す');
     },
     screenshotDir: state.screenshotDir,
+    downloadDir: state.downloadDir,
     hasSession: (id) => state.sessions.has(id),
     onAsk: (id, ask) => asked.push([id, ask]),
     channels: {
@@ -172,6 +175,14 @@ export function sentBy(page: FakeContents, origin = new URL(page.url).origin, to
 // targetId: その iframe のフレームの ID（DOM.describeNode の frameId と同じ）
 export function addChildFrame(page: FakeContents, child: string, type = 'iframe', targetId = `T-${child}`): void {
   page.debugger.message('Target.attachedToTarget', { sessionId: child, targetInfo: { type, targetId } });
+}
+
+// タブができたときに、ダイアログを見張るためにつなぐ CDP の準備の命令
+const WATCH_COMMANDS = ['Target.setAutoAttach', 'Page.enable'];
+
+// CDP の命令のうち、タブができたときの準備（WATCH_COMMANDS）を除いたもの（ツールが送ったもの）
+export function toolCommands(page: FakeContents): FakeContents['debugger']['commands'] {
+  return page.debugger.commands.filter((c) => !WATCH_COMMANDS.includes(c.method));
 }
 
 // CDP の命令に、名前ごとの答えを返す（child ごとの location.href も）

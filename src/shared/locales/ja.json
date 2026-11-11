@@ -241,6 +241,7 @@
       "toolAsk": "tanacode のツールの許可で、このツールを毎回確認にしています",
       "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています",
       "browserGateInside": "Claude に許す先のページなので、確認なしで開きます",
+      "browserGateLeave": "localhost 以外のページ（{url}）が、離れるのを拒んでいます（入力した内容が保存されていないことがあります）。許すと、Claude はこのページを離れ、入力した内容は失われることがあります",
       "postWalkthroughGate": "GitHub の PR に、ウォークスルーをコメントとして載せます（外に書き込みます）"
     },
     "translate": {
@@ -475,6 +476,8 @@
       "hover": "マウスを乗せる",
       "drag": "ドラッグ",
       "throttle": "遅くする",
+      "handle_dialog": "ダイアログに答える",
+      "get_downloads": "ダウンロード",
       "evaluate": "JavaScript の実行",
       "upload_file": "ファイルの添付",
       "ask_user_to_act": "操作の依頼"
@@ -1178,6 +1181,8 @@
         "hover": "要素にマウスを乗せる（ホバーで開くメニューなどを見る）",
         "drag": "ドラッグ＆ドロップする（並べ替え・スライダーなど）",
         "throttle": "CPU や通信を遅くする",
+        "handle_dialog": "ページが出したダイアログに答える（離れるのを拒んだ localhost 以外のページを離れるときは、この設定によらず確認を求める）",
+        "get_downloads": "Claude の操作でダウンロードしたファイルの一覧を読む",
         "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
         "upload_file": "localhost 以外のページに、この Mac のファイルを添付する（localhost では、いつも確認なしで添付する）",
         "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"

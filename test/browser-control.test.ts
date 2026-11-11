@@ -374,7 +374,8 @@ describe('webview の受け付け（attach）', () => {
     control.attach('S1', 'tab-2', two.id);
     control.attach('S1', 'tab-2', two.id);
     control.attach('S1', 'new', odd.id);
-    expect(two.debugger.listenerCount('message')).toBe(1);
+    // 別プロセスの iframe と、ダイアログ（browser-dialogs.ts）の見張り
+    expect(two.debugger.listenerCount('message')).toBe(2);
     expect(two.listenerCount('destroyed')).toBe(2);
     expect(textOf(await call('list_tabs'))).toBe(
       ['Tabs (* marks the current tab):', '  1. 番号なし — http://localhost:3000/x', '  2. 二 — http://localhost:3000/2', '  3. 十 — http://localhost:3000/10'].join('\n'),

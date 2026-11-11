@@ -1,4 +1,4 @@
-import type { BrowserWindow, BrowserWindowConstructorOptions, HandlerDetails, Rectangle, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
+import type { BrowserWindow, BrowserWindowConstructorOptions, DownloadItem, HandlerDetails, Rectangle, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
 import type { BrowserControl } from './browser-control';
 
 // アプリ内ブラウザ（プレビューのパーティションの webview のタブ）のページが、移る・新しいウインドウを開くときの守り。
@@ -15,7 +15,7 @@ import type { BrowserControl } from './browser-control';
 // 見張り（移る先・新しいウインドウの扱い）は、中身ができたとき（web-contents-created）に付ける。ポップアップの最初の読み込みとページのスクリプトより前
 
 // アプリ内ブラウザの操作のうち、ここで使うもの
-export type PreviewBrowser = Pick<BrowserControl, 'track' | 'openFromPage' | 'isOperating' | 'blocksNavigation' | 'allowsPopup' | 'attachPopup' | 'notOpened'>;
+export type PreviewBrowser = Pick<BrowserControl, 'track' | 'openFromPage' | 'isOperating' | 'blocksNavigation' | 'allowsPopup' | 'attachPopup' | 'notOpened' | 'takeDownload'>;
 
 // ポップアップを置く画面。workArea: tanacode のウインドウ（タブはいつもこのウインドウの中）がある画面の、メニューバーと Dock を除いた範囲 /
 // around: tanacode のウインドウ（位置の指定が無いポップアップは、この真ん中に出す）
@@ -67,11 +67,15 @@ const POPUP_PREFERENCES = {
 // （アプリの画面は、既定のセッションか、足したプロファイルのセッションを使う）
 const previewSessions = new WeakSet<Session>();
 
-// プレビューのセッションには、どの権限も与えず、ダウンロードも止める（Claude が操作したページが、勝手にファイルを保存させないように）
-export function restrictPreviewSession(preview: Session): void {
+// プレビューのセッションには、どの権限も与えず、ダウンロードも止める（ページが、勝手にファイルを保存させないように）。
+// download: Claude の操作で起きたダウンロードを受け取る（保存先を決めたら true。PreviewWindows.download）。受け取らないものは止める
+export function restrictPreviewSession(preview: Session, download?: (item: DownloadItem, contents: WebContents) => boolean): void {
   preview.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   preview.setPermissionCheckHandler(() => false);
-  preview.on('will-download', (event) => event.preventDefault());
+  preview.on('will-download', (event, item, contents) => {
+    // 中身の分からないもの（Electron は渡すが、念のため）も止める
+    if (!item || !contents || !download?.(item, contents)) event.preventDefault();
+  });
   previewSessions.add(preview);
 }
 
@@ -111,6 +115,13 @@ export class PreviewWindows {
     contents.on('will-redirect', guard);
     if (!popup) return;
     contents.setWindowOpenHandler((details) => this.open(contents, details));
+  }
+
+  // プレビューのセッションでダウンロードが始まった。Claude の操作で、タブで起きたものなら、そのタブのアプリ内ブラウザが受け取る（browser-control.ts）。
+  // ポップアップの別ウインドウのものは受け取らない
+  download(item: DownloadItem, contents: WebContents): boolean {
+    if (contents.getType() !== 'webview') return false;
+    return this.deps.browsers().some((browser) => browser.takeDownload(contents, item));
   }
 
   // webview のタブが付いた（did-attach-webview）。browser: そのタブのプロファイルのアプリ内ブラウザ

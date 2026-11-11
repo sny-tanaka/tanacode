@@ -244,6 +244,7 @@
       "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
       "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode",
       "browserGateInside": "The page is on a site allowed for Claude, so it opens without confirmation",
+      "browserGateLeave": "A page other than localhost ({url}) refused to be left (it may have unsaved input). If you allow it, Claude leaves the page, and what was entered may be lost",
       "postWalkthroughGate": "This posts the walkthrough as a comment on a GitHub pull request (it writes outside this Mac)"
     },
     "translate": {
@@ -480,6 +481,8 @@
       "hover": "Hover",
       "drag": "Drag",
       "throttle": "Throttle",
+      "handle_dialog": "Answer a dialog",
+      "get_downloads": "Downloads",
       "evaluate": "Run JavaScript",
       "upload_file": "Attach files",
       "ask_user_to_act": "Request to Act"
@@ -1218,6 +1221,8 @@
         "hover": "Moves the mouse over an element (to see hover menus and the like)",
         "drag": "Drags and drops (reordering, sliders and the like)",
         "throttle": "Slows down the CPU or the network",
+        "handle_dialog": "Answers a dialog the page opened (leaving a page other than localhost that refused to be left always asks, whatever this setting)",
+        "get_downloads": "Reads the list of files downloaded by Claude's actions",
         "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
         "upload_file": "Attaches files on this Mac to a page other than localhost (on localhost, it always attaches them without asking)",
         "ask_user_to_act": "Asks you to act in the browser, such as logging in"

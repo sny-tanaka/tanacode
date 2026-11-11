@@ -168,6 +168,7 @@ export class Profile {
       host: options.host,
       drawHost: options.drawHost,
       screenshotDir: join(dataDir, 'browser-screenshots'),
+      downloadDir: join(dataDir, 'browser-downloads'),
       hasSession: (id) => !!this.manager?.summary(id),
       // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
       onAsk: (id, ask) => {
