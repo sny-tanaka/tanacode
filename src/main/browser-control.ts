@@ -11,6 +11,7 @@ import {
   isLocalUrl,
   NETWORK_PRESETS,
   THROTTLE_LIMITS,
+  DRAG_LIMITS,
   TOUCH_LIMITS,
   VIEWPORT_LIMITS,
   type NetworkPresetName,
@@ -102,6 +103,8 @@ const MAX_SAVED_SHOTS = 100;
 const LONG_PRESS_MS = 800;
 const SWIPE_MS = 300;
 const TAP_MS = 50;
+// ドラッグで動かす既定の時間
+const DRAG_MS = 300;
 // 2 本指のタップ・なぞるときの指の間（CSS の px）
 const FINGER_GAP = 40;
 const DEFAULT_STYLES = [
@@ -934,6 +937,10 @@ export class BrowserControl {
         return this.setViewport(sessionId, guest, args);
       case 'touch':
         return this.touch(sessionId, guest, args);
+      case 'hover':
+        return this.hover(sessionId, guest, args);
+      case 'drag':
+        return this.drag(sessionId, guest, args);
       case 'throttle':
         return this.throttle(sessionId, guest, args);
       case 'evaluate':
@@ -1555,15 +1562,17 @@ export class BrowserControl {
     const selector = optionalString(args.selector);
     const double = args.double === true;
     const button = optionalString(args.button) ?? 'left';
+    const modifiers = mouseModifiers(args.modifiers);
     let target: Target;
     if (selector) target = await this.locate(guest, selector);
     else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
     else throw new ToolError('Provide selector, or x and y.');
     const before = guest.contents.getURL();
     await this.highlight(sessionId, target.rect);
-    const { real, note } = await this.press(guest, target, { double, button: button === 'right' || button === 'middle' ? button : 'left', real: args.real === true });
+    const { real, note } = await this.press(guest, target, { double, button: button === 'right' || button === 'middle' ? button : 'left', real: args.real === true, modifiers });
     await settle(guest.contents);
-    const lines = [`${double ? 'Double-clicked' : 'Clicked'}: ${target.description}${real ? ` (with a real mouse press, ${real})` : ''}`];
+    const held = modifiers.length ? ` with ${modifiers.join('+')}` : '';
+    const lines = [`${double ? 'Double-clicked' : 'Clicked'}${held}: ${target.description}${real ? ` (with a real mouse press, ${real})` : ''}`];
     if (target.covered) lines.push(`(another element, ${target.covered}, was covering the clicked position)`);
     if (note) lines.push(note);
     const after = guest.contents.getURL();
@@ -1577,13 +1586,17 @@ export class BrowserControl {
   // フォーカスを移すので、人がチャットの入力欄などで打っていると、そのフォーカスを奪ってしまうため（ページが mousedown を止めても移る）。
   // JavaScript では効かないもの（PRESS_PARTS の __realReason）と、別オリジンの iframe の中・右や真ん中のボタン・Claude が real を指定したときは、
   // 本物の押下で押し、押したらすぐ人のフォーカスを元の場所へ戻す（keepHumanFocus）。
+  // modifiers: 押したままにする修飾キー（mouseModifiers で名前をそろえたもの）。ページの中で押すときはイベントの shiftKey などに、
+  // 本物の押下では Input.dispatchMouseEvent の modifiers のビットにする（どちらでも、⌘ でリンクが新しいタブで開くことを Electron 44 で確かめた）
   // 返すもの: real は本物の押下で押した理由（ページの中で押したときは null）。note は、ページの中で押したときに、ページの処理がエラーを投げたこと
   private async press(
     guest: Guest,
     target: Target,
-    options: { double: boolean; button: 'left' | 'right' | 'middle'; real: boolean },
+    options: { double: boolean; button: 'left' | 'right' | 'middle'; real: boolean; modifiers?: string[] },
   ): Promise<{ real: string | null; note: string | null }> {
     const point = center(target.rect);
+    const modifiers = options.modifiers ?? [];
+    const keys = { shiftKey: modifiers.includes('shift'), ctrlKey: modifiers.includes('control'), altKey: modifiers.includes('alt'), metaKey: modifiers.includes('meta') };
     let reason: string | null = options.real ? 'as requested' : options.button !== 'left' ? `because it is the ${options.button} button` : null;
     if (target.cross) reason = 'because it is inside a cross-origin iframe';
     if (!reason) {
@@ -1615,7 +1628,7 @@ export class BrowserControl {
           // 押す要素の文書の中の位置
           const lx = x - o.ox, ly = y - o.oy;
           const Pointer = view.PointerEvent || view.MouseEvent;
-          const at = { bubbles: true, cancelable: true, composed: true, clientX: lx, clientY: ly, screenX: lx, screenY: ly, button: 0 };
+          const at = { bubbles: true, cancelable: true, composed: true, clientX: lx, clientY: ly, screenX: lx, screenY: ly, button: 0, ...${JSON.stringify(keys)} };
           const pointer = { ...at, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 };
           // ページの処理が投げたエラー（pointerdown の中の setPointerCapture など。本物の押下でないと効かないもの）
           const errors = [];
@@ -1659,11 +1672,13 @@ export class BrowserControl {
     // 本物の押下。別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
     const { x, y } = target.child ?? point;
     const child = target.child?.session;
+    const bits = modifierBits(modifiers);
+    const mods = bits ? { modifiers: bits } : {};
     await this.keepHumanFocus(guest, async () => {
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, child);
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, ...mods }, child);
       for (let count = 1; count <= (options.double ? 2 : 1); count++) {
-        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: options.button, clickCount: count }, child);
-        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: options.button, clickCount: count }, child);
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: options.button, clickCount: count, ...mods }, child);
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: options.button, clickCount: count, ...mods }, child);
       }
     });
     return { real: reason, note: null };
@@ -2139,6 +2154,153 @@ export class BrowserControl {
     const after = guest.contents.getURL();
     if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after, guest)}${this.allowedIn(guest, after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
     return textResult(lines.join('\n'));
+  }
+
+  // ---- マウスを乗せる・ドラッグする ----
+
+  // 要素の上（か x・y）へ本物のマウスを動かし、そのまま置く（CDP の Input.dispatchMouseEvent の mouseMoved）。CSS の :hover が効き、
+  // ページには本物の pointerover・mouseover・mousemove が届くので、ホバーで開くメニューやツールチップを、開いたまま撮る・読むことができる
+  // （click の前にページの中で合成する mouseover では :hover が効かない。Electron 44 で確かめた）。
+  // マウスを動かすだけでは、アプリの画面のフォーカスは webview へ移らない（Electron 44 で確かめた）が、本物の入力なので keepHumanFocus で守る
+  private async hover(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const target = await this.mouseTarget(guest, args, 'hover over');
+    await this.highlight(sessionId, target.rect);
+    // 別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る（click の本物の押下と同じ）
+    const { x, y } = target.child ?? center(target.rect);
+    await this.keepHumanFocus(guest, async () => {
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, target.child?.session);
+    });
+    await settle(guest.contents);
+    const lines = [`Hovered over: ${target.description}`];
+    if (target.covered) lines.push(`(another element, ${target.covered}, was covering the position)`);
+    lines.push('The mouse pointer stays there until the next mouse action, so take a screenshot or read the page now to see what the hover opened.');
+    return textResult(lines.join('\n'));
+  }
+
+  // 本物のマウスでドラッグする: 始めで左のボタンを押し、押したまま終わりまで少しずつ動かして、そこで離す。
+  // ページが HTML5 のドラッグ＆ドロップ（draggable・dragstart・drop）を使うときは、ドラッグを Chromium に任せず、CDP で受け取って
+  // （Input.setInterceptDrags。ドラッグが始まると Input.dragIntercepted でドラッグのデータが届く）、残りを Input.dispatchDragEvent で送る。
+  // 本物のマウスだけでも Electron 44 の webview でドロップまで届いたが、Chromium が OS のドラッグを始めるので、人のマウスの動きと混ざりうる。
+  // 受け取れば OS のドラッグは始まらない（並べ替えのリストで、どちらでも dragstart・drop・dragend が届き、並びが変わるのを確かめた）。
+  // 押すときと離すときは、click の本物の押下と同じく、アプリの画面のフォーカスが webview へ移るので、それぞれ keepHumanFocus で元へ戻す
+  // （動かしている間、webview に置いたままにしない）
+  private async drag(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const modifiers = mouseModifiers(args.modifiers);
+    const duration = args.durationMs === undefined ? DRAG_MS : ranged(args.durationMs, 'durationMs', 0, DRAG_LIMITS.maxDurationMs);
+    const hold = args.holdMs === undefined ? 0 : ranged(args.holdMs, 'holdMs', 0, DRAG_LIMITS.maxHoldMs);
+    const toSelector = optionalString(args.toSelector);
+    if (!toSelector && [args.toX, args.toY, args.deltaX, args.deltaY].every((v) => v === undefined)) {
+      throw new ToolError('Provide where to drag to: toSelector, toX and toY, or deltaX or deltaY.');
+    }
+    const start = await this.mouseTarget(guest, args, 'drag from');
+    const startAt = center(start.rect);
+    let end: Target;
+    if (toSelector) {
+      // 始めを見える位置まで動かしたあとなので、落とす先は動かさずに測る
+      const found = await this.locate(guest, toSelector, false);
+      const at = center(found.rect);
+      const { width, height } = found.viewport;
+      if (at.x < 0 || at.y < 0 || at.x >= width || at.y >= height) {
+        throw new ToolError(
+          `The center of the element matching "${toSelector}" (x=${round(at.x)} y=${round(at.y)}) is outside the visible area (${width}×${height}) after scrolling the start into view. ` +
+            'Bring both into the visible area (for example, scroll and drag with x and y, or make the viewport taller with set_viewport), then drag again.',
+        );
+      }
+      end = { rect: found.rect, description: found.description, covered: found.covered };
+    } else {
+      const toX = optionalNumber(args.toX, 'toX') ?? (args.deltaX === undefined ? undefined : startAt.x + optionalNumber(args.deltaX, 'deltaX')!);
+      const toY = optionalNumber(args.toY, 'toY') ?? (args.deltaY === undefined ? undefined : startAt.y + optionalNumber(args.deltaY, 'deltaY')!);
+      end = await this.pointAt(guest, round(toX ?? startAt.x), round(toY ?? startAt.y), 'drag to');
+    }
+    // 別プロセスの iframe の中は、その iframe のセッションに送る。始めと終わりが別のフレームだと、送る先の位置が決まらない
+    if (start.child?.session !== end.child?.session) throw new ToolError('A drag inside a cross-origin iframe must start and end in the same iframe.');
+    const child = start.child?.session;
+    const endAt = center(end.rect);
+    // 送る位置（iframe のセッションなら、その中の位置）
+    const from = start.child ?? startAt;
+    const to = end.child ?? endAt;
+    const bits = modifierBits(modifiers);
+    const mods = bits ? { modifiers: bits } : {};
+    // HTML5 のドラッグが始まったら、そのデータ（送る先のセッションのものだけ）
+    let data: unknown = null;
+    const mouse = (type: string, p: BrowserPoint, extra: Record<string, unknown>) =>
+      this.cdp(guest, 'Input.dispatchMouseEvent', { type, x: round(p.x), y: round(p.y), ...extra, ...mods }, child);
+    const dragEvent = (type: string, p: BrowserPoint) => this.cdp(guest, 'Input.dispatchDragEvent', { type, x: round(p.x), y: round(p.y), data, ...mods }, child);
+    const along = (a: BrowserPoint, b: BrowserPoint, t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    const before = guest.contents.getURL();
+    await this.highlight(sessionId, start.rect);
+    const onMessage = (_event: unknown, method: string, params: { data?: unknown } | undefined, session?: string) => {
+      if (method === 'Input.dragIntercepted' && (session || undefined) === child && params?.data) data = params.data;
+    };
+    // 受け取れなければ（CDP が対応していないなど）、Chromium に任せる
+    const intercepting = await this.cdp(guest, 'Input.setInterceptDrags', { enabled: true }, child).then(
+      () => true,
+      () => false,
+    );
+    guest.contents.debugger.on('message', onMessage);
+    let pressed = false;
+    // HTML5 のドラッグで、ページの上に入った（dragEnter を送った）
+    let entered = false;
+    try {
+      await this.keepHumanFocus(guest, async () => {
+        await mouse('mouseMoved', from, {});
+        await mouse('mousePressed', from, { button: 'left', buttons: 1, clickCount: 1 });
+        pressed = true;
+      });
+      if (hold > 0) await sleep(hold);
+      // 16 ミリ秒ごと（画面の 1 コマ）に動かす。5 回から 60 回まで（ドラッグを始めるのに少し動かす必要があるページのため、0 ミリ秒でも 5 回）
+      const steps = Math.min(60, Math.max(5, Math.round(duration / 16)));
+      for (let step = 1; step <= steps; step++) {
+        await sleep(duration / steps);
+        const now = along(from, to, step / steps);
+        if (data) {
+          if (!entered) await dragEvent('dragEnter', now);
+          entered = true;
+          await dragEvent('dragOver', now);
+        } else {
+          await mouse('mouseMoved', now, { button: 'left', buttons: 1 });
+        }
+        const shown = along(startAt, endAt, step / steps);
+        this.emit({ sessionId, active: true, label: null, box: { x: shown.x - 10, y: shown.y - 10, width: 20, height: 20 } });
+      }
+      if (data) {
+        // 最後の 1 回で始まったときは、まだ入っていない
+        if (!entered) {
+          await dragEvent('dragEnter', to);
+          await dragEvent('dragOver', to);
+        }
+        await dragEvent('drop', to);
+      }
+      await this.keepHumanFocus(guest, async () => {
+        await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 });
+        pressed = false;
+      });
+    } finally {
+      guest.contents.debugger.off('message', onMessage);
+      // 途中で失敗したら、ボタンを押したままにしない
+      if (pressed) await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 }).catch(() => undefined);
+      if (intercepting) await this.cdp(guest, 'Input.setInterceptDrags', { enabled: false }, child).catch(() => undefined);
+    }
+    await settle(guest.contents);
+    const held = modifiers.length ? ` with ${modifiers.join('+')}` : '';
+    const lines = [
+      `Dragged${held} from ${start.description} to ${end.description} in ${duration} ms`,
+      data
+        ? 'The page started an HTML5 drag and drop (dragstart), so dragover and drop were sent along the way (where the page does not accept a drop, it gets no drop event: check the page to see the result).'
+        : 'The page did not start an HTML5 drag and drop, so it got only the pointer and mouse events of the drag (down, moves, up).',
+    ];
+    if (end.covered) lines.push(`(another element, ${end.covered}, was covering the drop position)`);
+    const after = guest.contents.getURL();
+    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after, guest)}${this.allowedIn(guest, after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
+    return textResult(lines.join('\n'));
+  }
+
+  // マウスを当てる所。selector（見える位置まで動かす）か、見えている範囲の x・y（click と同じ探し方）。verb: 断る文の動詞
+  private async mouseTarget(guest: Guest, args: Record<string, unknown>, verb: string): Promise<Target> {
+    const selector = optionalString(args.selector);
+    if (selector) return this.locate(guest, selector);
+    if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) return this.pointAt(guest, args.x, args.y, verb);
+    throw new ToolError('Provide selector, or x and y.');
   }
 
   // タッチを送る位置の決め方。送る位置 = タブの中の位置 × scale。アプリの画面での位置 = 左上 + 送る位置（指が画面に出ているかを見るのに使う）。
@@ -2696,8 +2858,13 @@ export class BrowserControl {
     return (await this.world(guest, '({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })')) as { width: number; height: number; dpr: number };
   }
 
-  // セレクタに当たる要素（同じオリジンの iframe の中も）のうち、見えている最初のものを、見える位置まで動かして、その位置を返す
-  private async locate(guest: Guest, selector: string): Promise<{ rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null }> {
+  // セレクタに当たる要素（同じオリジンの iframe の中も）のうち、見えている最初のものを、見える位置まで動かして、その位置を返す。
+  // scroll が false なら動かさずに測る（drag の落とす先。動かすと、先に見える位置へ動かした始めの要素が、見えない所へ動きうる）
+  private async locate(
+    guest: Guest,
+    selector: string,
+    scroll = true,
+  ): Promise<{ rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null }> {
     await this.laidOut(guest);
     const found = (await this.world(
       guest,
@@ -2709,7 +2876,7 @@ export class BrowserControl {
         if (!hit) return { error: 'hidden', count: all.length };
         const el = hit.el;
         // iframe の中の要素は、外のページも合わせて動かす
-        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        ${scroll ? "el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });" : ''}
         const r = __rect(el);
         const top = __hit(r.x + r.width / 2, r.y + r.height / 2).el;
         return {
@@ -2730,10 +2897,12 @@ export class BrowserControl {
 
   // 見えている範囲の (x, y) にある要素。別オリジンの iframe の中は、その iframe の src が許す先のときだけ押せる
   // （スクリプトからは中が見えないので、どのページかは src で決める）
+  // verb: 断る文の「Cannot <verb> x=… y=…」（hover・drag でも使う）
   private async pointAt(
     guest: Guest,
     x: number,
     y: number,
+    verb = 'click',
   ): Promise<Target> {
     const found = (await this.world(
       guest,
@@ -2760,7 +2929,7 @@ export class BrowserControl {
     // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
     const frame = found.src ? await this.childFor(guest, found.src) : null;
     const url = frame?.url ?? found.src;
-    if (!url || !this.allowed(url)) throw new ToolError(`Cannot click x=${x} y=${y} because it is inside an iframe not allowed for Claude (${url ? frameShown(url) : 'no src'}).`);
+    if (!url || !this.allowed(url)) throw new ToolError(`Cannot ${verb} x=${x} y=${y} because it is inside an iframe not allowed for Claude (${url ? frameShown(url) : 'no src'}).`);
     return {
       rect,
       description: `x=${x} y=${y} (inside cross-origin iframe ${url})`,
@@ -2978,6 +3147,37 @@ function tabNumber(tabId: string): number {
 }
 
 const MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 };
+// マウスの操作（click・drag）の修飾キーの名前。Claude が書きがちな別名（cmd・ctrl・option など）も、そろえて受け付ける
+const MODIFIER_NAMES: Record<string, string> = {
+  shift: 'shift',
+  control: 'control',
+  ctrl: 'control',
+  alt: 'alt',
+  option: 'alt',
+  opt: 'alt',
+  meta: 'meta',
+  cmd: 'meta',
+  command: 'meta',
+  '⌘': 'meta',
+};
+
+// マウスの操作の修飾キー（重なりを除き、渡された順）。知らない名前は断る（押したつもりの修飾キーを黙って落とさない）
+export function mouseModifiers(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new ToolError('modifiers must be a list of shift, control, alt and meta.');
+  const names: string[] = [];
+  for (const item of value) {
+    const key = typeof item === 'string' ? item.trim().toLowerCase() : '';
+    if (!Object.hasOwn(MODIFIER_NAMES, key)) throw new ToolError(`Unknown modifier: ${String(item)} (use shift, control, alt or meta).`);
+    const name = MODIFIER_NAMES[key]!;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+function modifierBits(names: string[]): number {
+  return names.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
+}
 // 本物の押下のあと、アプリの画面のフォーカスが webview へ移るのを見る長さの上限と間隔（keepHumanFocus。移らなければ、そのまま）
 const KEEP_FOCUS_WAIT_MS = 1000;
 const KEEP_FOCUS_POLL_MS = 50;
@@ -2986,7 +3186,8 @@ type Target = { rect: BrowserRect; description: string; covered: string | null; 
 // ページに送ったキー・文字が、ページに届いた（keyup・input）のを待つ長さの上限（届かないもの: 文字を入れられない所に入れたなど）
 const INPUT_WAIT_MS = 1000;
 
-type KeySpec = { key: string; code: string; keyCode: number; text?: string };
+// electron: sendInputEvent に渡す名前が、key から決まらないもの（テンキー。数字の key のままだと、上の段の数字のキーになる）
+type KeySpec = { key: string; code: string; keyCode: number; text?: string; electron?: string };
 
 const NAMED_KEYS: Record<string, KeySpec> = {
   enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
@@ -3009,6 +3210,21 @@ const NAMED_KEYS: Record<string, KeySpec> = {
   end: { key: 'End', code: 'End', keyCode: 35 },
   pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
   pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  insert: { key: 'Insert', code: 'Insert', keyCode: 45 },
+  capslock: { key: 'CapsLock', code: 'CapsLock', keyCode: 20 },
+  numlock: { key: 'NumLock', code: 'NumLock', keyCode: 144 },
+  scrolllock: { key: 'ScrollLock', code: 'ScrollLock', keyCode: 145 },
+  printscreen: { key: 'PrintScreen', code: 'PrintScreen', keyCode: 44 },
+  // テンキー（sendInputEvent の名前は num0・numadd など。Electron 44 で、ページに code が Numpad0・NumpadAdd などとして届くのを確かめた。
+  // テンキーの Enter と ContextMenu・Pause は、sendInputEvent では key も code も空で届いたので、置かない）
+  ...Object.fromEntries(
+    Array.from({ length: 10 }, (_, d) => [`numpad${d}`, { key: `${d}`, code: `Numpad${d}`, keyCode: 96 + d, text: `${d}`, electron: `num${d}` }]),
+  ),
+  numpadadd: { key: '+', code: 'NumpadAdd', keyCode: 107, text: '+', electron: 'numadd' },
+  numpadsubtract: { key: '-', code: 'NumpadSubtract', keyCode: 109, text: '-', electron: 'numsub' },
+  numpadmultiply: { key: '*', code: 'NumpadMultiply', keyCode: 106, text: '*', electron: 'nummult' },
+  numpaddivide: { key: '/', code: 'NumpadDivide', keyCode: 111, text: '/', electron: 'numdiv' },
+  numpaddecimal: { key: '.', code: 'NumpadDecimal', keyCode: 110, text: '.', electron: 'numdec' },
 };
 
 // sendInputEvent に渡すキーの名前（Electron のアクセラレーターのキーの名前。文字のキーはその文字）
@@ -3020,13 +3236,13 @@ const ELECTRON_KEYS: Record<string, string> = {
   ArrowRight: 'Right',
 };
 export function electronKeyCode(spec: KeySpec): string {
-  return ELECTRON_KEYS[spec.key] ?? spec.key;
+  return spec.electron ?? ELECTRON_KEYS[spec.key] ?? spec.key;
 }
 
 export function keySpec(name: string): KeySpec | null {
   const named = NAMED_KEYS[name.toLowerCase()];
   if (named) return named;
-  const f = /^f([1-9]|1[0-2])$/i.exec(name);
+  const f = /^f([1-9]|1[0-9]|2[0-4])$/i.exec(name);
   if (f) return { key: `F${f[1]}`, code: `F${f[1]}`, keyCode: 111 + Number(f[1]) };
   if ([...name].length !== 1) return null;
   const upper = name.toUpperCase();

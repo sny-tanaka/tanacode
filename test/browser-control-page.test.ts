@@ -1190,7 +1190,7 @@ describe('キー（press_key）', () => {
     ]);
   });
 
-  it('keySpec: 名前の付いたキー（大文字小文字を問わない）・F1〜F12・英字・数字・記号', () => {
+  it('keySpec: 名前の付いたキー（大文字小文字を問わない）・F1〜F24・英字・数字・記号', () => {
     expect(keySpec('ESC')).toEqual({ key: 'Escape', code: 'Escape', keyCode: 27 });
     expect(keySpec('return')).toEqual({ key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' });
     expect(keySpec('Space')).toEqual({ key: ' ', code: 'Space', keyCode: 32, text: ' ' });
@@ -1198,7 +1198,7 @@ describe('キー（press_key）', () => {
     expect(keySpec('PageUp')).toEqual({ key: 'PageUp', code: 'PageUp', keyCode: 33 });
     expect(keySpec('f1')).toEqual({ key: 'F1', code: 'F1', keyCode: 112 });
     expect(keySpec('F12')).toEqual({ key: 'F12', code: 'F12', keyCode: 123 });
-    expect(keySpec('F13')).toBeNull();
+    expect(keySpec('F25')).toBeNull();
     expect(keySpec('F0')).toBeNull();
     expect(keySpec('xf1')).toBeNull();
     expect(keySpec('a')).toEqual({ key: 'a', code: 'KeyA', keyCode: 65, text: 'a' });

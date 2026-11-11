@@ -18,6 +18,12 @@ export const BROWSER_ASK_TIMEOUT_MS = 10 * 60_000;
 type Schema = Record<string, unknown>;
 
 const selector = (what: string): Schema => ({ type: 'string', description: `CSS selector of ${what}` });
+// マウスの操作（click・drag）と一緒に押したままにする修飾キー
+const mouseModifiers: Schema = {
+  type: 'array',
+  items: { type: 'string', enum: ['shift', 'control', 'alt', 'meta'] },
+  description: 'Keys to hold down during the mouse action (meta is ⌘ on macOS)',
+};
 
 // set_viewport の device で選べる機種。大きさは画面全体（CSS の px。Chrome DevTools のデバイスモードと同じく、Safari のツールバーは引かない）と、
 // 画素密度（devicePixelRatio）。どれもスマホ・タブレットなので、タッチにも対応させる（mobile の既定）
@@ -40,6 +46,8 @@ const DEVICE_NAMES = BROWSER_DEVICES.map((d) => d.name);
 export const VIEWPORT_LIMITS = { min: 100, max: 4000, minScale: 0.5, maxScale: 5 };
 // タッチの上限（指を動かす時間・ピンチの倍率）
 export const TOUCH_LIMITS = { maxDurationMs: 10_000, minScale: 0.1, maxScale: 10 };
+// ドラッグの上限（動かす時間・動かす前に押したままにする時間）
+export const DRAG_LIMITS = { maxDurationMs: 10_000, maxHoldMs: 5_000 };
 // CPU を遅くする倍率の上限
 export const THROTTLE_LIMITS = { maxCpu: 20 };
 
@@ -182,7 +190,9 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'The click is normally done with JavaScript inside the page (pointer and mouse events, focus, then click), so that it does not take the keyboard focus away from where the user is typing in tanacode. ' +
       'It reaches into open shadow DOM, and places the caret at the clicked position in contenteditable. ' +
       'A <select>, a file input, an <input> of type range, number, date, time or color, media controls, a link or form that opens a new window, a draggable element, a custom element whose inside JavaScript cannot reach (closed shadow DOM), a position inside a cross-origin iframe, and the right or middle button are pressed with a real mouse press automatically. ' +
-      'Set real to true only when the JavaScript click does not work as expected: the page ignores it (for example, it checks event.isTrusted), the result says the page threw an error, or it needs a real press for something else. A real press briefly moves the focus to the page and then returns it to where the user was.',
+      'Set real to true only when the JavaScript click does not work as expected: the page ignores it (for example, it checks event.isTrusted), the result says the page threw an error, or it needs a real press for something else. A real press briefly moves the focus to the page and then returns it to where the user was. ' +
+      'modifiers holds keys during the click (shiftKey and the like are set in either way): meta (⌘) opens a link in a new tab, which becomes the current tab, and shift opens it in a new window, which also opens as a tab. ' +
+      'With a real press, control with the left button is a right click on macOS (the page gets contextmenu, not click).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -192,6 +202,54 @@ export const BROWSER_TOOLS: BrowserTool[] = [
         double: { type: 'boolean', description: 'Double-click' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button to press (default left)' },
         real: { type: 'boolean', description: 'Press with a real mouse press instead of the JavaScript click (only when the JavaScript click does not work)' },
+        modifiers: mouseModifiers,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'hover',
+    kind: 'act',
+    description:
+      'Moves the mouse pointer over an element (or to x and y) with a real mouse move, and leaves it there. ' +
+      'CSS :hover applies and the page gets the pointer and mouse events of a real move, so menus and tooltips the page shows on hover stay open: take a screenshot or read them with get_text afterwards. ' +
+      'Where: selector (the first visible element matching it, scrolled into view; same-origin iframes are searched too), or x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
+      'The pointer stays until you hover elsewhere, drag, or click with a real mouse press (the JavaScript click does not move it), or until the user moves the mouse over the browser pane. ' +
+      'The tooltip of a title attribute is drawn by the system outside the page and does not show in screenshots: read the attribute with inspect instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: selector('the element to hover over'),
+        x: { type: 'number', description: 'x of the position to hover over (instead of selector, in CSS px)' },
+        y: { type: 'number', description: 'y of the position to hover over (instead of selector, in CSS px)' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'drag',
+    kind: 'act',
+    description:
+      'Drags with a real mouse: presses the left button at the start, moves the pointer to the end step by step while holding it, and releases it there. ' +
+      'This moves sliders, reorders sortable lists, moves cards between columns of a kanban board and the like, whether the page uses pointer and mouse events or HTML5 drag and drop (draggable, dragstart, dragover, drop); the result tells you which one the page used. ' +
+      'Start: selector (the first visible element matching it, scrolled into view; same-origin iframes are searched too), or x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
+      'End: toSelector (the center of that element, which must be in the visible area after the start is scrolled into view), toX and toY, or deltaX and deltaY (the distance from the start). ' +
+      'holdMs holds the button still before moving, for pages that start a drag only after a delay. modifiers holds keys during the whole drag (for example alt to copy). ' +
+      'Dropping files is not supported. A drag inside a cross-origin iframe must start and end in the same iframe.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: selector('the element to start dragging'),
+        x: { type: 'number', description: 'x of the start (instead of selector, in CSS px)' },
+        y: { type: 'number', description: 'y of the start (instead of selector, in CSS px)' },
+        toSelector: selector('the element to drop on (its center)'),
+        toX: { type: 'number', description: 'x of the end (instead of toSelector, in CSS px)' },
+        toY: { type: 'number', description: 'y of the end (instead of toSelector, in CSS px)' },
+        deltaX: { type: 'number', description: 'Distance to move to the right (negative is left), instead of toX' },
+        deltaY: { type: 'number', description: 'Distance to move down (negative is up), instead of toY' },
+        durationMs: { type: 'number', description: `How long the move takes (default 300, at most ${DRAG_LIMITS.maxDurationMs})` },
+        holdMs: { type: 'number', description: `How long to hold the button still before moving (default 0, at most ${DRAG_LIMITS.maxHoldMs})` },
+        modifiers: mouseModifiers,
       },
       additionalProperties: false,
     },
@@ -216,7 +274,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'press_key',
     kind: 'act',
-    description: 'Presses a key (e.g. Enter, Tab, Escape, ArrowDown, a). Hold Shift and other keys with modifiers.',
+    description: 'Presses a key (e.g. Enter, Tab, Escape, ArrowDown, a, Insert, F13, Numpad5, NumpadAdd). Hold Shift and other keys with modifiers.',
     inputSchema: {
       type: 'object',
       properties: {

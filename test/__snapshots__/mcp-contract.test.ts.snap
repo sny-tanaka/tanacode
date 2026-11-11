@@ -187,6 +187,18 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
           "double": {
             "type": "boolean",
           },
+          "modifiers": {
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
           "real": {
             "type": "boolean",
           },
@@ -205,6 +217,77 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
       "kind": "act",
       "label": "クリック",
       "name": "click",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "selector": {
+            "type": "string",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "マウスを乗せる",
+      "name": "hover",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "deltaX": {
+            "type": "number",
+          },
+          "deltaY": {
+            "type": "number",
+          },
+          "durationMs": {
+            "type": "number",
+          },
+          "holdMs": {
+            "type": "number",
+          },
+          "modifiers": {
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "toSelector": {
+            "type": "string",
+          },
+          "toX": {
+            "type": "number",
+          },
+          "toY": {
+            "type": "number",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "ドラッグ",
+      "name": "drag",
     },
     {
       "inputSchema": {
