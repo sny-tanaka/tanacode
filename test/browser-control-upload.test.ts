@@ -145,6 +145,37 @@ describe('ファイルの添付（upload_file）', () => {
     expect(page.debugger.sent('DOM.setFileInputFiles')).toEqual([]);
   });
 
+  it('位置（x・y）で押した要素がファイル選択を開いても入れる。ほかの CDP の知らせは選択とみなさない', async () => {
+    const { call, open } = setup();
+    const page = open('http://workflow.local/drafts/1');
+    page.page.point = () => ({ cross: false, src: null, frame: null, description: 'canvas#drop' });
+    fileInput(page, { input: false, chooser: { mode: 'selectSingle' } });
+    // 押す前に別の知らせが届いても、選択とはみなさない
+    const handler = page.debugger.handler;
+    page.debugger.handler = (method, params, child) => {
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') page.debugger.emit('message', {}, 'Page.frameNavigated', { frame: {} });
+      return handler(method, params, child);
+    };
+    const result = await call('upload_file', { paths: [receipt], x: 40, y: 30 });
+    expect(textOf(result)).toBe('Clicked canvas#drop at x=40 y=30, and attached the file (receipt.pdf) to the file dialog it opened.');
+    expect(page.debugger.sent('DOM.setFileInputFiles').map((c) => c.params)).toEqual([{ files: [receipt], objectId: 'NODE-7' }]);
+  });
+
+  it('selector も x・y も無い・許していないページ・ファイル欄が見つからないときは入れない', async () => {
+    const { call, open } = setup();
+    const page = open('http://workflow.local/drafts/1');
+    fileInput(page, { input: true });
+    expect(textOf(await call('upload_file', { paths: [receipt] }))).toBe('Provide selector (the file input, or the element that opens the file dialog), or x and y.');
+    page.page.locate = () => found;
+    fileInput(page, { input: false, chooser: { mode: 'selectSingle' } });
+    const resolve = page.debugger.handler;
+    page.debugger.handler = (method, params, child) => (method === 'DOM.resolveNode' ? {} : resolve(method, params, child));
+    expect(textOf(await call('upload_file', { paths: [receipt], selector: 'button.upload' }))).toBe('Could not find the file input, so the files were not attached.');
+    page.url = 'https://outside.example.test/';
+    expect(textOf(await call('upload_file', { paths: [receipt], selector: '#receipt' }))).toContain('is not allowed for Claude');
+    expect(page.debugger.sent('DOM.setFileInputFiles')).toEqual([]);
+  });
+
   it('子の添付の確認は、どのページでも人だけが答える（親の Claude に許させない）', () => {
     const { control, open } = setup();
     open('http://localhost:3000/');
