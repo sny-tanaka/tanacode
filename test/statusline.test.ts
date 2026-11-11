@@ -114,7 +114,7 @@ describe('アプリが Claude Code に渡す設定', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
     const tools = toolPermissionHooks().map((h) => h.matcher);
     expect(matchers(ownSettings(null))).toEqual(['Bash', ...tools]);
-    expect(matchers(ownSettings(null, true))).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate)$', ...tools]);
+    expect(matchers(ownSettings(null, true))).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__evaluate|mcp__tanacode-browser__upload_file)$', ...tools]);
     expect(JSON.parse(sessionSettings(true)).hooks.PreToolUse).toHaveLength(2 + tools.length);
   });
 

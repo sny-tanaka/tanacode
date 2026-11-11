@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, isAbsolute, join } from 'node:path';
 import { nativeImage, webContents as allWebContents, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import {
   BROWSER_DEVICES,
@@ -14,6 +14,7 @@ import {
   TOUCH_LIMITS,
   VIEWPORT_LIMITS,
   type NetworkPresetName,
+  uploadPaths,
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
@@ -289,7 +290,10 @@ type Emulation = { label: string; width: number; height: number; deviceScaleFact
 // 控えは「断る」にしか使わないので、期限やメニューのオフでは消さない（消すと、確認したページを確かめずに動かす側に倒れる）。
 // 控えが無い（フックが動かなかった・アプリに聞けなかった・上限で押し出された）呼び出しも、動かさない。捨てるのは、上限と forget だけ
 // toolUseId: その呼び出しの ID（フックの入力に tool_use_id があったときだけ）。呼び出しにも ID があれば、ID で結びつける
-type EvaluateMark = { expression: string; origin: string | null; toolUseId?: string };
+// ファイルの添付（upload_file）も同じ控えを使う。tool: どちらのツールか / key: 比べる入力（evaluate は式、upload_file は添付するファイルのパスの JSON）。
+// 添付は、人が確認した送り先のオリジンのページにだけ、確認したファイルだけを入れる
+type CheckedTool = 'evaluate' | 'upload_file';
+type EvaluateMark = { tool: CheckedTool; key: string; origin: string | null; toolUseId?: string };
 
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
@@ -326,6 +330,14 @@ type Deps = {
 };
 
 class ToolError extends Error {}
+
+// upload_file で、押した要素がファイル選択を開くのを待つ長さ
+const FILE_CHOOSER_WAIT_MS = 5000;
+
+// upload_file の、確認した呼び出しと添付する呼び出しを比べる入力（添付するファイルのパス。押す要素は比べない。送り先はオリジンで比べる）
+function uploadKey(input: Record<string, unknown>): string {
+  return JSON.stringify(uploadPaths(input));
+}
 
 export class BrowserControl {
   private readonly sessions = new Map<string, Tabs>();
@@ -579,6 +591,10 @@ export class BrowserControl {
       if (guest && !isBlank(url) && this.allowedIn(guest, url)) return null;
       return 'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
     }
+    // ファイルの添付: この Mac のファイルをそのサイトへ送るので、どのページでも人に任せる（localhost のページでは、そもそも確認が出ない）
+    if (request.tool === browserToolId('upload_file')) {
+      return 'it asks to attach files on this Mac to a page in the in-app browser (which sends them to that site), and only the user can answer such a prompt.';
+    }
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
@@ -658,10 +674,12 @@ export class BrowserControl {
     const url = guest?.contents.getURL() ?? '';
     // 答えたときのページを、同じ式の呼び出しのために控える
     const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
-    if (typeof input.expression === 'string') {
+    const upload = request.tool === browserToolId('upload_file');
+    const key = upload ? uploadKey(input) : typeof input.expression === 'string' ? input.expression : null;
+    if (key !== null) {
       const marks = this.evaluateMarks.get(sessionId) ?? [];
       const toolUseId = typeof request.toolUseId === 'string' ? request.toolUseId : undefined;
-      marks.push({ expression: input.expression, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
+      marks.push({ tool: upload ? 'upload_file' : 'evaluate', key, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
       this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
     }
     // フックは、この URL を確認の理由に書く（Claude Code の確認の理由として、親のセッションにも届く）。許していない先は、オリジンだけ
@@ -781,6 +799,8 @@ export class BrowserControl {
         return this.throttle(sessionId, guest, args);
       case 'evaluate':
         return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
+      case 'upload_file':
+        return this.uploadFile(sessionId, guest, args, toolUseId);
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -2016,40 +2036,8 @@ export class BrowserControl {
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
     // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
     // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
-    const checked = this.takeEvaluateMark(sessionId, expression, toolUseId);
-    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
-    if (!checked) {
-      throw new ToolError(
-        'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
-          '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
-          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
-          'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
-      );
-    }
-    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
-    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
-    if (checked === 'no-id') {
-      throw new ToolError(
-        'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
-          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
-          'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
-      );
-    }
-    // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
-    if (checked === 'changed') {
-      throw new ToolError(
-        'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
-          'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
-      );
-    }
-    if (checked.origin === null) {
-      throw new ToolError('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.');
-    }
-    if (checked.origin !== origin) {
-      throw new ToolError(
-        `The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so the script was not run. Call evaluate again to run it on the current page.`,
-      );
-    }
+    const checked = this.takeEvaluateMark(sessionId, 'evaluate', expression, toolUseId);
+    this.assertChecked('evaluate', checked, origin, url);
     // 目印は呼び出しごとに変える（ページが同じ文をコンソールに出して、止めたことにさせないように）
     const mark = `${PAGE_CHANGED} ${randomUUID()}`;
     let value: unknown;
@@ -2070,6 +2058,173 @@ export class BrowserControl {
     return textResult(clip(text, MAX_TEXT));
   }
 
+  // ---- ファイルの添付 ----
+
+  // この Mac のファイルを、ページのファイル欄に入れる（ファイル選択のダイアログで選んだのと同じ。ダイアログは開かない）。
+  // - selector がファイル欄そのもの（隠れていてもよい）なら、CDP の DOM.setFileInputFiles で直に入れる
+  // - そうでなければ（「アップロード」ボタンなど）、Page.setInterceptFileChooserDialog でダイアログを横取りしてから押し、
+  //   開いたファイル欄（Page.fileChooserOpened）に入れる。横取りは、この呼び出しの間だけ（人が押したときはふつうにダイアログが開く）
+  // 入れる前に、確認のフックが見たページと同じオリジンか（assertChecked）と、ファイル欄の文書のオリジンも同じか（別オリジンの iframe の
+  // ファイル欄は、人が確認した送り先と違うので入れない）を確かめる。input・change のイベントは Chromium が出す
+  private async uploadFile(sessionId: string, guest: Guest, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
+    const paths = uploadPaths(args);
+    if (paths.length === 0) throw new ToolError('Provide paths: the absolute paths of the files to attach.');
+    for (const path of paths) {
+      if (!isAbsolute(path)) throw new ToolError(`Not an absolute path: ${path}. Give the absolute paths of the files to attach.`);
+      const info = await stat(path).catch(() => null);
+      if (!info) throw new ToolError(`No such file: ${path}`);
+      if (!info.isFile()) throw new ToolError(`Not a file: ${path} (folders cannot be attached).`);
+    }
+    const selector = optionalString(args.selector);
+    const hasPoint = typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y);
+    if (!selector && !hasPoint) throw new ToolError('Provide selector (the file input, or the element that opens the file dialog), or x and y.');
+    const url = guest.contents.getURL();
+    const origin = webOrigin(url);
+    if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the files were not attached.`);
+    const checked = this.takeEvaluateMark(sessionId, 'upload_file', uploadKey(args), toolUseId);
+    this.assertChecked('upload_file', checked, origin, url);
+    const what = `${paths.length === 1 ? 'the file' : `${paths.length} files`} (${paths.map((p) => basename(p)).join(', ')})`;
+
+    // ファイル欄そのものを指したとき
+    if (selector) {
+      const input = await this.fileInputBySelector(guest, selector);
+      if (input) {
+        await this.putFiles(guest, { objectId: input.objectId }, paths, input.multiple, origin);
+        await settle(guest.contents);
+        return textResult(`Attached ${what} to the file input ${input.description}.`);
+      }
+    }
+
+    // ファイル選択を開く要素を押して、開いたダイアログに答える
+    const target = selector ? await this.locate(guest, selector) : await this.pointAt(guest, args.x as number, args.y as number);
+    const dbg = guest.contents.debugger;
+    type Chooser = { backendNodeId: number; multiple: boolean; child?: string };
+    let onMessage: ((event: unknown, method: string, params: { backendNodeId?: number; mode?: string }, child?: string) => void) | undefined;
+    const opened = new Promise<Chooser>((resolve) => {
+      onMessage = (_event, method, params, child) => {
+        if (method !== 'Page.fileChooserOpened' || typeof params.backendNodeId !== 'number') return;
+        resolve({ backendNodeId: params.backendNodeId, multiple: params.mode === 'selectMultiple', ...(child ? { child } : {}) });
+      };
+    });
+    // 別プロセスの iframe の中のファイル欄も横取りする（入れるかは putFiles がオリジンで決める。横取りしないと、人の前にダイアログが開く）
+    const sessions: (string | undefined)[] = [undefined, ...(await this.childFrames(guest)).map((f) => f.child)];
+    let chooser: Chooser | null;
+    try {
+      for (const child of sessions) {
+        await this.cdp(guest, 'Page.enable', undefined, child).catch(() => undefined);
+        await this.cdp(guest, 'Page.setInterceptFileChooserDialog', { enabled: true }, child).catch(() => undefined);
+      }
+      dbg.on('message', onMessage!);
+      await this.highlight(sessionId, target.rect);
+      await this.press(guest, target, { double: false, button: 'left', real: false });
+      chooser = await Promise.race([opened, sleep(FILE_CHOOSER_WAIT_MS).then(() => null)]);
+      if (chooser) await this.putFiles(guest, { backendNodeId: chooser.backendNodeId, child: chooser.child }, paths, chooser.multiple, origin);
+    } finally {
+      if (onMessage) dbg.removeListener('message', onMessage);
+      for (const child of sessions) await this.cdp(guest, 'Page.setInterceptFileChooserDialog', { enabled: false }, child).catch(() => undefined);
+    }
+    if (!chooser) {
+      throw new ToolError(
+        `Clicked ${target.description}, but no file dialog opened within ${FILE_CHOOSER_WAIT_MS / 1000} seconds, so the files were not attached. ` +
+          'Give the selector of the file input itself (input[type=file]; it may be hidden), or of the element that opens the file dialog.',
+      );
+    }
+    await settle(guest.contents);
+    return textResult(`Clicked ${target.description}, and attached ${what} to the file dialog it opened.`);
+  }
+
+  // selector に当たる、ファイル欄（input[type=file]。隠れていてもよい）。同じオリジンの iframe の中も探す。当たったものがファイル欄でなければ null
+  private async fileInputBySelector(guest: Guest, selector: string): Promise<{ objectId: string; multiple: boolean; description: string } | null> {
+    const found = (await this.cdp(guest, 'Runtime.evaluate', {
+      expression: `(() => {
+        const selector = ${JSON.stringify(selector)};
+        const docs = [document];
+        for (let i = 0; i < docs.length; i++) {
+          for (const frame of docs[i].querySelectorAll('iframe, frame')) {
+            try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch (e) {}
+          }
+        }
+        for (const doc of docs) {
+          let el = null;
+          try { el = doc.querySelector(selector); } catch (e) { return null; }
+          if (el) return el.tagName === 'INPUT' && el.type === 'file' ? el : null;
+        }
+        return null;
+      })()`,
+      returnByValue: false,
+    })) as { result?: { objectId?: string; subtype?: string } };
+    const objectId = found.result?.objectId;
+    if (!objectId || found.result?.subtype === 'null') return null;
+    const info = (await this.cdp(guest, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function () { return { multiple: this.multiple, description: "input[type=file]" + (this.id ? "#" + this.id : "") + (this.name ? "[name=" + this.name + "]" : "") }; }',
+      returnByValue: true,
+    })) as { result?: { value?: { multiple?: boolean; description?: string } } };
+    return { objectId, multiple: info.result?.value?.multiple === true, description: info.result?.value?.description ?? 'input[type=file]' };
+  }
+
+  // ファイル欄にファイルを入れる。node: ファイル欄（objectId か backendNodeId。child: 別プロセスの iframe のセッション）/ multiple: 複数を受け付けるか。
+  // 入れる前に、ファイル欄の文書と今のページのオリジンが、確認したページのオリジン（origin）と同じか確かめる
+  private async putFiles(guest: Guest, node: { objectId?: string; backendNodeId?: number; child?: string }, paths: string[], multiple: boolean, origin: string): Promise<void> {
+    if (!multiple && paths.length > 1) throw new ToolError(`The file input accepts only one file, but ${paths.length} files were given, so the files were not attached. Attach one file per call.`);
+    let objectId = node.objectId;
+    if (!objectId) {
+      const resolved = (await this.cdp(guest, 'DOM.resolveNode', { backendNodeId: node.backendNodeId }, node.child).catch(() => null)) as { object?: { objectId?: string } } | null;
+      objectId = resolved?.object?.objectId;
+    }
+    if (!objectId) throw new ToolError('Could not find the file input, so the files were not attached.');
+    const where = (await this.cdp(
+      guest,
+      'Runtime.callFunctionOn',
+      { objectId, functionDeclaration: 'function () { return this.ownerDocument.location.href; }', returnByValue: true },
+      node.child,
+    )) as { result?: { value?: unknown } };
+    const inputUrl = typeof where.result?.value === 'string' ? where.result.value : '';
+    if (webOrigin(inputUrl) !== origin || webOrigin(guest.contents.getURL()) !== origin) {
+      throw new ToolError(`The file input is on another site (${originShown(inputUrl)}) than the page tanacode checked (${origin}), so the files were not attached.`);
+    }
+    await this.cdp(guest, 'DOM.setFileInputFiles', { files: paths, objectId }, node.child);
+  }
+
+  // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）が、今のページと同じオリジンか確かめる。
+  // 違えば・控えが無ければ、動かさずに投げる。checked: takeEvaluateMark の答え / origin・url: 今のページ
+  private assertChecked(tool: CheckedTool, checked: EvaluateMark | 'changed' | 'no-id' | null, origin: string, url: string): asserts checked is EvaluateMark {
+    const notDone = tool === 'evaluate' ? 'the script was not run' : 'the files were not attached';
+    const input = tool === 'evaluate' ? 'expression' : 'paths';
+    const again = tool === 'evaluate' ? 'Call evaluate again to run it on the current page.' : 'Call upload_file again to attach them on the current page.';
+    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
+    if (!checked) {
+      throw new ToolError(
+        `tanacode has no record of checking this call, so ${notDone}. Call ${tool} again. ` +
+          `(tanacode checks each ${tool} call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ` +
+          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+          `If this keeps happening, tell the user that tanacode cannot check ${tool} calls in this session.`,
+      );
+    }
+    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
+    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
+    if (checked === 'no-id') {
+      throw new ToolError(
+        `tanacode checked this call, but the call reached tanacode without its ID, so ${notDone}. ` +
+          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+          `Ask the user to restart Claude Code in this session (the restart button in the chat header), then call ${tool} again.`,
+      );
+    }
+    // 同じ呼び出しの控えはあるが、入力が違う（ほかのフックが入力を書き換えた など）
+    if (checked === 'changed') {
+      throw new ToolError(
+        `The ${input} of this call differs from the one tanacode checked for it (another hook may have changed the input), so ${notDone}. Call ${tool} again. ` +
+          `If this keeps happening, tell the user that another hook seems to change the input of ${tool}.`,
+      );
+    }
+    if (checked.origin === null) {
+      throw new ToolError(`No page was open in the current tab when tanacode checked this call, so ${notDone}. ${again}`);
+    }
+    if (checked.origin !== origin) {
+      throw new ToolError(`The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so ${notDone}. ${again}`);
+    }
+  }
+
   // この呼び出しの控えを取り出す（1 回で使い切る）。呼び出しの ID があれば、同じ ID の控え（式も同じものだけ）。
   // 同じ ID の控えが無ければ、ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの。
   // 呼び出しに ID が無い（ID を渡さない中継）ときも、ID の無い控えだけから引く（ID のある控えは、同じ式の別の呼び出しのものや、前に断られて
@@ -2077,22 +2232,26 @@ export class BrowserControl {
   // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
   // 同じ ID の控えの式が違えば、その控えは捨てて 'changed' を返す。ID の無い呼び出しに、同じ式の ID のある控えしか無ければ 'no-id'
   // （古い中継）。どちらも、控えが無いときと分けて伝える
-  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
-    const marks = this.evaluateMarks.get(sessionId) ?? [];
+  private takeEvaluateMark(sessionId: string, tool: CheckedTool, key: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
+    const all = this.evaluateMarks.get(sessionId) ?? [];
+    // ほかのツールの控えは触らない（取り出したあとで戻す）
+    const others = all.filter((m) => m.tool !== tool);
+    const marks = all.filter((m) => m.tool === tool);
     const take = (index: number) => (index === -1 ? null : marks.splice(index, 1)[0]!);
     let found: EvaluateMark | 'changed' | 'no-id' | null;
     const byId = toolUseId === undefined ? -1 : marks.findIndex((m) => m.toolUseId === toolUseId);
     if (byId !== -1) {
       const mark = take(byId)!;
-      found = mark.expression === expression ? mark : 'changed';
+      found = mark.key === key ? mark : 'changed';
     } else {
       // ID で引けない。ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの
       let index = marks.length - 1;
-      while (index >= 0 && !(marks[index]!.expression === expression && marks[index]!.toolUseId === undefined)) index--;
+      while (index >= 0 && !(marks[index]!.key === key && marks[index]!.toolUseId === undefined)) index--;
       found = take(index);
-      if (!found && toolUseId === undefined && marks.some((m) => m.expression === expression)) found = 'no-id';
+      if (!found && toolUseId === undefined && marks.some((m) => m.key === key)) found = 'no-id';
     }
-    if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
+    const rest = all.filter((m) => others.includes(m) || marks.includes(m));
+    if (rest.length > 0) this.evaluateMarks.set(sessionId, rest);
     else this.evaluateMarks.delete(sessionId);
     return found;
   }

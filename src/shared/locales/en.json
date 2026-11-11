@@ -240,6 +240,7 @@
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
       "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation",
+      "browserGateUpload": "Attaches files on this Mac to a page that is not on localhost ({url}). Files: {files}",
       "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
       "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode",
       "browserGateInside": "The page is on a site allowed for Claude, so it opens without confirmation",
@@ -478,6 +479,7 @@
       "touch": "Touch",
       "throttle": "Throttle",
       "evaluate": "Run JavaScript",
+      "upload_file": "Attach files",
       "ask_user_to_act": "Request to Act"
     },
     "sessions": {
@@ -1213,6 +1215,7 @@
         "touch": "Taps, swipes and pinches",
         "throttle": "Slows down the CPU or the network",
         "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
+        "upload_file": "Attaches files on this Mac to a page other than localhost (on localhost, it always attaches them without asking)",
         "ask_user_to_act": "Asks you to act in the browser, such as logging in"
       },
       "sessions": {

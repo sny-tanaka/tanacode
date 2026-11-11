@@ -237,6 +237,7 @@
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
       "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
       "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています",
+      "browserGateUpload": "この Mac のファイルを、localhost 以外のページ（{url}）に添付します。添付するファイル: {files}",
       "toolAsk": "tanacode のツールの許可で、このツールを毎回確認にしています",
       "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています",
       "browserGateInside": "Claude に許す先のページなので、確認なしで開きます",
@@ -473,6 +474,7 @@
       "touch": "タッチ",
       "throttle": "遅くする",
       "evaluate": "JavaScript の実行",
+      "upload_file": "ファイルの添付",
       "ask_user_to_act": "操作の依頼"
     },
     "sessions": {
@@ -1173,6 +1175,7 @@
         "touch": "タップ・スワイプ・ピンチをする",
         "throttle": "CPU や通信を遅くする",
         "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
+        "upload_file": "localhost 以外のページに、この Mac のファイルを添付する（localhost では、いつも確認なしで添付する）",
         "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"
       },
       "sessions": {

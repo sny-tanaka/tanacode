@@ -446,6 +446,34 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     {
       "inputSchema": {
         "properties": {
+          "paths": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "paths",
+        ],
+        "type": "object",
+      },
+      "kind": "eval",
+      "label": "ファイルの添付",
+      "name": "upload_file",
+    },
+    {
+      "inputSchema": {
+        "properties": {
           "message": {
             "type": "string",
           },

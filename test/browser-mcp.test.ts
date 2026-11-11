@@ -13,6 +13,7 @@ import {
   isClaudeAllowedUrl,
   isLocalUrl,
   normalizeHostPattern,
+  uploadPaths,
 } from '../src/shared/browser-tools';
 import { setLanguage, t } from '../src/shared/i18n';
 import { AppSettings } from '../src/main/app-settings';
@@ -400,15 +401,15 @@ describe('起動の引数', () => {
   type Hook = { matcher: string; hooks: { type: string; command: string; timeout?: number }[] };
   const gateHooks = (settings: { hooks?: { PreToolUse?: Hook[] } }) => (settings.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => x.command === BROWSER_GATE_COMMAND));
 
-  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行と開く先の確認を決める', () => {
+  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行・ファイルの添付と開く先の確認を決める', () => {
     const args = claudeArgs({ ...base, browser: launch, sessionId: 's1' });
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
-    expect(gateHooks(settings)).toEqual([{ matcher: `^(${browserToolId('navigate')}|${browserToolId('evaluate')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gateHooks(settings)).toEqual([{ matcher: `^(${browserToolId('navigate')}|${browserToolId('evaluate')}|${browserToolId('upload_file')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
     // permissions.ask では、ページによって変えられない。許可のルールも足さない
     expect(settings).not.toHaveProperty('permissions');
-    expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('evaluate')]);
+    expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('evaluate'), browserToolId('upload_file')]);
     // オフなら足さない
     const off = claudeArgs(base);
     expect(off).not.toContain('--mcp-config');
@@ -460,6 +461,17 @@ describe('確認のフック', () => {
     expect(remote.permissionDecisionReason).toContain('https://staging.example.test/');
     expect(decision(gateOutput({ local: false, url: '' })).permissionDecision).toBe('ask');
     expect(decision(gateOutput(null)).permissionDecision).toBe('ask');
+  });
+
+  it('ファイルの添付: localhost のページなら確認なし（allow）、それ以外は、送り先のページと添付するファイルを理由に書いて確認を出させる（ask）', () => {
+    expect(decision(gateOutput({ local: true, url: 'http://localhost:3000/' }, false, ['/tmp/a.pdf'])).permissionDecision).toBe('allow');
+    expect(decision(gateOutput({ local: false, url: 'https://workflow.example.test/' }, false, ['/tmp/a.pdf', '/tmp/b.pdf']))).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'ask',
+      permissionDecisionReason: 'この Mac のファイルを、localhost 以外のページ（https://workflow.example.test/）に添付します。添付するファイル: /tmp/a.pdf, /tmp/b.pdf',
+    });
+    expect(uploadPaths({ paths: ['/tmp/a.pdf', 1] })).toEqual(['/tmp/a.pdf', '1']);
+    expect(uploadPaths({})).toEqual([]);
   });
 
   it('開く: 許す先の外なら、オリジンを添えて確認を出させる（ask）。許す先の中は確認なし（allow。plan では何も決めない）。アプリの答えが分からないときは何も決めない', () => {
