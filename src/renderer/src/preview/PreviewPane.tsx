@@ -8,6 +8,7 @@ import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLi
 import { codeBlock } from '../chat/sanitize';
 import { useOpenInBrowser } from './openInBrowser';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
+import { CredentialHint, useCredentialHint } from './CredentialHint';
 
 // Electron の <webview> のうち、ここで使うもの
 type Webview = HTMLElement & {
@@ -554,7 +555,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         <IconButton icon={CloseIcon} label={t('preview.toolbar.close')} onClick={onClose} />
       </div>
       {ask && sessionId ? (
-        <AskBar key={ask.id} message={ask.message} onAnswer={(answer) => window.tanacode.browser.answer(sessionId, ask.id, answer)} />
+        <AskBar key={ask.id} message={ask.message} login={ask.login === true} onAnswer={(answer) => window.tanacode.browser.answer(sessionId, ask.id, answer)} />
       ) : (
         activity?.active && <ClaudeBar label={activity.label} />
       )}
@@ -650,10 +651,12 @@ export function ClaudeBar({ label }: { label: string | null }) {
 }
 
 // 「あなたの番です」の帯。Claude がユーザーに頼んだ操作（ask_user_to_act）と、「終わった」「できない」のボタン。
-// 「できない」は、ひとこと理由を書いて送る（書かなくてもよい）。押すまで、Claude はブラウザを使わずに待っている
-export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answer: BrowserAnswer) => void }) {
+// 「できない」は、ひとこと理由を書いて送る（書かなくてもよい）。押すまで、Claude はブラウザを使わずに待っている。
+// login: ログインを頼んでいるように見える（main が決める）。1Password から入れられることの案内を添える（「もう出さない」まで）
+export function AskBar({ message, login = false, onAnswer }: { message: string; login?: boolean; onAnswer: (answer: BrowserAnswer) => void }) {
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
+  const hint = useCredentialHint();
   return (
     <div className="preview-ask" role="region" aria-label={t('preview.ask.label')}>
       <div className="preview-ask-text" role="status">
@@ -697,6 +700,7 @@ export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answ
           </button>
         </div>
       )}
+      {login && hint.shown && <CredentialHint onHide={hint.hide} />}
     </div>
   );
 }

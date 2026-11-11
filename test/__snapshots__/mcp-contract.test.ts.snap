@@ -583,6 +583,25 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     {
       "inputSchema": {
         "properties": {
+          "item": {
+            "type": "string",
+          },
+          "passwordSelector": {
+            "type": "string",
+          },
+          "usernameSelector": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "1Password から入力",
+      "name": "fill_credential",
+    },
+    {
+      "inputSchema": {
+        "properties": {
           "message": {
             "type": "string",
           },

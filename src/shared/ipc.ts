@@ -8,6 +8,7 @@ import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
 import type { ModelCatalog, SessionModel } from './models';
 import type { SettingsFile } from './settings-file';
+import type { CredentialLink } from './credential-links';
 import type { Shortcut } from './shortcuts';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
@@ -233,6 +234,8 @@ export const IpcChannel = {
   BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
   BrowserHostsSet: 'browser:hosts-set',
+  BrowserCredentialLinksGet: 'browser:credential-links-get',
+  BrowserCredentialLinksSet: 'browser:credential-links-set',
   // Claude がユーザーに操作を頼む（ask_user_to_act）。main → 画面: 頼んだ・終わった / 画面 → main: 今頼んでいるもの・返事 /
   // main → 画面: そのセッションのブラウザを開かせる（頼まれたときの通知をクリックした）
   BrowserAsk: 'browser:ask',
@@ -292,7 +295,8 @@ export type BrowserViewportChange = {
 export type BrowserThrottleChange = { sessionId: string; tabId: string; cpu: number; network: NetworkPresetName | null };
 
 // Claude がユーザーに頼んでいる操作（ask_user_to_act）。id: 頼むたびに変わる（返事をどの頼みへのものか見分ける）/ message: 頼む内容
-export type BrowserAsk = { id: string; message: string };
+// login: ログインを頼んでいるように見える（頼みの文・ページのパスワード欄から、控えめに決める）。帯に 1Password から入れられることの案内を添える
+export type BrowserAsk = { id: string; message: string; login?: boolean };
 // 頼んだ・終わった（ask が null）
 export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
 // ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
@@ -1015,6 +1019,10 @@ export type TanacodeApi = {
     hosts(): Promise<string[]>;
     // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
     setHosts(hosts: string[]): Promise<string[]>;
+    // サイトごとに控えた 1Password のアイテムのリンク（fill_credential。リンクだけで、秘密は控えない）
+    credentialLinks(): Promise<CredentialLink[]>;
+    // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
+    setCredentialLinks(links: CredentialLink[]): Promise<CredentialLink[]>;
     // Claude がユーザーに頼んでいる操作。asks: 今頼んでいるもの（画面を作り直したとき用）/ answer: ユーザーの返事 /
     // onShow: そのセッションを選んで、ブラウザを開く（頼まれたときの通知をクリックした）
     onAsk(listener: (change: BrowserAskChange) => void): () => void;
@@ -1175,6 +1183,8 @@ export type IpcInvoke = {
   [IpcChannel.BrowserOpenExternal]: Api['browser']['openExternal'];
   [IpcChannel.BrowserHostsGet]: Api['browser']['hosts'];
   [IpcChannel.BrowserHostsSet]: Api['browser']['setHosts'];
+  [IpcChannel.BrowserCredentialLinksGet]: Api['browser']['credentialLinks'];
+  [IpcChannel.BrowserCredentialLinksSet]: Api['browser']['setCredentialLinks'];
   [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
   [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
 };

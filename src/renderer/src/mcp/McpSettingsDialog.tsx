@@ -6,6 +6,7 @@ import { errorMessage } from '../errorMessage';
 import { CloseIcon, IconButton } from '../icons';
 import { Toggle } from '../layout/Toggle';
 import { BrowserHostsEditor } from './BrowserHostsEditor';
+import { CredentialLinksEditor } from './CredentialLinksEditor';
 
 const PERMISSIONS: ToolPermission[] = ['ask', 'allow'];
 
@@ -94,6 +95,7 @@ export function McpSettingsDialog({ onClose }: { onClose: () => void }) {
                   </div>
                   {!on && <p className="mcp-server-off">{t('mcpSettings.off')}</p>}
                   {group === 'browser' && <BrowserHostsEditor />}
+                  {group === 'browser' && <CredentialLinksEditor />}
                   {group === 'sessions' && (
                     <div className="mcp-server-option" role="group" aria-label={t('mcpSettings.parentAskRules.title')}>
                       <div className="mcp-server-option-head">

@@ -210,6 +210,10 @@
     "browserHosts": {
       "invalid": "Invalid format: {hosts} (e.g., example.test, *.example.test, 192.168.0.10)"
     },
+    "credentialLinks": {
+      "invalidSite": "Invalid site: {site} (e.g., example.com, localhost:3000)",
+      "invalidLink": "Not a 1Password item link: {link} (in 1Password, use \"Copy Private Link\" on the item and paste it)"
+    },
     "scheduled": {
       "cannotSchedule": "Can't schedule messages for this session",
       "empty": "Nothing to send",
@@ -485,6 +489,7 @@
       "get_downloads": "Downloads",
       "evaluate": "Run JavaScript",
       "upload_file": "Attach files",
+      "fill_credential": "Fill from 1Password",
       "ask_user_to_act": "Request to Act"
     },
     "sessions": {
@@ -1188,6 +1193,7 @@
     "switchLabel": "Let Claude use {server}",
     "off": "Turned off. When you turn it back on, the confirmation choices stay as they are.",
     "hostsTitle": "Sites Allowed for Claude",
+    "credentialLinksTitle": "1Password Items for Sites",
     "parentAskRules": {
       "title": "Let the parent allow child prompts from ask rules",
       "description": "Lets the parent Claude read and allow once the permission prompts of a child session that a permissions.ask rule in your Claude Code settings asked for (for example, Bash(rm:*)). When this is off (the default), the parent can only deny them. Even when it is on, only you can allow the prompts that Claude Code leaves to you (such as safety checks) and plan approvals. Takes effect at once, also in running sessions.",
@@ -1225,6 +1231,7 @@
         "get_downloads": "Reads the list of files downloaded by Claude's actions",
         "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
         "upload_file": "Attaches files on this Mac to a page other than localhost (on localhost, it always attaches them without asking)",
+        "fill_credential": "Fills the username and password of a 1Password item into a login form (Claude never sees the values)",
         "ask_user_to_act": "Asks you to act in the browser, such as logging in"
       },
       "sessions": {
@@ -1977,6 +1984,13 @@
       "submit": "Sign In",
       "cancel": "Cancel"
     },
+    "credentialHint": {
+      "label": "Filling from 1Password",
+      "text": "Give Claude the link to a 1Password item, and Claude can fill in the login without seeing the password.",
+      "how": "To get the link, right-click the item in 1Password and choose \"Copy Private Link\". Save links for sites, and Claude can fill them without a link next time.",
+      "settings": "Save Links for Sites…",
+      "hide": "Don't Show Again"
+    },
     "hosts": {
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",
       "empty": "(empty)",
@@ -1984,6 +1998,18 @@
       "default": "Default",
       "placeholder": "e.g., myapp.test, *.example.test",
       "inputLabel": "Site to add"
+    },
+    "credentialLinks": {
+      "description": "On the sites listed here, Claude can fill login forms with the site's 1Password item without writing the link (Claude never sees the values). Only the link is saved, never the password. To get a link, use \"Copy Private Link\" on the item in 1Password.",
+      "none": "None yet",
+      "invalidSite": "Invalid site: {site} (e.g., example.com, localhost:3000)",
+      "invalidLink": "Not a 1Password item link (in 1Password, use \"Copy Private Link\" on the item and paste it)",
+      "sitePlaceholder": "e.g., example.com",
+      "siteLabel": "Site",
+      "linkPlaceholder": "https://start.1password.com/open/i?…",
+      "linkLabel": "1Password item link",
+      "add": "Add Link",
+      "remove": "Delete the link for {site}"
     },
     "picked": {
       "heading": "Element selected in the in-app browser ({url}):",

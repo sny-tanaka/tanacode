@@ -9,6 +9,8 @@ import { BrowserControl } from '../../src/main/browser-control';
 import type { ToolResult } from '../../src/main/mcp-bridge';
 import { FakeContents, FakeSession, HOST, type RequestSender } from './fake-electron';
 
+type BrowserControlDeps = ConstructorParameters<typeof BrowserControl>[0];
+
 // アプリ内ブラウザの操作（BrowserControl）を、Electron の作り物（fake-electron.ts）の上で組み立てる。
 // 使うテストのファイルでは、先に vi.mock('electron', ...) で Electron を差し替えておく。
 // 時間は vi.useFakeTimers で進める（操作の間の待ち・時間切れを、待たずに確かめる）
@@ -50,7 +52,8 @@ export function textOf(result: ToolResult): string {
 
 let dirs = 0;
 
-export function setup() {
+// credentials: 1Password から入れる（fill_credential）の作り物
+export function setup(options: { credentials?: BrowserControlDeps['credentials'] } = {}) {
   const sent: { channel: string; payload: unknown }[] = [];
   const asked: [string, BrowserAsk | null][] = [];
   const state = {
@@ -100,6 +103,7 @@ export function setup() {
     downloadDir: state.downloadDir,
     hasSession: (id) => state.sessions.has(id),
     onAsk: (id, ask) => asked.push([id, ask]),
+    ...(options.credentials ? { credentials: options.credentials } : {}),
     channels: {
       open: IpcChannel.BrowserOpen,
       activity: IpcChannel.BrowserActivity,

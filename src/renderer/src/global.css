@@ -2952,6 +2952,29 @@ button.session-ref:hover {
   font-size: 11px;
   line-height: 1.6;
 }
+/* MCP の設定の中の、サイトごとの 1Password のアイテム（サイトの名前の下に、リンクを 1 行で省いて出す） */
+.credential-link-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.credential-link {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.credential-links-empty {
+  margin: 0;
+  padding: 4px 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.settings-files-dialog .browser-hosts-input.credential-links-site {
+  flex: 0 0 160px;
+}
 .browser-hosts-editor .browser-hosts-foot {
   display: flex;
   align-items: center;
@@ -6627,6 +6650,42 @@ button.menu-tab:disabled {
   width: auto;
   min-width: 0;
   max-width: 180px;
+}
+/* 人にログインを頼む帯に添える、1Password から入れられることの案内（preview/CredentialHint.tsx）。帯の中で 1 行を使い切る */
+.credential-hint {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.credential-hint > .icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+}
+.credential-hint-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+}
+.credential-hint-how {
+  display: block;
+  color: var(--text-tertiary);
+}
+/* 狭いときは、文の下に回る（アイコンの幅だけ字下げする） */
+.credential-hint-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 /* Claude がこれから押す要素の枠（ページの上に重ねる） */
 .preview-click-box {

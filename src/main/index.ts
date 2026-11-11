@@ -951,6 +951,8 @@ function registerIpc(): void {
   listen(IpcChannel.BrowserLoginAnswer, (e, id: string, loginId: string, answer: unknown) => P(e).browser.answerLogin(id, loginId, answer));
   handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
+  handle(IpcChannel.BrowserCredentialLinksGet, () => settings.credentialLinks());
+  handle(IpcChannel.BrowserCredentialLinksSet, (e, links: unknown) => P(e).setCredentialLinks(links));
   handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions(), parentAskRules: settings.parentAskRulesEnabled(), problem: toolPermissionsProblem }));
   handle(IpcChannel.McpEnabledSet, (_e, server: McpToolGroup, on: boolean) => setMcpEnabled(server, on));
   handle(IpcChannel.ToolPermissionsSet, (_e, toolId: string, permission: ToolPermission) => setToolPermission(toolId, permission));

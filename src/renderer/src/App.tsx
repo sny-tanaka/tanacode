@@ -62,6 +62,7 @@ import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { PromptsDialog } from './prompts/PromptsDialog';
 import { McpSettingsDialog } from './mcp/McpSettingsDialog';
+import { onOpenMcpSettings } from './mcp/openMcpSettings';
 import { PreviewPane } from './preview/PreviewPane';
 import { columnShortcut, useShortcutKeys, useShortcuts } from './layout/shortcuts';
 import { TitleBar } from './layout/TitleBar';
@@ -460,10 +461,13 @@ export function App() {
     });
     const offPrompts = window.tanacode.prompts.onOpen(() => setPromptsOpen(true));
     const offMcpSettings = window.tanacode.mcpSettings.onOpen(() => setMcpSettingsOpen(true));
+    // 画面の中から開くよう頼まれた（アプリ内ブラウザの帯の 1Password の案内）
+    const offMcpSettingsInPage = onOpenMcpSettings(() => setMcpSettingsOpen(true));
     return () => {
       offActivity();
       offPrompts();
       offMcpSettings();
+      offMcpSettingsInPage();
     };
   }, []);
 

@@ -30,6 +30,8 @@ import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
 import { textResult, type ToolResult } from './mcp-bridge';
+import { CHECK_SCRIPT, CredentialGuard, fillScript, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, parseItemRef, type CredentialSource, type FillResult } from './browser-credentials';
+import { linkForPage, normalizeSite, type CredentialLink } from '@shared/credential-links';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
@@ -67,6 +69,9 @@ const TOOL_TIMEOUT_MS = 60_000;
 const DOWNLOAD_WAIT_MS = 20_000;
 // ツールの始めに、外れた CDP をつなぎ直すのを待つ上限
 const WATCH_WAIT_MS = 2_000;
+// 1Password から取り出すのが、上限のこれより手前までに終わらなければ入れない（1Password の承認を人が遅れて押したとき、
+// Claude に時間切れを返したあとで欄に入ってしまわないように）
+const LATE_FILL_MARGIN_MS = 5_000;
 // 撮るのを待つ上限。ふつうは数十ミリ秒で撮れる。返ってこないのは、アプリの画面が描かれていないとき（capture のコメント）なので、
 // 1 回の操作の上限まで待たずに、理由の見当を添えて断る
 const CAPTURE_TIMEOUT_MS = 15_000;
@@ -352,6 +357,12 @@ type Deps = {
   hasSession: (id: string) => boolean;
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
   onAsk: (sessionId: string, ask: BrowserAsk | null) => void;
+  // 1Password から入れる（fill_credential）。無ければ使えない。source: 値の取り出し役（SDK など）/
+  // links: サイトごとに控えたアイテムのリンク（人が足したもの）
+  credentials?: {
+    source: CredentialSource;
+    links: () => CredentialLink[];
+  };
   channels: {
     open: typeof IpcChannel.BrowserOpen;
     activity: typeof IpcChannel.BrowserActivity;
@@ -408,6 +419,8 @@ export class BrowserControl {
   // 呼び出しごとに受け取ったダウンロードの数（セッションごと）と、呼び出しの間にダウンロードが始まった（止めたものも）セッション
   private readonly callDownloads = new Map<string, number>();
   private readonly downloadSeen = new Set<string>();
+  // 1Password から入れたページ（読み取りを止める）
+  private readonly credentialGuard = new CredentialGuard();
 
   constructor(private readonly deps: Deps) {
     this.downloads = new BrowserDownloads(deps.downloadDir);
@@ -822,8 +835,9 @@ export class BrowserControl {
     if (!this.deps.enabled()) return textResult(`The user has turned off the tanacode MCP "${t('tools.server.browser')}" in tanacode > ${t('main.menu.mcpSettings')}.`, true);
     if (!this.deps.hasSession(sessionId)) return textResult('This session is not in tanacode.', true);
     if (tool.kind === 'ask') {
+      const login = await this.looksLikeLogin(sessionId, args.message);
       this.yieldToUser(sessionId);
-      return this.asks.wait(sessionId, args.message, () => this.askedPage(sessionId), signal);
+      return this.asks.wait(sessionId, args.message, () => this.askedPage(sessionId), signal, login);
     }
     if (this.asks.has(sessionId)) {
       const done = t('preview.ask.done');
@@ -851,6 +865,20 @@ export class BrowserControl {
       release();
       this.end(sessionId);
     }
+  }
+
+  // ログインを頼んでいるように見えるか（帯に 1Password の案内を添える。browser-credentials.ts の looksLikeLoginRequest）。
+  // 1Password から入れられないとき（使えない tanacode）と、そのサイトのリンクを控えてあるとき（Claude が fill_credential を使えばよい）は出さない。
+  // ページは、Claude に許した先のときだけ見る（パスワード欄があるかだけで、値は読まない）
+  private async looksLikeLogin(sessionId: string, message: unknown): Promise<boolean> {
+    const credentials = this.deps.credentials;
+    if (!credentials) return false;
+    const guest = this.activeNow(sessionId);
+    const url = guest?.contents.getURL() ?? '';
+    if (guest && !isBlank(url) && linkForPage(credentials.links(), url)) return false;
+    const passwordField = async () =>
+      !!guest && !isBlank(url) && this.allowedIn(guest, url) && (await this.world(guest, HAS_PASSWORD_SCRIPT).catch(() => false)) === true;
+    return looksLikeLoginRequest(typeof message === 'string' ? message : '', passwordField);
   }
 
   // ユーザーの返事に添える、今のページ。許していない先のページ（外の認証のページなど）は、タイトルも URL の道筋も読ませない
@@ -989,6 +1017,8 @@ export class BrowserControl {
     // Claude が決めた画面の大きさが、このタブに当たっていなければ当てる（CDP が外れて消えた・当てる前に操作した）
     // 当てられなくても（CDP をつなげない など）、ツールは続ける（読むツールまで止めない）。当たっていないので、次の呼び出しでまた当てる
     if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport).catch(() => undefined);
+    const refusal = await this.credentialGuard.refusal(name, guest.contents.id, async () => (await this.world(guest, CHECK_SCRIPT)) === true);
+    if (refusal) throw new ToolError(refusal);
     switch (name) {
       case 'screenshot':
         return this.screenshot(guest, optionalString(args.selector), args.fullPage === true, args.save === true);
@@ -1026,6 +1056,8 @@ export class BrowserControl {
         return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
       case 'upload_file':
         return this.uploadFile(sessionId, guest, args, toolUseId);
+      case 'fill_credential':
+        return this.fillCredential(guest, args);
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -1216,6 +1248,69 @@ export class BrowserControl {
     if (records.length === 0) return textResult('No files have been downloaded by your actions in this session.');
     for (const record of records) if (record.state !== 'downloading') record.reported = true;
     return textResult(`Downloads (oldest first):\n${records.map((r, i) => `${i + 1}. ${describeDownload(r)}`).join('\n')}`);
+  }
+
+  // ---- 1Password から入れる ----
+
+  // アイテムの値を取り出し役（credentials.source）で取り出し、今のページのオリジンがアイテムの URL に合えば、欄に入れる（browser-credentials.ts）。
+  // 値は Claude への答え・エラー文に入れない。1Password を待つ間にページが移ったら、入れない。人には確かめない（ユーザーの判断:
+  // リンクを渡した時点で、そのアイテムを使うことを許している）。ページに書かれたリンクで別のサイトの値を入れさせないよう、オリジンは照合する。
+  // item を省いたら、今のページのサイトに人が控えたリンクを使う（控えていなければ断る）
+  private async fillCredential(guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const credentials = this.deps.credentials;
+    if (!credentials) throw new ToolError('Filling credentials from 1Password is not available in this tanacode.');
+    const started = Date.now();
+    const usernameSelector = optionalString(args.usernameSelector);
+    const passwordSelector = optionalString(args.passwordSelector);
+    const pageUrl = guest.contents.getURL();
+    const origin = webOrigin(pageUrl);
+    if (!origin) throw new ToolError('The current page is not a web page, so nothing can be filled.');
+    const given = optionalString(args.item);
+    const saved = given ? null : linkForPage(credentials.links(), pageUrl);
+    if (!given && !saved) {
+      throw new ToolError(
+        `No 1Password item is saved for this site (${normalizeSite(pageUrl) ?? origin}). Ask the user for the item link (in 1Password, "Copy Private Link" on the item), ` +
+          `or ask them to save one under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}.`,
+      );
+    }
+    const ref = parseItemRef(given ?? saved!.link);
+    const samePage = () => !guest.contents.isDestroyed() && webOrigin(guest.contents.getURL()) === origin;
+    const login = await credentials.source.read(ref);
+    if (!samePage()) throw new ToolError('The page changed while waiting for 1Password, so nothing was filled.');
+    if (Date.now() - started > TOOL_TIMEOUT_MS - LATE_FILL_MARGIN_MS) {
+      throw new ToolError('1Password answered too late (the user may have approved its prompt after a long wait), so nothing was filled. Try again.');
+    }
+    if (login.urls.length === 0) {
+      throw new ToolError(`The 1Password item "${login.title}" has no website URL, so tanacode cannot check that it belongs to this page. Nothing was filled. Ask the user to add the site's URL to the item.`);
+    }
+    if (!matchingUrl(pageUrl, login.urls)) {
+      const sites = [...new Set(login.urls.map((u) => webOrigin(/^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`) ?? u))].join(', ');
+      throw new ToolError(`The 1Password item "${login.title}" is for ${sites}, not for this page (${origin}). Nothing was filled.`);
+    }
+    // 入れる欄。selector を 1 つだけ渡したら、その欄だけ（ユーザー名とパスワードを別の画面で聞くログイン）
+    const both = usernameSelector === undefined && passwordSelector === undefined;
+    const wantUser = usernameSelector !== undefined || (both && login.username !== null);
+    const wantPass = passwordSelector !== undefined || (both && login.password !== null);
+    if (wantUser && login.username === null) throw new ToolError(`The 1Password item "${login.title}" has no username. Nothing was filled.`);
+    if (wantPass && login.password === null) throw new ToolError(`The 1Password item "${login.title}" has no password. Nothing was filled.`);
+    if (!wantUser && !wantPass) throw new ToolError(`The 1Password item "${login.title}" has neither a username nor a password. Nothing was filled.`);
+    // 入れる前に控える（スクリプトが途中で止まっても、読み取りを止める側に倒す）
+    this.credentialGuard.mark(guest.contents, pageUrl);
+    const script = fillScript({ usernameSelector, passwordSelector, username: wantUser ? login.username : null, password: wantPass ? login.password : null });
+    const result = (await this.world(guest, script).catch(() => ({ error: 'the page did not respond' }))) as FillResult | null;
+    if (!result || 'error' in result) throw new ToolError(`Could not fill the credential: ${result?.error ?? 'the page did not respond'}. Nothing was filled.`);
+    const where = result.filled.map((f) => `${f.field} into ${f.element}`).join(' and ');
+    // リンクを渡されて入れたサイトに、まだ控えが無ければ、控え方を伝える（Claude からは控えない。控えるのは人だけ）
+    const site = normalizeSite(pageUrl);
+    const hint =
+      given && site && !linkForPage(credentials.links(), pageUrl)
+        ? ` If the user wants to log in to ${site} without giving you the link next time, they can save it under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}.`
+        : '';
+    return textResult(
+      `Filled the ${where} from the 1Password item "${login.title}" on ${origin}${saved ? ' (the item the user saved for this site)' : ''}. The values were not shown to you and are not in this result. ` +
+        'Submit the form yourself (click or press_key). While this page stays open, evaluate is not available on it.' +
+        hint,
+    );
   }
 
   // ---- 開く ----

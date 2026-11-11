@@ -709,6 +709,8 @@ export class DemoBackend {
         clearThrottle: () => {},
         hosts: () => ok([]),
         setHosts: (hosts) => ok(hosts),
+        credentialLinks: () => ok([]),
+        setCredentialLinks: (links) => ok(links),
         onAsk: (l) => this.ch.browserAsk.on(l),
         asks: () => ok([...this.asks.values()]),
         // 返事をしたら、本物と同じく依頼を取り下げる（帯はこれで消える）

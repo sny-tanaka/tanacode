@@ -6,6 +6,7 @@ import { permissionToolDefaults, toolPermissionsOf, type McpEnabled, type ToolPe
 import { McpSettingsDialog } from '../../src/renderer/src/mcp/McpSettingsDialog';
 import './dom';
 import { mockApi } from './mock-api';
+import type { CredentialLink } from '../../src/shared/credential-links';
 
 // MCP の設定のダイアログ（McpSettingsDialog。メニューの「MCP の設定…」から開く）のスイッチ・選ぶ欄・許す先の入力とボタンを押して、効いたことを確かめる
 
@@ -24,6 +25,8 @@ type Overrides = {
   problem?: string;
   parentAskRules?: boolean;
   hosts?: string[];
+  links?: CredentialLink[];
+  setLinks?: (links: CredentialLink[]) => Promise<CredentialLink[]>;
   setEnabled?: (server: McpToolGroup, on: boolean) => Promise<McpEnabled>;
   setPermission?: (toolId: string, permission: ToolPermission) => Promise<Record<string, ToolPermission>>;
   setHosts?: (hosts: string[]) => Promise<string[]>;
@@ -52,6 +55,8 @@ async function open(o: Overrides = {}) {
       })) as never,
     'browser.hosts': () => Promise.resolve(o.hosts ?? []),
     'browser.setHosts': (o.setHosts ?? ((next: string[]) => Promise.resolve(next))) as never,
+    'browser.credentialLinks': () => Promise.resolve(o.links ?? []),
+    'browser.setCredentialLinks': (o.setLinks ?? ((next: CredentialLink[]) => Promise.resolve(next))) as never,
   });
   api.install();
   render(<McpSettingsDialog onClose={onClose} />);
@@ -238,6 +243,53 @@ describe('McpSettingsDialog: Claude に許す先', () => {
     await waitFor(() => expect(screen.queryByText('myapp.test')).toBeNull());
     expect(api.argsOf('browser.setHosts')).toEqual([[['*.staging.example.test']]]);
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('dialog')));
+  });
+});
+
+describe('McpSettingsDialog: サイトごとの 1Password のアイテム', () => {
+  const LINK = 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba&h=my.1password.com';
+  const group = () => within(screen.getByRole('region', { name: 'アプリ内ブラウザ' })).getByRole('group', { name: 'サイトごとの 1Password のアイテム' });
+  const fill = (site: string, link: string) => {
+    fireEvent.change(within(group()).getByLabelText('サイト'), { target: { value: site } });
+    fireEvent.change(within(group()).getByLabelText('1Password のアイテムのリンク'), { target: { value: link } });
+  };
+
+  it('控えたサイトとリンクを並べ、無ければ「まだありません」と出す', async () => {
+    await open({ links: [{ site: 'myapp.test', link: LINK }] });
+    expect(await within(group()).findByText('myapp.test')).toBeTruthy();
+    expect(within(group()).getByText(LINK)).toBeTruthy();
+    cleanup();
+    await open();
+    expect(within(group()).getByText('まだありません')).toBeTruthy();
+  });
+
+  it('サイトの書き方をそろえて足し、同じサイトは置き換える。両方を打つまで「リンクを追加」は押せない', async () => {
+    await open({ links: [{ site: 'example.com', link: 'old' }] });
+    await within(group()).findByText('example.com');
+    expect(button('リンクを追加').disabled).toBe(true);
+    fill('https://Example.com/login', LINK);
+    fireEvent.click(button('リンクを追加'));
+    await waitFor(() => expect(api.argsOf('browser.setCredentialLinks')).toEqual([[[{ site: 'example.com', link: LINK }]]]));
+    expect((within(group()).getByLabelText('サイト') as HTMLInputElement).value).toBe('');
+  });
+
+  it('書き方の違うサイト・リンクでないものは保存せずに理由を出す', async () => {
+    await open();
+    await act(async () => {});
+    fill('a b', LINK);
+    fireEvent.click(button('リンクを追加'));
+    expect(screen.getByText('サイトの書き方が違います: a b（例: example.com・localhost:3000）')).toBeTruthy();
+    fill('example.com', 'https://example.com/');
+    fireEvent.click(button('リンクを追加'));
+    expect(screen.getByText(/1Password のアイテムのリンクではありません/)).toBeTruthy();
+    expect(api.argsOf('browser.setCredentialLinks')).toEqual([]);
+  });
+
+  it('削除を押すと、そのサイトだけを除いて保存する', async () => {
+    await open({ links: [{ site: 'a.test', link: LINK }, { site: 'b.test', link: LINK }] });
+    await within(group()).findByText('a.test');
+    fireEvent.click(button('a.test のリンクを削除'));
+    await waitFor(() => expect(api.argsOf('browser.setCredentialLinks')).toEqual([[[{ site: 'b.test', link: LINK }]]]));
   });
 });
 

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { CredentialHint } from './CredentialHint';
 import { AskBar, ClaudeBar, ClickBox, LoginBar, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
 
 // アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
@@ -133,6 +134,47 @@ export const あなたの番: Story = {
           </div>
         </div>
       </div>
+    </div>
+  ),
+};
+
+// ログインを頼んだ（頼みの文にログインの語がある・ページにパスワード欄がある）。1Password のアイテムのリンクを渡せば Claude が入れられることを、
+// リンクの取り方と、サイトごとにリンクを控える画面への入り口と一緒に添える。「もう出さない」を押すと、それからは出さない
+export const あなたの番_ログイン: Story = {
+  args: { label: null },
+  beforeEach: () => localStorage.removeItem('tanacode.credentialHint.hidden'),
+  render: () => (
+    <div className="preview-pane" style={{ maxWidth: 760, height: 260, border: '1px solid var(--border-subtle)' }}>
+      <AskBar message="テスト用のアカウントでログインしてください" login onAnswer={() => {}} />
+      <div className="preview-body">
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>
+            <h1 style={{ margin: '0 0 16px', fontSize: 24 }}>ログイン</h1>
+            <span style={{ display: 'inline-block', width: 240, height: 28, border: '1px solid #999', borderRadius: 4 }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// 狭い幅のログインの頼み。案内のボタンは、文の下に回る
+export const あなたの番_ログイン_狭い幅: Story = {
+  args: { label: null },
+  beforeEach: () => localStorage.removeItem('tanacode.credentialHint.hidden'),
+  render: () => (
+    <div className="preview-pane" style={{ width: 380, height: 320, border: '1px solid var(--border-subtle)' }}>
+      <AskBar message="ステージングの管理画面にログインしてください" login onAnswer={() => {}} />
+    </div>
+  ),
+};
+
+// 案内だけ（Basic 認証の入力の帯など、ほかの帯にも同じものを置く。「もう出さない」を渡さなければ、そのボタンは出さない）
+export const 案内だけ: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-ask" style={{ maxWidth: 760 }}>
+      <CredentialHint />
     </div>
   ),
 };

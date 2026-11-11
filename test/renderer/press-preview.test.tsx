@@ -9,6 +9,7 @@ import { CANCEL_PICKER_SCRIPT, describePicked, type PickedElement } from '../../
 import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
 import './dom';
 import { mockApi } from './mock-api';
+import { onOpenMcpSettings } from '../../src/renderer/src/mcp/openMcpSettings';
 
 // アプリ内ブラウザ（PreviewPane）のボタン・入力を押して、効いたことを確かめる（Claude に許す先は press-mcp-settings.test.tsx）。
 // jsdom には Electron の <webview> が無いので、作られた webview の要素に、押したことを控えるだけの操作（戻る・読み込み直すなど）を足す
@@ -667,6 +668,28 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
     expect(api.argsOf('browser.answer')).toEqual([['s1', 'a1', { done: true, reason: '' }]]);
     ask({ sessionId: 's1', ask: null });
     expect(screen.queryByText('ログインしてください')).toBeNull();
+  });
+
+  it('ログインの依頼には 1Password から入れられることの案内を添え、「サイトごとのリンクを控える…」で MCP の設定を開く。「もう出さない」で、それからは出さない', async () => {
+    localStorage.removeItem('tanacode.credentialHint.hidden');
+    const opened = vi.fn();
+    const off = onOpenMcpSettings(opened);
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    ask({ sessionId: 's1', ask: { id: 'a1', message: '2 段階認証のコードを入れてください' } });
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    ask({ sessionId: 's1', ask: { id: 'a2', message: 'ログインしてください', login: true } });
+    const hint = screen.getByRole('note', { name: '1Password から入力する案内' });
+    expect(hint.textContent).toContain('「プライベートリンクをコピー」');
+    fireEvent.click(screen.getByText('サイトごとのリンクを控える…'));
+    expect(opened).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('もう出さない'));
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    expect(api.argsOf('prefs.set')).toEqual([['tanacode.credentialHint.hidden', '1']]);
+    ask({ sessionId: 's1', ask: { id: 'a3', message: 'もう一度ログインしてください', login: true } });
+    expect(screen.queryByRole('note', { name: '1Password から入力する案内' })).toBeNull();
+    off();
+    localStorage.removeItem('tanacode.credentialHint.hidden');
   });
 
   it('「できない」で理由の欄を出し、書いた理由（前後の空白を除く）を添えて返す。「戻る」と Esc で元のボタンに戻る', async () => {
