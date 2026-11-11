@@ -13,6 +13,7 @@ import { instructionDirs, instructionFiles } from './project-instructions';
 import { repositoryRoot } from './worktree';
 import { AppSettings } from './app-settings';
 import { PreviewWindows, restrictPreviewSession } from './browser-windows';
+import { trustLocalCertificates } from './browser-certificates';
 import { isClaudeInput } from './claude-input';
 import { SharedPrefStore } from './shared-prefs';
 import { appendFocusLog } from './focus-log';
@@ -115,6 +116,7 @@ const APP_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-read', 'clipboa
 function restrictPermissions(): void {
   restrictAppSession(session.defaultSession);
   restrictPreviewSession(session.fromPartition(PREVIEW_PARTITION), (item, contents) => previewWindows.download(item, contents));
+  trustLocalCertificates(session.fromPartition(PREVIEW_PARTITION));
 }
 
 // アプリの画面のセッション。アプリの画面（主ウインドウと、足したプロファイルの画面）にだけ APP_PERMISSIONS を許す
@@ -546,6 +548,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
   if (!isDefault) {
     restrictAppSession(session.fromPartition(appPartition(info.id)));
     restrictPreviewSession(session.fromPartition(previewPartition(info.id)), (item, contents) => previewWindows.download(item, contents));
+    trustLocalCertificates(session.fromPartition(previewPartition(info.id)));
   }
   const p = new Profile({
     id: info.id,
@@ -944,6 +947,8 @@ function registerIpc(): void {
   });
   handle(IpcChannel.BrowserAsksGet, (e) => P(e).browser.pendingAsks());
   listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
+  handle(IpcChannel.BrowserLoginsGet, (e) => P(e).browser.pendingLogins());
+  listen(IpcChannel.BrowserLoginAnswer, (e, id: string, loginId: string, answer: unknown) => P(e).browser.answerLogin(id, loginId, answer));
   handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
   handle(IpcChannel.McpSettingsGet, () => ({ enabled: mcpEnabled(), permissions: settings.toolPermissions(), parentAskRules: settings.parentAskRulesEnabled(), problem: toolPermissionsProblem }));
@@ -1557,6 +1562,16 @@ const previewWindows = new PreviewWindows({
   whenFocused: (callback) => app.once('browser-window-focus', callback),
 });
 app.on('web-contents-created', (_e, contents) => previewWindows.watch(contents));
+// アプリ内ブラウザのページ（webview のタブと、そのタブから開いたポップアップ）が HTTP の認証（Basic など）を求めた。
+// 入力欄を人にだけ出す（browser-logins.ts）。ほかの中身（アプリの画面など）は、Electron の既定のまま（取り消す）
+app.on('login', (event, contents, details, authInfo, callback) => {
+  if (!contents || contents.isDestroyed()) return;
+  const root = previewWindows.rootOf(contents) ?? (contents.getType() === 'webview' ? contents : undefined);
+  const owner = root && profiles().find((p) => p.previewSession === contents.session);
+  if (!root || !owner) return;
+  event.preventDefault();
+  owner.browser.requestLogin(contents, root, { url: details.url, authInfo }, callback);
+});
 
 app.whenReady().then(async () => {
   if (!primary) return;

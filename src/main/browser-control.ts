@@ -19,11 +19,13 @@ import {
   uploadPaths,
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { describeDialog, PageDialogs } from './browser-dialogs';
 import { BrowserDownloads, describeDownload, MAX_DOWNLOAD_BYTES, MAX_DOWNLOADS_PER_CALL } from './browser-downloads';
+import { certificateErrorHint } from './browser-certificates';
+import { BrowserLogins, type LoginRequest } from './browser-logins';
 import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
@@ -359,6 +361,7 @@ type Deps = {
     selectTab: typeof IpcChannel.BrowserSelectTab;
     closeTab: typeof IpcChannel.BrowserCloseTab;
     ask: typeof IpcChannel.BrowserAsk;
+    login: typeof IpcChannel.BrowserLogin;
   };
 };
 
@@ -386,6 +389,8 @@ export class BrowserControl {
   private readonly drawing = new Map<WebContents, number>();
   // ユーザーに頼んでいる操作
   private readonly asks: BrowserAsks;
+  // ページが求めた HTTP の認証の入力欄（人にだけ出す。browser-logins.ts）
+  private readonly logins: BrowserLogins;
   // 人に確認した、許す先の外を開く印（セッションごと）
   private readonly marks = new Map<string, Mark[]>();
   // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
@@ -410,6 +415,7 @@ export class BrowserControl {
       this.deps.send(this.deps.channels.ask, { sessionId, ask } satisfies BrowserAskChange);
       this.deps.onAsk(sessionId, ask);
     });
+    this.logins = new BrowserLogins((change) => this.deps.send(this.deps.channels.login, change));
   }
 
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
@@ -493,6 +499,7 @@ export class BrowserControl {
     this.watchGuest(sessionId, guest);
     for (const resolve of this.waiters.get(sessionId) ?? []) resolve(guest);
     this.waiters.delete(sessionId);
+    this.logins.place(contents, { sessionId, tabId });
     // Claude が決めた画面の大きさは、あとで開いたタブにも当てる（人が開いたタブも、枠はその大きさになるため）
     if (session.viewport) void this.emulate(guest, session.viewport).catch(() => undefined);
   }
@@ -733,6 +740,22 @@ export class BrowserControl {
     this.asks.answer(sessionId, askId, answer);
   }
 
+  // ページが HTTP の認証を求めた（main の app の login。呼ぶ側が event.preventDefault() したもの）。asker: 求めたページ /
+  // root: 入力欄を出すタブ（asker がタブから開いた別ウインドウなら、そのタブ）。callback はすぐに呼ぶ（browser-logins.ts）
+  requestLogin(asker: WebContents, root: WebContents, request: LoginRequest, callback: (username?: string, password?: string) => void): void {
+    const found = this.find(root);
+    this.logins.request(asker, root, found ? { sessionId: found.sessionId, tabId: found.guest.tabId } : null, request, callback);
+  }
+
+  // 今出している認証の入力欄（画面を作り直したとき用）と、人の入力
+  pendingLogins(): BrowserLoginChange[] {
+    return this.logins.list();
+  }
+
+  answerLogin(sessionId: string, loginId: unknown, answer: unknown): void {
+    this.logins.answer(sessionId, loginId, answer);
+  }
+
   // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）。
   // 人が許した、許す先の外のオリジンと、確認した印も捨てる（オンに戻したら、また人に許可を求める）
   turnOff(): void {
@@ -776,6 +799,7 @@ export class BrowserControl {
   // セッションを消した・アーカイブしたとき
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
+    this.logins.forget(sessionId);
     this.marks.delete(sessionId);
     this.evaluateMarks.delete(sessionId);
     this.leaveMarks.delete(sessionId);
@@ -837,7 +861,7 @@ export class BrowserControl {
     const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
     if (!guest || isBlank(url)) return ['Current tab: (no page open)'];
     if (!this.allowedIn(guest, url)) return [`The current page is not allowed for Claude (${originOf(url) ?? 'invalid URL'}). It can be neither read nor operated any further.`];
-    return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`];
+    return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`, ...this.logins.notes(guest.contents)];
   }
 
   // 確認のフック（browser-gate.ts）への答え。request.tool: ツールの名前（mcp__…）/ request.input: ツールの入力。待たない（フックは短い間しか待たない）
@@ -1255,7 +1279,8 @@ export class BrowserControl {
       // 許していない先へのリダイレクトを止めた
       if (session.blocked) throw stoppedError(session.blocked);
       // 移ったための中断（リダイレクトなど）と、ダウンロードになったもの（本物では ERR_FAILED で終わる）は失敗にしない
-      if (!/ERR_ABORTED/.test(String(error)) && !this.downloadSeen.has(sessionId)) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/ERR_ABORTED/.test(message) && !this.downloadSeen.has(sessionId)) throw new ToolError(`Could not open ${url} (${message}).${certificateErrorHint(message)}`);
     });
     return current;
   }
@@ -1381,6 +1406,7 @@ export class BrowserControl {
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
     const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r)).length;
     if (failed > 0) lines.push(`${count(failed, 'request')} failed (read them with get_failed_requests).`);
+    lines.push(...this.logins.notes(guest.contents));
     return textResult(lines.join('\n'));
   }
 

@@ -6578,6 +6578,56 @@ button.menu-tab:disabled {
 .preview-ask-reason:focus {
   border-color: var(--border-focus);
 }
+/* ページが求めた HTTP の認証の入力欄（人の入力待ちなので「あなたの番です」と同じ色。並びも同じ） */
+.preview-login {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: var(--warn-tint);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-login-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.preview-login-message {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  /* 求めた先は省略せずに出す（長いホスト名も折り返す） */
+  overflow-wrap: anywhere;
+}
+.preview-login-realm,
+.preview-login-note {
+  color: var(--text-secondary);
+}
+.preview-login-warning {
+  color: var(--danger);
+}
+/* 入力欄とボタン。狭い幅では入力欄が縮み、それでも入らなければボタンが下の行に回る（帯からはみ出さない） */
+.preview-login-actions {
+  flex: 1 1 320px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.preview-login-input {
+  flex: 1 1 110px;
+  width: auto;
+  min-width: 0;
+  max-width: 180px;
+}
 /* Claude がこれから押す要素の枠（ページの上に重ねる） */
 .preview-click-box {
   position: absolute;

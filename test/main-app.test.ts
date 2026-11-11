@@ -532,6 +532,7 @@ describe('部品から画面への知らせ', () => {
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
       ask: IpcChannel.BrowserAsk,
+      login: IpcChannel.BrowserLogin,
     });
     browser.send(IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' });
     expect(sentToRenderer()).toEqual([[IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' }]]);
@@ -1182,6 +1183,44 @@ describe('権限', () => {
     const download = fakeEvent();
     preview.emit('will-download', download);
     expect(download.preventDefault).toHaveBeenCalled();
+  });
+
+  it('証明書の誤りを通すのは、プレビューのセッションの、この Mac の中の先だけ（アプリの画面のセッションには付けない）', async () => {
+    await boot();
+    const preview = state.partitions.get('persist:tanacode-preview')!;
+    const verify = (hostname: string) => {
+      let answer = NaN;
+      preview.verifyProc!({ hostname, verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID', errorCode: -202 }, (result) => (answer = result));
+      return answer;
+    };
+    expect(verify('localhost')).toBe(0);
+    expect(verify('stg.example.com')).toBe(-3);
+    expect(state.defaultSession.verifyProc).toBeNull();
+  });
+
+  it('HTTP の認証は、プレビューのセッションの webview のものだけ受ける（取り消して、人に入力欄を出す）。ほかは Electron の既定のまま', async () => {
+    await boot();
+    const login = (contents: FakeWebContents) => {
+      const event = fakeEvent();
+      const callback = vi.fn();
+      state.app.emit('login', event, contents, { url: 'https://stg.example.com/' }, { isProxy: false, scheme: 'basic', host: 'stg.example.com', port: 443, realm: 'STG' }, callback);
+      return { prevented: event.preventDefault.mock.calls.length > 0, callback };
+    };
+    const guest = new FakeWebContents();
+    guest.type = 'webview';
+    guest.session = state.partitions.get('persist:tanacode-preview');
+    const handled = login(guest);
+    expect(handled.prevented).toBe(true);
+    // 求めたページと、入力欄を出すタブ（ポップアップでなければ同じ）を、そのプロファイルのアプリ内ブラウザに渡す
+    expect(the('BrowserControl').requestLogin.mock.calls).toEqual([
+      [guest, guest, { url: 'https://stg.example.com/', authInfo: { isProxy: false, scheme: 'basic', host: 'stg.example.com', port: 443, realm: 'STG' } }, handled.callback],
+    ]);
+    // アプリの画面・ほかのセッションの webview には、何もしない
+    expect(login(mainWindow().webContents).prevented).toBe(false);
+    const other = new FakeWebContents();
+    other.type = 'webview';
+    other.session = state.defaultSession;
+    expect(login(other).prevented).toBe(false);
   });
 });
 

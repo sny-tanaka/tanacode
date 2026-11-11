@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserPoint, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
+import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserLogin, BrowserLoginAnswer, BrowserLoginChange, BrowserPoint, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
@@ -105,6 +105,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
   // Claude がユーザーに頼んでいる操作（ask_user_to_act）
   const [asks, setAsks] = useState<Record<string, BrowserAsk>>({});
+  // タブの ID → ページが求めた HTTP の認証の入力欄
+  const [logins, setLogins] = useState<Record<string, BrowserLogin>>({});
   // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
   const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
   // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
@@ -122,6 +124,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const throttle = activeTab ? throttles[activeTab] : undefined;
   const activity = sessionId ? claude[sessionId] : undefined;
   const ask = sessionId ? asks[sessionId] : undefined;
+  const login = activeTab ? logins[activeTab] : undefined;
 
   const update = (tabId: string, patch: Partial<PageState>) =>
     setPages((prev) => ({ ...prev, [tabId]: { ...(prev[tabId] ?? EMPTY_PAGE), ...patch } }));
@@ -167,7 +170,11 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         validatedURL: string;
       };
       // -3 は別のページへ移ったための中断
-      if (isMainFrame && errorCode !== -3) update(tabId, { error: t('preview.page.loadFailed', { url: validatedURL, error: errorDescription }), loading: false });
+      // -200〜-299 は証明書の誤り。通すのはこの Mac の中のページだけ（main の browser-certificates.ts）なので、そのことを添える
+      if (isMainFrame && errorCode !== -3) {
+        const error = t('preview.page.loadFailed', { url: validatedURL, error: errorDescription });
+        update(tabId, { error: errorCode <= -200 && errorCode > -300 ? `${error} ${t('preview.page.certificate')}` : error, loading: false });
+      }
     });
     wv.addEventListener('console-message', (e) => {
       const { level, message, sourceId, line } = e as unknown as { level: number | string; message: string; sourceId?: string; line?: number };
@@ -250,7 +257,9 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
           return rest;
         }),
       ),
+      window.tanacode.browser.onLogin((change) => setLogins((prev) => withLogin(prev, change))),
     ];
+    void window.tanacode.browser.logins().then((list) => setLogins((prev) => list.reduce(withLogin, prev)));
     // 画面を作り直したとき（ウィンドウを閉じて開き直した）も、頼まれている操作の帯を出す
     void window.tanacode.browser.asks().then((list) =>
       setAsks((prev) => ({ ...Object.fromEntries(list.flatMap((c) => (c.ask ? [[c.sessionId, c.ask]] : []))), ...prev })),
@@ -549,6 +558,9 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
       ) : (
         activity?.active && <ClaudeBar label={activity.label} />
       )}
+      {login && sessionId && (
+        <LoginBar key={login.id} login={login} onAnswer={(answer) => window.tanacode.browser.answerLogin(sessionId, login.id, answer)} />
+      )}
       {picking && <div className="preview-hint">{t('preview.hint.picking')}</div>}
       {page?.error && (
         <div className="preview-hint error">
@@ -686,6 +698,74 @@ export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answ
         </div>
       )}
     </div>
+  );
+}
+
+// タブの入力欄の一覧に、出した・消した（login が null）を当てる
+function withLogin(prev: Record<string, BrowserLogin>, { tabId, login }: BrowserLoginChange): Record<string, BrowserLogin> {
+  if (login) return { ...prev, [tabId]: login };
+  const { [tabId]: _, ...rest } = prev;
+  return rest;
+}
+
+// ページが求めた HTTP の認証（Basic など）の入力欄。人が入れた値は main がページにだけ渡し、Claude には渡さない。
+// 求めた先（オリジン）は省略せずに出す（ほかのサイトの認証と見分けられるように）。realm はサイトが自由に書けるので、サイトの言葉として括って出す。
+// 急に出ても、入れている途中の文字を取らないよう、フォーカスは移さない。Esc でキャンセル
+export function LoginBar({ login, onAnswer }: { login: BrowserLogin; onAnswer: (answer: BrowserLoginAnswer) => void }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const message = login.proxy ? 'preview.login.proxy' : login.popup ? 'preview.login.popup' : 'preview.login.page';
+  const escape = (e: React.KeyboardEvent) => {
+    if (!e.nativeEvent.isComposing && e.key === 'Escape') onAnswer(null);
+  };
+  return (
+    <form
+      className="preview-login"
+      aria-label={t('preview.login.label')}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onAnswer({ username, password });
+      }}
+    >
+      <div className="preview-login-text" role="status">
+        <span className="preview-ask-title">{t('preview.login.title')}</span>
+        <span className="preview-login-message">
+          {t(message, { origin: login.origin })}
+          {login.realm && <span className="preview-login-realm">{t('preview.login.realm', { realm: login.realm })}</span>}
+          {login.retry && <span className="preview-login-warning">{t('preview.login.retry')}</span>}
+          {login.insecure && <span className="preview-login-warning">{t('preview.login.insecure')}</span>}
+          <span className="preview-login-note">{t(login.proxy ? 'preview.login.proxyPrivate' : 'preview.login.private')}</span>
+        </span>
+      </div>
+      <div className="preview-ask-actions preview-login-actions">
+        <input
+          className="preview-ask-reason preview-login-input"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          onKeyDown={escape}
+          placeholder={t('preview.login.username')}
+          aria-label={t('preview.login.username')}
+          autoComplete="username"
+          spellCheck={false}
+        />
+        <input
+          className="preview-ask-reason preview-login-input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={escape}
+          placeholder={t('preview.login.password')}
+          aria-label={t('preview.login.password')}
+          autoComplete="current-password"
+        />
+        <button type="submit" className="send-button">
+          {t('preview.login.submit')}
+        </button>
+        <button type="button" className="ghost-button" onClick={() => onAnswer(null)}>
+          {t('preview.login.cancel')}
+        </button>
+      </div>
+    </form>
   );
 }
 

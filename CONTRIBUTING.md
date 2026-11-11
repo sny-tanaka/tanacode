@@ -1524,6 +1524,17 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 一覧と通知: `SessionAttention` の `'browser'` は、`SessionManager.browserAskChanged` で控え、`list()` の attention は答えを待つ要求（質問・許可など）を優先し、無ければ `'browser'`（一覧は「ブラウザでの操作待ち」。アプリを終了するときの確認の状態も同じ）。頼んでいる間は、ターンの終わりの通知を出しません。`index.ts` の `notify` は、クリックで画面に送る知らせ（既定は `sessions:select`）を選べ、頼まれたときは `browser:show` を送ります。画面（`App.tsx`）は、そのセッションを選んでブラウザを開きます。頼まれたとき（`browser:ask`）も、見ているセッションならブラウザを開き、見ていなければ戻ったときに開きます。
   - 画面: `PreviewPane.tsx` の `AskBar`。頼まれている間は、「Claude が操作中」の帯の代わりに出します。画面を作り直したとき用に、`browser.asks()`（`browser:asks-get`）で今頼んでいるものを読みます。返事は `browser.answer()`（`browser:answer`）。ストーリーは `ClaudeBrowsing.stories.tsx`。
 - オン・オフ: 「MCP の設定」のダイアログの「アプリ内ブラウザ」のスイッチ（`settings.json` の `browserControl`）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。待ち受けを始められなかったときも、足しません。
+- HTTPS の証明書の誤り（`browser-certificates.ts`）: プレビューのセッション（既定と、足したプロファイルのもの）に `setCertificateVerifyProc` を付け、Chromium が誤りとした証明書のうち、この Mac の中の先（`isLocalUrl` と同じ `localhost`・`*.localhost`・`127.0.0.1`・`[::1]`）のものだけを通します（`0`）。ほかは Chromium の確かめたとおり（`-3`）。確かめ方はセッションに付くので、ページの読み込みだけでなく、`fetch`・WebSocket・ワーカーの通信にも効き、アプリの画面（既定のセッション）や Node の通信には効きません（Electron 44.10 で、自己署名の証明書の `https://localhost`・`https://app.localhost` のページ・`fetch`・`wss:` が通り、`MAP` でこの Mac に向けた別の名前と既定のセッションは `ERR_CERT_AUTHORITY_INVALID` のままなのを確かめた）。
+  - この Mac の中の先に限るのは、ネットワークの途中の人が成りすませないためです（`localhost`・`*.localhost` は Chromium が DNS を引かずにループバックにつなぐ）。証明書が守るもの（正しい相手につながっていること）が、はじめから守られています。Chrome の `allow-insecure-localhost` と同じ考え方。
+  - `*.local`（同じネットワークの誰でも mDNS で答えられる）・ユーザーが足した許す先・`/etc/hosts` でこの Mac に向けた名前は含めません。名前で決めるので（確かめ方には、つないだ先の IP アドレスが来ない）、DNS の答えしだいで外の機械につながる名前の誤りを通すと、中間者攻撃を通してしまいます。人の操作でも通しません（決めたこと。「できないと拒否されない」より、ログインを共有するブラウザの安全を優先）。
+  - 設定でのオン・オフは設けません。この Mac の中の先では通しても危なくならず、外の先では決して通さないので、選ぶものがありません。
+  - Claude には、`navigate` で開けなかった理由が証明書の誤り（`ERR_CERT_`）なら、この Mac の中の先しか通さないこと・`https://localhost` で開き直すか人に伝えることを添えます（`certificateErrorHint`）。画面の「読み込めませんでした」にも、同じことを添えます（`did-fail-load` の `errorCode` が -200〜-299）。
+- HTTP の認証（Basic など。`browser-logins.ts` の `BrowserLogins`。`BrowserControl` が 1 つ持つ）: `index.ts` の `app.on('login')` で、プレビューのセッションの webview（と、そのタブから開いたポップアップ。`PreviewWindows.rootOf` でもとのタブを探す）のものだけを受けます（`event.preventDefault()`）。どのプロファイルのものかは、中身のセッション（`Profile.previewSession`）で見分けます。ほかの中身は Electron の既定のまま（取り消す）。
+  - 受けたら、すぐに `callback()` で取り消し（ページには 401 の本文が出る）、タブに入力欄を出します（`browser:login`）。待たずに取り消すのは、読み込みを止めたままにしないためです（Claude の `navigate` が人の入力まで返らなくなる。最初の読み込みでは、画面がタブの webview を知らせる `dom-ready` も来ない）。画面がまだタブを知らせていなければ、知らせたとき（`attach` → `BrowserLogins.place`）に出します。
+  - 人が入れたら（`browser:login-answer`）、値を、求めたページに 1 回だけ使えるよう控え（1 分で捨てる）、そのページを読み込み直します。読み込み直したページの `login` が同じ先（プロキシか・方式・ホスト・ポート・realm）なら、控えた値で答えます。控えた値で答えたあと 30 秒の間に同じ先にまた求められたら、通らなかったものとして「違うようです」を添えます。通ったあとは Chromium がセッションの中で覚えます（Electron 44.10 で、取り消すと 401 の本文が出て、読み込み直して答えると通るのを確かめた）。
+  - 入力欄は、タブごとに先に出したものだけ。出している間に別の先の認証が来ても、取り消すだけで差し替えません（人が入れている最中に、送る先をすり替えさせない）。タブか、求めたページが別のページへ移り始めたら（トップのフレームの、文書が替わる `did-start-navigation`）・閉じたら・セッションを消したら、消します。
+  - Claude には値を渡しません（ツールの引数でも受け取らない）。タブの操作の結果（`pageResult`）と `ask_user_to_act` の返事（`askedPage`）に、入力欄を出していること（人に `ask_user_to_act` で頼むよう、チャットで値を聞かないよう伝える）か、人が入れた・閉じたこと（1 回だけ）を添えます。realm はサイトが自由に書けるので、Claude には渡しません。
+  - 画面: `PreviewPane.tsx` の `LoginBar`。今のタブのものを、「あなたの番です」の帯の下に出します。求めた先のオリジンは省略せずに折り返し（国際化ドメインは `xn--` のまま）、realm は制御文字と書式の文字を除いて 120 文字に切り、サイトの言葉として括ります。急に出ても入力の途中の文字を取らないよう、フォーカスは移しません。画面を作り直したとき用に、`browser.logins()`（`browser:logins-get`）で今出しているものを読みます。ストーリーは `ClaudeBrowsing.stories.tsx`。
 
 ### ツールごとの許可（毎回確認・常に許可）
 
@@ -1935,6 +1946,8 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `browser-control.ts`: Claude から届いたアプリ内ブラウザの操作を、webview の中身で実行する（スクリーンショット・CDP・許す先とタブごとの許可の確かめ）
   - `browser-windows.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先の見張り・新しいタブ・ポップアップの別ウインドウ・プレビューのセッションの権限とダウンロード）
   - `browser-asks.ts`: Claude がユーザーに頼んだ操作（`ask_user_to_act`）の返事を待つ（返事・時間切れ・取り消し）
+  - `browser-certificates.ts`: アプリ内ブラウザの HTTPS の証明書の扱い（この Mac の中の先だけ、誤りを通す）
+  - `browser-logins.ts`: アプリ内ブラウザのページが求めた HTTP の認証（Basic など）の入力欄（人にだけ出し、入れた値で読み込み直す）
   - `sessions-mcp.ts` / `sessions-bridge.ts`: セッションの中継の入り口と、中継に渡す環境変数・子セッションの起動の確認のフック・`--mcp-config` のエントリ
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ・自分への予約・報告）
   - `turn-reports.ts`: Claude がターンの終わりの通知に載せる報告（`report_result`）を、セッションごとに持つ。新しいターンが始まったら捨てる

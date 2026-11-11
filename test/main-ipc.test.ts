@@ -194,6 +194,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
     [IpcChannel.AppUpdateCheck, [], call('appUpdates.refresh')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],
+    [IpcChannel.BrowserLoginsGet, [], call('browser.pendingLogins')],
     [IpcChannel.WalkthroughGet, [], call('walkthrough.list')],
     [IpcChannel.WorkspaceInfo, ['s1'], callIn(cwdOf('s1'), 'workspace.info')],
     [IpcChannel.ListDir, ['s1', 'src/lib'], callIn(cwdOf('s1'), 'workspace.listDir', 'src/lib')],
@@ -283,6 +284,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.WatchOpenFiles, [{ '/work': ['a.ts', '/outside/memo.md'] }], 'OpenFileWatchers', 'set', [{ '/work': ['a.ts', '/outside/memo.md'] }]],
     [IpcChannel.BrowserActivate, ['s1', null], 'BrowserControl', 'activate', ['s1', null]],
     [IpcChannel.BrowserAnswer, ['s1', 'ask-1', { done: false, reason: 'ログインできない' }], 'BrowserControl', 'answerAsk', ['s1', 'ask-1', { done: false, reason: 'ログインできない' }]],
+    [IpcChannel.BrowserLoginAnswer, ['s1', 'login-1', { username: 'u', password: 'p' }], 'BrowserControl', 'answerLogin', ['s1', 'login-1', { username: 'u', password: 'p' }]],
   ];
 
   it.each(listens)('知らせ %s（%j）は、%s の %s に引数をそのまま渡す', (channel, args, name, method, expected) => {

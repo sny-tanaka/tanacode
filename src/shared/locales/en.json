@@ -1915,7 +1915,8 @@
       "heightOnly": "height {height}"
     },
     "page": {
-      "loadFailed": "Couldn't load {url} ({error})"
+      "loadFailed": "Couldn't load {url} ({error})",
+      "certificate": "The certificate of this site couldn't be verified. Pages with certificate errors open only when they are on this Mac (localhost, 127.0.0.1, *.localhost). Other sites don't open, because someone may be intercepting the connection."
     },
     "chat": {
       "consoleErrors": "Errors logged to the in-app browser console ({url}):\n{errors}\n"
@@ -1959,6 +1960,22 @@
       "send": "Send",
       "done": "Done",
       "decline": "Can't Do It"
+    },
+    "login": {
+      "label": "Site sign-in",
+      "title": "Sign-in required",
+      "page": "{origin} is asking for a user name and password",
+      "popup": "A window opened from this tab ({origin}) is asking for a user name and password",
+      "proxy": "The proxy {origin} is asking for a user name and password",
+      "realm": "Message from the site: “{realm}”",
+      "retry": "The user name or password seems to be wrong. Please try again.",
+      "insecure": "This connection isn't encrypted. What you enter could be read on the way.",
+      "private": "What you enter is sent only to this site. It isn't shared with Claude.",
+      "proxyPrivate": "What you enter is sent only to this proxy. It isn't shared with Claude.",
+      "username": "User Name",
+      "password": "Password",
+      "submit": "Sign In",
+      "cancel": "Cancel"
     },
     "hosts": {
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",

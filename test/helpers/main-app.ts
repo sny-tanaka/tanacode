@@ -167,6 +167,11 @@ export class FakeSession extends Emitter {
   setPermissionCheckHandler = (handler: FakeSession['checkHandler']) => {
     this.checkHandler = handler;
   };
+  // 証明書の確かめ方（setCertificateVerifyProc。アプリ内ブラウザのセッションにだけ付ける）
+  verifyProc: ((request: { hostname: string; verificationResult: string; errorCode: number }, callback: (result: number) => void) => void) | null = null;
+  setCertificateVerifyProc = (proc: FakeSession['verifyProc']) => {
+    this.verifyProc = proc;
+  };
 }
 
 export class FakeNotification extends Emitter {
@@ -483,6 +488,9 @@ const modules: Record<string, Record<string, unknown>> = {
       activate: echo('browser.activate'),
       pendingAsks: echo('browser.pendingAsks'),
       answerAsk: echo('browser.answerAsk'),
+      requestLogin: () => undefined,
+      pendingLogins: echo('browser.pendingLogins'),
+      answerLogin: echo('browser.answerLogin'),
       turnOff: () => undefined,
     }),
   },

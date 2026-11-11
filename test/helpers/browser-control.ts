@@ -109,6 +109,7 @@ export function setup() {
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
       ask: IpcChannel.BrowserAsk,
+      login: IpcChannel.BrowserLogin,
     },
   });
 

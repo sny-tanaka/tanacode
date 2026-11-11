@@ -124,6 +124,11 @@ export class PreviewWindows {
     return this.deps.browsers().some((browser) => browser.takeDownload(contents, item));
   }
 
+  // ポップアップの中身を開いたタブ（ポップアップから開いたポップアップも、もとのタブ）。ポップアップでなければ undefined
+  rootOf(contents: WebContents): WebContents | undefined {
+    return this.roots.get(contents);
+  }
+
   // webview のタブが付いた（did-attach-webview）。browser: そのタブのプロファイルのアプリ内ブラウザ
   attach(guest: WebContents, browser: PreviewBrowser | undefined): void {
     if (browser) this.owners.set(guest, browser);

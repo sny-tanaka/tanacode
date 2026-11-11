@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { AskBar, ClaudeBar, ClickBox, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
+import { AskBar, ClaudeBar, ClickBox, LoginBar, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
 
 // アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
-// Claude がユーザーに操作を頼んだときの「あなたの番です」の帯。
+// Claude がユーザーに操作を頼んだときの「あなたの番です」の帯、ページが HTTP の認証（Basic など）を求めたときの入力欄。
 // 本物のブラウザ（webview）は Storybook では動かないので、ページの代わりに白い地と作り物のボタンを置く
 
 const meta = {
@@ -146,6 +146,50 @@ export const あなたの番_狭い幅: Story = {
         message={'決済のテスト画面で、次のカードで支払ってください。\n1. カード番号はテスト用のもの（決済サービスの文書にあるもの）\n2. 有効期限は未来の日付\n3. 支払いが終わったら、注文の完了画面まで進めてください\n4. 完了画面が出なければ「できない」で教えてください'}
         onAnswer={() => {}}
       />
+    </div>
+  ),
+};
+
+const LOGIN = { id: 'login-1', origin: 'https://stg.example.com', realm: 'Staging', proxy: false, insecure: false, retry: false, popup: false };
+
+// ページが HTTP の認証（Basic 認証）を求めた。ページには 401 の本文が出ていて、その上に入力欄を出す。
+// 入れた値はページにだけ渡し、Claude には渡さない（Claude には、人に頼むよう伝える）
+export const サイトのログイン: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <LoginBar login={LOGIN} onAnswer={() => {}} />
+      <div className="preview-body">
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>401 Unauthorized</div>
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// 入れたものが通らなかった・暗号化されていない http（この Mac の外）・長いホスト名（省略せずに折り返す）。
+// Claude が ask_user_to_act で頼んでいるときは、「あなたの番です」の帯の下に出る
+export const サイトのログイン_警告と狭い幅: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ width: 380, height: 360, border: '1px solid var(--border-subtle)' }}>
+      <AskBar message="STG に Basic 認証でログインしてください" onAnswer={() => {}} />
+      <LoginBar
+        login={{ ...LOGIN, origin: 'http://very-long-branch-name-for-review.stg.internal.example.com:8080', realm: '社内の検証環境（アカウントは管理者に聞いてください）', insecure: true, retry: true }}
+        onAnswer={() => {}}
+      />
+    </div>
+  ),
+};
+
+// プロキシの認証と、タブから開いた別ウインドウのページの認証
+export const サイトのログイン_プロキシと別ウインドウ: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <LoginBar login={{ ...LOGIN, origin: 'proxy.corp.example.com:3128', realm: '', proxy: true }} onAnswer={() => {}} />
+      <LoginBar login={{ ...LOGIN, id: 'login-2', origin: 'https://sso.example.com', popup: true }} onAnswer={() => {}} />
     </div>
   ),
 };

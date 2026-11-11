@@ -98,6 +98,10 @@ export class Profile {
   readonly statusLines: StatusLineWatcher;
   readonly settingsFiles: SettingsFiles;
   readonly browser: BrowserControl;
+  // アプリ内ブラウザ（プレビューの webview）のセッション。ページが HTTP の認証を求めたとき、どのプロファイルのものかを見分ける
+  get previewSession(): Session {
+    return this.options.preview;
+  }
   readonly checklists: ChecklistStore;
   readonly usage: UsageMonitor;
   manager!: SessionManager;
@@ -184,6 +188,7 @@ export class Profile {
         selectTab: IpcChannel.BrowserSelectTab,
         closeTab: IpcChannel.BrowserCloseTab,
         ask: IpcChannel.BrowserAsk,
+        login: IpcChannel.BrowserLogin,
       },
     });
     this.browser.watchNetwork(options.preview);
