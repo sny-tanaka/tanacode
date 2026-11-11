@@ -8,7 +8,7 @@
 #   （人の確かめを待たない）。差分は PR の本文に載せ、あとで仕分ける。tanacode が使うフィールドが目録から消えていたら、確認が落ちて Issue が立つ
 # - 同じ PR で、tanacode のバージョンと動作確認済のバージョンの対応表（compat.json）も書き換える（scripts/compat-table.mjs）。
 #   公開済みのアプリは develop の compat.json を読むので、マージすれば、リリースしなくても印が変わる。
-#   いまのアプリの行は、その行のバージョンと目録に差が無いときだけ上げ、差があれば据え置いて、次にリリースするバージョンから上げる
+#   いまのアプリの行は、その行のバージョンと目録に差が無いか、増えただけのときに上げ、消えたものがあれば据え置いて、次にリリースするバージョンから上げる
 # 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ。
 # どの台本でも、アプリの知らない種類の行が出たら落ちる）
 # アプリは macOS 専用なので、macOS のランナーで確かめる
@@ -179,11 +179,11 @@ jobs:
           if [ "$action" = bump ] && [ "$(node scripts/compat-table.mjs current)" = "$VERSION" ]; then
             deliver_note="- 対応表（\`compat.json\`）の、公開済みのアプリ（v$app）の行も $VERSION にします。マージすると、リリースしなくても、公開済みのアプリのステータスバーがこのバージョンでチェックマークになります"
           elif [ "$action" = bump ]; then
-            deliver_note="- 対応表（\`compat.json\`）の、公開済みのアプリ（v$app）の行は、目録に差があるので据え置きます。$VERSION にするのは次にリリースするバージョンからで、アプリのリリースで利用者に届きます"
+            deliver_note="- 対応表（\`compat.json\`）の、公開済みのアプリ（v$app）の行は、目録から消えた種類かフィールドがあるので据え置きます。$VERSION にするのは次にリリースするバージョンからで、アプリのリリースで利用者に届きます"
           else
             deliver_note="- 控えを足すだけなので、アプリの動きは変わりません"
           fi
-          if [ "$inventory" = changed ]; then
+          if [ "$inventory" != same ]; then
             merge_note="- 行の目録（\`test/fixtures/claude-code/<バージョン>/inventory.json\`）が、動作確認済のバージョン（$verified）と違います。PR の CI が通ったら、そのまま squash マージします。下の差分は、マージしたあとに仕分けます（tanacode が読むべきもの・意図して捨てるもの・台本の揺れ。CONTRIBUTING.md の「Claude Code との互換性の確かめ方」）"
           else
             merge_note="- PR の CI が通ったら、そのまま squash マージします。手元の Claude Code がこのバージョンになって数日使ったら、本物の会話ログでも確かめます（\`TANACODE_CHECK_VERSION=$VERSION npm run check:transcripts\`）"
@@ -200,7 +200,7 @@ jobs:
           - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
           $merge_note
           $deliver_note"
-          if [ "$inventory" = changed ]; then
+          if [ "$inventory" != same ]; then
             body="$body
 
           ## 行の目録の差分（$verified → $VERSION）
@@ -209,7 +209,7 @@ jobs:
           fi
           gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$body"
           # 目録に差があっても、CI が通ればマージする（人の確かめを待たない）。差があったことは警告に残し、あとで仕分ける
-          if [ "$inventory" = changed ]; then
+          if [ "$inventory" != same ]; then
             echo "::warning::行の目録が $verified と違います。$branch の PR は CI が通ればマージします。差分は PR の本文を見て、あとで仕分けてください"
           fi
           # PR の CI（必須のチェックを出す ci と demo-site）が動き始めるのを待ってから、終わるまで待つ。

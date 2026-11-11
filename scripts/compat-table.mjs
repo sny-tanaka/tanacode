@@ -15,8 +15,9 @@ const RANGE = /^>=(\d+\.\d+\.\d+)(?: <(\d+\.\d+\.\d+))?$/;
 
 // 動作確認済のバージョンを version に上げたときの、表の書き換え。
 // - 次にリリースするアプリ（package.json のバージョンの patch を 1 つ上げたもの以上）の行は、いつも version にする（組み込んだバージョンと揃える）
-// - いまのアプリ（package.json のバージョン。公開済み）の行は、その行のバージョンと version で、行の目録（inventory.json）に差が無いときだけ上げる
-//   （アプリを直さなくても読める。リリースせずに、公開済みのアプリの印が変わる）。差があれば据え置く（直したアプリをリリースで届ける）
+// - いまのアプリ（package.json のバージョン。公開済み）の行は、その行のバージョンと version で、行の目録（inventory.json）に差が無いか、
+//   種類・フィールドが増えただけのときに上げる（tanacode は知らない種類・フィールドを読み飛ばすので、アプリを直さなくても読める。
+//   リリースせずに、公開済みのアプリの印が変わる）。消えたものがあれば据え置く（直したアプリをリリースで届ける）
 // - 2 つが同じ行で、いまのアプリの行を上げられないときは、次にリリースするバージョンで行を分ける
 // 古いアプリの行は書き換えない
 export function updateCompatTable(version) {
@@ -26,7 +27,7 @@ export function updateCompatTable(version) {
   const iApp = rows.findIndex((r) => contains(r, app));
   const iNext = rows.findIndex((r) => contains(r, next));
   if (iNext < 0) throw new Error(`${TABLE_FILE} に ${next} 以上の行がありません（最後の行は上限を付けません）`);
-  const bumpApp = iApp >= 0 && compareVersions(version, rows[iApp].claudeCode) > 0 && sameInventory(rows[iApp].claudeCode, version);
+  const bumpApp = iApp >= 0 && compareVersions(version, rows[iApp].claudeCode) > 0 && readableInventory(rows[iApp].claudeCode, version);
   if (iApp === iNext) {
     if (bumpApp) rows[iApp].claudeCode = version;
     else rows.splice(iApp, 1, { ...rows[iApp], below: next }, { from: next, below: rows[iApp].below, claudeCode: version });
@@ -70,14 +71,14 @@ function nextPatch(version) {
   return version.replace(/\d+$/, (n) => String(Number(n) + 1));
 }
 
-// 2 つのバージョンの控えの行の目録に、差が無いか（scripts/inventory-diff.mjs。前の目録が無いときは差があるとみなす）
-function sameInventory(prev, next) {
+// 2 つのバージョンの控えの行の目録が、差が無いか、増えただけか（scripts/inventory-diff.mjs。前の目録が無いときは、消えたものがあるとみなす）
+function readableInventory(prev, next) {
   const dir = mkdtempSync(join(tmpdir(), 'compat-'));
   try {
     const inventory = (v) => `test/fixtures/claude-code/${v}/inventory.json`;
     const script = fileURLToPath(new URL('inventory-diff.mjs', import.meta.url));
     const out = execFileSync(process.execPath, [script, inventory(prev), inventory(next), join(dir, 'diff.md')], { encoding: 'utf8' });
-    return out.trim() === 'same';
+    return ['same', 'added'].includes(out.trim());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

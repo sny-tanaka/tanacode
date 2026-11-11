@@ -43,14 +43,14 @@ describe('scripts/compat-table.mjs', () => {
     expect(parseCompatTable(JSON.parse(table()))).not.toBeNull();
   });
 
-  it('目録に差があれば、いまのアプリの行は据え置き、次にリリースするバージョンから上げる。そのあと差の無いバージョンは、次の行だけを上げる', () => {
+  it('目録から消えたものがあれば、いまのアプリの行は据え置き、次にリリースするバージョンから上げる。そのあと差の無いバージョンは、次の行だけを上げる', () => {
     setup('2.2.3', [
       { app: '>=2.1.0 <2.2.0', claudeCode: '2.1.290' },
       { app: '>=2.2.0', claudeCode: '2.1.305' },
     ]);
-    inventory('2.1.305', ['user']);
-    inventory('2.1.306', ['user', 'system/new']);
-    inventory('2.1.307', ['user', 'system/new']);
+    inventory('2.1.305', ['user', 'system/old']);
+    inventory('2.1.306', ['user']);
+    inventory('2.1.307', ['user']);
     update('2.1.306');
     expect(rows()).toEqual([
       { app: '>=2.1.0 <2.2.0', claudeCode: '2.1.290' },
@@ -58,7 +58,7 @@ describe('scripts/compat-table.mjs', () => {
       { app: '>=2.2.4', claudeCode: '2.1.306' },
     ]);
     expect(current()).toBe('2.1.305');
-    // 公開済みの 2.2.3 は 2.1.305 と比べるので、差があるまま
+    // 公開済みの 2.2.3 は 2.1.305 と比べるので、消えたものがあるまま
     update('2.1.307');
     expect(rows()).toEqual([
       { app: '>=2.1.0 <2.2.0', claudeCode: '2.1.290' },
@@ -68,14 +68,23 @@ describe('scripts/compat-table.mjs', () => {
     expect(parseCompatTable(JSON.parse(table()))).not.toBeNull();
   });
 
+  it('目録の種類・フィールドが増えただけなら、いまのアプリの行も上げる（知らないものは読み飛ばすので、直さなくても読める）', () => {
+    setup('2.2.3', [{ app: '>=2.2.0', claudeCode: '2.1.305' }]);
+    inventory('2.1.305', ['user']);
+    inventory('2.1.306', ['user', 'system/new']);
+    update('2.1.306');
+    expect(rows()).toEqual([{ app: '>=2.2.0', claudeCode: '2.1.306' }]);
+    expect(current()).toBe('2.1.306');
+  });
+
   it('リリースしたあと（次の行がいまのアプリの行になった）は、その行を差が無ければ上げる', () => {
     setup('2.3.0', [
       { app: '>=2.2.0 <2.2.4', claudeCode: '2.1.305' },
       { app: '>=2.2.4', claudeCode: '2.1.306' },
     ]);
-    inventory('2.1.305', ['user']);
-    inventory('2.1.306', ['user', 'system/new']);
-    inventory('2.1.307', ['user', 'system/new']);
+    inventory('2.1.305', ['user', 'system/old']);
+    inventory('2.1.306', ['user']);
+    inventory('2.1.307', ['user']);
     update('2.1.307');
     expect(rows()).toEqual([
       { app: '>=2.2.0 <2.2.4', claudeCode: '2.1.305' },
@@ -83,7 +92,7 @@ describe('scripts/compat-table.mjs', () => {
     ]);
   });
 
-  it('前の目録が無ければ、差があるとみなす', () => {
+  it('前の目録が無ければ、消えたものがあるとみなす', () => {
     setup('2.2.3', [{ app: '>=2.2.0', claudeCode: '2.1.305' }]);
     inventory('2.1.306', ['user']);
     update('2.1.306');
