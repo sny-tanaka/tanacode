@@ -240,9 +240,11 @@
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
       "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation",
+      "browserGateUpload": "Attaches files on this Mac to a page that is not on localhost ({url}). Files: {files}",
       "toolAsk": "This tool is set to Ask Every Time in the tool permissions of tanacode",
       "toolAllow": "This tool is set to Always Allow in the tool permissions of tanacode",
       "browserGateInside": "The page is on a site allowed for Claude, so it opens without confirmation",
+      "browserGateLeave": "A page other than localhost ({url}) refused to be left (it may have unsaved input). If you allow it, Claude leaves the page, and what was entered may be lost",
       "postWalkthroughGate": "This posts the walkthrough as a comment on a GitHub pull request (it writes outside this Mac)"
     },
     "translate": {
@@ -476,8 +478,13 @@
       "wait_for": "Wait",
       "set_viewport": "Viewport Size",
       "touch": "Touch",
+      "hover": "Hover",
+      "drag": "Drag",
       "throttle": "Throttle",
+      "handle_dialog": "Answer a dialog",
+      "get_downloads": "Downloads",
       "evaluate": "Run JavaScript",
+      "upload_file": "Attach files",
       "ask_user_to_act": "Request to Act"
     },
     "sessions": {
@@ -1211,8 +1218,13 @@
         "wait_for": "Waits for an element or text to appear",
         "set_viewport": "Changes the screen size or the emulated device",
         "touch": "Taps, swipes and pinches",
+        "hover": "Moves the mouse over an element (to see hover menus and the like)",
+        "drag": "Drags and drops (reordering, sliders and the like)",
         "throttle": "Slows down the CPU or the network",
+        "handle_dialog": "Answers a dialog the page opened (leaving a page other than localhost that refused to be left always asks, whatever this setting)",
+        "get_downloads": "Reads the list of files downloaded by Claude's actions",
         "evaluate": "Runs JavaScript on a page other than localhost (on localhost, it always runs without asking)",
+        "upload_file": "Attaches files on this Mac to a page other than localhost (on localhost, it always attaches them without asking)",
         "ask_user_to_act": "Asks you to act in the browser, such as logging in"
       },
       "sessions": {
@@ -1903,7 +1915,8 @@
       "heightOnly": "height {height}"
     },
     "page": {
-      "loadFailed": "Couldn't load {url} ({error})"
+      "loadFailed": "Couldn't load {url} ({error})",
+      "certificate": "The certificate of this site couldn't be verified. Pages with certificate errors open only when they are on this Mac (localhost, 127.0.0.1, *.localhost). Other sites don't open, because someone may be intercepting the connection."
     },
     "chat": {
       "consoleErrors": "Errors logged to the in-app browser console ({url}):\n{errors}\n"
@@ -1947,6 +1960,22 @@
       "send": "Send",
       "done": "Done",
       "decline": "Can't Do It"
+    },
+    "login": {
+      "label": "Site sign-in",
+      "title": "Sign-in required",
+      "page": "{origin} is asking for a user name and password",
+      "popup": "A window opened from this tab ({origin}) is asking for a user name and password",
+      "proxy": "The proxy {origin} is asking for a user name and password",
+      "realm": "Message from the site: “{realm}”",
+      "retry": "The user name or password seems to be wrong. Please try again.",
+      "insecure": "This connection isn't encrypted. What you enter could be read on the way.",
+      "private": "What you enter is sent only to this site. It isn't shared with Claude.",
+      "proxyPrivate": "What you enter is sent only to this proxy. It isn't shared with Claude.",
+      "username": "User Name",
+      "password": "Password",
+      "submit": "Sign In",
+      "cancel": "Cancel"
     },
     "hosts": {
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",

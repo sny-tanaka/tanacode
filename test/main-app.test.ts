@@ -532,6 +532,7 @@ describe('部品から画面への知らせ', () => {
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
       ask: IpcChannel.BrowserAsk,
+      login: IpcChannel.BrowserLogin,
     });
     browser.send(IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' });
     expect(sentToRenderer()).toEqual([[IpcChannel.BrowserOpen, { sessionId: 's1', url: 'http://localhost' }]]);
@@ -1134,10 +1135,13 @@ describe('ウインドウ', () => {
     expect(popupWindow.showInactive).toHaveBeenCalledTimes(1);
     expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: false, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
     expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
+    // 別ウインドウは、そのタブのアプリ内ブラウザの一覧に入れる（Claude が選んで操作できる）
+    expect(browser.attachPopup.mock.calls.map((c: unknown[]) => [c[0], c[1]])).toEqual([[guest, state.windows.at(-1)!.webContents]]);
     // Claude の操作で許していない先なら開かない
     browser.allowsPopup.mockReturnValueOnce(false);
     expect(open({ url: 'https://outside.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toEqual({ action: 'deny' });
     expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(browser.notOpened.mock.calls).toEqual([[guest, 'file:///etc/hosts', 'scheme']]);
     expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
 });
@@ -1179,6 +1183,44 @@ describe('権限', () => {
     const download = fakeEvent();
     preview.emit('will-download', download);
     expect(download.preventDefault).toHaveBeenCalled();
+  });
+
+  it('証明書の誤りを通すのは、プレビューのセッションの、この Mac の中の先だけ（アプリの画面のセッションには付けない）', async () => {
+    await boot();
+    const preview = state.partitions.get('persist:tanacode-preview')!;
+    const verify = (hostname: string) => {
+      let answer = NaN;
+      preview.verifyProc!({ hostname, verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID', errorCode: -202 }, (result) => (answer = result));
+      return answer;
+    };
+    expect(verify('localhost')).toBe(0);
+    expect(verify('stg.example.com')).toBe(-3);
+    expect(state.defaultSession.verifyProc).toBeNull();
+  });
+
+  it('HTTP の認証は、プレビューのセッションの webview のものだけ受ける（取り消して、人に入力欄を出す）。ほかは Electron の既定のまま', async () => {
+    await boot();
+    const login = (contents: FakeWebContents) => {
+      const event = fakeEvent();
+      const callback = vi.fn();
+      state.app.emit('login', event, contents, { url: 'https://stg.example.com/' }, { isProxy: false, scheme: 'basic', host: 'stg.example.com', port: 443, realm: 'STG' }, callback);
+      return { prevented: event.preventDefault.mock.calls.length > 0, callback };
+    };
+    const guest = new FakeWebContents();
+    guest.type = 'webview';
+    guest.session = state.partitions.get('persist:tanacode-preview');
+    const handled = login(guest);
+    expect(handled.prevented).toBe(true);
+    // 求めたページと、入力欄を出すタブ（ポップアップでなければ同じ）を、そのプロファイルのアプリ内ブラウザに渡す
+    expect(the('BrowserControl').requestLogin.mock.calls).toEqual([
+      [guest, guest, { url: 'https://stg.example.com/', authInfo: { isProxy: false, scheme: 'basic', host: 'stg.example.com', port: 443, realm: 'STG' } }, handled.callback],
+    ]);
+    // アプリの画面・ほかのセッションの webview には、何もしない
+    expect(login(mainWindow().webContents).prevented).toBe(false);
+    const other = new FakeWebContents();
+    other.type = 'webview';
+    other.session = state.defaultSession;
+    expect(login(other).prevented).toBe(false);
   });
 });
 

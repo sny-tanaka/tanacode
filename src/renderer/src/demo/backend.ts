@@ -717,6 +717,10 @@ export class DemoBackend {
           this.onBrowserAnswer(sessionId, askId, answer);
         },
         onShow: () => () => {},
+        // デモのページは認証を求めない
+        onLogin: () => () => {},
+        logins: () => ok([]),
+        answerLogin: () => {},
       },
       pathForFile: () => '',
       language: () => 'ja',

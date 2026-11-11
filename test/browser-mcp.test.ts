@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -13,17 +13,19 @@ import {
   isClaudeAllowedUrl,
   isLocalUrl,
   normalizeHostPattern,
+  uploadPaths,
 } from '../src/shared/browser-tools';
 import { setLanguage, t } from '../src/shared/i18n';
 import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
 import { McpBridge as BrowserBridge, callBridge as rawCallBridge, textResult, type BridgeRequest } from '../src/main/mcp-bridge';
-import { BROWSER_GATE_COMMAND, gateOutput, navigateGateOutput, readAnswer, readGateInput, readNavigateAnswer, runGate } from '../src/main/browser-gate';
+import { BROWSER_GATE_COMMAND, gateOutput, leaveGateOutput, navigateGateOutput, readAnswer, readGateInput, readLeaveAnswer, readNavigateAnswer, runGate } from '../src/main/browser-gate';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
 import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
 import { ownSettings } from '../src/main/statusline';
+import { permissionFile, TOOL_PERMISSIONS_DIR_ENV } from '../src/main/tool-permissions';
 
 // アプリ内ブラウザの MCP。中継（MCP の JSON-RPC）・アプリとのソケット・Claude に許す先・起動の引数
 
@@ -400,15 +402,17 @@ describe('起動の引数', () => {
   type Hook = { matcher: string; hooks: { type: string; command: string; timeout?: number }[] };
   const gateHooks = (settings: { hooks?: { PreToolUse?: Hook[] } }) => (settings.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => x.command === BROWSER_GATE_COMMAND));
 
-  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行と開く先の確認を決める', () => {
+  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行・ファイルの添付と開く先の確認を決める', () => {
     const args = claudeArgs({ ...base, browser: launch, sessionId: 's1' });
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
-    expect(gateHooks(settings)).toEqual([{ matcher: `^(${browserToolId('navigate')}|${browserToolId('evaluate')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gateHooks(settings)).toEqual([
+      { matcher: `^(${browserToolId('navigate')}|${browserToolId('handle_dialog')}|${browserToolId('evaluate')}|${browserToolId('upload_file')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] },
+    ]);
     // permissions.ask では、ページによって変えられない。許可のルールも足さない
     expect(settings).not.toHaveProperty('permissions');
-    expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('evaluate')]);
+    expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('handle_dialog'), browserToolId('evaluate'), browserToolId('upload_file')]);
     // オフなら足さない
     const off = claudeArgs(base);
     expect(off).not.toContain('--mcp-config');
@@ -462,6 +466,17 @@ describe('確認のフック', () => {
     expect(decision(gateOutput(null)).permissionDecision).toBe('ask');
   });
 
+  it('ファイルの添付: localhost のページなら確認なし（allow）、それ以外は、送り先のページと添付するファイルを理由に書いて確認を出させる（ask）', () => {
+    expect(decision(gateOutput({ local: true, url: 'http://localhost:3000/' }, false, ['/tmp/a.pdf'])).permissionDecision).toBe('allow');
+    expect(decision(gateOutput({ local: false, url: 'https://workflow.example.test/' }, false, ['/tmp/a.pdf', '/tmp/b.pdf']))).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'ask',
+      permissionDecisionReason: 'この Mac のファイルを、localhost 以外のページ（https://workflow.example.test/）に添付します。添付するファイル: /tmp/a.pdf, /tmp/b.pdf',
+    });
+    expect(uploadPaths({ paths: ['/tmp/a.pdf', 1] })).toEqual(['/tmp/a.pdf', '1']);
+    expect(uploadPaths({})).toEqual([]);
+  });
+
   it('開く: 許す先の外なら、オリジンを添えて確認を出させる（ask）。許す先の中は確認なし（allow。plan では何も決めない）。アプリの答えが分からないときは何も決めない', () => {
     const outside = decision(navigateGateOutput({ outside: 'https://example.com' }));
     expect(outside).toEqual({
@@ -481,6 +496,43 @@ describe('確認のフック', () => {
     } finally {
       setLanguage('ja');
     }
+  });
+
+  it('ダイアログに答える: 離れるのを拒んだ localhost 以外のページを離れるときだけ、URL を添えて確認を出させる（ask）。ほかは何も決めない', () => {
+    expect(decision(leaveGateOutput({ leave: 'https://app.example.com/edit' }))).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'ask',
+      permissionDecisionReason:
+        'localhost 以外のページ（https://app.example.com/edit）が、離れるのを拒んでいます（入力した内容が保存されていないことがあります）。許すと、Claude はこのページを離れ、入力した内容は失われることがあります',
+    });
+    expect(leaveGateOutput({ leave: null })).toBe('{}');
+    expect(leaveGateOutput(null)).toBe('{}');
+    expect(readLeaveAnswer(textResult('{"leave":"https://app.example.com/"}'))).toEqual({ leave: 'https://app.example.com/' });
+    expect(readLeaveAnswer(textResult('{"leave":null}'))).toEqual({ leave: null });
+    expect(readLeaveAnswer(textResult('{"leave":1}'))).toBeNull();
+    expect(readLeaveAnswer(textResult('{"leave":null}', true))).toBeNull();
+  });
+
+  it('ダイアログに答える: アプリに聞いて決める。「常に許可」でも、離れる確認は省かない。アプリが無いときは何も決めない', async () => {
+    const socketPath = join(root, 'gate-leave.sock');
+    let leave: string | null = 'https://app.example.com/edit';
+    const bridge = new BrowserBridge(socketPath, async () => textResult(JSON.stringify({ leave })));
+    await bridge.start();
+    const dir = mkdtempSync(join(tmpdir(), 'tanacode-permissions-'));
+    const previous = process.env[TOOL_PERMISSIONS_DIR_ENV];
+    process.env[TOOL_PERMISSIONS_DIR_ENV] = dir;
+    try {
+      writeFileSync(permissionFile(dir, browserToolId('handle_dialog'), 'allow'), '');
+      expect(decision(await runGate(socketPath, 's1', 5000, hookInput('handle_dialog', { accept: true }))).permissionDecision).toBe('ask');
+      leave = null;
+      expect(await runGate(socketPath, 's1', 5000, hookInput('handle_dialog', { accept: true }))).toBe('{}');
+    } finally {
+      bridge.close();
+      if (previous === undefined) delete process.env[TOOL_PERMISSIONS_DIR_ENV];
+      else process.env[TOOL_PERMISSIONS_DIR_ENV] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(await runGate(socketPath, 's1', 5000, hookInput('handle_dialog', { accept: true }))).toBe('{}');
   });
 
   it('標準入力からツールの名前と入力を読む。読めないものは、ツールの名前を空にする', () => {

@@ -39,9 +39,9 @@ describe('既定', () => {
     expect(permissionToolDefaults().size).toBe(PERMISSION_SERVERS.reduce((n, s) => n + s.def.tools.length, 0));
   });
 
-  it('既定: 毎回確認はターミナルに打つ・再起動・セッションを始める・開く（許す先の外）・JavaScript の実行（localhost 以外）・PR に載せるだけ。ほかは常に許可', () => {
+  it('既定: 毎回確認はターミナルに打つ・再起動・セッションを始める・開く（許す先の外）・JavaScript の実行とファイルの添付（localhost 以外）・PR に載せるだけ。ほかは常に許可', () => {
     const asks = [...permissionToolDefaults()].filter(([, p]) => p === 'ask').map(([id]) => id).sort();
-    expect(asks).toEqual([browserToolId('evaluate'), browserToolId('navigate'), sessionToolId('restart_app'), sessionToolId('start_session'), terminalToolId('type_in_terminal'), walkthroughToolId('post_walkthrough')].sort());
+    expect(asks).toEqual([browserToolId('evaluate'), browserToolId('navigate'), browserToolId('upload_file'), sessionToolId('restart_app'), sessionToolId('start_session'), terminalToolId('type_in_terminal'), walkthroughToolId('post_walkthrough')].sort());
     expect(ruleOf(browserToolId('screenshot'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(browserToolId('ask_user_to_act'))).toEqual({ rule: 'allowed', permission: 'allow' });
     expect(ruleOf(sessionToolId('send_message'))).toEqual({ rule: 'allowed', permission: 'allow' });
@@ -118,11 +118,12 @@ describe('フック', () => {
   const input = (tool: string, mode = 'default', toolInput: Record<string, unknown> = {}) => ({ session_id: 's', permission_mode: mode, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: toolInput });
   const decisionOf = (command: string, tool: string, dir: string | null, mode?: string) => run(command, input(tool, mode), dir).hookSpecificOutput?.permissionDecision ?? null;
 
-  it('アプリに問い合わせる確認のフックのツール（開く・JavaScript の実行・ターミナルに打つ）を除く、全部のツールに 1 つずつ当たる', () => {
+  it('アプリに問い合わせる確認のフックのツール（開く・JavaScript の実行・ファイルの添付・ターミナルに打つ）を除く、全部のツールに 1 つずつ当たる', () => {
     const hooks = toolPermissionHooks();
-    expect(hooks).toHaveLength(permissionToolDefaults().size - 3);
+    expect(hooks).toHaveLength(permissionToolDefaults().size - 4);
     expect(hooks.map((h) => h.matcher)).not.toContain(`^${browserToolId('navigate')}$`);
     expect(hooks.map((h) => h.matcher)).not.toContain(`^${browserToolId('evaluate')}$`);
+    expect(hooks.map((h) => h.matcher)).not.toContain(`^${browserToolId('upload_file')}$`);
     expect(hooks.map((h) => h.matcher)).not.toContain(`^${terminalToolId('type_in_terminal')}$`);
     expect(hooks.find((h) => h.matcher === `^${sessionToolId('start_session')}$`)?.hooks).toEqual([{ type: 'command', command: toolPermissionCommand(sessionToolId('start_session'), 'always'), timeout: 10 }]);
     // matcher は、そのツールの名前だけに当たる（名前の一部が同じほかのツールに当たらない）

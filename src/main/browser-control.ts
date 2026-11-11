@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { nativeImage, webContents as allWebContents, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, isAbsolute, join } from 'node:path';
+import { nativeImage, webContents as allWebContents, type DownloadItem, type KeyboardInputEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import {
   BROWSER_DEVICES,
+  BROWSER_DIALOG_TOOL,
   BROWSER_MCP,
   browserTool,
   browserToolId,
@@ -11,23 +12,31 @@ import {
   isLocalUrl,
   NETWORK_PRESETS,
   THROTTLE_LIMITS,
+  DRAG_LIMITS,
   TOUCH_LIMITS,
   VIEWPORT_LIMITS,
   type NetworkPresetName,
+  uploadPaths,
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
+import { describeDialog, PageDialogs } from './browser-dialogs';
+import { BrowserDownloads, describeDownload, MAX_DOWNLOAD_BYTES, MAX_DOWNLOADS_PER_CALL } from './browser-downloads';
+import { certificateErrorHint } from './browser-certificates';
+import { BrowserLogins, type LoginRequest } from './browser-logins';
 import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
+import { MAX_POPUPS } from './browser-windows';
 import { textResult, type ToolResult } from './mcp-bridge';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
 // ページが開くポップアップ（features 付きの window.open など）は、アプリ内ブラウザの外の別ウインドウで開く（browser-windows.ts）。
-// 別ウインドウは Claude の操作の対象にしない。Claude の操作で開いたときは、そのことを伝える（allowsPopup）。
+// 別ウインドウも、タブの一覧に「ポップアップ」として入れ（attachPopup）、select_tab で選べば、タブと同じように読んで操作できる。
+// 許可は開いたタブのものを分け合う（ポップアップは、開いたタブの中のログインの窓などとして扱う）。Claude の操作で開いたときは、そのことを伝える（allowsPopup）。
 // クリックは CDP（Input.*）で送る。キーと文字は、ページそのもの（webContents）に sendInputEvent・insertText で送る（key の説明）。
 // どちらもウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
@@ -36,6 +45,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // 許す先（isClaudeAllowedUrl）の外のページも開けるが、開くたびに人の許可を求める（フックが Claude Code の許可の確認を出させる。browser-gate.ts）。
 // 人が許したら、そのタブでそのオリジンを許可し、タブを閉じるまで、その中の操作（読む・押す・同じオリジンの中の移動）には許可を求めない。
 // 別のオリジンへ移ろうとしたら止め、続けるなら、また人に許可を求める（navigate の action: "continue"）。別オリジンの iframe には、許可は効かない。
+// ページが出すダイアログ（alert・confirm・離れるのを拒んだこと）は、止まったページを待たずに Claude に伝え、handle_dialog で答えさせる（browser-dialogs.ts）。
+// Claude の操作で起きたダウンロードは、許した先からのものだけ保存してパスを伝える（takeDownload・browser-downloads.ts）。
 // Claude に返す文は英語。画面の項目（メニュー・帯のボタン）の名前だけ、Claude が利用者に伝えられるよう t() で画面の言語にする
 
 // 要素を探したり読んだりするスクリプトを動かす、ページとは別の JavaScript の世界（ページのスクリプトに書き換えられない）
@@ -52,6 +63,10 @@ const MAX_IMAGE_SIDE = 1568;
 const MAX_FULL_PAGE_RATIO = 2.5;
 // 1 回の操作の上限。中継の待ち（90 秒）より短くする
 const TOOL_TIMEOUT_MS = 60_000;
+// 操作のあと、その操作で始まったダウンロードが終わるのを待つ上限
+const DOWNLOAD_WAIT_MS = 20_000;
+// ツールの始めに、外れた CDP をつなぎ直すのを待つ上限
+const WATCH_WAIT_MS = 2_000;
 // 撮るのを待つ上限。ふつうは数十ミリ秒で撮れる。返ってこないのは、アプリの画面が描かれていないとき（capture のコメント）なので、
 // 1 回の操作の上限まで待たずに、理由の見当を添えて断る
 const CAPTURE_TIMEOUT_MS = 15_000;
@@ -90,6 +105,8 @@ const ACTIVE_LINGER_MS = 8_000;
 const OPERATING_GRACE_MS = 2_000;
 // 1 つのセッションで開けるタブの数（ページが window.open を繰り返しても、タブで埋まらないように）
 const MAX_TABS = 20;
+// 一覧に入れたポップアップの ID の頭（あとに中身の webContents の ID。画面のタブの ID（tab-<番号>）とは重ならない）
+const POPUP_TAB = 'popup-';
 const VIEWPORTS: Record<string, number> = { full: 0, mobile: 390, tablet: 768 };
 // 保存しておくスクリーンショットの数（screenshot の save。古いものから消す）
 const MAX_SAVED_SHOTS = 100;
@@ -97,6 +114,8 @@ const MAX_SAVED_SHOTS = 100;
 const LONG_PRESS_MS = 800;
 const SWIPE_MS = 300;
 const TAP_MS = 50;
+// ドラッグで動かす既定の時間
+const DRAG_MS = 300;
 // 2 本指のタップ・なぞるときの指の間（CSS の px）
 const FINGER_GAP = 40;
 const DEFAULT_STYLES = [
@@ -245,6 +264,8 @@ type Guest = {
   logs: Logs;
   // CDP（debugger）をつないだか
   cdp: boolean;
+  // 別プロセスの iframe にもつないだか（Target.setAutoAttach。connect の frames）。CDP が外れたら false に戻す
+  framesAttached?: boolean;
   // 別プロセスで動く iframe（別サイトのもの）の CDP のセッション（Target.setAutoAttach でつなぐ）。
   // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る。
   // セッションの ID → その iframe のフレームの ID（CDP の targetId。DOM.describeNode の frameId と同じ）
@@ -260,7 +281,14 @@ type Guest = {
   // Claude の操作の間に、許していない先へ移ろう（開こう）として止めた先。navigate の action: "continue" で、人に許可を求めて開く。
   // newWindow: ページが新しいウインドウで開こうとしたもの（新しいタブで開く）
   stopped: { url: string; newWindow: boolean } | null;
+  // ポップアップの別ウインドウ（attachPopup）。opener: 開いたタブ（ポップアップから開いたものも、もとのタブ）の ID。タブなら無い
+  popup?: { opener: string } & PopupWindow;
 };
+// ポップアップの別ウインドウの操作（browser-windows.ts が渡す）。close: 閉じる / size: 中身の大きさ（CSS の px）
+export type PopupWindow = { close: () => void; size: () => { width: number; height: number } };
+// ページが新しいウインドウで開こうとして、開かなかったわけ（notOpened）。popup-limit: 1 つのタブから開けるポップアップの数を超えた /
+// tab-limit: セッションのタブの数を超えた / scheme: http(s) でない先（file:・mailto: など）
+export type NotOpenedReason = 'popup-limit' | 'tab-limit' | 'scheme';
 // セッションのタブ
 type Tabs = {
   tabs: Map<string, Guest>;
@@ -271,7 +299,15 @@ type Tabs = {
   blocked: string | null;
   opened: string[];
   popups: string[];
-  popupBlocked: string | null;
+  // 許していない先へ移ろうとして止めたポップアップの移動。tabId: そのポップアップ（タブとして受け付けていなければ null）
+  popupBlocked: { url: string; tabId: string | null } | null;
+  // Claude の操作の間に開いたポップアップ（attachPopup で受け付けたもの）と、開かなかったもの（Claude に返す文。呼び出しごとに空にする）
+  popupTabs: string[];
+  notOpened: string[];
+  // 呼び出しの外で起きたことのうち、次の呼び出しで Claude に伝えるもの（今のタブにしていたポップアップが閉じた など）
+  notes: string[];
+  // 画面が知らせてきた今のタブ（Claude がポップアップを選んでいる間も、画面のタブのまま。ポップアップが閉じたら、ここへ戻す）
+  shown: string | null;
   // これからできるタブに渡す許可（navigate で新しいタブに開く・許可したページが同じオリジンを新しいウインドウで開く）。
   // 画面がタブを作って知らせてくるまでの間だけ（until まで）
   handoff: { origin: string; until: number }[];
@@ -289,7 +325,10 @@ type Emulation = { label: string; width: number; height: number; deviceScaleFact
 // 控えは「断る」にしか使わないので、期限やメニューのオフでは消さない（消すと、確認したページを確かめずに動かす側に倒れる）。
 // 控えが無い（フックが動かなかった・アプリに聞けなかった・上限で押し出された）呼び出しも、動かさない。捨てるのは、上限と forget だけ
 // toolUseId: その呼び出しの ID（フックの入力に tool_use_id があったときだけ）。呼び出しにも ID があれば、ID で結びつける
-type EvaluateMark = { expression: string; origin: string | null; toolUseId?: string };
+// ファイルの添付（upload_file）も同じ控えを使う。tool: どちらのツールか / key: 比べる入力（evaluate は式、upload_file は添付するファイルのパスの JSON）。
+// 添付は、人が確認した送り先のオリジンのページにだけ、確認したファイルだけを入れる
+type CheckedTool = 'evaluate' | 'upload_file';
+type EvaluateMark = { tool: CheckedTool; key: string; origin: string | null; toolUseId?: string };
 
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
@@ -309,6 +348,8 @@ type Deps = {
   drawHost: () => () => void;
   // screenshot の save で、撮った画像を保存するフォルダ（アプリのデータの中）
   screenshotDir: string;
+  // Claude の操作で起きたダウンロードを保存するフォルダ（アプリのデータの中）
+  downloadDir: string;
   // あるセッションか（アーカイブしたものも含む）
   hasSession: (id: string) => boolean;
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
@@ -322,10 +363,19 @@ type Deps = {
     selectTab: typeof IpcChannel.BrowserSelectTab;
     closeTab: typeof IpcChannel.BrowserCloseTab;
     ask: typeof IpcChannel.BrowserAsk;
+    login: typeof IpcChannel.BrowserLogin;
   };
 };
 
 class ToolError extends Error {}
+
+// upload_file で、押した要素がファイル選択を開くのを待つ長さ
+const FILE_CHOOSER_WAIT_MS = 5000;
+
+// upload_file の、確認した呼び出しと添付する呼び出しを比べる入力（添付するファイルのパス。押す要素は比べない。送り先はオリジンで比べる）
+function uploadKey(input: Record<string, unknown>): string {
+  return JSON.stringify(uploadPaths(input));
+}
 
 export class BrowserControl {
   private readonly sessions = new Map<string, Tabs>();
@@ -341,16 +391,33 @@ export class BrowserControl {
   private readonly drawing = new Map<WebContents, number>();
   // ユーザーに頼んでいる操作
   private readonly asks: BrowserAsks;
+  // ページが求めた HTTP の認証の入力欄（人にだけ出す。browser-logins.ts）
+  private readonly logins: BrowserLogins;
   // 人に確認した、許す先の外を開く印（セッションごと）
   private readonly marks = new Map<string, Mark[]>();
   // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
   private readonly evaluateMarks = new Map<string, EvaluateMark[]>();
+  // ページが出したダイアログ（alert・confirm）
+  private readonly dialogs = new PageDialogs();
+  // Claude の操作で、ページが離れるのを拒んだ（beforeunload）時刻（タブごと。離れるか、留まると答えるまで残す）
+  private readonly refusedLeave = new WeakMap<WebContents, number>();
+  // handle_dialog で、次の 1 回だけ離れてよいとしたタブと、その期限
+  private readonly leaveAllowed = new WeakMap<WebContents, number>();
+  // 離れることを人に確認した印（確認のフックが ask を返したときに控え、handle_dialog が 1 回だけ使う）。タブと期限
+  private readonly leaveMarks = new Map<string, { contents: WebContents; until: number }>();
+  // Claude の操作で起きたダウンロード
+  private readonly downloads: BrowserDownloads;
+  // 呼び出しごとに受け取ったダウンロードの数（セッションごと）と、呼び出しの間にダウンロードが始まった（止めたものも）セッション
+  private readonly callDownloads = new Map<string, number>();
+  private readonly downloadSeen = new Set<string>();
 
   constructor(private readonly deps: Deps) {
+    this.downloads = new BrowserDownloads(deps.downloadDir);
     this.asks = new BrowserAsks((sessionId, ask) => {
       this.deps.send(this.deps.channels.ask, { sessionId, ask } satisfies BrowserAskChange);
       this.deps.onAsk(sessionId, ask);
     });
+    this.logins = new BrowserLogins((change) => this.deps.send(this.deps.channels.login, change));
   }
 
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
@@ -431,6 +498,17 @@ export class BrowserControl {
     session.tabs.set(tabId, guest);
     // 並びは、画面がタブを作った順（タブの ID の番号）
     session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
+    this.watchGuest(sessionId, guest);
+    for (const resolve of this.waiters.get(sessionId) ?? []) resolve(guest);
+    this.waiters.delete(sessionId);
+    this.logins.place(contents, { sessionId, tabId });
+    // Claude が決めた画面の大きさは、あとで開いたタブにも当てる（人が開いたタブも、枠はその大きさになるため）
+    if (session.viewport) void this.emulate(guest, session.viewport).catch(() => undefined);
+  }
+
+  // タブ（とポップアップ）の CDP と、無くなったときの見張り（attach・attachPopup）
+  private watchGuest(sessionId: string, guest: Guest): void {
+    const { contents, tabId } = guest;
     // CDP が外れると、CDP で決めた画面の大きさと遅くする設定も消える
     contents.debugger.on('detach', () => {
       guest.cdp = false;
@@ -447,12 +525,117 @@ export class BrowserControl {
     });
     contents.once('destroyed', () => {
       const current = this.sessions.get(sessionId);
-      if (current?.tabs.get(tabId) === guest) current.tabs.delete(tabId);
+      if (current?.tabs.get(tabId) !== guest) return;
+      if (guest.popup) this.popupGone(current, guest);
+      current.tabs.delete(tabId);
     });
-    for (const resolve of this.waiters.get(sessionId) ?? []) resolve(guest);
-    this.waiters.delete(sessionId);
-    // Claude が決めた画面の大きさは、あとで開いたタブにも当てる（人が開いたタブも、枠はその大きさになるため）
-    if (session.viewport) void this.emulate(guest, session.viewport).catch(() => undefined);
+    // ダイアログの見張り（タブにもポップアップにも付ける）
+    this.watchDialogs(guest);
+  }
+
+  // ---- ポップアップ ----
+  // ページが開いたポップアップの別ウインドウも、タブの一覧に「ポップアップ」として入れ、選べば読んで操作できるようにする。決めたこと:
+  // - 許可は、開いたタブのもの（granted）を、同じ Set のまま分け合う。ポップアップの移る先は、もとから開いたタブで許した先かで確かめていて
+  //   （browser-windows.ts）、読む・操作するときと、移るときの判断をそろえるため。ポップアップで人が許したオリジンも、開いたタブに効く
+  // - 許していない先のページ（外の認証のページなど）は、タブと同じく、題も URL の道筋も読ませず、操作もさせない（current が断る）。
+  //   OAuth のログインの窓は、たいていこれに当たるので、人に頼む（ask_user_to_act）よう伝える
+  // - パスワード欄は、タブと同じく、値を読ませない（get_text など）が、打つのは止めない（自分で作っているページのログインを、
+  //   テスト用の値で試すため）。ログイン・秘密の値を入れないことは、Claude への説明で決める（タブと同じ）
+  // - 選んでも、今のタブにするだけで、画面のタブは替えない（別ウインドウは、アプリの画面のタブの帯に無い）。Claude の操作で開いても、
+  //   今のタブは替えない（ログインの窓は、すぐに自分で閉じることが多く、続けて操作するのは開いたページのことが多いため）
+  // - 画面の大きさ（set_viewport）と遅くする設定（throttle）は当てない（大きさはページが決めた別ウインドウのもの。遅くしたことを、
+  //   ツールバーで人に見せられない）
+
+  // ポップアップの別ウインドウができた（browser-windows.ts の adopt）。opener: 開いたタブ（webview）/ contents: 別ウインドウの中身。
+  // 知らないタブ（画面からまだ知らせが来ていない）から開いたものは、受け付けない（一覧に出ず、操作もできない。守りは browser-windows.ts が付ける）
+  attachPopup(opener: WebContents, contents: WebContents, window: PopupWindow): void {
+    const found = this.find(opener);
+    if (!found || found.guest.popup || contents.isDestroyed()) return;
+    const { sessionId, session, guest: root } = found;
+    const tabId = `${POPUP_TAB}${contents.id}`;
+    if (session.tabs.has(tabId)) return;
+    const guest: Guest = {
+      tabId,
+      contents,
+      logs: this.track(contents),
+      cdp: false,
+      children: new Map(),
+      granted: root.granted,
+      stopped: null,
+      emulated: null,
+      throttle: { cpu: 1, network: null },
+      popup: { opener: root.tabId, ...window },
+    };
+    // ポップアップは、タブのあと（tabNumber）に、開いた順に並ぶ
+    session.tabs.set(tabId, guest);
+    session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
+    this.watchGuest(sessionId, guest);
+    if (this.operating(sessionId)) session.popupTabs.push(tabId);
+  }
+
+  // ページが新しいウインドウ（タブ・ポップアップ）を開こうとして、開かなかった（browser-windows.ts と openFromPage）。
+  // Claude の操作の間なら、開かなかったことと、わけを伝える（黙って開かないと、Claude は押したのが効かなかったわけが分からない）
+  notOpened(contents: WebContents, url: string, reason: NotOpenedReason): void {
+    const found = this.find(contents);
+    if (!found || !this.operating(found.sessionId)) return;
+    const { session, guest } = found;
+    const where = (() => {
+      if (reason === 'scheme') {
+        const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1];
+        return scheme ? `a ${scheme.toLowerCase()}: URL` : url === '' ? 'an empty URL' : 'an invalid URL';
+      }
+      return isBlank(url) ? 'about:blank' : this.shownUrl(url, guest);
+    })();
+    const text =
+      reason === 'popup-limit'
+        ? `The page tried to open a popup window (${where}), but it was not opened: the tab that opened it already has ${MAX_POPUPS} popup windows open, the limit for a tab. Close the ones you do not need with close_tab (list_tabs shows them), then try again.`
+        : reason === 'tab-limit'
+          ? `The page tried to open ${where} in a new tab, but it was not opened: this session already has ${MAX_TABS} tabs open, the limit. Close the tabs you do not need with close_tab, then try again.`
+          : `The page tried to open ${where} in a new window, but it was not opened: the in-app browser opens only http and https pages in new windows.`;
+    if (!session.notOpened.includes(text)) session.notOpened.push(text);
+  }
+
+  // 一覧に入れたポップアップが閉じた（ページの window.close・人が閉じた・開いたタブを閉じた・close_tab）。
+  // 今のタブにしていたなら、画面の今のタブへ戻し、次の呼び出しでそう伝える（呼び出しの間に閉じても、気づけるように）
+  private popupGone(session: Tabs, guest: Guest): void {
+    if (session.active !== guest.tabId) return;
+    const number = [...session.tabs.keys()].indexOf(guest.tabId) + 1;
+    const back = session.shown && session.tabs.has(session.shown) ? session.shown : guest.popup!.opener;
+    session.active = session.tabs.has(back) ? back : null;
+    const left = [...session.tabs.keys()].filter((id) => id !== guest.tabId);
+    const next = session.active ? left.indexOf(session.active) + 1 : 0;
+    session.notes.push(`The popup window that was the current tab (tab ${number}) has closed.${next > 0 ? ` The current tab is now tab ${next}.` : ''} Check the tabs with list_tabs.`);
+  }
+
+  // Claude の操作で開いたポップアップを伝える文。一覧に入ったもの（まだ開いているもの）は、番号も添える
+  private popupsOpened(session: Tabs): string {
+    const origins = [...new Set(session.popups.map((url) => (isBlank(url) ? 'about:blank' : originShown(url))))].join(', ');
+    const ids = [...session.tabs.keys()];
+    const numbers = session.popupTabs.map((id) => ids.indexOf(id) + 1).filter((n) => n > 0);
+    if (numbers.length === 0) return `Opened a popup window (${origins}) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.`;
+    return (
+      `Opened a popup window (${origins}) in a separate window: ${numbers.length === 1 ? `tab ${numbers[0]}` : `tabs ${numbers.join(', ')}`} in list_tabs. ` +
+      'The current tab did not change. To read or operate the popup, switch to it with select_tab. ' +
+      'If it shows a page that is not allowed for Claude (such as a login page of another site), ask the user to act there with ask_user_to_act.'
+    );
+  }
+
+  // ポップアップの移動を止めたことを伝える文。一覧に入れたものは、選んで continue で進めることも伝える
+  private popupBlockedText(session: Tabs, blocked: { url: string; tabId: string | null }): string {
+    const number = blocked.tabId ? [...session.tabs.keys()].indexOf(blocked.tabId) + 1 : 0;
+    if (number === 0) return `Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${originShown(blocked.url)}).`;
+    return (
+      `Blocked an attempt to move the popup window (tab ${number}) to a page not allowed for Claude (${originShown(blocked.url)}). ` +
+      'To open it there, switch to the popup with select_tab and call navigate with action "continue" (tanacode asks the user for permission).'
+    );
+  }
+
+  // ポップアップでは使えないツール。使えないわけを返す（使えるなら null）
+  private popupRefuses(guest: Guest, name: string): string | null {
+    if (!guest.popup) return null;
+    if (name === 'set_viewport') return 'set_viewport does not apply to a popup window: it keeps the size of its window. Switch to a tab with select_tab first.';
+    if (name === 'throttle') return 'throttle does not apply to a popup window (the user could not see or turn it off in the toolbar). Switch to a tab with select_tab first.';
+    return null;
   }
 
   // 人がツールバーで表示幅を選んだ。Claude が set_viewport で決めた大きさ・画素密度・タッチをやめる（画面は、選んだ幅にする）
@@ -471,7 +654,9 @@ export class BrowserControl {
 
   // 画面で今のタブが変わった（タブが無くなったら null）
   activate(sessionId: string, tabId: string | null): void {
-    this.tabsOf(sessionId).active = tabId;
+    const session = this.tabsOf(sessionId);
+    session.active = tabId;
+    session.shown = tabId;
   }
 
   // Claude が操作している最中（と、終わってすぐ）の webview か。この間は、許していない先へ移らせず、開かせない
@@ -483,13 +668,15 @@ export class BrowserControl {
   // webview のトップのフレームが url へ移ろうとしている（リンク・リダイレクト・ページのスクリプト）。
   // Claude の操作で、許していない先（許す先の外で、このタブで許可していないオリジン）へ移ろうとしていれば止める（true を返す）。
   // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない。
-  // popup: contents のタブが開いたポップアップ（別ウインドウ）の移動。そのタブで許した先かを見て、止めたことだけを Claude に伝える
-  // （Claude はポップアップを操作できないので、continue の先には控えない）
-  blocksNavigation(contents: WebContents, url: string, popup = false): boolean {
-    const found = this.find(contents);
+  // opener: contents がポップアップ（別ウインドウ）なら、それを開いたタブ。一覧に入れたポップアップ（attachPopup）は、そのポップアップに
+  // 止めた先を控える（選んで continue で進める。許可は開いたタブと分け合う）。入れていないものは、開いたタブで許した先かを見て、止めたことだけを伝える
+  blocksNavigation(contents: WebContents, url: string, opener?: WebContents): boolean {
+    const own = this.find(contents);
+    const found = own ?? (opener ? this.find(opener) : null);
     if (!found || !this.operating(found.sessionId) || this.allowedIn(found.guest, url)) return false;
-    if (popup) {
-      found.session.popupBlocked = url;
+    if (found.guest.popup || (opener && !own)) {
+      found.session.popupBlocked = { url, tabId: own ? found.guest.tabId : null };
+      if (own) found.guest.stopped = { url, newWindow: false };
       return true;
     }
     found.session.blocked = url;
@@ -521,7 +708,10 @@ export class BrowserControl {
     const found = this.find(contents);
     if (!found) return false;
     const { sessionId, session, guest } = found;
-    if (session.tabs.size >= MAX_TABS) return true;
+    if ([...session.tabs.values()].filter((tab) => !tab.popup).length >= MAX_TABS) {
+      this.notOpened(contents, url, 'tab-limit');
+      return true;
+    }
     const operating = this.operating(sessionId);
     if (operating && !this.allowedIn(guest, url)) {
       session.blocked = url;
@@ -552,6 +742,22 @@ export class BrowserControl {
     this.asks.answer(sessionId, askId, answer);
   }
 
+  // ページが HTTP の認証を求めた（main の app の login。呼ぶ側が event.preventDefault() したもの）。asker: 求めたページ /
+  // root: 入力欄を出すタブ（asker がタブから開いた別ウインドウなら、そのタブ）。callback はすぐに呼ぶ（browser-logins.ts）
+  requestLogin(asker: WebContents, root: WebContents, request: LoginRequest, callback: (username?: string, password?: string) => void): void {
+    const found = this.find(root);
+    this.logins.request(asker, root, found ? { sessionId: found.sessionId, tabId: found.guest.tabId } : null, request, callback);
+  }
+
+  // 今出している認証の入力欄（画面を作り直したとき用）と、人の入力
+  pendingLogins(): BrowserLoginChange[] {
+    return this.logins.list();
+  }
+
+  answerLogin(sessionId: string, loginId: unknown, answer: unknown): void {
+    this.logins.answer(sessionId, loginId, answer);
+  }
+
   // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）。
   // 人が許した、許す先の外のオリジンと、確認した印も捨てる（オンに戻したら、また人に許可を求める）
   turnOff(): void {
@@ -579,6 +785,15 @@ export class BrowserControl {
       if (guest && !isBlank(url) && this.allowedIn(guest, url)) return null;
       return 'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
     }
+    // ファイルの添付: この Mac のファイルをそのサイトへ送るので、どのページでも人に任せる（localhost のページでは、そもそも確認が出ない）
+    if (request.tool === browserToolId('upload_file')) {
+      return 'it asks to attach files on this Mac to a page in the in-app browser (which sends them to that site), and only the user can answer such a prompt.';
+    }
+    if (request.tool === browserToolId(BROWSER_DIALOG_TOOL)) {
+      const mark = this.leaveMarks.get(sessionId);
+      if (!mark || mark.until <= Date.now()) return null;
+      return 'it asks to leave a page (other than localhost) that refused to be left, which may discard what the user entered, and only the user can answer such a prompt.';
+    }
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
@@ -586,8 +801,13 @@ export class BrowserControl {
   // セッションを消した・アーカイブしたとき
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
+    this.logins.forget(sessionId);
     this.marks.delete(sessionId);
     this.evaluateMarks.delete(sessionId);
+    this.leaveMarks.delete(sessionId);
+    this.downloads.forget(sessionId);
+    this.callDownloads.delete(sessionId);
+    this.downloadSeen.delete(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -618,14 +838,17 @@ export class BrowserControl {
     this.begin(sessionId, mcpToolLabel(BROWSER_MCP, tool));
     const release = this.drawHost();
     let timer: NodeJS.Timeout | undefined;
+    // 呼び出しの間にページがダイアログを出したら、止まったページを待たずに返す
+    const dialog = this.dialogOpened(sessionId);
     try {
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new ToolError(`Did not finish within ${TOOL_TIMEOUT_MS / 1000} seconds.`)), TOOL_TIMEOUT_MS);
       });
-      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout]);
+      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout, dialog.opened]);
     } catch (error) {
       return textResult(error instanceof Error ? error.message : String(error), true);
     } finally {
+      dialog.stop();
       clearTimeout(timer);
       release();
       this.end(sessionId);
@@ -640,7 +863,7 @@ export class BrowserControl {
     const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
     if (!guest || isBlank(url)) return ['Current tab: (no page open)'];
     if (!this.allowedIn(guest, url)) return [`The current page is not allowed for Claude (${originOf(url) ?? 'invalid URL'}). It can be neither read nor operated any further.`];
-    return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`];
+    return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`, ...this.logins.notes(guest.contents)];
   }
 
   // 確認のフック（browser-gate.ts）への答え。request.tool: ツールの名前（mcp__…）/ request.input: ツールの入力。待たない（フックは短い間しか待たない）
@@ -652,16 +875,22 @@ export class BrowserControl {
       const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
       return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
     }
+    if (request.tool === browserToolId(BROWSER_DIALOG_TOOL)) {
+      const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
+      return textResult(JSON.stringify({ leave: this.gateLeave(sessionId, input) }));
+    }
     // メニューでオフのとき・知らないセッションには答えない（フックは、確認を出させる側に倒す）
     if (!this.deps.enabled() || !this.deps.hasSession(sessionId)) return textResult('The in-app browser is not available for this session.', true);
     const guest = this.activeNow(sessionId);
     const url = guest?.contents.getURL() ?? '';
     // 答えたときのページを、同じ式の呼び出しのために控える
     const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
-    if (typeof input.expression === 'string') {
+    const upload = request.tool === browserToolId('upload_file');
+    const key = upload ? uploadKey(input) : typeof input.expression === 'string' ? input.expression : null;
+    if (key !== null) {
       const marks = this.evaluateMarks.get(sessionId) ?? [];
       const toolUseId = typeof request.toolUseId === 'string' ? request.toolUseId : undefined;
-      marks.push({ expression: input.expression, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
+      marks.push({ tool: upload ? 'upload_file' : 'evaluate', key, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
       this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
     }
     // フックは、この URL を確認の理由に書く（Claude Code の確認の理由として、親のセッションにも届く）。許していない先は、オリジンだけ
@@ -714,20 +943,27 @@ export class BrowserControl {
     session.opened = [];
     session.popups = [];
     session.popupBlocked = null;
-    const result = await this.dispatch(sessionId, name, args, toolUseId);
+    session.popupTabs = [];
+    session.notOpened = [];
+    const dialog = this.dialogBlocks(sessionId, name);
+    if (dialog) return dialog;
+    await this.watchPage(sessionId, name);
+    const startedAt = Date.now();
+    const since = this.downloads.next();
+    this.callDownloads.set(sessionId, 0);
+    this.downloadSeen.delete(sessionId);
+    // 失敗しても、それまでに起きたダウンロードは伝える（失敗の文は handle が返すものと同じ）
+    const result = await this.dispatch(sessionId, name, args, toolUseId).catch((error: unknown) => textResult(error instanceof Error ? error.message : String(error), true));
+    await this.afterCall(sessionId, result, startedAt, since);
     if (result.isError) return result;
+    // 呼び出しの外で起きたこと（今のタブにしていたポップアップが閉じた など）
+    for (const note of session.notes.splice(0)) result.content.push({ type: 'text', text: note });
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
     if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${originShown(session.blocked)}).${CONTINUE_HINT}` });
-    // ポップアップは別ウインドウで開き、Claude は操作できない。ログインなどは人に頼むよう伝える（オリジンだけ。URL に認証の途中の値が入っていることがある）
-    if (session.popups.length > 0) {
-      result.content.push({
-        type: 'text',
-        text:
-          `Opened a popup window outside the in-app browser (${[...new Set(session.popups.map((url) => (isBlank(url) ? 'about:blank' : originShown(url))))].join(', ')}). ` +
-          'You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
-      });
-    }
-    if (session.popupBlocked) result.content.push({ type: 'text', text: `Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${originShown(session.popupBlocked)}).` });
+    // ポップアップは別ウインドウで開き、タブの一覧に入る（オリジンだけ。URL に認証の途中の値が入っていることがある）
+    if (session.popups.length > 0) result.content.push({ type: 'text', text: this.popupsOpened(session) });
+    if (session.popupBlocked) result.content.push({ type: 'text', text: this.popupBlockedText(session, session.popupBlocked) });
+    for (const text of session.notOpened) result.content.push({ type: 'text', text });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -746,7 +982,12 @@ export class BrowserControl {
     if (name === 'list_tabs') return this.listTabs(sessionId);
     if (name === 'select_tab') return this.selectTab(sessionId, args.index);
     if (name === 'close_tab') return this.closeTab(sessionId, args.index);
+    if (name === 'get_downloads') return this.listDownloads(sessionId);
+    // ダイアログが出ている間は、ページに何も送らない（画面の大きさを当てる CDP の命令も返らない）
+    if (name === 'handle_dialog') return this.answerDialog(sessionId, await this.current(sessionId), args.accept);
     const guest = await this.current(sessionId);
+    const refused = this.popupRefuses(guest, name);
+    if (refused) throw new ToolError(refused);
     // Claude が決めた画面の大きさが、このタブに当たっていなければ当てる（CDP が外れて消えた・当てる前に操作した）
     // 当てられなくても（CDP をつなげない など）、ツールは続ける（読むツールまで止めない）。当たっていないので、次の呼び出しでまた当てる
     if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport).catch(() => undefined);
@@ -777,12 +1018,206 @@ export class BrowserControl {
         return this.setViewport(sessionId, guest, args);
       case 'touch':
         return this.touch(sessionId, guest, args);
+      case 'hover':
+        return this.hover(sessionId, guest, args);
+      case 'drag':
+        return this.drag(sessionId, guest, args);
       case 'throttle':
         return this.throttle(sessionId, guest, args);
       case 'evaluate':
         return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
+      case 'upload_file':
+        return this.uploadFile(sessionId, guest, args, toolUseId);
     }
     return textResult(`Unknown tool: ${name}`, true);
+  }
+
+  // ---- ダイアログ（browser-dialogs.ts） ----
+
+  // タブのダイアログと、離れるのを拒んだことを見張る。CDP は、ダイアログが出る前につないでおく（出てからは Page.enable が返らない）
+  private watchDialogs(guest: Guest): void {
+    const contents = guest.contents;
+    this.dialogs.watch(contents);
+    // ページが離れるのを拒んだ（beforeunload）。Claude の操作なら、handle_dialog で許していれば 1 回だけ離れる。
+    // 許していなければ留まり（Electron の webview は、何もしなければ移動を取りやめる）、Claude に伝える。人の操作は今までどおり（留まる）
+    contents.on('will-prevent-unload', (event: Electron.Event) => {
+      const found = this.find(contents);
+      if (!found || !this.operating(found.sessionId)) return;
+      const until = this.leaveAllowed.get(contents);
+      this.leaveAllowed.delete(contents);
+      if (until !== undefined && until > Date.now()) {
+        this.refusedLeave.delete(contents);
+        event.preventDefault();
+        return;
+      }
+      this.refusedLeave.set(contents, Date.now());
+    });
+    void this.connect(guest, false).catch(() => undefined);
+  }
+
+  // ツールの始めに、今のタブの CDP がつながっていなければ（DevTools を開いたなどで外れた）、つなぎ直してダイアログを見張る。
+  // ページが応えなくても（重い・見張る前に出たダイアログ）待ちすぎずに進める（どうなったかは、あとの操作が伝える）
+  private async watchPage(sessionId: string, name: string): Promise<void> {
+    if (name === 'list_tabs' || name === 'select_tab' || name === 'close_tab' || name === 'get_downloads') return;
+    const guest = this.activeNow(sessionId);
+    if (!guest || (guest.cdp && guest.contents.debugger.isAttached())) return;
+    await Promise.race([this.connect(guest, false).catch(() => undefined), sleep(WATCH_WAIT_MS)]);
+  }
+
+  // 呼び出しの間に、セッションのどれかのタブでダイアログが出たら、そのことを答える（opened）。stop で見張りをやめる
+  private dialogOpened(sessionId: string): { opened: Promise<ToolResult>; stop: () => void } {
+    let stop = () => {};
+    const opened = new Promise<ToolResult>((resolve) => {
+      stop = this.dialogs.onOpen((contents) => {
+        const found = this.find(contents);
+        if (found?.sessionId !== sessionId) return;
+        resolve(
+          textResult(
+            `${this.dialogText(found.guest)}\n` +
+              `The page is paused until the dialog is answered, so this action may not have finished. Answer it with ${BROWSER_DIALOG_TOOL} (accept true for OK, false for Cancel), then check the page.`,
+          ),
+        );
+      });
+    });
+    return { opened, stop: () => stop() };
+  }
+
+  // 出ているダイアログの説明（タブの番号と、許した先のフレームなら文言）
+  private dialogText(guest: Guest): string {
+    const dialog = this.dialogs.current(guest.contents);
+    if (!dialog) return '';
+    const session = this.find(guest.contents)?.session;
+    const tab = session && session.active !== guest.tabId ? ` (in tab ${[...session.tabs.keys()].indexOf(guest.tabId) + 1}, not the current tab)` : '';
+    return `${describeDialog(dialog, this.allowedIn(guest, dialog.url), originShown(dialog.url))}${tab}`;
+  }
+
+  // 今のタブにダイアログが出ていれば、ページを使うツールは動かさずに伝える（動かすと、返ってこない）
+  private dialogBlocks(sessionId: string, name: string): ToolResult | null {
+    if (name === BROWSER_DIALOG_TOOL || name === 'get_downloads' || name === 'list_tabs' || name === 'select_tab' || name === 'close_tab') return null;
+    const guest = this.activeNow(sessionId);
+    if (!guest || !this.dialogs.current(guest.contents)) return null;
+    return textResult(`${this.dialogText(guest)}\nThe page is paused until the dialog is answered. Answer it with ${BROWSER_DIALOG_TOOL} first (accept true for OK, false for Cancel).`, true);
+  }
+
+  // handle_dialog。今のタブのダイアログに答えるか、離れるのを拒んだページを（次の 1 回だけ）離れてよいことにする
+  private async answerDialog(sessionId: string, guest: Guest, accept: unknown): Promise<ToolResult> {
+    if (typeof accept !== 'boolean') throw new ToolError('accept must be true or false.');
+    const dialog = this.dialogs.current(guest.contents);
+    if (dialog) {
+      await this.cdp(guest, 'Page.handleJavaScriptDialog', { accept }).catch((error: unknown) => {
+        // 人が先に答えた・ページが移った
+        if (!/No dialog is showing/i.test(String(error))) throw new ToolError(`Could not answer the dialog (${error instanceof Error ? error.message : String(error)}).`);
+      });
+      this.dialogs.answered(guest.contents);
+      await settle(guest.contents);
+      const pressed = dialog.type === 'alert' ? 'OK' : accept ? 'OK' : 'Cancel';
+      return this.pageResult(guest, `Pressed ${pressed} in the ${dialog.type} dialog. Now`);
+    }
+    // ほかのタブに出ていれば、そのタブを教える
+    for (const other of this.tabsOf(sessionId).tabs.values()) {
+      if (other !== guest && !other.contents.isDestroyed() && this.dialogs.current(other.contents)) {
+        throw new ToolError(`There is no dialog in the current tab. ${this.dialogText(other)} Switch to that tab with select_tab first.`);
+      }
+    }
+    if (!this.refusedLeave.has(guest.contents)) throw new ToolError('There is no dialog in the current tab, and the page has not refused to be left.');
+    const mark = this.leaveMarks.get(sessionId);
+    this.leaveMarks.delete(sessionId);
+    if (!accept) {
+      this.refusedLeave.delete(guest.contents);
+      return textResult('Stayed on the page (what was entered is kept).');
+    }
+    // localhost 以外のページは、確認のフックが人に確認した印がいる（入力した内容を捨てることがあるため）
+    if (!isLocalUrl(guest.contents.getURL()) && !(mark && mark.contents === guest.contents && mark.until > Date.now())) {
+      throw new ToolError(
+        'Leaving this page (not on localhost) may discard what the user entered, so it needs the permission of the user, and tanacode has no permission from the user for this. ' +
+          `Call ${BROWSER_DIALOG_TOOL} again to ask the user. If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.`,
+      );
+    }
+    this.leaveAllowed.set(guest.contents, Date.now() + MARK_TTL_MS);
+    return textResult(
+      'The next action that leaves this page (navigate, a click on a link, a reload, ...) will leave it once, even though the page refuses, and what was entered may be lost. Repeat the action that tried to leave the page.',
+    );
+  }
+
+  // 確認のフック（handle_dialog）への答え。離れるのを拒んだ localhost 以外のページを離れるなら、人に確認させ（URL。許していない先ならオリジン）、
+  // 確認した印を控える。ほかは null（何も決めない）
+  private gateLeave(sessionId: string, input: Record<string, unknown>): string | null {
+    if (!this.deps.enabled() || !this.deps.hasSession(sessionId) || input.accept !== true) return null;
+    const guest = this.activeNow(sessionId);
+    if (!guest || this.dialogs.current(guest.contents) || !this.refusedLeave.has(guest.contents)) return null;
+    const url = guest.contents.getURL();
+    if (isLocalUrl(url)) return null;
+    this.leaveMarks.set(sessionId, { contents: guest.contents, until: Date.now() + MARK_TTL_MS });
+    return this.shownUrl(url, guest);
+  }
+
+  // 呼び出しのあと。離れるのを拒まれたこと（先頭に）と、ダウンロードを伝える
+  private async afterCall(sessionId: string, result: ToolResult, startedAt: number, since: number): Promise<void> {
+    const session = this.tabsOf(sessionId);
+    const refused = [...session.tabs.values()].some((g) => (this.refusedLeave.get(g.contents) ?? 0) >= startedAt);
+    if (refused) {
+      result.content.unshift({
+        type: 'text',
+        text:
+          'The page refused to be left (a beforeunload handler; it may have unsaved input), so tanacode stayed on the current page and did not leave it. ' +
+          `To leave it anyway, call ${BROWSER_DIALOG_TOOL} with accept true and repeat the action; to stay, call it with accept false.`,
+      });
+    }
+    const records = await this.downloads.settle(sessionId, since, DOWNLOAD_WAIT_MS);
+    for (const record of records) {
+      result.content.push({ type: 'text', text: describeDownload(record) });
+      if (record.state !== 'downloading') record.reported = true;
+    }
+  }
+
+  // ---- ダウンロード（browser-downloads.ts） ----
+
+  // プレビューのセッションでダウンロードが始まった（will-download）。受け取るなら保存先を決めて true（呼び出し元は止めない）。
+  // 受け取るのは、Claude の操作の間に、セッションのタブで起きたもので、そのタブで許した先（許す先か、人がそのタブで許したオリジン）からのものだけ。
+  // 許していない先からのものは止めて、そのタブに控える（navigate の action: "continue" で、人に許可を求めて受け取れる）。
+  // 人の操作のものと、ポップアップの別ウインドウのものは受け取らない（今までどおり止める）
+  takeDownload(contents: WebContents | null | undefined, item: DownloadItem): boolean {
+    const found = contents ? this.find(contents) : null;
+    if (!found || !this.operating(found.sessionId)) return false;
+    const { sessionId, guest } = found;
+    this.downloadSeen.add(sessionId);
+    const page = guest.contents.getURL();
+    const chain = item.getURLChain().length > 0 ? item.getURLChain() : [item.getURL()];
+    // ページが作ったもの（data:・blob:）は、そのページのものとして扱う
+    const sources = chain.map((url) => (/^data:/i.test(url) ? page : /^blob:/i.test(url) ? url.slice(5) : url));
+    const last = sources[sources.length - 1];
+    const origin = originShown(last);
+    const blocked = sources.findIndex((url) => !this.allowedIn(guest, url));
+    if (blocked !== -1) {
+      this.downloads.refuse(sessionId, item, originShown(sources[blocked]), 'blocked');
+      // 続ける先は、許していない最初の URL（転送の途中なら、そこから）。http(s) のときだけ（blob: はページの中でしか作れない）
+      if (/^https?:/i.test(chain[blocked])) guest.stopped = { url: chain[blocked], newWindow: false };
+      return false;
+    }
+    const taken = this.callDownloads.get(sessionId) ?? 0;
+    if (taken >= MAX_DOWNLOADS_PER_CALL) {
+      this.downloads.refuse(sessionId, item, origin, 'too-many');
+      return false;
+    }
+    if (item.getTotalBytes() > MAX_DOWNLOAD_BYTES) {
+      this.downloads.refuse(sessionId, item, origin, 'too-large');
+      return false;
+    }
+    try {
+      this.downloads.take(sessionId, item, origin);
+    } catch {
+      return false;
+    }
+    this.callDownloads.set(sessionId, taken + 1);
+    return true;
+  }
+
+  // get_downloads
+  private listDownloads(sessionId: string): ToolResult {
+    const records = this.downloads.list(sessionId);
+    if (records.length === 0) return textResult('No files have been downloaded by your actions in this session.');
+    for (const record of records) if (record.state !== 'downloading') record.reported = true;
+    return textResult(`Downloads (oldest first):\n${records.map((r, i) => `${i + 1}. ${describeDownload(r)}`).join('\n')}`);
   }
 
   // ---- 開く ----
@@ -834,7 +1269,8 @@ export class BrowserControl {
     if (newTab || !current) {
       // 画面に webview を作らせ、知らせを待つ
       const attached = this.waitAttach(sessionId);
-      if (current) this.deps.send(this.deps.channels.newTab, { sessionId, url, background: false, openerTabId: current.tabId });
+      // ポップアップから開くときは、そのポップアップを開いたタブを、開いたタブとして知らせる（画面はポップアップを知らない）
+      if (current) this.deps.send(this.deps.channels.newTab, { sessionId, url, background: false, openerTabId: current.popup?.opener ?? current.tabId });
       else this.deps.send(this.deps.channels.open, { sessionId, url });
       const guest = await attached;
       await waitForLoad(guest.contents);
@@ -844,8 +1280,9 @@ export class BrowserControl {
     await current.contents.loadURL(url).catch((error: unknown) => {
       // 許していない先へのリダイレクトを止めた
       if (session.blocked) throw stoppedError(session.blocked);
-      // 移ったための中断（リダイレクトなど）は失敗にしない
-      if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
+      // 移ったための中断（リダイレクトなど）と、ダウンロードになったもの（本物では ERR_FAILED で終わる）は失敗にしない
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/ERR_ABORTED/.test(message) && !this.downloadSeen.has(sessionId)) throw new ToolError(`Could not open ${url} (${message}).${certificateErrorHint(message)}`);
     });
     return current;
   }
@@ -882,9 +1319,9 @@ export class BrowserControl {
     session.handoff.push({ origin, until: Date.now() + ATTACH_TIMEOUT_MS });
   }
 
-  // タブの番号（1 から）
-  private numberOf(sessionId: string, guest: Guest): number {
-    return [...this.tabsOf(sessionId).tabs.keys()].indexOf(guest.tabId) + 1;
+  // タブの番号（1 から）。guest はタブの ID でもよい
+  private numberOf(sessionId: string, guest: Guest | string): number {
+    return [...this.tabsOf(sessionId).tabs.keys()].indexOf(typeof guest === 'string' ? guest : guest.tabId) + 1;
   }
 
   // ---- タブ ----
@@ -898,7 +1335,9 @@ export class BrowserControl {
       // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）。
       // 空のタブ（「＋」で開いたもの）は、許していない先ではない（navigate で開ける）。タイトルは読まない
       const title = isBlank(url) ? '(untitled)' : this.allowedIn(guest, url) ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)';
-      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '(empty tab)' : this.shownUrl(url, guest)}`;
+      // ポップアップは、どのタブが開いたものかを添える（別ウインドウなので、人はタブの帯ではなく、別のウインドウで見ている）
+      const kind = guest.popup ? `[popup window opened by tab ${this.numberOf(sessionId, guest.popup.opener)}] ` : '';
+      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${kind}${title} — ${isBlank(url) ? (guest.popup ? '(empty page)' : '(empty tab)') : this.shownUrl(url, guest)}`;
     });
     return textResult(`Tabs (* marks the current tab):\n${lines.join('\n')}`);
   }
@@ -913,6 +1352,7 @@ export class BrowserControl {
 
   private async selectTab(sessionId: string, index: unknown): Promise<ToolResult> {
     const guest = this.tabAt(sessionId, index);
+    if (guest.popup) return this.selectPopup(sessionId, guest, index);
     this.tabsOf(sessionId).active = guest.tabId;
     this.deps.send(this.deps.channels.selectTab, { sessionId, tabId: guest.tabId });
     await sleep(150);
@@ -922,12 +1362,38 @@ export class BrowserControl {
   private async closeTab(sessionId: string, index: unknown): Promise<ToolResult> {
     const session = this.tabsOf(sessionId);
     const guest = index === undefined ? await this.activeGuest(sessionId) : this.tabAt(sessionId, index);
+    if (guest.popup) return this.closePopup(sessionId, guest);
     const number = [...session.tabs.keys()].indexOf(guest.tabId) + 1;
     this.deps.send(this.deps.channels.closeTab, { sessionId, tabId: guest.tabId });
     session.tabs.delete(guest.tabId);
     // 今のタブを閉じたときは、画面が次のタブを今のタブにして知らせてくる
     await sleep(150);
     return textResult(`Closed tab ${number} (${count(session.tabs.size, 'tab')} left)`);
+  }
+
+  // ポップアップを今のタブにする。画面のタブは替えない（別ウインドウは、タブの帯に無い）
+  private selectPopup(sessionId: string, guest: Guest, index: unknown): ToolResult {
+    this.tabsOf(sessionId).active = guest.tabId;
+    const result = this.pageResult(guest, `Switched to tab ${String(index)}, a popup window opened by tab ${this.numberOf(sessionId, guest.popup!.opener)}`);
+    const url = guest.contents.getURL();
+    if (!isBlank(url) && !this.allowedIn(guest, url)) {
+      result.content.push({ type: 'text', text: 'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. The user sees the popup in its own window.' });
+    }
+    return result;
+  }
+
+  // ポップアップを閉じる（別ウインドウを閉じる。ページの beforeunload では止まらない）。今のタブにしていたなら、画面の今のタブへ戻す
+  private closePopup(sessionId: string, guest: Guest): ToolResult {
+    const session = this.tabsOf(sessionId);
+    const number = this.numberOf(sessionId, guest);
+    session.tabs.delete(guest.tabId);
+    if (session.active === guest.tabId) {
+      const back = session.shown && session.tabs.has(session.shown) ? session.shown : guest.popup!.opener;
+      session.active = session.tabs.has(back) ? back : null;
+    }
+    guest.popup!.close();
+    const current = session.active ? this.numberOf(sessionId, session.active) : 0;
+    return textResult(`Closed tab ${number}, a popup window (${count(session.tabs.size, 'tab')} left${current > 0 ? `; the current tab is tab ${current}` : ''})`);
   }
 
   // 開いたあとのページの様子。許していない先に移っていたら、そう伝える（タイトルと URL の道筋は伏せる）
@@ -942,6 +1408,7 @@ export class BrowserControl {
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
     const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r)).length;
     if (failed > 0) lines.push(`${count(failed, 'request')} failed (read them with get_failed_requests).`);
+    lines.push(...this.logins.notes(guest.contents));
     return textResult(lines.join('\n'));
   }
 
@@ -1366,15 +1833,17 @@ export class BrowserControl {
     const selector = optionalString(args.selector);
     const double = args.double === true;
     const button = optionalString(args.button) ?? 'left';
+    const modifiers = mouseModifiers(args.modifiers);
     let target: Target;
     if (selector) target = await this.locate(guest, selector);
     else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
     else throw new ToolError('Provide selector, or x and y.');
     const before = guest.contents.getURL();
     await this.highlight(sessionId, target.rect);
-    const { real, note } = await this.press(guest, target, { double, button: button === 'right' || button === 'middle' ? button : 'left', real: args.real === true });
+    const { real, note } = await this.press(guest, target, { double, button: button === 'right' || button === 'middle' ? button : 'left', real: args.real === true, modifiers });
     await settle(guest.contents);
-    const lines = [`${double ? 'Double-clicked' : 'Clicked'}: ${target.description}${real ? ` (with a real mouse press, ${real})` : ''}`];
+    const held = modifiers.length ? ` with ${modifiers.join('+')}` : '';
+    const lines = [`${double ? 'Double-clicked' : 'Clicked'}${held}: ${target.description}${real ? ` (with a real mouse press, ${real})` : ''}`];
     if (target.covered) lines.push(`(another element, ${target.covered}, was covering the clicked position)`);
     if (note) lines.push(note);
     const after = guest.contents.getURL();
@@ -1388,13 +1857,17 @@ export class BrowserControl {
   // フォーカスを移すので、人がチャットの入力欄などで打っていると、そのフォーカスを奪ってしまうため（ページが mousedown を止めても移る）。
   // JavaScript では効かないもの（PRESS_PARTS の __realReason）と、別オリジンの iframe の中・右や真ん中のボタン・Claude が real を指定したときは、
   // 本物の押下で押し、押したらすぐ人のフォーカスを元の場所へ戻す（keepHumanFocus）。
+  // modifiers: 押したままにする修飾キー（mouseModifiers で名前をそろえたもの）。ページの中で押すときはイベントの shiftKey などに、
+  // 本物の押下では Input.dispatchMouseEvent の modifiers のビットにする（どちらでも、⌘ でリンクが新しいタブで開くことを Electron 44 で確かめた）
   // 返すもの: real は本物の押下で押した理由（ページの中で押したときは null）。note は、ページの中で押したときに、ページの処理がエラーを投げたこと
   private async press(
     guest: Guest,
     target: Target,
-    options: { double: boolean; button: 'left' | 'right' | 'middle'; real: boolean },
+    options: { double: boolean; button: 'left' | 'right' | 'middle'; real: boolean; modifiers?: string[] },
   ): Promise<{ real: string | null; note: string | null }> {
     const point = center(target.rect);
+    const modifiers = options.modifiers ?? [];
+    const keys = { shiftKey: modifiers.includes('shift'), ctrlKey: modifiers.includes('control'), altKey: modifiers.includes('alt'), metaKey: modifiers.includes('meta') };
     let reason: string | null = options.real ? 'as requested' : options.button !== 'left' ? `because it is the ${options.button} button` : null;
     if (target.cross) reason = 'because it is inside a cross-origin iframe';
     if (!reason) {
@@ -1426,7 +1899,7 @@ export class BrowserControl {
           // 押す要素の文書の中の位置
           const lx = x - o.ox, ly = y - o.oy;
           const Pointer = view.PointerEvent || view.MouseEvent;
-          const at = { bubbles: true, cancelable: true, composed: true, clientX: lx, clientY: ly, screenX: lx, screenY: ly, button: 0 };
+          const at = { bubbles: true, cancelable: true, composed: true, clientX: lx, clientY: ly, screenX: lx, screenY: ly, button: 0, ...${JSON.stringify(keys)} };
           const pointer = { ...at, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 };
           // ページの処理が投げたエラー（pointerdown の中の setPointerCapture など。本物の押下でないと効かないもの）
           const errors = [];
@@ -1470,11 +1943,13 @@ export class BrowserControl {
     // 本物の押下。別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
     const { x, y } = target.child ?? point;
     const child = target.child?.session;
+    const bits = modifierBits(modifiers);
+    const mods = bits ? { modifiers: bits } : {};
     await this.keepHumanFocus(guest, async () => {
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, child);
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, ...mods }, child);
       for (let count = 1; count <= (options.double ? 2 : 1); count++) {
-        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: options.button, clickCount: count }, child);
-        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: options.button, clickCount: count }, child);
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: options.button, clickCount: count, ...mods }, child);
+        await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: options.button, clickCount: count, ...mods }, child);
       }
     });
     return { real: reason, note: null };
@@ -1827,6 +2302,8 @@ export class BrowserControl {
   // タブに、CDP で画面の大きさを当てる（null なら、やめる）。当たっているものと同じなら、何もしない
   // （決めていないタブに、やめる命令を送るために CDP をつなぐこともしない）
   private async emulate(guest: Guest, emulation: Emulation | null): Promise<void> {
+    // ポップアップは、別ウインドウの大きさのまま（popupRefuses）
+    if (guest.popup) return;
     if (JSON.stringify(guest.emulated) === JSON.stringify(emulation)) return;
     if (emulation) {
       const { width, height, deviceScaleFactor, mobile } = emulation;
@@ -1950,6 +2427,153 @@ export class BrowserControl {
     return textResult(lines.join('\n'));
   }
 
+  // ---- マウスを乗せる・ドラッグする ----
+
+  // 要素の上（か x・y）へ本物のマウスを動かし、そのまま置く（CDP の Input.dispatchMouseEvent の mouseMoved）。CSS の :hover が効き、
+  // ページには本物の pointerover・mouseover・mousemove が届くので、ホバーで開くメニューやツールチップを、開いたまま撮る・読むことができる
+  // （click の前にページの中で合成する mouseover では :hover が効かない。Electron 44 で確かめた）。
+  // マウスを動かすだけでは、アプリの画面のフォーカスは webview へ移らない（Electron 44 で確かめた）が、本物の入力なので keepHumanFocus で守る
+  private async hover(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const target = await this.mouseTarget(guest, args, 'hover over');
+    await this.highlight(sessionId, target.rect);
+    // 別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る（click の本物の押下と同じ）
+    const { x, y } = target.child ?? center(target.rect);
+    await this.keepHumanFocus(guest, async () => {
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, target.child?.session);
+    });
+    await settle(guest.contents);
+    const lines = [`Hovered over: ${target.description}`];
+    if (target.covered) lines.push(`(another element, ${target.covered}, was covering the position)`);
+    lines.push('The mouse pointer stays there until the next mouse action, so take a screenshot or read the page now to see what the hover opened.');
+    return textResult(lines.join('\n'));
+  }
+
+  // 本物のマウスでドラッグする: 始めで左のボタンを押し、押したまま終わりまで少しずつ動かして、そこで離す。
+  // ページが HTML5 のドラッグ＆ドロップ（draggable・dragstart・drop）を使うときは、ドラッグを Chromium に任せず、CDP で受け取って
+  // （Input.setInterceptDrags。ドラッグが始まると Input.dragIntercepted でドラッグのデータが届く）、残りを Input.dispatchDragEvent で送る。
+  // 本物のマウスだけでも Electron 44 の webview でドロップまで届いたが、Chromium が OS のドラッグを始めるので、人のマウスの動きと混ざりうる。
+  // 受け取れば OS のドラッグは始まらない（並べ替えのリストで、どちらでも dragstart・drop・dragend が届き、並びが変わるのを確かめた）。
+  // 押すときと離すときは、click の本物の押下と同じく、アプリの画面のフォーカスが webview へ移るので、それぞれ keepHumanFocus で元へ戻す
+  // （動かしている間、webview に置いたままにしない）
+  private async drag(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const modifiers = mouseModifiers(args.modifiers);
+    const duration = args.durationMs === undefined ? DRAG_MS : ranged(args.durationMs, 'durationMs', 0, DRAG_LIMITS.maxDurationMs);
+    const hold = args.holdMs === undefined ? 0 : ranged(args.holdMs, 'holdMs', 0, DRAG_LIMITS.maxHoldMs);
+    const toSelector = optionalString(args.toSelector);
+    if (!toSelector && [args.toX, args.toY, args.deltaX, args.deltaY].every((v) => v === undefined)) {
+      throw new ToolError('Provide where to drag to: toSelector, toX and toY, or deltaX or deltaY.');
+    }
+    const start = await this.mouseTarget(guest, args, 'drag from');
+    const startAt = center(start.rect);
+    let end: Target;
+    if (toSelector) {
+      // 始めを見える位置まで動かしたあとなので、落とす先は動かさずに測る
+      const found = await this.locate(guest, toSelector, false);
+      const at = center(found.rect);
+      const { width, height } = found.viewport;
+      if (at.x < 0 || at.y < 0 || at.x >= width || at.y >= height) {
+        throw new ToolError(
+          `The center of the element matching "${toSelector}" (x=${round(at.x)} y=${round(at.y)}) is outside the visible area (${width}×${height}) after scrolling the start into view. ` +
+            'Bring both into the visible area (for example, scroll and drag with x and y, or make the viewport taller with set_viewport), then drag again.',
+        );
+      }
+      end = { rect: found.rect, description: found.description, covered: found.covered };
+    } else {
+      const toX = optionalNumber(args.toX, 'toX') ?? (args.deltaX === undefined ? undefined : startAt.x + optionalNumber(args.deltaX, 'deltaX')!);
+      const toY = optionalNumber(args.toY, 'toY') ?? (args.deltaY === undefined ? undefined : startAt.y + optionalNumber(args.deltaY, 'deltaY')!);
+      end = await this.pointAt(guest, round(toX ?? startAt.x), round(toY ?? startAt.y), 'drag to');
+    }
+    // 別プロセスの iframe の中は、その iframe のセッションに送る。始めと終わりが別のフレームだと、送る先の位置が決まらない
+    if (start.child?.session !== end.child?.session) throw new ToolError('A drag inside a cross-origin iframe must start and end in the same iframe.');
+    const child = start.child?.session;
+    const endAt = center(end.rect);
+    // 送る位置（iframe のセッションなら、その中の位置）
+    const from = start.child ?? startAt;
+    const to = end.child ?? endAt;
+    const bits = modifierBits(modifiers);
+    const mods = bits ? { modifiers: bits } : {};
+    // HTML5 のドラッグが始まったら、そのデータ（送る先のセッションのものだけ）
+    let data: unknown = null;
+    const mouse = (type: string, p: BrowserPoint, extra: Record<string, unknown>) =>
+      this.cdp(guest, 'Input.dispatchMouseEvent', { type, x: round(p.x), y: round(p.y), ...extra, ...mods }, child);
+    const dragEvent = (type: string, p: BrowserPoint) => this.cdp(guest, 'Input.dispatchDragEvent', { type, x: round(p.x), y: round(p.y), data, ...mods }, child);
+    const along = (a: BrowserPoint, b: BrowserPoint, t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    const before = guest.contents.getURL();
+    await this.highlight(sessionId, start.rect);
+    const onMessage = (_event: unknown, method: string, params: { data?: unknown } | undefined, session?: string) => {
+      if (method === 'Input.dragIntercepted' && (session || undefined) === child && params?.data) data = params.data;
+    };
+    // 受け取れなければ（CDP が対応していないなど）、Chromium に任せる
+    const intercepting = await this.cdp(guest, 'Input.setInterceptDrags', { enabled: true }, child).then(
+      () => true,
+      () => false,
+    );
+    guest.contents.debugger.on('message', onMessage);
+    let pressed = false;
+    // HTML5 のドラッグで、ページの上に入った（dragEnter を送った）
+    let entered = false;
+    try {
+      await this.keepHumanFocus(guest, async () => {
+        await mouse('mouseMoved', from, {});
+        await mouse('mousePressed', from, { button: 'left', buttons: 1, clickCount: 1 });
+        pressed = true;
+      });
+      if (hold > 0) await sleep(hold);
+      // 16 ミリ秒ごと（画面の 1 コマ）に動かす。5 回から 60 回まで（ドラッグを始めるのに少し動かす必要があるページのため、0 ミリ秒でも 5 回）
+      const steps = Math.min(60, Math.max(5, Math.round(duration / 16)));
+      for (let step = 1; step <= steps; step++) {
+        await sleep(duration / steps);
+        const now = along(from, to, step / steps);
+        if (data) {
+          if (!entered) await dragEvent('dragEnter', now);
+          entered = true;
+          await dragEvent('dragOver', now);
+        } else {
+          await mouse('mouseMoved', now, { button: 'left', buttons: 1 });
+        }
+        const shown = along(startAt, endAt, step / steps);
+        this.emit({ sessionId, active: true, label: null, box: { x: shown.x - 10, y: shown.y - 10, width: 20, height: 20 } });
+      }
+      if (data) {
+        // 最後の 1 回で始まったときは、まだ入っていない
+        if (!entered) {
+          await dragEvent('dragEnter', to);
+          await dragEvent('dragOver', to);
+        }
+        await dragEvent('drop', to);
+      }
+      await this.keepHumanFocus(guest, async () => {
+        await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 });
+        pressed = false;
+      });
+    } finally {
+      guest.contents.debugger.off('message', onMessage);
+      // 途中で失敗したら、ボタンを押したままにしない
+      if (pressed) await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 }).catch(() => undefined);
+      if (intercepting) await this.cdp(guest, 'Input.setInterceptDrags', { enabled: false }, child).catch(() => undefined);
+    }
+    await settle(guest.contents);
+    const held = modifiers.length ? ` with ${modifiers.join('+')}` : '';
+    const lines = [
+      `Dragged${held} from ${start.description} to ${end.description} in ${duration} ms`,
+      data
+        ? 'The page started an HTML5 drag and drop (dragstart), so dragover and drop were sent along the way (where the page does not accept a drop, it gets no drop event: check the page to see the result).'
+        : 'The page did not start an HTML5 drag and drop, so it got only the pointer and mouse events of the drag (down, moves, up).',
+    ];
+    if (end.covered) lines.push(`(another element, ${end.covered}, was covering the drop position)`);
+    const after = guest.contents.getURL();
+    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after, guest)}${this.allowedIn(guest, after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
+    return textResult(lines.join('\n'));
+  }
+
+  // マウスを当てる所。selector（見える位置まで動かす）か、見えている範囲の x・y（click と同じ探し方）。verb: 断る文の動詞
+  private async mouseTarget(guest: Guest, args: Record<string, unknown>, verb: string): Promise<Target> {
+    const selector = optionalString(args.selector);
+    if (selector) return this.locate(guest, selector);
+    if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) return this.pointAt(guest, args.x, args.y, verb);
+    throw new ToolError('Provide selector, or x and y.');
+  }
+
   // タッチを送る位置の決め方。送る位置 = タブの中の位置 × scale。アプリの画面での位置 = 左上 + 送る位置（指が画面に出ているかを見るのに使う）。
   // 画面がタブの webview に付けた data-tab-id で探す。
   // アプリの画面を拡大（表示のメニュー）しているときの決まりは、Electron 44.7 の webview で、1.1 倍にして測って決めた（2 点ずつ、ずれは 1px 以内）。
@@ -1958,6 +2582,11 @@ export class BrowserControl {
   // - タブの中の位置は、CDP で大きさを決めていないタブではそのまま、決めたタブ（set_viewport の機種・数字）では倍率で割る
   // visible: webview のうち、アプリの画面に出ている所（アプリの画面の CSS の px。枠のスクロールなど、はみ出たものを切る入れ物と、ウインドウの端で切る）
   private async hostOffset(guest: Guest): Promise<HostOffset> {
+    // ポップアップは、別ウインドウの中身がまるごと見えている（画面の大きさも当てない）
+    if (guest.popup) {
+      const { width, height } = guest.popup.size();
+      return { x: 0, y: 0, scale: 1, visible: { left: 0, top: 0, right: width, bottom: height } };
+    }
     const host = this.deps.host();
     const found = host && !host.isDestroyed() ? ((await host.executeJavaScript(webviewPlace(guest.tabId)).catch(() => null)) as Omit<HostOffset, 'scale'> | null) : null;
     if (!found) throw new ToolError('Could not find this tab in the tanacode window, so the touch was not sent.');
@@ -2016,40 +2645,8 @@ export class BrowserControl {
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
     // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
     // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
-    const checked = this.takeEvaluateMark(sessionId, expression, toolUseId);
-    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
-    if (!checked) {
-      throw new ToolError(
-        'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
-          '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
-          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
-          'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
-      );
-    }
-    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
-    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
-    if (checked === 'no-id') {
-      throw new ToolError(
-        'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
-          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
-          'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
-      );
-    }
-    // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
-    if (checked === 'changed') {
-      throw new ToolError(
-        'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
-          'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
-      );
-    }
-    if (checked.origin === null) {
-      throw new ToolError('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.');
-    }
-    if (checked.origin !== origin) {
-      throw new ToolError(
-        `The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so the script was not run. Call evaluate again to run it on the current page.`,
-      );
-    }
+    const checked = this.takeEvaluateMark(sessionId, 'evaluate', expression, toolUseId);
+    this.assertChecked('evaluate', checked, origin, url);
     // 目印は呼び出しごとに変える（ページが同じ文をコンソールに出して、止めたことにさせないように）
     const mark = `${PAGE_CHANGED} ${randomUUID()}`;
     let value: unknown;
@@ -2070,6 +2667,173 @@ export class BrowserControl {
     return textResult(clip(text, MAX_TEXT));
   }
 
+  // ---- ファイルの添付 ----
+
+  // この Mac のファイルを、ページのファイル欄に入れる（ファイル選択のダイアログで選んだのと同じ。ダイアログは開かない）。
+  // - selector がファイル欄そのもの（隠れていてもよい）なら、CDP の DOM.setFileInputFiles で直に入れる
+  // - そうでなければ（「アップロード」ボタンなど）、Page.setInterceptFileChooserDialog でダイアログを横取りしてから押し、
+  //   開いたファイル欄（Page.fileChooserOpened）に入れる。横取りは、この呼び出しの間だけ（人が押したときはふつうにダイアログが開く）
+  // 入れる前に、確認のフックが見たページと同じオリジンか（assertChecked）と、ファイル欄の文書のオリジンも同じか（別オリジンの iframe の
+  // ファイル欄は、人が確認した送り先と違うので入れない）を確かめる。input・change のイベントは Chromium が出す
+  private async uploadFile(sessionId: string, guest: Guest, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
+    const paths = uploadPaths(args);
+    if (paths.length === 0) throw new ToolError('Provide paths: the absolute paths of the files to attach.');
+    for (const path of paths) {
+      if (!isAbsolute(path)) throw new ToolError(`Not an absolute path: ${path}. Give the absolute paths of the files to attach.`);
+      const info = await stat(path).catch(() => null);
+      if (!info) throw new ToolError(`No such file: ${path}`);
+      if (!info.isFile()) throw new ToolError(`Not a file: ${path} (folders cannot be attached).`);
+    }
+    const selector = optionalString(args.selector);
+    const hasPoint = typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y);
+    if (!selector && !hasPoint) throw new ToolError('Provide selector (the file input, or the element that opens the file dialog), or x and y.');
+    const url = guest.contents.getURL();
+    const origin = webOrigin(url);
+    if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the files were not attached.`);
+    const checked = this.takeEvaluateMark(sessionId, 'upload_file', uploadKey(args), toolUseId);
+    this.assertChecked('upload_file', checked, origin, url);
+    const what = `${paths.length === 1 ? 'the file' : `${paths.length} files`} (${paths.map((p) => basename(p)).join(', ')})`;
+
+    // ファイル欄そのものを指したとき
+    if (selector) {
+      const input = await this.fileInputBySelector(guest, selector);
+      if (input) {
+        await this.putFiles(guest, { objectId: input.objectId }, paths, input.multiple, origin);
+        await settle(guest.contents);
+        return textResult(`Attached ${what} to the file input ${input.description}.`);
+      }
+    }
+
+    // ファイル選択を開く要素を押して、開いたダイアログに答える
+    const target = selector ? await this.locate(guest, selector) : await this.pointAt(guest, args.x as number, args.y as number);
+    const dbg = guest.contents.debugger;
+    type Chooser = { backendNodeId: number; multiple: boolean; child?: string };
+    let onMessage: ((event: unknown, method: string, params: { backendNodeId?: number; mode?: string }, child?: string) => void) | undefined;
+    const opened = new Promise<Chooser>((resolve) => {
+      onMessage = (_event, method, params, child) => {
+        if (method !== 'Page.fileChooserOpened' || typeof params.backendNodeId !== 'number') return;
+        resolve({ backendNodeId: params.backendNodeId, multiple: params.mode === 'selectMultiple', ...(child ? { child } : {}) });
+      };
+    });
+    // 別プロセスの iframe の中のファイル欄も横取りする（入れるかは putFiles がオリジンで決める。横取りしないと、人の前にダイアログが開く）
+    const sessions: (string | undefined)[] = [undefined, ...(await this.childFrames(guest)).map((f) => f.child)];
+    let chooser: Chooser | null;
+    try {
+      for (const child of sessions) {
+        await this.cdp(guest, 'Page.enable', undefined, child).catch(() => undefined);
+        await this.cdp(guest, 'Page.setInterceptFileChooserDialog', { enabled: true }, child).catch(() => undefined);
+      }
+      dbg.on('message', onMessage!);
+      await this.highlight(sessionId, target.rect);
+      await this.press(guest, target, { double: false, button: 'left', real: false });
+      chooser = await Promise.race([opened, sleep(FILE_CHOOSER_WAIT_MS).then(() => null)]);
+      if (chooser) await this.putFiles(guest, { backendNodeId: chooser.backendNodeId, child: chooser.child }, paths, chooser.multiple, origin);
+    } finally {
+      if (onMessage) dbg.removeListener('message', onMessage);
+      for (const child of sessions) await this.cdp(guest, 'Page.setInterceptFileChooserDialog', { enabled: false }, child).catch(() => undefined);
+    }
+    if (!chooser) {
+      throw new ToolError(
+        `Clicked ${target.description}, but no file dialog opened within ${FILE_CHOOSER_WAIT_MS / 1000} seconds, so the files were not attached. ` +
+          'Give the selector of the file input itself (input[type=file]; it may be hidden), or of the element that opens the file dialog.',
+      );
+    }
+    await settle(guest.contents);
+    return textResult(`Clicked ${target.description}, and attached ${what} to the file dialog it opened.`);
+  }
+
+  // selector に当たる、ファイル欄（input[type=file]。隠れていてもよい）。同じオリジンの iframe の中も探す。当たったものがファイル欄でなければ null
+  private async fileInputBySelector(guest: Guest, selector: string): Promise<{ objectId: string; multiple: boolean; description: string } | null> {
+    const found = (await this.cdp(guest, 'Runtime.evaluate', {
+      expression: `(() => {
+        const selector = ${JSON.stringify(selector)};
+        const docs = [document];
+        for (let i = 0; i < docs.length; i++) {
+          for (const frame of docs[i].querySelectorAll('iframe, frame')) {
+            try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch (e) {}
+          }
+        }
+        for (const doc of docs) {
+          let el = null;
+          try { el = doc.querySelector(selector); } catch (e) { return null; }
+          if (el) return el.tagName === 'INPUT' && el.type === 'file' ? el : null;
+        }
+        return null;
+      })()`,
+      returnByValue: false,
+    })) as { result?: { objectId?: string; subtype?: string } };
+    const objectId = found.result?.objectId;
+    if (!objectId || found.result?.subtype === 'null') return null;
+    const info = (await this.cdp(guest, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function () { return { multiple: this.multiple, description: "input[type=file]" + (this.id ? "#" + this.id : "") + (this.name ? "[name=" + this.name + "]" : "") }; }',
+      returnByValue: true,
+    })) as { result?: { value?: { multiple?: boolean; description?: string } } };
+    return { objectId, multiple: info.result?.value?.multiple === true, description: info.result?.value?.description ?? 'input[type=file]' };
+  }
+
+  // ファイル欄にファイルを入れる。node: ファイル欄（objectId か backendNodeId。child: 別プロセスの iframe のセッション）/ multiple: 複数を受け付けるか。
+  // 入れる前に、ファイル欄の文書と今のページのオリジンが、確認したページのオリジン（origin）と同じか確かめる
+  private async putFiles(guest: Guest, node: { objectId?: string; backendNodeId?: number; child?: string }, paths: string[], multiple: boolean, origin: string): Promise<void> {
+    if (!multiple && paths.length > 1) throw new ToolError(`The file input accepts only one file, but ${paths.length} files were given, so the files were not attached. Attach one file per call.`);
+    let objectId = node.objectId;
+    if (!objectId) {
+      const resolved = (await this.cdp(guest, 'DOM.resolveNode', { backendNodeId: node.backendNodeId }, node.child).catch(() => null)) as { object?: { objectId?: string } } | null;
+      objectId = resolved?.object?.objectId;
+    }
+    if (!objectId) throw new ToolError('Could not find the file input, so the files were not attached.');
+    const where = (await this.cdp(
+      guest,
+      'Runtime.callFunctionOn',
+      { objectId, functionDeclaration: 'function () { return this.ownerDocument.location.href; }', returnByValue: true },
+      node.child,
+    )) as { result?: { value?: unknown } };
+    const inputUrl = typeof where.result?.value === 'string' ? where.result.value : '';
+    if (webOrigin(inputUrl) !== origin || webOrigin(guest.contents.getURL()) !== origin) {
+      throw new ToolError(`The file input is on another site (${originShown(inputUrl)}) than the page tanacode checked (${origin}), so the files were not attached.`);
+    }
+    await this.cdp(guest, 'DOM.setFileInputFiles', { files: paths, objectId }, node.child);
+  }
+
+  // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）が、今のページと同じオリジンか確かめる。
+  // 違えば・控えが無ければ、動かさずに投げる。checked: takeEvaluateMark の答え / origin・url: 今のページ
+  private assertChecked(tool: CheckedTool, checked: EvaluateMark | 'changed' | 'no-id' | null, origin: string, url: string): asserts checked is EvaluateMark {
+    const notDone = tool === 'evaluate' ? 'the script was not run' : 'the files were not attached';
+    const input = tool === 'evaluate' ? 'expression' : 'paths';
+    const again = tool === 'evaluate' ? 'Call evaluate again to run it on the current page.' : 'Call upload_file again to attach them on the current page.';
+    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
+    if (!checked) {
+      throw new ToolError(
+        `tanacode has no record of checking this call, so ${notDone}. Call ${tool} again. ` +
+          `(tanacode checks each ${tool} call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ` +
+          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+          `If this keeps happening, tell the user that tanacode cannot check ${tool} calls in this session.`,
+      );
+    }
+    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
+    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
+    if (checked === 'no-id') {
+      throw new ToolError(
+        `tanacode checked this call, but the call reached tanacode without its ID, so ${notDone}. ` +
+          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+          `Ask the user to restart Claude Code in this session (the restart button in the chat header), then call ${tool} again.`,
+      );
+    }
+    // 同じ呼び出しの控えはあるが、入力が違う（ほかのフックが入力を書き換えた など）
+    if (checked === 'changed') {
+      throw new ToolError(
+        `The ${input} of this call differs from the one tanacode checked for it (another hook may have changed the input), so ${notDone}. Call ${tool} again. ` +
+          `If this keeps happening, tell the user that another hook seems to change the input of ${tool}.`,
+      );
+    }
+    if (checked.origin === null) {
+      throw new ToolError(`No page was open in the current tab when tanacode checked this call, so ${notDone}. ${again}`);
+    }
+    if (checked.origin !== origin) {
+      throw new ToolError(`The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so ${notDone}. ${again}`);
+    }
+  }
+
   // この呼び出しの控えを取り出す（1 回で使い切る）。呼び出しの ID があれば、同じ ID の控え（式も同じものだけ）。
   // 同じ ID の控えが無ければ、ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの。
   // 呼び出しに ID が無い（ID を渡さない中継）ときも、ID の無い控えだけから引く（ID のある控えは、同じ式の別の呼び出しのものや、前に断られて
@@ -2077,22 +2841,26 @@ export class BrowserControl {
   // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
   // 同じ ID の控えの式が違えば、その控えは捨てて 'changed' を返す。ID の無い呼び出しに、同じ式の ID のある控えしか無ければ 'no-id'
   // （古い中継）。どちらも、控えが無いときと分けて伝える
-  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
-    const marks = this.evaluateMarks.get(sessionId) ?? [];
+  private takeEvaluateMark(sessionId: string, tool: CheckedTool, key: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
+    const all = this.evaluateMarks.get(sessionId) ?? [];
+    // ほかのツールの控えは触らない（取り出したあとで戻す）
+    const others = all.filter((m) => m.tool !== tool);
+    const marks = all.filter((m) => m.tool === tool);
     const take = (index: number) => (index === -1 ? null : marks.splice(index, 1)[0]!);
     let found: EvaluateMark | 'changed' | 'no-id' | null;
     const byId = toolUseId === undefined ? -1 : marks.findIndex((m) => m.toolUseId === toolUseId);
     if (byId !== -1) {
       const mark = take(byId)!;
-      found = mark.expression === expression ? mark : 'changed';
+      found = mark.key === key ? mark : 'changed';
     } else {
       // ID で引けない。ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの
       let index = marks.length - 1;
-      while (index >= 0 && !(marks[index]!.expression === expression && marks[index]!.toolUseId === undefined)) index--;
+      while (index >= 0 && !(marks[index]!.key === key && marks[index]!.toolUseId === undefined)) index--;
       found = take(index);
-      if (!found && toolUseId === undefined && marks.some((m) => m.expression === expression)) found = 'no-id';
+      if (!found && toolUseId === undefined && marks.some((m) => m.key === key)) found = 'no-id';
     }
-    if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
+    const rest = all.filter((m) => others.includes(m) || marks.includes(m));
+    if (rest.length > 0) this.evaluateMarks.set(sessionId, rest);
     else this.evaluateMarks.delete(sessionId);
     return found;
   }
@@ -2142,6 +2910,12 @@ export class BrowserControl {
     const guest = await this.activeGuest(sessionId);
     const url = guest.contents.getURL();
     if (isBlank(url)) throw new ToolError('The current tab is empty. Open a page with navigate.');
+    if (!this.allowedIn(guest, url) && guest.popup) {
+      throw new ToolError(
+        `The page of the current tab, a popup window (${originShown(url)}), is not allowed for Claude, so it can be neither read nor operated. ` +
+          'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. Otherwise, switch back to a tab with select_tab.',
+      );
+    }
     if (!this.allowedIn(guest, url)) {
       throw new ToolError(
         `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added under "${t('mcpSettings.hostsTitle')}" in tanacode > ${t('main.menu.mcpSettings')}), ` +
@@ -2175,7 +2949,7 @@ export class BrowserControl {
   private tabsOf(sessionId: string): Tabs {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, handoff: [], viewport: null };
+      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, popupTabs: [], notOpened: [], notes: [], shown: null, handoff: [], viewport: null };
       this.sessions.set(sessionId, session);
     }
     return session;
@@ -2230,6 +3004,15 @@ export class BrowserControl {
 
   // CDP の命令を送る。child: 別プロセスの iframe のセッション（無ければページ）
   private async cdp(guest: Guest, method: string, params?: Record<string, unknown>, child?: string): Promise<unknown> {
+    await this.connect(guest);
+    return guest.contents.debugger.sendCommand(method, params, child);
+  }
+
+  // CDP をつなぐ（つながっていれば何もしない）。frames: 別プロセスの iframe にもつなぐ（Target.setAutoAttach）。
+  // タブができたとき・ツールの始め（ダイアログを知るため）は、iframe にはつながない。ページの読み込みの前や途中に setAutoAttach を送ると、
+  // 別サイトの iframe の読み込みが終わらなくなることがある（test/e2e/browser-failed.test.ts が 5 回に 4 回、navigate の読み込み待ちで止まった。
+  // Page.enable を外しても止まり、setAutoAttach を外すと止まらなかった。Electron 44.10）。iframe へは、CDP の命令を送るとき（cdp）につなぐ（前と同じ時機）
+  private async connect(guest: Guest, frames = true): Promise<void> {
     const dbg = guest.contents.debugger;
     if (!guest.cdp || !dbg.isAttached()) {
       try {
@@ -2238,11 +3021,17 @@ export class BrowserControl {
         if (!dbg.isAttached()) throw new ToolError(`Could not get ready to control the page (${error instanceof Error ? error.message : String(error)}).`);
       }
       guest.cdp = true;
+      guest.framesAttached = false;
+      // ページが出すダイアログを知らせてもらう（出てから送っても返らないので、つないだらすぐ。browser-dialogs.ts）
+      await dbg.sendCommand('Page.enable').catch(() => undefined);
+      await sleep(150);
+    }
+    if (frames && !guest.framesAttached) {
+      guest.framesAttached = true;
       // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
       await dbg.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => undefined);
       await sleep(150);
     }
-    return dbg.sendCommand(method, params, child);
   }
 
   // 別プロセスの iframe と、その今の URL
@@ -2355,8 +3144,13 @@ export class BrowserControl {
     return (await this.world(guest, '({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })')) as { width: number; height: number; dpr: number };
   }
 
-  // セレクタに当たる要素（同じオリジンの iframe の中も）のうち、見えている最初のものを、見える位置まで動かして、その位置を返す
-  private async locate(guest: Guest, selector: string): Promise<{ rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null }> {
+  // セレクタに当たる要素（同じオリジンの iframe の中も）のうち、見えている最初のものを、見える位置まで動かして、その位置を返す。
+  // scroll が false なら動かさずに測る（drag の落とす先。動かすと、先に見える位置へ動かした始めの要素が、見えない所へ動きうる）
+  private async locate(
+    guest: Guest,
+    selector: string,
+    scroll = true,
+  ): Promise<{ rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null }> {
     await this.laidOut(guest);
     const found = (await this.world(
       guest,
@@ -2368,7 +3162,7 @@ export class BrowserControl {
         if (!hit) return { error: 'hidden', count: all.length };
         const el = hit.el;
         // iframe の中の要素は、外のページも合わせて動かす
-        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        ${scroll ? "el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });" : ''}
         const r = __rect(el);
         const top = __hit(r.x + r.width / 2, r.y + r.height / 2).el;
         return {
@@ -2389,10 +3183,12 @@ export class BrowserControl {
 
   // 見えている範囲の (x, y) にある要素。別オリジンの iframe の中は、その iframe の src が許す先のときだけ押せる
   // （スクリプトからは中が見えないので、どのページかは src で決める）
+  // verb: 断る文の「Cannot <verb> x=… y=…」（hover・drag でも使う）
   private async pointAt(
     guest: Guest,
     x: number,
     y: number,
+    verb = 'click',
   ): Promise<Target> {
     const found = (await this.world(
       guest,
@@ -2419,7 +3215,7 @@ export class BrowserControl {
     // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
     const frame = found.src ? await this.childFor(guest, found.src) : null;
     const url = frame?.url ?? found.src;
-    if (!url || !this.allowed(url)) throw new ToolError(`Cannot click x=${x} y=${y} because it is inside an iframe not allowed for Claude (${url ? frameShown(url) : 'no src'}).`);
+    if (!url || !this.allowed(url)) throw new ToolError(`Cannot ${verb} x=${x} y=${y} because it is inside an iframe not allowed for Claude (${url ? frameShown(url) : 'no src'}).`);
     return {
       rect,
       description: `x=${x} y=${y} (inside cross-origin iframe ${url})`,
@@ -2469,6 +3265,8 @@ export class BrowserControl {
   }
 
   private emit(activity: BrowserActivity): void {
+    // 押す要素の枠と指の丸は、画面の今のタブの上に出るので、ポップアップを操作しているときは出さない（別ウインドウの中ではない所に出てしまう）
+    if ((activity.box || activity.touches) && this.activeNow(activity.sessionId)?.popup) activity = { ...activity, box: null, touches: undefined };
     this.deps.send(this.deps.channels.activity, activity);
   }
 }
@@ -2628,12 +3426,44 @@ function isBlank(url: string): boolean {
   return url === '' || url === 'about:blank';
 }
 
-// タブの ID（tab-<番号>）の番号
+// タブの ID（tab-<番号>）の番号。ポップアップ（POPUP_TAB）は、どのタブよりあと（同じ値どうしは、受け付けた順のまま）
 function tabNumber(tabId: string): number {
+  if (tabId.startsWith(POPUP_TAB)) return Number.MAX_SAFE_INTEGER;
   return Number(tabId.replace(/\D/g, '')) || 0;
 }
 
 const MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 };
+// マウスの操作（click・drag）の修飾キーの名前。Claude が書きがちな別名（cmd・ctrl・option など）も、そろえて受け付ける
+const MODIFIER_NAMES: Record<string, string> = {
+  shift: 'shift',
+  control: 'control',
+  ctrl: 'control',
+  alt: 'alt',
+  option: 'alt',
+  opt: 'alt',
+  meta: 'meta',
+  cmd: 'meta',
+  command: 'meta',
+  '⌘': 'meta',
+};
+
+// マウスの操作の修飾キー（重なりを除き、渡された順）。知らない名前は断る（押したつもりの修飾キーを黙って落とさない）
+export function mouseModifiers(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new ToolError('modifiers must be a list of shift, control, alt and meta.');
+  const names: string[] = [];
+  for (const item of value) {
+    const key = typeof item === 'string' ? item.trim().toLowerCase() : '';
+    if (!Object.hasOwn(MODIFIER_NAMES, key)) throw new ToolError(`Unknown modifier: ${String(item)} (use shift, control, alt or meta).`);
+    const name = MODIFIER_NAMES[key]!;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+function modifierBits(names: string[]): number {
+  return names.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
+}
 // 本物の押下のあと、アプリの画面のフォーカスが webview へ移るのを見る長さの上限と間隔（keepHumanFocus。移らなければ、そのまま）
 const KEEP_FOCUS_WAIT_MS = 1000;
 const KEEP_FOCUS_POLL_MS = 50;
@@ -2642,7 +3472,8 @@ type Target = { rect: BrowserRect; description: string; covered: string | null; 
 // ページに送ったキー・文字が、ページに届いた（keyup・input）のを待つ長さの上限（届かないもの: 文字を入れられない所に入れたなど）
 const INPUT_WAIT_MS = 1000;
 
-type KeySpec = { key: string; code: string; keyCode: number; text?: string };
+// electron: sendInputEvent に渡す名前が、key から決まらないもの（テンキー。数字の key のままだと、上の段の数字のキーになる）
+type KeySpec = { key: string; code: string; keyCode: number; text?: string; electron?: string };
 
 const NAMED_KEYS: Record<string, KeySpec> = {
   enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
@@ -2665,6 +3496,21 @@ const NAMED_KEYS: Record<string, KeySpec> = {
   end: { key: 'End', code: 'End', keyCode: 35 },
   pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
   pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  insert: { key: 'Insert', code: 'Insert', keyCode: 45 },
+  capslock: { key: 'CapsLock', code: 'CapsLock', keyCode: 20 },
+  numlock: { key: 'NumLock', code: 'NumLock', keyCode: 144 },
+  scrolllock: { key: 'ScrollLock', code: 'ScrollLock', keyCode: 145 },
+  printscreen: { key: 'PrintScreen', code: 'PrintScreen', keyCode: 44 },
+  // テンキー（sendInputEvent の名前は num0・numadd など。Electron 44 で、ページに code が Numpad0・NumpadAdd などとして届くのを確かめた。
+  // テンキーの Enter と ContextMenu・Pause は、sendInputEvent では key も code も空で届いたので、置かない）
+  ...Object.fromEntries(
+    Array.from({ length: 10 }, (_, d) => [`numpad${d}`, { key: `${d}`, code: `Numpad${d}`, keyCode: 96 + d, text: `${d}`, electron: `num${d}` }]),
+  ),
+  numpadadd: { key: '+', code: 'NumpadAdd', keyCode: 107, text: '+', electron: 'numadd' },
+  numpadsubtract: { key: '-', code: 'NumpadSubtract', keyCode: 109, text: '-', electron: 'numsub' },
+  numpadmultiply: { key: '*', code: 'NumpadMultiply', keyCode: 106, text: '*', electron: 'nummult' },
+  numpaddivide: { key: '/', code: 'NumpadDivide', keyCode: 111, text: '/', electron: 'numdiv' },
+  numpaddecimal: { key: '.', code: 'NumpadDecimal', keyCode: 110, text: '.', electron: 'numdec' },
 };
 
 // sendInputEvent に渡すキーの名前（Electron のアクセラレーターのキーの名前。文字のキーはその文字）
@@ -2676,13 +3522,13 @@ const ELECTRON_KEYS: Record<string, string> = {
   ArrowRight: 'Right',
 };
 export function electronKeyCode(spec: KeySpec): string {
-  return ELECTRON_KEYS[spec.key] ?? spec.key;
+  return spec.electron ?? ELECTRON_KEYS[spec.key] ?? spec.key;
 }
 
 export function keySpec(name: string): KeySpec | null {
   const named = NAMED_KEYS[name.toLowerCase()];
   if (named) return named;
-  const f = /^f([1-9]|1[0-2])$/i.exec(name);
+  const f = /^f([1-9]|1[0-9]|2[0-4])$/i.exec(name);
   if (f) return { key: `F${f[1]}`, code: `F${f[1]}`, keyCode: 111 + Number(f[1]) };
   if ([...name].length !== 1) return null;
   const upper = name.toUpperCase();

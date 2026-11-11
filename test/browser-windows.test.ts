@@ -86,6 +86,16 @@ class FakeWindow extends EventEmitter {
     this.destroyed = true;
     this.emit('closed');
   }
+  // 閉じる（ページの beforeunload は止められないので、すぐ閉じる）
+  readonly closes: number[] = [];
+  close(): void {
+    this.closes.push(1);
+    this.destroy();
+  }
+  contentSize: [number, number] = [480, 640];
+  getContentSize(): number[] {
+    return this.contentSize;
+  }
   setTitle(title: string): void {
     this.title = title;
   }
@@ -108,13 +118,17 @@ const asSession = (s: FakeSession) => s as unknown as Session;
 
 function setup(options: { background?: boolean; screen?: PopupScreen | null; focused?: boolean } = {}) {
   const preview = new FakeSession();
-  restrictPreviewSession(asSession(preview));
+  // ダウンロードは PreviewWindows.download に回す（windows は下で作る）
+  restrictPreviewSession(asSession(preview), (item, contents) => windows.download(item, contents));
   const browser = {
     track: vi.fn(),
     openFromPage: vi.fn(() => true),
     isOperating: vi.fn(() => false),
     blocksNavigation: vi.fn(() => false),
     allowsPopup: vi.fn(() => true),
+    attachPopup: vi.fn(),
+    notOpened: vi.fn(),
+    takeDownload: vi.fn(() => false),
   };
   const opened: string[] = [];
   // アプリの既定のセッション（プレビューのものではない）
@@ -169,6 +183,26 @@ describe('プレビューのセッション', () => {
     preview.emit('will-download', download);
     expect(download.preventDefault).toHaveBeenCalled();
   });
+
+  it('タブのダウンロードは、アプリ内ブラウザが受け取れば止めない。ポップアップの別ウインドウのものは聞かずに止める', () => {
+    const { preview, browser, tab } = setup();
+    const guest = tab();
+    const item = { getURL: () => 'http://localhost:3000/a.csv' };
+    const event = () => ({ preventDefault: vi.fn() });
+    const refused = event();
+    preview.emit('will-download', refused, item, guest);
+    expect(refused.preventDefault).toHaveBeenCalled();
+    expect(browser.takeDownload).toHaveBeenCalledWith(guest, item);
+    browser.takeDownload.mockReturnValue(true);
+    const taken = event();
+    preview.emit('will-download', taken, item, guest);
+    expect(taken.preventDefault).not.toHaveBeenCalled();
+    browser.takeDownload.mockClear();
+    const fromPopup = event();
+    preview.emit('will-download', fromPopup, item, new FakeContents('window', preview));
+    expect(fromPopup.preventDefault).toHaveBeenCalled();
+    expect(browser.takeDownload).not.toHaveBeenCalled();
+  });
 });
 
 describe('移る先', () => {
@@ -184,7 +218,7 @@ describe('移る先', () => {
     expect(isPreviewDestination(url, isMainFrame)).toBe(expected);
   });
 
-  it('タブとポップアップの両方で、http(s) の外へは移らない。Claude の操作中の移動は、ポップアップなら開いたタブで許した先かを見る', () => {
+  it('タブとポップアップの両方で、http(s) の外へは移らない。Claude の操作中の移動は、ポップアップなら、それ自身と開いたタブを渡して見る', () => {
     const { browser, tab, popup } = setup();
     const guest = tab();
     const win = popup(guest);
@@ -205,8 +239,8 @@ describe('移る先', () => {
     expect(win.webContents.go('https://outside.test/', false)).toBe(false);
     expect(browser.blocksNavigation.mock.calls).toEqual([
       [guest, 'https://outside.test/'],
-      [guest, 'https://outside.test/', true],
-      [guest, 'https://inside.test/', true],
+      [win.webContents, 'https://outside.test/', guest],
+      [win.webContents, 'https://inside.test/', guest],
     ]);
   });
 
@@ -460,7 +494,32 @@ describe('新しいウインドウ', () => {
     expect(browser.allowsPopup).toHaveBeenLastCalledWith(guest, 'https://login.example.test/');
     browser.blocksNavigation.mockClear();
     nested.webContents.go('https://example.test/');
-    expect(browser.blocksNavigation.mock.calls).toEqual([[guest, 'https://example.test/', true]]);
+    expect(browser.blocksNavigation.mock.calls).toEqual([[nested.webContents, 'https://example.test/', guest]]);
+  });
+
+  it('ポップアップは、開いたタブのアプリ内ブラウザの一覧に入れる。一覧から閉じる・中身の大きさを読める。閉じたあとは、閉じ直さず大きさは 0', () => {
+    const { tab, popup, browser } = setup();
+    const guest = tab();
+    const win = popup(guest);
+    const [[root, contents, handle]] = browser.attachPopup.mock.calls as unknown as [FakeContents, FakeContents, { close: () => void; size: () => { width: number; height: number } }][];
+    expect([root, contents]).toEqual([guest, win.webContents]);
+    win.contentSize = [500, 700];
+    expect(handle.size()).toEqual({ width: 500, height: 700 });
+    handle.close();
+    expect([win.destroyed, win.closes.length]).toEqual([true, 1]);
+    handle.close();
+    expect(win.closes.length).toBe(1);
+    expect(handle.size()).toEqual({ width: 0, height: 0 });
+  });
+
+  it('ポップアップのもとのタブ（rootOf）。ポップアップから開いたものも、もとのタブ。タブそのものは undefined', () => {
+    const { tab, popup, windows } = setup();
+    const guest = tab();
+    const win = popup(guest);
+    const nested = popup(win.webContents);
+    expect(windows.rootOf(asContents(win.webContents))).toBe(guest);
+    expect(windows.rootOf(asContents(nested.webContents))).toBe(guest);
+    expect(windows.rootOf(asContents(guest))).toBeUndefined();
   });
 
   it('開いたページと違うセッションのポップアップ（プレビューの守りが効かないもの）は、閉じる', () => {

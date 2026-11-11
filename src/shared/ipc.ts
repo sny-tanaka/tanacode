@@ -239,6 +239,10 @@ export const IpcChannel = {
   BrowserAsksGet: 'browser:asks-get',
   BrowserAnswer: 'browser:answer',
   BrowserShow: 'browser:show',
+  // ページが HTTP の認証（Basic など）を求めた。main → 画面: 入力欄を出す・消す / 画面 → main: 今出しているもの・人の入力
+  BrowserLogin: 'browser:login',
+  BrowserLoginsGet: 'browser:logins-get',
+  BrowserLoginAnswer: 'browser:login-answer',
   // チェックリスト。読む・書き換える・別のセッションへコピーする・変わった（main → 画面）・セッションごとの未読の数
   ChecklistGet: 'checklist:get',
   ChecklistApply: 'checklist:apply',
@@ -293,6 +297,15 @@ export type BrowserAsk = { id: string; message: string };
 export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
 // ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
 export type BrowserAnswer = { done: boolean; reason: string };
+
+// ページが求めた HTTP の認証（Basic など）の入力欄（browser-logins.ts）。id: 求めるたびに変わる / origin: 認証を求めた先（プロキシなら host:port）/
+// realm: サイトが書いた説明（サイトが自由に書ける）/ proxy: プロキシの認証 / insecure: 暗号化されていない通信で送る（この Mac の外の http）/
+// retry: 直前に入れたものが通らなかった / popup: タブから開いた別ウインドウのページが求めた
+export type BrowserLogin = { id: string; origin: string; realm: string; proxy: boolean; insecure: boolean; retry: boolean; popup: boolean };
+// 入力欄を出した・消した（login が null）。タブごとに 1 つ
+export type BrowserLoginChange = { sessionId: string; tabId: string; login: BrowserLogin | null };
+// 人の入力。null: 「キャンセル」
+export type BrowserLoginAnswer = { username: string; password: string } | null;
 
 export type SessionAttention = 'question' | 'permission' | 'browser' | null;
 
@@ -1008,6 +1021,10 @@ export type TanacodeApi = {
     asks(): Promise<BrowserAskChange[]>;
     answer(sessionId: string, askId: string, answer: BrowserAnswer): void;
     onShow(listener: (sessionId: string) => void): () => void;
+    // ページが求めた HTTP の認証の入力欄。logins: 今出しているもの（画面を作り直したとき用）/ answerLogin: 人の入力（Claude には渡さない）
+    onLogin(listener: (change: BrowserLoginChange) => void): () => void;
+    logins(): Promise<BrowserLoginChange[]>;
+    answerLogin(sessionId: string, loginId: string, answer: BrowserLoginAnswer): void;
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
@@ -1159,6 +1176,7 @@ export type IpcInvoke = {
   [IpcChannel.BrowserHostsGet]: Api['browser']['hosts'];
   [IpcChannel.BrowserHostsSet]: Api['browser']['setHosts'];
   [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
+  [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
 };
 
 // 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
@@ -1181,6 +1199,7 @@ export type IpcSend = {
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
+  [IpcChannel.BrowserLoginAnswer]: Api['browser']['answerLogin'];
   [IpcChannel.BrowserViewportReset]: Api['browser']['resetViewport'];
   [IpcChannel.BrowserThrottleClear]: Api['browser']['clearThrottle'];
   [IpcChannel.WalkthroughShown]: Api['walkthrough']['shown'];
@@ -1232,6 +1251,7 @@ export type IpcEvent = {
   [IpcChannel.McpSettingsOpen]: undefined;
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
+  [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;
   [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
 };
 

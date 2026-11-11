@@ -10,6 +10,7 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     "mcp__tanacode-browser__get_console_logs",
     "mcp__tanacode-browser__get_failed_requests",
     "mcp__tanacode-browser__list_tabs",
+    "mcp__tanacode-browser__get_downloads",
     "mcp__tanacode-browser__ask_user_to_act",
   ],
   "tools": [
@@ -187,6 +188,18 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
           "double": {
             "type": "boolean",
           },
+          "modifiers": {
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
           "real": {
             "type": "boolean",
           },
@@ -205,6 +218,77 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
       "kind": "act",
       "label": "クリック",
       "name": "click",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "selector": {
+            "type": "string",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "マウスを乗せる",
+      "name": "hover",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "deltaX": {
+            "type": "number",
+          },
+          "deltaY": {
+            "type": "number",
+          },
+          "durationMs": {
+            "type": "number",
+          },
+          "holdMs": {
+            "type": "number",
+          },
+          "modifiers": {
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "toSelector": {
+            "type": "string",
+          },
+          "toX": {
+            "type": "number",
+          },
+          "toY": {
+            "type": "number",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "ドラッグ",
+      "name": "drag",
     },
     {
       "inputSchema": {
@@ -430,6 +514,31 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
     {
       "inputSchema": {
         "properties": {
+          "accept": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "accept",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "ダイアログに答える",
+      "name": "handle_dialog",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "ダウンロード",
+      "name": "get_downloads",
+    },
+    {
+      "inputSchema": {
+        "properties": {
           "expression": {
             "type": "string",
           },
@@ -442,6 +551,34 @@ exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種�
       "kind": "eval",
       "label": "JavaScript の実行",
       "name": "evaluate",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "paths",
+        ],
+        "type": "object",
+      },
+      "kind": "eval",
+      "label": "ファイルの添付",
+      "name": "upload_file",
     },
     {
       "inputSchema": {

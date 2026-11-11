@@ -27,7 +27,7 @@ export const TOOL_PERMISSIONS_DIR_ENV = 'TANACODE_TOOL_PERMISSIONS_DIR';
 export const TOOL_PERMISSIONS_DIR = 'tool-permissions';
 
 // アプリに問い合わせる確認のフックが扱うツール（ここのフックは足さない。同じツールに 2 つのフックが答えると ask が勝つため）
-const APP_GATED = new Set([browserToolId('navigate'), browserToolId('evaluate'), terminalToolId('type_in_terminal')]);
+const APP_GATED = new Set([browserToolId('navigate'), browserToolId('evaluate'), browserToolId('upload_file'), terminalToolId('type_in_terminal')]);
 
 export function permissionFile(dir: string, toolId: string, permission: ToolPermission): string {
   return join(dir, `${toolId}.${permission}`);

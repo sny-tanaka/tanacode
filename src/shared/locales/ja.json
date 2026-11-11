@@ -237,9 +237,11 @@
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
       "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
       "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています",
+      "browserGateUpload": "この Mac のファイルを、localhost 以外のページ（{url}）に添付します。添付するファイル: {files}",
       "toolAsk": "tanacode のツールの許可で、このツールを毎回確認にしています",
       "toolAllow": "tanacode のツールの許可で、このツールを常に許可にしています",
       "browserGateInside": "Claude に許す先のページなので、確認なしで開きます",
+      "browserGateLeave": "localhost 以外のページ（{url}）が、離れるのを拒んでいます（入力した内容が保存されていないことがあります）。許すと、Claude はこのページを離れ、入力した内容は失われることがあります",
       "postWalkthroughGate": "GitHub の PR に、ウォークスルーをコメントとして載せます（外に書き込みます）"
     },
     "translate": {
@@ -471,8 +473,13 @@
       "wait_for": "待つ",
       "set_viewport": "画面の大きさ",
       "touch": "タッチ",
+      "hover": "マウスを乗せる",
+      "drag": "ドラッグ",
       "throttle": "遅くする",
+      "handle_dialog": "ダイアログに答える",
+      "get_downloads": "ダウンロード",
       "evaluate": "JavaScript の実行",
+      "upload_file": "ファイルの添付",
       "ask_user_to_act": "操作の依頼"
     },
     "sessions": {
@@ -1171,8 +1178,13 @@
         "wait_for": "要素や文字が出るまで待つ",
         "set_viewport": "画面の大きさや、まねる端末を変える",
         "touch": "タップ・スワイプ・ピンチをする",
+        "hover": "要素にマウスを乗せる（ホバーで開くメニューなどを見る）",
+        "drag": "ドラッグ＆ドロップする（並べ替え・スライダーなど）",
         "throttle": "CPU や通信を遅くする",
+        "handle_dialog": "ページが出したダイアログに答える（離れるのを拒んだ localhost 以外のページを離れるときは、この設定によらず確認を求める）",
+        "get_downloads": "Claude の操作でダウンロードしたファイルの一覧を読む",
         "evaluate": "localhost 以外のページで JavaScript を実行する（localhost では、いつも確認なしで実行する）",
+        "upload_file": "localhost 以外のページに、この Mac のファイルを添付する（localhost では、いつも確認なしで添付する）",
         "ask_user_to_act": "ログインなど、ブラウザでの操作を人に頼む"
       },
       "sessions": {
@@ -1845,7 +1857,8 @@
       "heightOnly": "高さ {height}"
     },
     "page": {
-      "loadFailed": "{url} を読み込めませんでした（{error}）"
+      "loadFailed": "{url} を読み込めませんでした（{error}）",
+      "certificate": "このサイトの証明書を確かめられませんでした。証明書の誤りを通して開くのは、この Mac の中のページ（localhost・127.0.0.1・*.localhost）だけです。ほかのサイトでは、途中で通信を盗み見られているおそれがあるため開きません。"
     },
     "chat": {
       "consoleErrors": "アプリ内ブラウザ（{url}）のコンソールに出たエラー:\n{errors}\n"
@@ -1888,6 +1901,22 @@
       "send": "送る",
       "done": "終わった",
       "decline": "できない"
+    },
+    "login": {
+      "label": "サイトのログイン",
+      "title": "ログインが必要です",
+      "page": "{origin} がユーザー名とパスワードを求めています",
+      "popup": "このタブから開いた別ウインドウのページ（{origin}）が、ユーザー名とパスワードを求めています",
+      "proxy": "プロキシ {origin} がユーザー名とパスワードを求めています",
+      "realm": "サイトからのメッセージ: 「{realm}」",
+      "retry": "ユーザー名かパスワードが違うようです。もう一度入力してください。",
+      "insecure": "この接続は暗号化されていません。入力した内容が途中で読み取られるおそれがあります。",
+      "private": "入力した内容は、このサイトにだけ送ります。Claude には渡しません。",
+      "proxyPrivate": "入力した内容は、このプロキシにだけ送ります。Claude には渡しません。",
+      "username": "ユーザー名",
+      "password": "パスワード",
+      "submit": "ログイン",
+      "cancel": "キャンセル"
     },
     "hosts": {
       "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",

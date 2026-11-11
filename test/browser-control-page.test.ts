@@ -6,7 +6,7 @@ import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
 import { textResult } from '../src/main/mcp-bridge';
 import { keySpec } from '../src/main/browser-control';
 import { FakeImage, HOST, images } from './helpers/fake-electron';
-import { addChildFrame, answerCdp, logConsole, setup, textOf } from './helpers/browser-control';
+import { addChildFrame, answerCdp, logConsole, setup, textOf, toolCommands } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
 
@@ -72,7 +72,7 @@ describe('ページを読むツールの前に（今のページ）', () => {
     expect(page.scripts).toEqual([]);
     expect(page.captures).toEqual([]);
     expect(page.evaluated).toEqual([]);
-    expect(page.debugger.commands).toEqual([]);
+    expect(toolCommands(page)).toEqual([]);
   });
 
   it('読んでいる間に許していない先へ移ったら、読んだものを返さない（スクリーンショット・文字・ツリー。移った先はオリジンだけ）', async () => {
@@ -484,7 +484,7 @@ describe('ページの文字（get_text）', () => {
     page.page.text = (code) =>
       code.includes('"#main"') ? { title: '', url: 'http://localhost:3000/', parts: [{ frame: 'http://localhost:3000/f', text: 'メイン' }] } : null;
     expect(textOf(await call('get_text', { selector: '#main' }))).toBe('Title: (none)\nURL: http://localhost:3000/\n\n--- inside iframe (http://localhost:3000/f) ---\nメイン');
-    expect(page.debugger.commands).toEqual([]);
+    expect(toolCommands(page)).toEqual([]);
     expect(await call('get_text', { selector: '#none' })).toEqual(textResult('No element matches "#none".', true));
   });
 
@@ -727,7 +727,8 @@ describe('クリック', () => {
     expect(decide).toHaveLength(1);
     expect(decide[0].userGesture).toBeUndefined();
     expect(inputs(page)).toEqual([]);
-    expect(page.debugger.attachCount).toBe(0);
+    // CDP は、タブができたときに（ダイアログを見張るために）つないだ 1 回だけ
+    expect(page.debugger.attachCount).toBe(1);
     expect(activities()).toEqual([
       { sessionId: 'S1', active: true, label: 'クリック', box: null },
       { sessionId: 'S1', active: true, label: null, box: rect },
@@ -744,7 +745,9 @@ describe('クリック', () => {
     expect(page.scriptsOf('press')).toEqual([]);
     expect(page.debugger.attachCount).toBe(1);
     expect(page.debugger.versions).toEqual(['1.3']);
-    expect(page.debugger.commands[0]).toEqual({ method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, child: undefined });
+    // タブができたときはダイアログの見張り（Page.enable）だけ。別プロセスの iframe には、最初に CDP の命令を送るときにつなぐ
+    expect(page.debugger.commands[0]).toEqual({ method: 'Page.enable', params: undefined, child: undefined });
+    expect(page.debugger.sent('Target.setAutoAttach').map((c) => c.params)).toEqual([{ autoAttach: true, waitForDebuggerOnStart: false, flatten: true }]);
     expect(inputs(page)).toEqual([
       { method: 'dispatchMouseEvent', type: 'mouseMoved', x: 201, y: 70 },
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 201, y: 70, button: 'left', clickCount: 1 },
@@ -1190,7 +1193,7 @@ describe('キー（press_key）', () => {
     ]);
   });
 
-  it('keySpec: 名前の付いたキー（大文字小文字を問わない）・F1〜F12・英字・数字・記号', () => {
+  it('keySpec: 名前の付いたキー（大文字小文字を問わない）・F1〜F24・英字・数字・記号', () => {
     expect(keySpec('ESC')).toEqual({ key: 'Escape', code: 'Escape', keyCode: 27 });
     expect(keySpec('return')).toEqual({ key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' });
     expect(keySpec('Space')).toEqual({ key: ' ', code: 'Space', keyCode: 32, text: ' ' });
@@ -1198,7 +1201,7 @@ describe('キー（press_key）', () => {
     expect(keySpec('PageUp')).toEqual({ key: 'PageUp', code: 'PageUp', keyCode: 33 });
     expect(keySpec('f1')).toEqual({ key: 'F1', code: 'F1', keyCode: 112 });
     expect(keySpec('F12')).toEqual({ key: 'F12', code: 'F12', keyCode: 123 });
-    expect(keySpec('F13')).toBeNull();
+    expect(keySpec('F25')).toBeNull();
     expect(keySpec('F0')).toBeNull();
     expect(keySpec('xf1')).toBeNull();
     expect(keySpec('a')).toEqual({ key: 'a', code: 'KeyA', keyCode: 65, text: 'a' });
@@ -1740,6 +1743,10 @@ describe('CDP のつなぎ方', () => {
   it('つなげなければ、理由を返す（Error でないものも）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
+    // タブができたときにつないだものが、外れた（DevTools を開いたなど）
+    await vi.advanceTimersByTimeAsync(200);
+    page.debugger.detachNow();
+    page.debugger.commands.length = 0;
     page.debugger.attachError = new Error('Another debugger is already attached to the target');
     expect(await call('get_accessibility_tree')).toEqual(
       textResult('Could not get ready to control the page (Another debugger is already attached to the target).', true),
@@ -1776,7 +1783,8 @@ describe('CDP のつなぎ方', () => {
     page.debugger.commands.length = 0;
     expect(textOf(await call('get_text'))).toBe('Title: T\nURL: http://localhost:3000/\n\n本文');
     expect(page.debugger.attachCount).toBe(2);
-    expect(page.debugger.commands.map((c) => c.method)).toEqual(['Target.setAutoAttach', 'Target.getTargets']);
+    // つなぎ直したら、ダイアログの見張りも付け直す
+    expect(page.debugger.commands.map((c) => c.method)).toEqual(['Page.enable', 'Target.setAutoAttach', 'Target.getTargets']);
   });
 
   it('別プロセスの iframe の今の URL が読めなければ、その iframe は数えない', async () => {
