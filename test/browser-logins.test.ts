@@ -154,6 +154,137 @@ describe('入力欄', () => {
   });
 });
 
+describe('入力欄の端の扱い', () => {
+  it('画面がタブの webview を作り直した（別のタブの ID で知らせた）ら、前の場所の入力欄を消して、新しい場所に出す。同じ場所なら出し直さない', () => {
+    const { sent, logins, tab } = make();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    logins.place(as(tab), place);
+    expect(sent).toHaveLength(1);
+    const moved = { sessionId: 'S1', tabId: 'tab-2' };
+    logins.place(as(tab), moved);
+    expect(sent.slice(1)).toEqual([
+      { ...place, login: null },
+      { ...moved, login: sent[0].login },
+    ]);
+    // 出していないタブ・入力欄の無いタブには何もしない
+    logins.place(as(new FakeContents()), place);
+    expect(sent).toHaveLength(3);
+  });
+
+  it('画面が知らせる前に別のページへ移ったら、出さずに消す（あとで知らせても出さない）', () => {
+    const { sent, logins, tab } = make();
+    logins.request(as(tab), as(tab), null, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    tab.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    logins.place(as(tab), place);
+    expect(sent).toEqual([]);
+    // 入力欄が無いときの移動も何もしない
+    tab.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    expect(sent).toEqual([]);
+  });
+
+  it('タブから開いた別ウインドウの入力欄は、もとのタブが別のページへ移っても消す。別ウインドウを閉じたら消すが、タブの控えは残す', () => {
+    const { sent, logins, tab } = make();
+    const popup = new FakeContents({ url: '', type: 'window' });
+    const request = { url: 'https://sso.example.com/', authInfo: basic({ host: 'sso.example.com' }) };
+    logins.request(as(popup), as(tab), place, request, () => {});
+    tab.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    expect(sent.at(-1)).toEqual({ ...place, login: null });
+    logins.request(as(popup), as(tab), place, request, () => {});
+    expect(logins.notes(as(tab))[0]).toMatch(/^A popup window opened from this tab asked for HTTP authentication \(https:\/\/sso\.example\.com\)\./);
+    popup.destroy();
+    expect(sent.at(-1)).toEqual({ ...place, login: null });
+    expect(logins.list()).toEqual([]);
+    // タブはまだ開いているので、そのタブの新しい入力欄は出せる
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    expect(logins.list()).toHaveLength(1);
+  });
+
+  it('入力欄を出していない別ウインドウが閉じても、タブの入力欄は消さない', () => {
+    const { sent, logins, tab } = make();
+    const popup = new FakeContents({ url: '', type: 'window' });
+    logins.request(as(popup), as(tab), place, { url: 'https://sso.example.com/', authInfo: basic({ host: 'sso.example.com' }) }, () => {});
+    logins.answer('S1', sent[0].login!.id, null);
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    popup.destroy();
+    expect(logins.list()).toEqual([{ ...place, login: sent.at(-1)!.login }]);
+    expect(sent.at(-1)!.login!.origin).toBe('https://stg.example.com');
+  });
+
+  it('前に入れた値を捨てる時間切れが、あとで入れた値を捨てない', async () => {
+    const { sent, logins, tab } = make();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    logins.answer('S1', sent.at(-1)!.login!.id, { username: 'old', password: 'old' });
+    // 読み込み直したページが、別の realm を求めた（控えた値は使わず、もう一度聞く）
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic({ realm: 'other' }) }, () => {});
+    await vi.advanceTimersByTimeAsync(30_000);
+    logins.answer('S1', sent.at(-1)!.login!.id, { username: 'new', password: 'new' });
+    // 前の値の時間切れ（入れてから 1 分）を過ぎても、あとの値（入れてから 31 秒）は使える
+    await vi.advanceTimersByTimeAsync(31_000);
+    const next = answered();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic({ realm: 'other' }) }, next.callback);
+    expect(next.calls).toEqual([['new', 'new']]);
+  });
+
+  it('入れたあとに求めたページが閉じていたら、読み込み直さない', () => {
+    const { sent, logins, tab } = make();
+    const popup = new FakeContents({ url: '', type: 'window' });
+    logins.request(as(popup), as(tab), place, { url: 'https://sso.example.com/', authInfo: basic({ host: 'sso.example.com' }) }, () => {});
+    popup.destroyed = true;
+    logins.answer('S1', sent[0].login!.id, { username: 'u', password: 'p' });
+    expect(popup.calls).toEqual([]);
+    expect(sent.at(-1)).toEqual({ ...place, login: null });
+  });
+
+  it('閉じたページ・入力欄を出しているタブへの認証は、取り消すだけで入力欄を出さない', () => {
+    const { sent, logins, tab } = make();
+    const closed = new FakeContents({ url: '' });
+    closed.destroyed = true;
+    const cancel = answered();
+    logins.request(as(closed), as(closed), place, { url: 'https://stg.example.com/', authInfo: basic() }, cancel.callback);
+    expect([cancel.calls, sent]).toEqual([[[]], []]);
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    expect(sent).toHaveLength(1);
+  });
+
+  it('realm の無い認証も出せ、同じく realm の無い先にだけ控えた値を使う', () => {
+    const { sent, logins, tab } = make();
+    const noRealm = basic({ realm: undefined as unknown as string });
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: noRealm }, () => {});
+    expect(sent[0].login!.realm).toBe('');
+    logins.answer('S1', sent[0].login!.id, { username: 'u', password: 'p' });
+    const next = answered();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: noRealm }, next.callback);
+    expect(next.calls).toEqual([['u', 'p']]);
+  });
+
+  it('読めない URL・http(s) でない URL のときは、認証の先を host:port で出す', () => {
+    for (const url of ['not a url', 'ftp://stg.example.com/']) {
+      const { sent, logins, tab } = make();
+      logins.request(as(tab), as(tab), place, { url, authInfo: basic({ port: 21 }) }, () => {});
+      expect(sent[0].login!.origin).toBe('stg.example.com:21');
+    }
+  });
+
+  it('プロキシの認証は、Claude にもプロキシとして伝える', () => {
+    const { sent, logins, tab } = make();
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic({ isProxy: true, host: 'proxy.corp', port: 3128 }) }, () => {});
+    expect(logins.notes(as(tab))[0]).toContain('asked for HTTP authentication (the proxy proxy.corp:3128).');
+    logins.answer('S1', sent[0].login!.id, null);
+    expect(logins.notes(as(tab))).toEqual(["The user closed tanacode's sign-in form for the HTTP authentication (the proxy proxy.corp:3128) without signing in."]);
+  });
+
+  it('セッションを消したら、そのセッションの入力欄だけを消す', () => {
+    const { sent, logins, tab } = make();
+    const other = new FakeContents({ url: '' });
+    const elsewhere = { sessionId: 'S2', tabId: 'tab-9' };
+    logins.request(as(tab), as(tab), place, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    logins.request(as(other), as(other), elsewhere, { url: 'https://stg.example.com/', authInfo: basic() }, () => {});
+    logins.forget('S2');
+    expect(logins.list()).toEqual([{ ...place, login: sent[0].login }]);
+    expect(sent.at(-1)).toEqual({ ...elsewhere, login: null });
+  });
+});
+
 describe('Claude への知らせ', () => {
   it('入力欄を出している間は、人に頼むよう伝える。入れた・断ったことは 1 回だけ伝える。値も realm も伝えない', () => {
     const { sent, logins, tab } = make();

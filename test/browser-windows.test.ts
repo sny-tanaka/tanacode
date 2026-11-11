@@ -86,6 +86,16 @@ class FakeWindow extends EventEmitter {
     this.destroyed = true;
     this.emit('closed');
   }
+  // 閉じる（ページの beforeunload は止められないので、すぐ閉じる）
+  readonly closes: number[] = [];
+  close(): void {
+    this.closes.push(1);
+    this.destroy();
+  }
+  contentSize: [number, number] = [480, 640];
+  getContentSize(): number[] {
+    return this.contentSize;
+  }
   setTitle(title: string): void {
     this.title = title;
   }
@@ -485,6 +495,31 @@ describe('新しいウインドウ', () => {
     browser.blocksNavigation.mockClear();
     nested.webContents.go('https://example.test/');
     expect(browser.blocksNavigation.mock.calls).toEqual([[nested.webContents, 'https://example.test/', guest]]);
+  });
+
+  it('ポップアップは、開いたタブのアプリ内ブラウザの一覧に入れる。一覧から閉じる・中身の大きさを読める。閉じたあとは、閉じ直さず大きさは 0', () => {
+    const { tab, popup, browser } = setup();
+    const guest = tab();
+    const win = popup(guest);
+    const [[root, contents, handle]] = browser.attachPopup.mock.calls as unknown as [FakeContents, FakeContents, { close: () => void; size: () => { width: number; height: number } }][];
+    expect([root, contents]).toEqual([guest, win.webContents]);
+    win.contentSize = [500, 700];
+    expect(handle.size()).toEqual({ width: 500, height: 700 });
+    handle.close();
+    expect([win.destroyed, win.closes.length]).toEqual([true, 1]);
+    handle.close();
+    expect(win.closes.length).toBe(1);
+    expect(handle.size()).toEqual({ width: 0, height: 0 });
+  });
+
+  it('ポップアップのもとのタブ（rootOf）。ポップアップから開いたものも、もとのタブ。タブそのものは undefined', () => {
+    const { tab, popup, windows } = setup();
+    const guest = tab();
+    const win = popup(guest);
+    const nested = popup(win.webContents);
+    expect(windows.rootOf(asContents(win.webContents))).toBe(guest);
+    expect(windows.rootOf(asContents(nested.webContents))).toBe(guest);
+    expect(windows.rootOf(asContents(guest))).toBeUndefined();
   });
 
   it('開いたページと違うセッションのポップアップ（プレビューの守りが効かないもの）は、閉じる', () => {
