@@ -795,3 +795,48 @@ describe('PreviewPane: Claude からの操作の依頼（あなたの番です�
     ]);
   });
 });
+
+describe('PreviewPane: ページが求めた HTTP の認証（Basic 認証）の入力欄', () => {
+  const LOGIN = { id: 'login-1', origin: 'https://stg.example.com', realm: 'staging', proxy: false, insecure: false, retry: false, popup: false };
+  // 今のタブに入力欄を出す
+  async function showLogin() {
+    render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('localhost:3000');
+    const tabId = activated().at(-1)![1] as string;
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId, login: LOGIN }));
+    expect(screen.getByLabelText('サイトのログイン')).toBeTruthy();
+    return tabId;
+  }
+
+  it('打ったユーザー名とパスワードを「ログイン」で、そのセッションのその入力欄に返す', async () => {
+    await showLogin();
+    fireEvent.change(screen.getByLabelText('ユーザー名'), { target: { value: 'tester' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'dummy-pass' } });
+    expect((screen.getByLabelText('ユーザー名') as HTMLInputElement).value).toBe('tester');
+    fireEvent.click(screen.getByText('ログイン'));
+    expect(api.argsOf('browser.answerLogin')).toEqual([['s1', 'login-1', { username: 'tester', password: 'dummy-pass' }]]);
+  });
+
+  it('「キャンセル」と Esc（変換中でないとき）で、キャンセルを返す。ほかのキーでは返さない', async () => {
+    await showLogin();
+    fireEvent.click(screen.getByText('キャンセル'));
+    expect(api.argsOf('browser.answerLogin')).toEqual([['s1', 'login-1', null]]);
+    fireEvent.keyDown(screen.getByLabelText('ユーザー名'), { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(screen.getByLabelText('パスワード'), { key: 'a' });
+    expect(api.argsOf('browser.answerLogin')).toHaveLength(1);
+    fireEvent.keyDown(screen.getByLabelText('パスワード'), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByLabelText('ユーザー名'), { key: 'Escape' });
+    expect(api.argsOf('browser.answerLogin')).toEqual([
+      ['s1', 'login-1', null],
+      ['s1', 'login-1', null],
+      ['s1', 'login-1', null],
+    ]);
+  });
+
+  it('消えた知らせ（login が null）で、入力欄を消す', async () => {
+    const tabId = await showLogin();
+    act(() => api.emit('browser.onLogin', { sessionId: 's1', tabId, login: null }));
+    expect(screen.queryByLabelText('サイトのログイン')).toBeNull();
+  });
+});
