@@ -6793,6 +6793,64 @@ button.menu-tab:disabled {
   width: 100%;
   height: 100%;
 }
+/* ページが開いたポップアップの絵（PopupCanvas）。表示幅の枠（スマホなど）は当てず、本体いっぱいに出す。
+   絵は、ポップアップの中身と同じ大きさで左上から描く（main が中身を、この場所の大きさにする） */
+.preview-popup {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+.preview-popup-hint {
+  justify-content: space-between;
+}
+.preview-popup-box {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* 表示するページの既定の背景（アプリの色ではない） */
+  background: #fff;
+}
+.preview-popup-canvas {
+  display: block;
+}
+/* キーと日本語の変換を受ける入力欄。ふだんは見せず、変換の間だけ、押した位置に変換中の文字を出す */
+.preview-popup-input {
+  position: absolute;
+  width: 1px;
+  height: 1.6em;
+  padding: 0 4px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.preview-popup-input.composing {
+  width: 20em;
+  opacity: 1;
+  color: var(--text-heading);
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  border-radius: 4px;
+}
+/* タブの帯の、ポップアップの印 */
+.preview-tab-badge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
 .preview-empty {
   position: absolute;
   inset: 0;

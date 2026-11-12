@@ -4,6 +4,7 @@ import { browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel } from '../src/shared/ipc';
 import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
 import { MAX_POPUPS } from '../src/main/browser-windows';
+import type { PopupView } from '../src/main/browser-popup-view';
 import { textResult } from '../src/main/mcp-bridge';
 import { FakeContents } from './helpers/fake-electron';
 import { flush, finish, setup, textOf, type Tab } from './helpers/browser-control';
@@ -26,9 +27,19 @@ const asWebContents = (page: FakeContents) => page as unknown as WebContents;
 function popupOf(ctx: ReturnType<typeof setup>, opener: FakeContents, url: string, title = 'ログイン') {
   const contents = new FakeContents({ url, title, type: 'window' });
   contents.hostWebContents = undefined;
-  const window = { closed: 0, close: () => window.closed++, size: () => ({ width: 480, height: 640 }) };
+  // view: 絵をタブに映すもの（browser-popup-view.ts。ここでは呼ばれたものだけを見る）
+  const view = { watch: vi.fn(), done: vi.fn(), input: vi.fn(), reveal: vi.fn(), revealed: false };
+  const window = {
+    closed: 0,
+    close: () => {
+      window.closed++;
+      contents.emit('destroyed');
+    },
+    size: () => ({ width: 480, height: 640 }),
+    view: view as unknown as PopupView,
+  };
   ctx.control.attachPopup(asWebContents(opener), asWebContents(contents), window);
-  return Object.assign(contents, { window });
+  return Object.assign(contents, { window, view });
 }
 
 // Claude がページのボタンを押す。押したときにページがすること（onRelease）を起こす
@@ -85,12 +96,12 @@ describe('ポップアップの別ウインドウを、タブの一覧に入れ�
 });
 
 describe('ポップアップを選んで操作する', () => {
-  it('select_tab: 今のタブにして、ページを返す。画面のタブは替えない。このあとの操作はポップアップに', async () => {
+  it('select_tab: 今のタブにして、ページを返す。画面もそのポップアップのタブにする。このあとの操作はポップアップに', async () => {
     const ctx = setup();
     const page = ctx.open('http://localhost:3000/', { title: 'トップ' });
     const popup = popupOf(ctx, page, 'http://localhost:3000/login');
     expect(textOf(await ctx.call('select_tab', { index: 2 }))).toBe('Switched to tab 2, a popup window opened by tab 1: ログイン\nURL: http://localhost:3000/login');
-    expect(ctx.sentOn(IpcChannel.BrowserSelectTab)).toEqual([]);
+    expect(ctx.sentOn(IpcChannel.BrowserSelectTab)).toEqual([{ sessionId: 'S1', tabId: `popup-${popup.id}` }]);
     expect(JSON.parse(textOf(await ctx.control.handle('S1', BROWSER_GATE_REQUEST, {}))).url).toBe('http://localhost:3000/login');
     popup.page.text = () => ({ title: 'ログイン', url: 'http://localhost:3000/login', parts: [{ frame: null, text: 'ポップアップの中身' }] });
     page.page.text = () => ({ title: 'トップ', url: 'http://localhost:3000/', parts: [{ frame: null, text: 'タブの中身' }] });
@@ -135,7 +146,7 @@ describe('ポップアップを選んで操作する', () => {
     expect(selected).toBe(
       'Switched to tab 2, a popup window opened by tab 1: (not allowed for Claude)\nURL: https://accounts.example.com\n' +
         'This page is not allowed for Claude, so it can be neither read nor operated any further.\n' +
-        'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. The user sees the popup in its own window.',
+        'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. The user sees the popup as a tab in the in-app browser.',
     );
     expect(await ctx.call('get_text')).toEqual(
       textResult(
@@ -225,7 +236,7 @@ describe('Claude の操作で開いた・止めた・開かなかったポップ
     );
     expect(result).toBe(
       'Clicked: button#login\n' +
-        'Opened a popup window (http://localhost:3000) in a separate window: tab 2 in list_tabs. The current tab did not change. To read or operate the popup, switch to it with select_tab. ' +
+        'Opened a popup window (http://localhost:3000): tab 2 in list_tabs (the user sees it as a popup tab in the in-app browser). The current tab did not change. To read or operate the popup, switch to it with select_tab. ' +
         'If it shows a page that is not allowed for Claude (such as a login page of another site), ask the user to act there with ask_user_to_act.',
     );
     expect(textOf(await ctx.call('list_tabs')).split('\n')[1]).toBe('* 1. トップ — http://localhost:3000/');
@@ -320,5 +331,79 @@ describe('Claude の操作で開いた・止めた・開かなかったポップ
     const pending = ctx.control.handle('S1', 'click', { selector: '#done' });
     await flush();
     expect(textOf(await finish(pending))).toContain('The popup window that was the current tab (tab 2) has closed. The current tab is now tab 1.');
+  });
+});
+
+describe('ポップアップを画面のタブに映す', () => {
+  type Popups = { sessionId: string; popups: { tabId: string; openerTabId: string; url: string; title: string }[] };
+
+  it('開いた・題が変わった・閉じたときに、画面へポップアップの一覧を送る（今の一覧は pendingPopups でも読める）', () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/', { title: 'トップ' });
+    const popup = popupOf(ctx, page, 'https://login.example.com/auth', '外のログイン');
+    const tabId = `popup-${popup.id}`;
+    const entry = { tabId, openerTabId: 'tab-1', url: 'https://login.example.com/auth', title: '外のログイン' };
+    expect(ctx.sentOn<Popups>(IpcChannel.BrowserPopups).at(-1)).toEqual({ sessionId: 'S1', popups: [entry] });
+    expect(ctx.control.pendingPopups()).toEqual([{ sessionId: 'S1', popups: [entry] }]);
+    popup.title = '二段階認証';
+    popup.emit('page-title-updated');
+    expect(ctx.sentOn<Popups>(IpcChannel.BrowserPopups).at(-1)!.popups[0]!.title).toBe('二段階認証');
+    // 人がタブを閉じた
+    ctx.control.closePopupTab('S1', tabId);
+    expect(popup.window.closed).toBe(1);
+    expect(ctx.sentOn<Popups>(IpcChannel.BrowserPopups).at(-1)).toEqual({ sessionId: 'S1', popups: [] });
+    expect(ctx.control.pendingPopups()).toEqual([]);
+  });
+
+  it('映す場所を受けたら、絵とカーソルの形を画面へ送り始める。場所が null か壊れていれば、やめる', () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const popup = popupOf(ctx, page, 'http://localhost:3000/login');
+    const tabId = `popup-${popup.id}`;
+    ctx.control.viewPopup('S1', tabId, { x: 10, y: 20, width: 300, height: 400 });
+    const [place, onFrame, onCursor] = popup.view.watch.mock.calls[0] as [unknown, (frame: unknown) => void, (cursor: string) => void];
+    expect(place).toEqual({ x: 10, y: 20, width: 300, height: 400 });
+    const data = Buffer.from([1, 2, 3, 4]);
+    onFrame({ width: 1, height: 1, scale: 2, data });
+    onCursor('pointer');
+    expect(ctx.sentOn(IpcChannel.BrowserPopupFrame)).toEqual([{ sessionId: 'S1', tabId, width: 1, height: 1, scale: 2, data }]);
+    expect(ctx.sentOn(IpcChannel.BrowserPopupCursor)).toEqual([{ sessionId: 'S1', tabId, cursor: 'pointer' }]);
+    ctx.control.viewPopup('S1', tabId, null);
+    ctx.control.viewPopup('S1', tabId, { x: 0, y: 0, width: -1, height: 'a' });
+    expect(popup.view.watch.mock.calls.slice(1)).toEqual([
+      [null, null, null],
+      [null, null, null],
+    ]);
+  });
+
+  it('人の操作は、形を確かめてから送る。描き終えた・実物を開くも、そのポップアップへ。知らないタブ・タブ（ポップアップでないもの）には何もしない', () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const popup = popupOf(ctx, page, 'http://localhost:3000/login');
+    const tabId = `popup-${popup.id}`;
+    ctx.control.popupInput('S1', tabId, { type: 'mouseDown', x: 5.4, y: 6, button: 'left', clickCount: 1, modifiers: ['shift', 'bogus'] });
+    ctx.control.popupInput('S1', tabId, { type: 'eval', code: 'x' });
+    ctx.control.popupInput('S1', 'tab-1', { type: 'focus' });
+    ctx.control.popupInput('S2', tabId, { type: 'focus' });
+    expect(popup.view.input.mock.calls).toEqual([[{ type: 'mouseDown', x: 5, y: 6, button: 'left', clickCount: 1, modifiers: ['shift'] }]]);
+    ctx.control.popupFrameDone('S1', tabId);
+    ctx.control.revealPopup('S1', tabId);
+    ctx.control.revealPopup('S1', 'tab-1');
+    expect([popup.view.done.mock.calls.length, popup.view.reveal.mock.calls.length]).toEqual([1, 1]);
+  });
+
+  it('画面で見ていたポップアップが閉じたら、画面の今のタブは開いたタブに戻ったものとして扱う（Claude の今のタブも）', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/', { title: 'トップ' });
+    ctx.open('http://localhost:3000/b', { title: '二' });
+    const popup = popupOf(ctx, page, 'http://localhost:3000/login');
+    // 人がポップアップのタブを選んだ（画面が知らせてくる）
+    ctx.control.activate('S1', `popup-${popup.id}`);
+    popup.destroy();
+    expect(textOf(await ctx.call('list_tabs')).split('\n').slice(1)).toEqual([
+      '* 1. トップ — http://localhost:3000/',
+      '  2. 二 — http://localhost:3000/b',
+      'The popup window that was the current tab (tab 3) has closed. The current tab is now tab 1. Check the tabs with list_tabs.',
+    ]);
   });
 });

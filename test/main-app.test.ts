@@ -531,6 +531,9 @@ describe('部品から画面への知らせ', () => {
       newTab: IpcChannel.BrowserNewTab,
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
+      popups: IpcChannel.BrowserPopups,
+      popupFrame: IpcChannel.BrowserPopupFrame,
+      popupCursor: IpcChannel.BrowserPopupCursor,
       ask: IpcChannel.BrowserAsk,
       login: IpcChannel.BrowserLogin,
       remember: IpcChannel.BrowserRemember,
@@ -1121,7 +1124,7 @@ describe('ウインドウ', () => {
       overrideBrowserWindowOptions: Record<string, unknown>;
       createWindow: (options: Record<string, unknown>) => unknown;
     };
-    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
+    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, backgroundThrottling: false, disableDialogs: true };
     expect(popup.action).toBe('allow');
     expect(popup.outlivesOpener).toBe(true);
     expect(popup.overrideBrowserWindowOptions).toEqual({ webPreferences: secure });

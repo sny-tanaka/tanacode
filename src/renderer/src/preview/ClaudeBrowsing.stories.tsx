@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import type { BrowserPopupFrame } from '@shared/ipc';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { CredentialHint } from './CredentialHint';
+import { PopupCanvas } from './PopupCanvas';
 import { AskBar, ClaudeBar, ClickBox, LoginBar, RememberBar, TabStrip, ThrottleBadge, TouchPoints, viewportLabel } from './PreviewPane';
 
 // アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
@@ -265,3 +268,76 @@ export const サイトのログイン_プロキシと別ウインドウ: Story =
     </div>
   ),
 };
+
+// ページが開いたポップアップ（ログインの窓など）は、タブのあとに「ポップアップ」の印を付けたタブとして並ぶ
+export const ポップアップのタブ: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ width: 760, height: 120, border: '1px solid var(--border-subtle)' }}>
+      <TabStrip
+        tabs={[
+          { id: 'tab-1', title: 'メニュー｜カフェ', url: 'http://localhost:5173/', loading: false },
+          { id: 'popup-12', title: 'Sign in - Example', url: 'https://accounts.example.com/signin', loading: false, popup: true },
+          { id: 'popup-13', title: '', url: 'about:blank', loading: false, popup: true },
+        ]}
+        active="popup-12"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onNew={() => {}}
+      />
+    </div>
+  ),
+};
+
+// ポップアップの画面を映したところ。main が送ってくる絵の代わりに、ここで描いたログインの画面を送る（画素は main と同じ BGRA の順）。
+// 上の帯の「実物を開く」で、本物の別ウインドウを出す
+export const ポップアップを映す: Story = {
+  args: { label: null },
+  beforeEach: () =>
+    mockApi({
+      'browser.onPopupFrame': (listener: unknown) => {
+        const timer = setTimeout(() => (listener as (frame: BrowserPopupFrame) => void)(loginFrame(480, 360, window.devicePixelRatio || 1)), 50);
+        return () => clearTimeout(timer);
+      },
+    }),
+  render: () => (
+    <div className="preview-pane" style={{ flex: 'none', width: 640, height: 480, border: '1px solid var(--border-subtle)' }}>
+      <div className="preview-body">
+        <PopupCanvas sessionId="S1" tabId="popup-12" visible />
+      </div>
+    </div>
+  ),
+};
+
+// 作り物のログインの画面の絵（width・height は CSS の px）
+function loginFrame(width: number, height: number, scale: number): BrowserPopupFrame {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  const g = canvas.getContext('2d')!;
+  g.scale(scale, scale);
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, width, height);
+  g.fillStyle = '#222';
+  g.font = 'bold 20px sans-serif';
+  g.fillText('Example にサインイン', 24, 48);
+  g.font = '14px sans-serif';
+  g.fillText('メールアドレス', 24, 88);
+  g.strokeStyle = '#999';
+  g.strokeRect(24, 98, 280, 32);
+  g.fillText('パスワード', 24, 158);
+  g.strokeRect(24, 168, 280, 32);
+  g.fillStyle = '#1a73e8';
+  g.fillRect(24, 224, 120, 36);
+  g.fillStyle = '#fff';
+  g.fillText('次へ', 70, 247);
+  const rgba = g.getImageData(0, 0, canvas.width, canvas.height).data;
+  const bgra = new Uint8Array(rgba.length);
+  for (let i = 0; i < rgba.length; i += 4) {
+    bgra[i] = rgba[i + 2]!;
+    bgra[i + 1] = rgba[i + 1]!;
+    bgra[i + 2] = rgba[i]!;
+    bgra[i + 3] = rgba[i + 3]!;
+  }
+  return { sessionId: 'S1', tabId: 'popup-12', width: canvas.width, height: canvas.height, scale, data: bgra };
+}

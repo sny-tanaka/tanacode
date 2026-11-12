@@ -225,6 +225,19 @@ export const IpcChannel = {
   BrowserSelectTab: 'browser:select-tab',
   BrowserCloseTab: 'browser:close-tab',
   BrowserActivate: 'browser:activate',
+  // ページが開いたポップアップ（見えない別ウインドウで動かし、絵をアプリ内ブラウザのタブに映す）。main → 画面: 一覧が変わった・絵・カーソルの形 /
+  // 画面 → main: 今の一覧（画面を作り直したとき用）・映す場所（映すのをやめたら null）・絵を描き終えた・人の操作
+  BrowserPopups: 'browser:popups',
+  BrowserPopupsGet: 'browser:popups-get',
+  BrowserPopupFrame: 'browser:popup-frame',
+  BrowserPopupCursor: 'browser:popup-cursor',
+  BrowserPopupView: 'browser:popup-view',
+  BrowserPopupFrameDone: 'browser:popup-frame-done',
+  BrowserPopupInput: 'browser:popup-input',
+  // 画面 → main: ポップアップの実物の別ウインドウを出す（映しきれないものを、人が実物で操作するため）
+  BrowserPopupReveal: 'browser:popup-reveal',
+  // 画面 → main: 人がポップアップのタブを閉じた（別ウインドウを閉じる）
+  BrowserPopupClose: 'browser:popup-close',
   // Claude が変えた画面の大きさ・遅くする設定。画面 → main: 人がツールバーで表示幅を選んだ（Claude が決めた大きさをやめる）/
   // main → 画面: タブを遅くしている様子 / 画面 → main: 人がツールバーで遅くするのをやめた
   BrowserViewportReset: 'browser:viewport-reset',
@@ -284,6 +297,32 @@ export type BrowserNewTabRequest = { sessionId: string; url: string; background:
 
 // セッションのタブ
 export type BrowserTabRef = { sessionId: string; tabId: string };
+
+// セッションのポップアップ（ページが開いた別ウインドウ。人には出さず、アプリ内ブラウザのタブに絵を映す）。タブの後ろに、開いた順に並ぶ。
+// tabId: ポップアップのタブの ID（Claude の list_tabs と同じもの）/ openerTabId: 開いたタブ / url・title: 今のページ
+export type BrowserPopupTab = { tabId: string; openerTabId: string; url: string; title: string };
+export type BrowserPopupsChange = { sessionId: string; popups: BrowserPopupTab[] };
+
+// ポップアップの絵。width・height: 画素の数 / scale: 1 CSS px あたりの画素の数 / data: 絵の画素（BGRA の順に 4 バイトずつ）
+export type BrowserPopupFrame = { sessionId: string; tabId: string; width: number; height: number; scale: number; data: Uint8Array };
+// ポップアップのカーソルの形（Electron の cursor-changed の type。pointer・text など）
+export type BrowserPopupCursor = { sessionId: string; tabId: string; cursor: string };
+
+// 映す場所。アプリの画面の中の位置と大きさ（CSS の px）。ポップアップの中身は、この大きさにする
+export type BrowserPopupPlace = { x: number; y: number; width: number; height: number };
+
+// 人がポップアップの絵の上でした操作。x・y: 絵の左上からの位置（CSS の px）/ modifiers: 押していた修飾キー /
+// key: 押したキー（KeyboardEvent.key）/ text: 打った文字（日本語の変換で確定した文字も）/ command: 編集の操作（⌘C など。ページのメニューが無いので main が行う）
+export type BrowserPopupModifier = 'shift' | 'control' | 'alt' | 'meta';
+export type BrowserPopupInput =
+  | { type: 'mouseDown' | 'mouseUp'; x: number; y: number; button: 'left' | 'middle' | 'right'; clickCount: number; modifiers: BrowserPopupModifier[] }
+  | { type: 'mouseMove'; x: number; y: number; modifiers: BrowserPopupModifier[] }
+  | { type: 'mouseLeave' }
+  | { type: 'mouseWheel'; x: number; y: number; deltaX: number; deltaY: number; modifiers: BrowserPopupModifier[] }
+  | { type: 'keyDown' | 'keyUp'; key: string; modifiers: BrowserPopupModifier[] }
+  | { type: 'insertText'; text: string }
+  | { type: 'edit'; command: 'copy' | 'cut' | 'paste' | 'selectAll' | 'undo' | 'redo' }
+  | { type: 'focus' };
 
 // Claude が表示幅を変えた（0 は全幅）。width だけなら、前からの表示幅の切り替え（全幅・スマホ・タブレット）。
 // 機種の名前か数字で決めたときは custom があり、ツールバーにその大きさを出す。height: 高さ（CSS の px。0 は枠の高さいっぱい）/
@@ -1013,6 +1052,20 @@ export type TanacodeApi = {
     onNewTab(listener: (request: BrowserNewTabRequest) => void): () => void;
     onSelectTab(listener: (tab: BrowserTabRef) => void): () => void;
     onCloseTab(listener: (tab: BrowserTabRef) => void): () => void;
+    // ポップアップ。onPopups: 一覧が変わった / popups: 今の一覧（画面を作り直したとき用）/ onPopupFrame・onPopupCursor: 絵・カーソルの形 /
+    // viewPopup: 映す場所（映すのをやめたら null。映している間だけ絵が届く）/ popupFrameDone: 絵を描き終えた（次の絵は、これを待って送られる）/
+    // popupInput: 人の操作
+    onPopups(listener: (change: BrowserPopupsChange) => void): () => void;
+    popups(): Promise<BrowserPopupsChange[]>;
+    onPopupFrame(listener: (frame: BrowserPopupFrame) => void): () => void;
+    onPopupCursor(listener: (cursor: BrowserPopupCursor) => void): () => void;
+    viewPopup(sessionId: string, tabId: string, place: BrowserPopupPlace | null): void;
+    popupFrameDone(sessionId: string, tabId: string): void;
+    popupInput(sessionId: string, tabId: string, input: BrowserPopupInput): void;
+    // 実物の別ウインドウを出して、前に出す（人がボタンを押したときだけ）
+    revealPopup(sessionId: string, tabId: string): void;
+    // 人がポップアップのタブを閉じた（別ウインドウを閉じる。ページの beforeunload では止まらない）
+    closePopup(sessionId: string, tabId: string): void;
     // ふだんのブラウザで開く（http(s) だけ）
     openExternal(url: string): Promise<void>;
     onActivity(listener: (activity: BrowserActivity) => void): () => void;
@@ -1199,6 +1252,7 @@ export type IpcInvoke = {
   [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
   [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
   [IpcChannel.BrowserRemembersGet]: Api['browser']['remembers'];
+  [IpcChannel.BrowserPopupsGet]: Api['browser']['popups'];
 };
 
 // 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
@@ -1220,6 +1274,11 @@ export type IpcSend = {
   [IpcChannel.WatchOpenFiles]: Api['workspace']['watchOpenFiles'];
   [IpcChannel.BrowserAttach]: Api['browser']['attach'];
   [IpcChannel.BrowserActivate]: Api['browser']['activate'];
+  [IpcChannel.BrowserPopupView]: Api['browser']['viewPopup'];
+  [IpcChannel.BrowserPopupFrameDone]: Api['browser']['popupFrameDone'];
+  [IpcChannel.BrowserPopupInput]: Api['browser']['popupInput'];
+  [IpcChannel.BrowserPopupReveal]: Api['browser']['revealPopup'];
+  [IpcChannel.BrowserPopupClose]: Api['browser']['closePopup'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
   [IpcChannel.BrowserLoginAnswer]: Api['browser']['answerLogin'];
   [IpcChannel.BrowserRememberAnswer]: Api['browser']['answerRemember'];
@@ -1267,6 +1326,9 @@ export type IpcEvent = {
   [IpcChannel.BrowserNewTab]: Payload<Api['browser']['onNewTab']>;
   [IpcChannel.BrowserSelectTab]: Payload<Api['browser']['onSelectTab']>;
   [IpcChannel.BrowserCloseTab]: Payload<Api['browser']['onCloseTab']>;
+  [IpcChannel.BrowserPopups]: Payload<Api['browser']['onPopups']>;
+  [IpcChannel.BrowserPopupFrame]: Payload<Api['browser']['onPopupFrame']>;
+  [IpcChannel.BrowserPopupCursor]: Payload<Api['browser']['onPopupCursor']>;
   [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
   [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;

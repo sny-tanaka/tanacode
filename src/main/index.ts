@@ -940,6 +940,12 @@ function registerIpc(): void {
   );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
+  handle(IpcChannel.BrowserPopupsGet, (e) => P(e).browser.pendingPopups());
+  listen(IpcChannel.BrowserPopupView, (e, id: string, tabId: string, place: unknown) => P(e).browser.viewPopup(id, tabId, place));
+  listen(IpcChannel.BrowserPopupFrameDone, (e, id: string, tabId: string) => P(e).browser.popupFrameDone(id, tabId));
+  listen(IpcChannel.BrowserPopupInput, (e, id: string, tabId: string, input: unknown) => P(e).browser.popupInput(id, tabId, input));
+  listen(IpcChannel.BrowserPopupReveal, (e, id: string, tabId: string) => P(e).browser.revealPopup(id, tabId));
+  listen(IpcChannel.BrowserPopupClose, (e, id: string, tabId: string) => P(e).browser.closePopupTab(id, tabId));
   listen(IpcChannel.BrowserViewportReset, (e, id: string) => P(e).browser.resetViewport(id));
   listen(IpcChannel.BrowserThrottleClear, (e, id: string, tabId: string) => P(e).browser.clearThrottle(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
@@ -1562,6 +1568,8 @@ const previewWindows = new PreviewWindows({
   // ポップアップは、tanacode のウインドウ（タブはいつもこの中）がある画面の中に置く
   screen: () => (mainWindow && !mainWindow.isDestroyed() ? { workArea: screen.getDisplayMatching(mainWindow.getBounds()).workArea, around: mainWindow.getBounds() } : null),
   makeWindow: (options) => new BrowserWindow(options),
+  // ポップアップは、映している場所（アプリの画面の中）と同じ位置に、見えないまま置く
+  hostBounds: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : null),
   focused: () => BrowserWindow.getFocusedWindow() !== null,
   whenFocused: (callback) => app.once('browser-window-focus', callback),
 });

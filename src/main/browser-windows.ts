@@ -1,13 +1,16 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions, DownloadItem, HandlerDetails, Rectangle, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
 import type { BrowserControl } from './browser-control';
+import { PopupView } from './browser-popup-view';
 
 // アプリ内ブラウザ（プレビューのパーティションの webview のタブ）のページが、移る・新しいウインドウを開くときの守り。
 // - 移る先: トップのフレームは http(s) と about:blank だけ。中のフレームだけ about:srcdoc・blob:・data: も（isPreviewDestination）。
 //   Claude の操作の間は、許した先へしか移らせない（BrowserControl.blocksNavigation）
 // - 新しいウインドウ: リンクの「新しいタブで開く」・features の無い window.open などは、アプリ内ブラウザの新しいタブで開く（openFromPage）。
-//   ポップアップ（disposition が new-window。window.open に features を付けたものなど）は、アプリ内ブラウザの外の別ウインドウで開き、
+//   ポップアップ（disposition が new-window。window.open に features を付けたものなど）は、別ウインドウで開き、
 //   開いたページ（window.opener）とつなぐ（OAuth のログインの窓のため）。別ウインドウは、開いたタブのアプリ内ブラウザの一覧に
-//   「ポップアップ」として入れ（attachPopup）、Claude も選んで操作できる。許していない先のページ（外の認証のページなど）は、タブと同じく読ませない
+//   「ポップアップ」として入れ（attachPopup）、Claude も選んで操作できる。許していない先のページ（外の認証のページなど）は、タブと同じく読ませない。
+//   一覧に入れた別ウインドウは人には出さず、絵をアプリ内ブラウザのタブに映す（browser-popup-view.ts）。人が「実物を開く」を押したときだけ出す。
+//   一覧に入れられなかったもの（画面からまだ知らせの無いタブが開いたもの）は、前と同じく出す
 // 別ウインドウにも、タブと同じ守りを付ける。Electron は、ポップアップの中身を、開いたページと同じセッション（プレビューのもの。どの権限も断り、
 // ダウンロードを止める）で作る。webPreferences の守りの値はここで決め、ページが window.open の features に書いた値（nodeIntegration=yes など）は効かない。
 // ウインドウは、Electron に作らせず、ここで作る（createWindow）。ページの features（closable=no・opacity=0・type=panel など）は使わず、
@@ -32,6 +35,8 @@ type Deps = {
   screen: () => PopupScreen | null;
   // 別ウインドウを作る（new BrowserWindow）
   makeWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
+  // tanacode のウインドウの中身の位置と大きさ（画面の上。ポップアップを映す場所に、見えない別ウインドウを置くため。分からなければ null）
+  hostBounds: () => Rectangle | null;
   // tanacode のウインドウにフォーカスがあるか（tanacode を使っているか）と、フォーカスが来たら一度だけ呼ぶ
   focused: () => boolean;
   whenFocused: (callback: () => void) => void;
@@ -58,6 +63,8 @@ const POPUP_PREFERENCES = {
   contextIsolation: true,
   sandbox: true,
   webviewTag: false,
+  // 人には出さずに映すので、見えなくても描かせ続ける
+  backgroundThrottling: false,
   // ページの alert・confirm は出さない（すぐに返る。confirm は false。prompt は Electron がもともと出さない）。出すのを待っている（tanacode にフォーカスが来るまで出さない）・
   // 裏で起動している別ウインドウのダイアログは、ウインドウに付かず、ほかのアプリの前に出うるため。safeDialogs では、1 回目は出てしまう
   disableDialogs: true,
@@ -200,11 +207,12 @@ export class PreviewWindows {
         ? ({ webContents: contents, ...options } as BrowserWindowConstructorOptions)
         : { ...options, webPreferences: { ...POPUP_PREFERENCES, session: source.session } },
     );
-    this.adopt(source, win);
+    const projected = this.adopt(source, win);
     if (!contents && !win.isDestroyed()) void win.loadURL(url);
+    // アプリ内ブラウザの一覧に入れたものは出さない（タブに映す）。入れられなかったものは、前と同じく出す:
     // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）。
     // tanacode を使っていない（ほかのアプリにフォーカスがある）ときは、tanacode に戻るまで出さない（ほかのアプリの前に出さない）
-    if (!this.deps.background && !win.isDestroyed()) {
+    if (!projected && !this.deps.background && !win.isDestroyed()) {
       if (this.deps.focused()) win.showInactive();
       else this.showWhenFocused(win);
     }
@@ -225,11 +233,12 @@ export class PreviewWindows {
     });
   }
 
-  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
-  private adopt(source: WebContents, win: BrowserWindow): void {
+  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる。
+  // アプリ内ブラウザの一覧に入れて、タブに映すなら true
+  private adopt(source: WebContents, win: BrowserWindow): boolean {
     if (win.webContents.session !== source.session) {
       win.destroy();
-      return;
+      return false;
     }
     // ページの beforeunload で、閉じるのを止めさせない（閉じるボタンが効かなくなる。Electron は確認も出さない）
     win.webContents.on('will-prevent-unload', (event) => event.preventDefault());
@@ -239,8 +248,10 @@ export class PreviewWindows {
     list.add(win);
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
-    // アプリ内ブラウザの一覧に入れる（Claude が選んで操作できる）。閉じたら、中身が無くなったときに一覧から外れる
-    this.owners.get(root)?.attachPopup(root, win.webContents, {
+    // アプリ内ブラウザの一覧に入れる（Claude が選んで操作でき、人にはタブとして映す）。閉じたら、中身が無くなったときに一覧から外れる
+    const view = new PopupView(win, this.deps.hostBounds);
+    const projected = this.owners.get(root)?.attachPopup(root, win.webContents, {
+      view,
       close: () => {
         if (!win.isDestroyed()) win.close();
       },
@@ -248,16 +259,19 @@ export class PreviewWindows {
         const [width = 0, height = 0] = win.isDestroyed() ? [] : win.getContentSize();
         return { width, height };
       },
-    });
+    }) === true;
     showOrigin(win);
     // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める。
+    // タブに映しているもの（人が出していないもの）は、動かさない（位置と大きさは、映す場所に合わせる）。
     // bounds は、Electron の説明（content bounds）と違い、枠を含むウインドウの位置と大きさ（ページの outerWidth・screenX と同じ。
     // Electron の既定の動きも setBounds に渡す。44.7 で確かめた）。setContentBounds に渡すと、resizeBy(0, 0) のたびに題の帯の分だけ大きくなる
     win.webContents.on('content-bounds-updated', (event, bounds) => {
       event.preventDefault();
+      if (projected && !view.revealed) return;
       const screen = this.deps.screen();
       if (screen && !win.isDestroyed()) win.setBounds(fitIn(bounds, screen.workArea));
     });
+    return projected;
   }
 }
 

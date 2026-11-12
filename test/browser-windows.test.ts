@@ -106,7 +106,16 @@ class FakeWindow extends EventEmitter {
 }
 
 // 中身の守りの値（Electron が中身を作るときに使う）。ページの alert・confirm も出さない
-const SECURE = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
+const SECURE = {
+  nodeIntegration: false,
+  nodeIntegrationInWorker: false,
+  nodeIntegrationInSubFrames: false,
+  contextIsolation: true,
+  sandbox: true,
+  webviewTag: false,
+  backgroundThrottling: false,
+  disableDialogs: true,
+};
 // ページが features に書いた、見た目を偽れる指定（Electron が createWindow に渡してくる。使ってはいけない）
 const FROM_PAGE = { closable: false, focusable: false, opacity: 0, alwaysOnTop: true, frame: false, visibleOnAllWorkspaces: true, type: 'panel', movable: false, minimizable: false, hasShadow: false, show: true, x: -10000, y: -10000, width: 99999, height: 1 };
 
@@ -116,7 +125,8 @@ const SCREEN: PopupScreen = { workArea: { x: 0, y: 25, width: 1440, height: 875 
 const asContents = (c: FakeContents) => c as unknown as WebContents;
 const asSession = (s: FakeSession) => s as unknown as Session;
 
-function setup(options: { background?: boolean; screen?: PopupScreen | null; focused?: boolean } = {}) {
+// attached: アプリ内ブラウザが、ポップアップを一覧に入れる（タブに映す）か。既定は入れない（前と同じく、別ウインドウを出す）
+function setup(options: { background?: boolean; screen?: PopupScreen | null; focused?: boolean; attached?: boolean } = {}) {
   const preview = new FakeSession();
   // ダウンロードは PreviewWindows.download に回す（windows は下で作る）
   restrictPreviewSession(asSession(preview), (item, contents) => windows.download(item, contents));
@@ -126,7 +136,7 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null; foc
     isOperating: vi.fn(() => false),
     blocksNavigation: vi.fn(() => false),
     allowsPopup: vi.fn(() => true),
-    attachPopup: vi.fn(),
+    attachPopup: vi.fn(() => options.attached ?? false),
     notOpened: vi.fn(),
     takeDownload: vi.fn(() => false),
   };
@@ -144,6 +154,7 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null; foc
     screen: () => (options.screen === undefined ? SCREEN : options.screen),
     focused: () => focus.now,
     whenFocused: (callback) => focus.waiting.push(callback),
+    hostBounds: () => ({ x: 100, y: 78, width: 1200, height: 772 }),
     makeWindow: (windowOptions) => {
       // 中身を渡さなければ、本物と同じく、webPreferences の session（無ければアプリの既定のセッション）で中身を作る
       const given = (windowOptions as { webContents?: FakeContents }).webContents;
@@ -355,7 +366,25 @@ describe('新しいウインドウ', () => {
     expect(event.preventDefault).toHaveBeenCalled();
   });
 
-  it('別ウインドウは、フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように）', () => {
+  it('一覧に入れた（タブに映す）ポップアップは、別ウインドウを出さない（tanacode の上に出て、チャットの邪魔にならないように）', () => {
+    const { tab, popup, browser } = setup({ attached: true });
+    const win = popup(tab());
+    expect(win.options.show).toBe(false);
+    expect(win.shown).toEqual([]);
+    const [[, , handle]] = browser.attachPopup.mock.calls as unknown as [unknown, unknown, { view: unknown }][];
+    expect(handle.view).toBeDefined();
+  });
+
+  it('タブに映しているポップアップは、ページが動かす・大きさを変えても動かさない（位置と大きさは、映す場所に合わせる）', () => {
+    const { tab, popup } = setup({ attached: true });
+    const win = popup(tab());
+    const event = { preventDefault: vi.fn() };
+    win.webContents.emit('content-bounds-updated', event, { x: 0, y: 0, width: 99999, height: 1 });
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(win.bounds).toBeNull();
+  });
+
+  it('一覧に入れられなかった別ウインドウは、フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように）', () => {
     const { tab, popup } = setup();
     const win = popup(tab());
     expect(win.options.show).toBe(false);

@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -71,6 +71,8 @@ export class E2EApp {
   private readonly consoleWarnings: string[] = [];
   // メインプロセスの出力（失敗したときの手がかり）
   private readonly output: string[] = [];
+  // メインプロセスが終わったときの時刻・終了コード・シグナル（テストの途中でアプリが落ちたときの手がかり。終わっていなければ null）
+  private exited: string | null = null;
   // アプリに渡す環境変数（prepare で決める）
   private env: Record<string, string> = {};
   // choose・pressHolding で押したときに画面に届いたイベントの記録（押した回ごと。keepEvidence に残す）
@@ -203,6 +205,7 @@ export class E2EApp {
     const child = this.electronApp.process();
     child.stdout?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
     child.stderr?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
+    child.once('exit', (code, signal) => (this.exited = `${new Date().toISOString()} code=${String(code)} signal=${String(signal)}`));
     this.window = await this.electronApp.firstWindow({ timeout: TIMEOUT_MS }).catch((error: unknown) => {
       // ウインドウが出ないと keepEvidence も画面を写せないので、メインプロセスの出力をエラーに付け、記録にも残す
       // pty ホストを起動できないと、メインプロセスはエラーのダイアログを出したまま止まる。その理由は pty-host.log にある
@@ -344,6 +347,9 @@ export class E2EApp {
       [
         '# メインプロセスの出力',
         this.output.join(''),
+        // テストの途中でアプリが落ちた（画面を読めない）ときに、どう終わったか・クラッシュの記録が残ったかを見る
+        `# メインプロセスの終わり方: ${this.exited ?? 'まだ動いている'}`,
+        `# クラッシュの記録（userData/Crashpad）: ${crashDumps(this.userData).join(', ') || 'なし'}`,
         '# 画面のコンソールのエラー',
         ...this.consoleErrors,
         '# 画面のコンソールの警告',
@@ -689,4 +695,25 @@ function shutdownPtyHost(socketPath: string): Promise<void> {
     socket.on('close', finish);
     socket.on('connect', () => socket.end(`${JSON.stringify({ t: 'shutdown' })}\n`));
   });
+}
+
+// Electron が残したクラッシュの記録（Crashpad の .dmp）。どのプロセスが落ちたかの手がかり
+function crashDumps(userData: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth > 3) return;
+    let entries: Dirent[] = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path, depth + 1);
+      else if (entry.name.endsWith('.dmp')) found.push(path);
+    }
+  };
+  walk(join(userData, 'Crashpad'), 0);
+  return found;
 }

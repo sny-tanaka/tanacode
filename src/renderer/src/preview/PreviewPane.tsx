@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserLogin, BrowserLoginAnswer, BrowserLoginChange, BrowserPoint, BrowserRememberChange, BrowserRememberOffer, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
+import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserLogin, BrowserLoginAnswer, BrowserLoginChange, BrowserPoint, BrowserPopupTab, BrowserPopupsChange, BrowserRememberChange, BrowserRememberOffer, BrowserRect, BrowserThrottleChange, BrowserViewportChange } from '@shared/ipc';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
@@ -9,6 +9,7 @@ import { codeBlock } from '../chat/sanitize';
 import { useOpenInBrowser } from './openInBrowser';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
 import { CredentialHint, useCredentialHint } from './CredentialHint';
+import { PopupCanvas } from './PopupCanvas';
 
 // Electron の <webview> のうち、ここで使うもの
 type Webview = HTMLElement & {
@@ -83,6 +84,8 @@ let tabSeq = 0;
 
 // 開発中のページをアプリの中で開く。セッションごとにタブ（webview）を持ち、切り替えても読み込み直さない。
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開く（main が知らせてくる）。
+// ページが開いたポップアップ（window.open に features を付けたもの。ログインの窓など）は、main が見えない別ウインドウで動かし、
+// タブの後ろに「ポップアップ」のタブとして並べて、絵を映す（PopupCanvas）。ポップアップのタブの ID は main が決める（Claude の list_tabs と同じ）
 // Claude が操作したセッションの今のタブは、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
 // 透明にして画面の後ろに置き、ブラウザを開いたときと同じ大きさで描かせる
 // App は応答中に何度も描き直すので、props が変わったときだけ描き直す
@@ -104,10 +107,16 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   // タブの ID → Claude が遅くしている様子（遅くしていないタブは無い）
   const [throttles, setThrottles] = useState<Record<string, Throttle>>({});
   const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
+  const claudeRef = useRef(claude);
+  claudeRef.current = claude;
   // Claude がユーザーに頼んでいる操作（ask_user_to_act）
   const [asks, setAsks] = useState<Record<string, BrowserAsk>>({});
   // タブの ID → ページが求めた HTTP の認証の入力欄
   const [logins, setLogins] = useState<Record<string, BrowserLogin>>({});
+  // セッションの ID → ポップアップ（タブの後ろに並べる）。購読の中からも読むので ref にも写す
+  const [popups, setPopups] = useState<Record<string, BrowserPopupTab[]>>({});
+  const popupsRef = useRef(popups);
+  popupsRef.current = popups;
   // セッションの ID → 1Password から入れたあとの「次からこのアイテムを使いますか？」
   const [remembers, setRemembers] = useState<Record<string, BrowserRememberOffer>>({});
   // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
@@ -116,7 +125,10 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const [offstageSize, setOffstageSize] = useState<{ width: number; height: number } | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const sessionTabs = sessionId ? (tabsRef.current.get(sessionId) ?? []) : [];
+  const sessionPopups = sessionId ? (popups[sessionId] ?? []) : [];
   const activeTab = sessionId ? (activeRef.current.get(sessionId) ?? null) : null;
+  // 今のタブがポップアップなら、そのポップアップ（タブのページの操作は、どれも使えない）
+  const activePopup = sessionPopups.find((popup) => popup.tabId === activeTab) ?? null;
   const page = activeTab ? pages[activeTab] : undefined;
   // 空のタブ（「＋」で開いたもの）は、まだ何も開いていないのと同じに扱う
   const url = page?.url && page.url !== 'about:blank' ? page.url : null;
@@ -200,8 +212,12 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
     return tabId;
   };
 
-  // タブを閉じる。今のタブなら、右（無ければ左）のタブに移る
+  // タブを閉じる。今のタブなら、右（無ければ左）のタブに移る。ポップアップは main が閉じ、一覧が変わったと知らせてくる
   const closeTab = (sid: string, tabId: string) => {
+    if (popupsRef.current[sid]?.some((popup) => popup.tabId === tabId)) {
+      window.tanacode.browser.closePopup(sid, tabId);
+      return;
+    }
     const list = tabsRef.current.get(sid) ?? [];
     const index = list.indexOf(tabId);
     if (index < 0) return;
@@ -261,9 +277,11 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
           return rest;
         }),
       ),
+      window.tanacode.browser.onPopups(popupsChanged),
       window.tanacode.browser.onLogin((change) => setLogins((prev) => withLogin(prev, change))),
       window.tanacode.browser.onRemember((change) => setRemembers((prev) => withRemember(prev, change))),
     ];
+    void window.tanacode.browser.popups().then((list) => list.forEach(popupsChanged));
     void window.tanacode.browser.remembers().then((list) => setRemembers((prev) => list.reduce(withRemember, prev)));
     void window.tanacode.browser.logins().then((list) => setLogins((prev) => list.reduce(withLogin, prev)));
     // 画面を作り直したとき（ウィンドウを閉じて開き直した）も、頼まれている操作の帯を出す
@@ -273,6 +291,22 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
     return () => offs.forEach((off) => off());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ポップアップの一覧が変わった。新しく開いたものは、Claude が操作していなければ今のタブにする（人が押して開いたログインの窓などを、すぐ見せる。
+  // Claude の操作中に替えると、Claude の今のタブが替わってしまう）。今のタブにしていたものが閉じたら、開いたタブへ戻る（無ければ最後のタブ）
+  function popupsChanged({ sessionId: sid, popups: next }: BrowserPopupsChange) {
+    const before = popupsRef.current[sid] ?? [];
+    popupsRef.current = { ...popupsRef.current, [sid]: next };
+    setPopups((prev) => ({ ...prev, [sid]: next }));
+    const current = activeRef.current.get(sid) ?? null;
+    const gone = before.find((popup) => popup.tabId === current && !next.some((n) => n.tabId === popup.tabId));
+    const opened = next.filter((popup) => !before.some((b) => b.tabId === popup.tabId));
+    if (opened.length > 0 && !claudeRef.current[sid]?.active) activate(sid, opened[opened.length - 1]!.tabId);
+    else if (gone) {
+      const tabs = tabsRef.current.get(sid) ?? [];
+      activate(sid, tabs.includes(gone.openerTabId) ? gone.openerTabId : (tabs[tabs.length - 1] ?? next[next.length - 1]?.tabId ?? null));
+    }
+  }
 
   // ターミナルのリンクを ⌘ クリックした（openInBrowser）。見ているセッションのブラウザの新しいタブで開き、ブラウザを出す。
   // Claude がそのセッションのブラウザを操作している間は、タブを足すだけで選ばない（Claude の操作は今のタブに対して行うので、
@@ -333,7 +367,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
     return () => observer.disconnect();
   }, [offstage]);
 
-  useEffect(() => setAddress(url ?? ''), [sessionId, activeTab, url]);
+  useEffect(() => setAddress(activePopup ? activePopup.url : (url ?? '')), [sessionId, activeTab, url, activePopup?.url]);
 
   // 人がブラウザを出したとき・セッションを替えたときに、まだ何も開いていなければ（空のタブも）、すぐ URL を貼れるようにアドレス欄にカーソルを置く。
   // Claude が操作を始めてブラウザが出たときや、Claude がタブを開く・選ぶ・閉じたときは置かない（チャットに打っている途中で奪わない）。
@@ -388,7 +422,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
       case 'nextTab':
       case 'previousTab': {
         if (pane !== 'browser') return false;
-        const next = stepIn(tabsRef.current.get(sessionId) ?? [], activeTab, shortcut === 'nextTab' ? 1 : -1, true);
+        const next = stepIn([...(tabsRef.current.get(sessionId) ?? []), ...sessionPopups.map((popup) => popup.tabId)], activeTab, shortcut === 'nextTab' ? 1 : -1, true);
         if (next && next !== activeTab) {
           activate(sessionId, next);
           focusPageLater();
@@ -468,9 +502,12 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
       aria-hidden={!visible}
       style={offstage && offstageSize ? { width: offstageSize.width, height: offstageSize.height } : undefined}
     >
-      {sessionId && sessionTabs.length > 0 && (
+      {sessionId && sessionTabs.length + sessionPopups.length > 0 && (
         <TabStrip
-          tabs={sessionTabs.map((id) => ({ id, title: pages[id]?.title ?? '', url: pages[id]?.url ?? '', loading: pages[id]?.loading ?? false }))}
+          tabs={[
+            ...sessionTabs.map((id) => ({ id, title: pages[id]?.title ?? '', url: pages[id]?.url ?? '', loading: pages[id]?.loading ?? false })),
+            ...sessionPopups.map((popup) => ({ id: popup.tabId, title: popup.title, url: popup.url, loading: false, popup: true })),
+          ]}
           active={activeTab}
           onSelect={(tabId) => {
             if (tabId === activeTab) return;
@@ -504,6 +541,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
             ref={addressRef}
             value={address}
             onChange={(e) => setAddress(e.target.value)}
+            readOnly={!!activePopup}
             onFocus={(e) => e.target.select()}
             placeholder="http://localhost:3000"
             spellCheck={false}
@@ -585,7 +623,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
           {activity?.box && visible && <ClickBox rect={activity.box} />}
           {activity?.touches && visible && <TouchPoints points={activity.touches} />}
         </div>
-        {!url && (
+        {activePopup && sessionId && <PopupCanvas key={activePopup.tabId} sessionId={sessionId} tabId={activePopup.tabId} visible={visible} />}
+        {!url && !activePopup && (
           <div className="preview-empty">
             <p>{t('preview.hint.empty')}</p>
           </div>
@@ -595,7 +634,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   );
 });
 
-type TabInfo = { id: string; title: string; url: string; loading: boolean };
+// popup: ページが開いたポップアップ（印を付け、題も URL も無ければ「空のページ」と出す）
+type TabInfo = { id: string; title: string; url: string; loading: boolean; popup?: boolean };
 
 // ブラウザのタブの並び。中ボタンのクリックでも閉じる
 export function TabStrip({
@@ -614,13 +654,13 @@ export function TabStrip({
   return (
     <div className="preview-tabs" role="tablist" aria-label={t('preview.tabs.label')}>
       {tabs.map((tab) => {
-        const label = tab.title || (tab.url && tab.url !== 'about:blank' ? tab.url.replace(/^https?:\/\//, '') : t('preview.tabs.untitled'));
+        const label = tab.title || (tab.url && tab.url !== 'about:blank' ? tab.url.replace(/^https?:\/\//, '') : t(tab.popup ? 'preview.popup.untitled' : 'preview.tabs.untitled'));
         return (
           <div
             key={tab.id}
             role="tab"
             aria-selected={tab.id === active}
-            className={`preview-tab reveal-host${tab.id === active ? ' active' : ''}`}
+            className={`preview-tab reveal-host${tab.id === active ? ' active' : ''}${tab.popup ? ' popup' : ''}`}
             title={tab.url && tab.url !== 'about:blank' ? `${tab.title ? `${tab.title}\n` : ''}${tab.url}` : undefined}
             onMouseDown={(e) => {
               if (e.button === 0) onSelect(tab.id);
@@ -630,12 +670,13 @@ export function TabStrip({
             }}
           >
             {tab.loading && <span className="tool-dot running" />}
+            {tab.popup && <span className="preview-tab-badge">{t('preview.popup.badge')}</span>}
             <span className="preview-tab-title">{label}</span>
             <IconButton
               icon={CloseIcon}
               size="sm"
               reveal
-              label={t('preview.tabs.close')}
+              label={t(tab.popup ? 'preview.popup.close' : 'preview.tabs.close')}
               tip={tab.id === active ? t('preview.tabs.closeTip') : undefined}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onClose(tab.id)}
