@@ -53,3 +53,22 @@ export function mcpToolLabel(def: McpServerDef, tool: McpTool): string {
 export function allowedToolIds(def: McpServerDef): string[] {
   return def.tools.filter((t) => t.kind !== 'act' && t.kind !== 'eval').map((t) => mcpToolId(def.name, t.name));
 }
+
+// 定義に無い引数が来たときに Claude に返す文（無ければ null）。黙って無視すると、推測で付けた名前（fill_credential の field: "otp" など）が
+// 既定の動きに落ちて、思わぬ欄に値を入れることがあるため、断って正しい引数を伝える。Claude Code が古い定義を持ったままのこともあるので、
+// 引数の説明も添える（この文の一覧が今の定義）
+export function unknownArgumentsError(tool: McpTool, args: Record<string, unknown>): string | null {
+  const known = Object.keys(tool.inputSchema.properties);
+  const unknown = Object.keys(args).filter((key) => !known.includes(key));
+  if (unknown.length === 0) return null;
+  const list = known.map((key) => {
+    const description = tool.inputSchema.properties[key]?.description;
+    return `- ${key}${typeof description === 'string' ? `: ${description}` : ''}`;
+  });
+  return (
+    `${tool.name} has no argument named ${unknown.map((key) => JSON.stringify(key)).join(', ')}, so nothing was done. ` +
+    (known.length === 0
+      ? 'It takes no arguments.'
+      : `Its arguments are (if your definition of the tool lacks some of them, it is out of date; use these):\n${list.join('\n')}`)
+  );
+}
