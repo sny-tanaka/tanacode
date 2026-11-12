@@ -1,6 +1,6 @@
 import { isLocalUrl } from '@shared/browser-tools';
 
-// アプリ内ブラウザのログイン欄に、1Password のアイテムのユーザー名・パスワードを入れる（fill_credential）。
+// アプリ内ブラウザのログイン欄に、1Password のアイテムのユーザー名・パスワード（と、ワンタイムパスワード・ほかの欄）を入れる（fill_credential）。
 // Claude が渡すのは 1Password のアイテムのリンク（「プライベートリンクをコピー」）と、入れる欄の selector だけ。値を取り出すのはメインプロセスで、
 // 取り出し役（CredentialSource）を差し替えられる。使うのは sdkSource（1Password の JavaScript SDK のデスクトップアプリ連携。
 // ユーザーに足すセットアップは、1Password の設定 → 開発者 →「1Password SDKs と連携」をオンにすることだけ。1Password アプリが承認を求める）。
@@ -15,8 +15,13 @@ import { isLocalUrl } from '@shared/browser-tools';
 // アイテムの参照（リンクの a・v・i。アカウント・保管庫・アイテムの ID）
 export type ItemRef = { account: string; vault: string; item: string };
 
+// アイテムの欄（ユーザー名・パスワードのほか。fill_credential の fields・oneTimePasswordSelector で入れる）。
+// title: 欄の名前 / section: 入っているセクションの名前（無ければ null）/ kind: otp はワンタイムパスワード（value は今のコード。
+// 求められなければ null で、error に理由）、secret は隠す欄（Concealed）、text はそれ以外
+export type LoginField = { title: string; section: string | null; kind: 'otp' | 'secret' | 'text'; value: string | null; error?: string };
+
 // 取り出したログイン。username・password は、アイテムにその欄が無ければ null
-export type Login = { title: string; urls: string[]; username: string | null; password: string | null };
+export type Login = { title: string; urls: string[]; username: string | null; password: string | null; fields: LoginField[] };
 
 // 取り出し役。参照からログインの値を読む。失敗は CredentialError（Claude に返す英語の文。値を入れない）
 export type CredentialSource = { read: (ref: ItemRef) => Promise<Login> };
@@ -49,7 +54,8 @@ export type SdkItem = {
   title: string;
   category: string;
   websites: { url: string }[];
-  fields: { id: string; fieldType: string; value: string; sectionId?: string }[];
+  fields: { id: string; title?: string; fieldType: string; value: string; sectionId?: string; details?: { type: string; content?: { code?: string; errorMessage?: string } } }[];
+  sections?: { id: string; title: string }[];
 };
 export type SdkClient = { items: { get: (vaultId: string, itemId: string) => Promise<SdkItem> } };
 export type SdkModule = {
@@ -76,13 +82,49 @@ export function sdkFailure(error: unknown): string {
   return `1Password could not read the item${first ? `: ${first.slice(0, 200)}` : '.'}`;
 }
 
-// SDK のアイテムから、ログインの値を取り出す。ユーザー名とパスワードは、組み込みの欄（ID が username・password で、セクションに入っていないもの）
+// SDK のアイテムから、ログインの値を取り出す。ユーザー名とパスワードは、組み込みの欄（ID が username・password で、セクションに入っていないもの）。
+// すべての欄を fields にも入れる（ワンタイムパスワードは、SDK が求めた今のコード。もとの秘密の鍵（otpauth://）は持たない）
 export function loginFromSdkItem(item: SdkItem): Login {
   const field = (id: string) => {
     const found = item.fields.find((f) => f.id === id && !f.sectionId && f.value !== '');
     return found ? found.value : null;
   };
-  return { title: item.title || '(untitled)', urls: item.websites.map((w) => w.url).filter((u) => u !== ''), username: field('username'), password: field('password') };
+  const sections = new Map((item.sections ?? []).map((s) => [s.id, s.title]));
+  const fields = item.fields.map((f): LoginField => {
+    const section = f.sectionId ? sections.get(f.sectionId) || null : null;
+    const title = f.title || f.id;
+    if (f.fieldType === 'Totp') {
+      const otp = f.details?.type === 'Otp' ? f.details.content : undefined;
+      return otp?.code ? { title, section, kind: 'otp', value: otp.code } : { title, section, kind: 'otp', value: null, error: otp?.errorMessage || 'no code was computed' };
+    }
+    return { title, section, kind: f.fieldType === 'Concealed' ? 'secret' : 'text', value: f.value === '' ? null : f.value };
+  });
+  return { title: item.title || '(untitled)', urls: item.websites.map((w) => w.url).filter((u) => u !== ''), username: field('username'), password: field('password'), fields };
+}
+
+const fieldName = (f: LoginField) => (f.section ? `${f.section}/${f.title}` : f.title);
+
+// fill_credential の fields で名指しされた欄を、アイテムの欄から探す。「セクション名/欄の名前」か、欄の名前で探す（大文字・小文字は問わない）。
+// 見つからない・いくつも当たる・空のときは CredentialError（欄の名前の一覧を添える。値は入れない）
+export function findField(login: Login, name: string): LoginField {
+  const want = name.trim().toLowerCase();
+  const exact = login.fields.filter((f) => fieldName(f).toLowerCase() === want);
+  const found = exact.length > 0 ? exact : login.fields.filter((f) => f.title.toLowerCase() === want);
+  const names = () => [...new Set(login.fields.map(fieldName))].map((n) => JSON.stringify(n)).join(', ') || '(none)';
+  if (found.length === 0) throw new CredentialError(`The 1Password item "${login.title}" has no field named ${JSON.stringify(name)} (its fields: ${names()}). Nothing was filled.`);
+  if (found.length > 1) throw new CredentialError(`Several fields of the 1Password item "${login.title}" are named ${JSON.stringify(name)}; name one as "section/field" (its fields: ${names()}). Nothing was filled.`);
+  const field = found[0];
+  if (field.kind === 'otp' && field.value === null) throw new CredentialError(`1Password could not compute the one-time password of the item "${login.title}" (${field.error}). Nothing was filled.`);
+  if (field.value === null) throw new CredentialError(`The field ${JSON.stringify(name)} of the 1Password item "${login.title}" is empty. Nothing was filled.`);
+  return field;
+}
+
+// アイテムのワンタイムパスワード（今のコード）。いくつもあれば、コードを求められた最初のもの。無い・求められなければ CredentialError
+export function oneTimePassword(login: Login): string {
+  const otp = login.fields.find((f) => f.kind === 'otp' && f.value !== null) ?? login.fields.find((f) => f.kind === 'otp');
+  if (!otp) throw new CredentialError(`The 1Password item "${login.title}" has no one-time password. Nothing was filled.`);
+  if (otp.value === null) throw new CredentialError(`1Password could not compute the one-time password of the item "${login.title}" (${otp.error}). Nothing was filled.`);
+  return otp.value;
 }
 
 // SDK を使う取り出し役。load: SDK を読み込む（初めて使うときに読み込む。SDK は読み込むときに 14MB の WebAssembly をコンパイルするので、
@@ -153,8 +195,12 @@ export function matchingUrl(pageUrl: string, itemUrls: readonly string[]): strin
   return null;
 }
 
-// 入れる欄。selector を省くと、ページの中で見つける（見えているパスワードの欄と、その前の入力欄）
-export type FillTarget = { usernameSelector?: string; passwordSelector?: string; username: string | null; password: string | null };
+// 入れる欄。selector を省くと、ページの中で見つける（見えているパスワードの欄と、その前の入力欄）。
+// extra: ユーザー名・パスワードのほかに入れるもの（ワンタイムパスワード・アイテムのほかの欄。selector は省けない）。
+// label: 答えに書く名前 / secret: 隠す欄の値（控えて、パスワードの欄でない欄に入れたら、文字のまま見えるものとして読み取りを止める）/
+// split: selector が値の文字数と同じ数の欄に当たれば、1 文字ずつ入れる（1 桁ずつ欄が分かれたワンタイムパスワード）
+export type ExtraFill = { label: string; selector: string; value: string; secret: boolean; split: boolean };
+export type FillTarget = { usernameSelector?: string; passwordSelector?: string; username: string | null; password: string | null; extra?: ExtraFill[] };
 
 // 目印（作り物のテストがスクリプトの種類を見分ける。test/helpers/fake-electron.ts）
 export const FILL_MARK = '__tanacodeCredentialFill';
@@ -162,15 +208,17 @@ export const CHECK_MARK = '__tanacodeCredentialCheck';
 
 // 欄を見つけて値を入れるスクリプト（ページとは別の JavaScript の世界で動かす。ページのスクリプトには、この中の変数は見えない）。
 // 値は、ページの中では欄に入れるだけで、結果には返さない（返すのは、入れた欄の名前か、入れられなかった理由）。
-// いちばん外の文書の欄だけに入れる（iframe の中は、オリジンを確かめられないので入れない）。
-// React などが値の変化に気づくよう、input と change を送る。入れた欄は、この世界の変数に控える（CHECK_SCRIPT が見る）
+// いちばん外の文書の欄だけに入れる（iframe の中は、オリジンを確かめられないので入れない）。入れられない欄が 1 つでもあれば、どれにも入れない。
+// React などが値の変化に気づくよう、input と change を送る。入れたパスワード・隠す欄は、この世界の変数に控える（CHECK_SCRIPT が見る）
 export function fillScript(target: FillTarget): string {
   const values = JSON.stringify({ u: target.username, p: target.password });
   const selectors = JSON.stringify({ u: target.usernameSelector ?? null, p: target.passwordSelector ?? null });
+  const extra = JSON.stringify((target.extra ?? []).map((e) => ({ l: e.label, s: e.selector, v: e.value, secret: e.secret, split: e.split })));
   return `(() => {
   const ${FILL_MARK} = true;
   const values = ${values};
   const sel = ${selectors};
+  const extra = ${extra};
   const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
   const name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.name ? '[name="' + e.name + '"]' : '');
   const pick = (s) => { try { return document.querySelector(s); } catch (e) { return { error: 'bad selector: ' + s }; } };
@@ -193,23 +241,45 @@ export function fillScript(target: FillTarget): string {
   }
   if (user && (user.tagName !== 'INPUT' || user.type === 'password' || user.type === 'hidden')) return { error: name(user) + ' is not a text field for the username' };
   for (const el of [user, pass]) if (el && el.disabled) return { error: name(el) + ' is disabled' };
+  // ほかに入れるものの欄を、入れる前にすべて決める
+  const groups = [];
+  for (const e of extra) {
+    let els;
+    try { els = [...document.querySelectorAll(e.s)]; } catch (err) { return { error: 'bad selector: ' + e.s }; }
+    if (els.length === 0) return { error: 'no element matches ' + e.s };
+    for (const el of els) {
+      if (!(el.tagName === 'INPUT' && !/^(hidden|file|checkbox|radio|submit|button|image|reset)$/.test(el.type)) && el.tagName !== 'TEXTAREA') return { error: name(el) + ' is not a text field for the ' + e.l };
+      if (el.disabled) return { error: name(el) + ' is disabled' };
+    }
+    if (els.length === 1) groups.push({ e, els, parts: [e.v] });
+    else if (e.split && els.length === e.v.length) groups.push({ e, els, parts: [...e.v] });
+    else return { error: e.s + ' matches ' + els.length + ' elements (pass a selector of one field' + (e.split ? ', or of one field per character of the code)' : ')') };
+  }
   const put = (el, value) => {
     el.focus();
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    setter.call(el, value);
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertReplacementText' }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const filled = [];
+  const keep = [];
   if (user && values.u !== null) { put(user, values.u); filled.push({ field: 'username', element: name(user) }); }
-  if (pass && values.p !== null) { put(pass, values.p); filled.push({ field: 'password', element: name(pass) }); }
+  if (pass && values.p !== null) { put(pass, values.p); filled.push({ field: 'password', element: name(pass) }); keep.push(pass); }
   if (pass) pass.blur();
-  window.__tanacodeFilled = [...(window.__tanacodeFilled || []).filter((el) => el.isConnected), ...(pass && values.p !== null ? [pass] : [])];
+  for (const g of groups) {
+    g.els.forEach((el, i) => put(el, g.parts[i]));
+    g.els[g.els.length - 1].blur();
+    if (g.e.secret) keep.push(...g.els);
+    filled.push({ field: g.e.l, element: g.els.length === 1 ? name(g.els[0]) : g.els.length + ' fields from ' + name(g.els[0]) });
+  }
+  window.__tanacodeFilled = [...(window.__tanacodeFilled || []).filter((el) => el.isConnected), ...keep];
   return { filled };
 })()`;
 }
 
-// 入れたパスワードの欄が、文字のまま見える形（type が password でない）に変えられて、値が残っているか
+// 入れたパスワード・隠す欄が、文字のまま見える形（type が password でない）で、値が残っているか
+// （隠す欄の値をパスワードの欄でない欄に入れたときは、入れたときから当たる）
 export const CHECK_SCRIPT = `(() => {
   const ${CHECK_MARK} = true;
   return (window.__tanacodeFilled || []).some((el) => el.isConnected && el.type !== 'password' && el.value !== '');
