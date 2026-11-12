@@ -1956,6 +1956,13 @@
       "new": "New tab",
       "closeTip": "Close tab (⌘W)"
     },
+    "popup": {
+      "badge": "Popup",
+      "hint": "This shows the window (popup) the page opened. If something does not work here, use the real window.",
+      "reveal": "Open the window",
+      "close": "Close popup",
+      "untitled": "Blank page"
+    },
     "claude": {
       "operating": "Claude is using the browser"
     },

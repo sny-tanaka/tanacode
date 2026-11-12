@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { browserToolId } from '@shared/browser-tools';
 import type { Block } from '../cli/mock-api';
-import { BACKGROUND, E2EApp } from './app';
+import { E2EApp } from './app';
 
 // アプリ内ブラウザのページが window.open でポップアップ（features 付き。OAuth のログインの窓など）を開くと、アプリ内ブラウザの外の
 // 別ウインドウで開き、開いたページ（window.opener）とつながるか。アプリの index.ts・browser-windows.ts を通って、本物の webview と BrowserWindow まで。
@@ -252,7 +252,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
   it('Claude が押して開いたポップアップは別ウインドウで開き、opener に届く。Node もアプリの API も無く、file: にも blob: にも移れない', async () => {
     await app.startSession(OPEN, { mode: 'manual' });
     await app.byText('.chat-list', DONE).waitFor();
-    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#login'))).toContain(`Opened a popup window (${origin}) in a separate window: tab 2 in list_tabs.`);
+    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#login'))).toContain(`Opened a popup window (${origin}): tab 2 in list_tabs (the user sees it as a popup tab in the in-app browser).`);
     expect(app.api.toolResults.find((r) => r.includes(REPORT))).toContain(`${REPORT} #1`);
     expect((await popups())[0]?.preview).toBe(true);
   });
@@ -359,20 +359,18 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await expect.poll(async () => (await popups()).slice(12).map((p) => p.closed), { timeout: 10_000 }).toEqual([true, true]);
   });
 
-  it('ページが window.focus() を呼んでも、別ウインドウにフォーカスは移らない。裏で起動しているときは、画面にも出ない', async () => {
+  it('ページが window.focus() を呼んでも、別ウインドウにフォーカスは移らず、画面にも出ない（一覧に入れたポップアップは、人には出さずにタブに映す）', async () => {
     // 空のページだけの別ウインドウ（11 番め。開いたまま）を、開いたページ（w.focus()）と、別ウインドウの中（window.focus()）から前に出そうとする
     expect(await runIn('/', 'window.plain.focus(); "focused"')).toBe('focused');
     expect(await runInPopup(11, 'window.focus(); "focused"')).toBe('focused');
     // 両方のページともう一度行き来してから見る
     expect(await runIn('/', 'document.title')).toBe('開く側');
     expect(await runInPopup(11, 'location.href')).toBe('about:blank');
-    // 開いたままのほかの別ウインドウ（入れ子・題を書いた空のページ）も。フォーカスは、どの起動の仕方でも移らない。
-    // 画面に出ないことは、アプリを裏で起動したとき（BACKGROUND。手元の Mac）だけ確かめる。前に出して流すとき（CI）は、tanacode に
-    // フォーカスがあれば、別ウインドウはフォーカスを移さずに画面に出る（決めた動き）
+    // 開いたままのほかの別ウインドウ（入れ子・題を書いた空のページ）も。どの起動の仕方でも、フォーカスは移らず、画面にも出ない
     for (const index of [3, 10, 11]) {
       const state = await popupState(index);
       expect(state?.focused, `${index} 番めの別ウインドウ`).toBe(false);
-      if (BACKGROUND) expect(state?.visible, `${index} 番めの別ウインドウ`).toBe(false);
+      expect(state?.visible, `${index} 番めの別ウインドウ`).toBe(false);
     }
   });
 
@@ -414,7 +412,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await app.send(BLANK_OUT);
     await app.byText('.chat-list', BLANK_BLOCKED).waitFor();
     const clicked = app.api.toolResults.find((r) => r.startsWith('Clicked: button#blank-outside'));
-    expect(clicked).toMatch(/Opened a popup window \(about:blank\) in a separate window: tab \d+ in list_tabs\./);
+    expect(clicked).toMatch(/Opened a popup window \(about:blank\): tab \d+ in list_tabs \(the user sees it as a popup tab in the in-app browser\)\./);
     // 一覧に入れたポップアップは、選んで continue で進められることも伝える
     expect(clicked).toMatch(/Blocked an attempt to move the popup window \(tab \d+\) to a page not allowed for Claude/);
     expect(clicked).toContain(`to a page not allowed for Claude (${outside}). To open it there, switch to the popup with select_tab`);
@@ -433,7 +431,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
   it('Claude が押して開いたポップアップは、タブの一覧のタブのあとに、開いたタブを添えて出る。今のタブは開いた側のまま', async () => {
     await app.send(HOLD);
     await app.byText('.chat-list', HELD).waitFor();
-    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#hold'))).toContain(`Opened a popup window (${origin}) in a separate window: tab `);
+    expect(app.api.toolResults.find((r) => r.startsWith('Clicked: button#hold'))).toContain(`Opened a popup window (${origin}): tab `);
     const tabs = app.api.toolResults.find((r) => r.startsWith('Tabs (* marks the current tab):'))!.split('\n');
     expect(tabs[1]).toBe(`* 1. 開く側 — ${origin}/`);
     // 開いた直後に読むので、題と URL は読み込みの途中のこともある。見るのは、開いたタブを添えたポップアップの行があること

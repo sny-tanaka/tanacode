@@ -19,7 +19,20 @@ import {
   uploadPaths,
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRememberChange, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
+import type {
+  BrowserActivity,
+  BrowserAsk,
+  BrowserAskChange,
+  BrowserLoginChange,
+  BrowserPoint,
+  BrowserPopupsChange,
+  BrowserPopupTab,
+  BrowserRememberChange,
+  BrowserRect,
+  BrowserThrottleChange,
+  IpcChannel,
+  IpcEvent,
+} from '@shared/ipc';
 import { mcpToolLabel, unknownArgumentsError } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { describeDialog, PageDialogs } from './browser-dialogs';
@@ -30,6 +43,7 @@ import { CredentialOffers } from './browser-credential-offers';
 import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
+import { sanitizePopupInput, sanitizePopupPlace, type PopupView } from './browser-popup-view';
 import { textResult, type ToolResult } from './mcp-bridge';
 import { CHECK_SCRIPT, CredentialGuard, fillScript, findField, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, oneTimePassword, parseItemRef, type CredentialSource, type ExtraFill, type FillResult, type Login } from './browser-credentials';
 import { linkForPage, normalizeSite, type CredentialLink } from '@shared/credential-links';
@@ -293,8 +307,9 @@ type Guest = {
   // ポップアップの別ウインドウ（attachPopup）。opener: 開いたタブ（ポップアップから開いたものも、もとのタブ）の ID。タブなら無い
   popup?: { opener: string } & PopupWindow;
 };
-// ポップアップの別ウインドウの操作（browser-windows.ts が渡す）。close: 閉じる / size: 中身の大きさ（CSS の px）
-export type PopupWindow = { close: () => void; size: () => { width: number; height: number } };
+// ポップアップの別ウインドウの操作（browser-windows.ts が渡す）。close: 閉じる / size: 中身の大きさ（CSS の px）/
+// view: 人には出さずに、絵をアプリ内ブラウザのタブに映す（browser-popup-view.ts）
+export type PopupWindow = { close: () => void; size: () => { width: number; height: number }; view: PopupView };
 // ページが新しいウインドウで開こうとして、開かなかったわけ（notOpened）。popup-limit: 1 つのタブから開けるポップアップの数を超えた /
 // tab-limit: セッションのタブの数を超えた / scheme: http(s) でない先（file:・mailto: など）
 export type NotOpenedReason = 'popup-limit' | 'tab-limit' | 'scheme';
@@ -378,6 +393,9 @@ type Deps = {
     newTab: typeof IpcChannel.BrowserNewTab;
     selectTab: typeof IpcChannel.BrowserSelectTab;
     closeTab: typeof IpcChannel.BrowserCloseTab;
+    popups: typeof IpcChannel.BrowserPopups;
+    popupFrame: typeof IpcChannel.BrowserPopupFrame;
+    popupCursor: typeof IpcChannel.BrowserPopupCursor;
     ask: typeof IpcChannel.BrowserAsk;
     login: typeof IpcChannel.BrowserLogin;
     remember: typeof IpcChannel.BrowserRemember;
@@ -556,6 +574,7 @@ export class BrowserControl {
       if (current?.tabs.get(tabId) !== guest) return;
       if (guest.popup) this.popupGone(current, guest);
       current.tabs.delete(tabId);
+      if (guest.popup) this.sendPopups(sessionId);
     });
     // ダイアログの見張り（タブにもポップアップにも付ける）
     this.watchDialogs(guest);
@@ -569,19 +588,21 @@ export class BrowserControl {
   //   OAuth のログインの窓は、たいていこれに当たるので、人に頼む（ask_user_to_act）よう伝える
   // - パスワード欄は、タブと同じく、値を読ませない（get_text など）が、打つのは止めない（自分で作っているページのログインを、
   //   テスト用の値で試すため）。ログイン・秘密の値を入れないことは、Claude への説明で決める（タブと同じ）
-  // - 選んでも、今のタブにするだけで、画面のタブは替えない（別ウインドウは、アプリの画面のタブの帯に無い）。Claude の操作で開いても、
+  // - 別ウインドウは人には出さず、アプリの画面のタブの帯の、タブの後ろに「ポップアップ」のタブとして並べて、絵を映す（browser-popup-view.ts）。
+  //   Claude が選んだら、画面もそのタブにする（Claude が操作しているものを、人が見られるように）。Claude の操作で開いても、
   //   今のタブは替えない（ログインの窓は、すぐに自分で閉じることが多く、続けて操作するのは開いたページのことが多いため）
   // - 画面の大きさ（set_viewport）と遅くする設定（throttle）は当てない（大きさはページが決めた別ウインドウのもの。遅くしたことを、
   //   ツールバーで人に見せられない）
 
   // ポップアップの別ウインドウができた（browser-windows.ts の adopt）。opener: 開いたタブ（webview）/ contents: 別ウインドウの中身。
   // 知らないタブ（画面からまだ知らせが来ていない）から開いたものは、受け付けない（一覧に出ず、操作もできない。守りは browser-windows.ts が付ける）
-  attachPopup(opener: WebContents, contents: WebContents, window: PopupWindow): void {
+  // 受け付けたら true（別ウインドウは出さず、画面のタブに映す）
+  attachPopup(opener: WebContents, contents: WebContents, window: PopupWindow): boolean {
     const found = this.find(opener);
-    if (!found || found.guest.popup || contents.isDestroyed()) return;
+    if (!found || found.guest.popup || contents.isDestroyed()) return false;
     const { sessionId, session, guest: root } = found;
     const tabId = `${POPUP_TAB}${contents.id}`;
-    if (session.tabs.has(tabId)) return;
+    if (session.tabs.has(tabId)) return false;
     const guest: Guest = {
       tabId,
       contents,
@@ -599,6 +620,78 @@ export class BrowserControl {
     session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
     this.watchGuest(sessionId, guest);
     if (this.operating(sessionId)) session.popupTabs.push(tabId);
+    // 画面のタブの題と URL を合わせる（人が見るもの。Claude には、許した先のものしか渡さない）
+    const changed = () => this.sendPopups(sessionId);
+    contents.on('did-navigate', changed);
+    contents.on('did-navigate-in-page', changed);
+    contents.on('page-title-updated', changed);
+    this.sendPopups(sessionId);
+    return true;
+  }
+
+  // セッションのポップアップの一覧（画面のタブの帯に並べるもの）
+  private popupList(session: Tabs): BrowserPopupTab[] {
+    return [...session.tabs.values()].flatMap((guest) => {
+      if (!guest.popup || guest.contents.isDestroyed()) return [];
+      return [{ tabId: guest.tabId, openerTabId: guest.popup.opener, url: guest.contents.getURL(), title: guest.contents.getTitle() }];
+    });
+  }
+
+  private sendPopups(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.deps.send(this.deps.channels.popups, { sessionId, popups: this.popupList(session) } satisfies BrowserPopupsChange);
+  }
+
+  // 今のポップアップの一覧（画面を作り直したとき用）
+  pendingPopups(): BrowserPopupsChange[] {
+    return [...this.sessions].flatMap(([sessionId, session]) => {
+      const popups = this.popupList(session);
+      return popups.length > 0 ? [{ sessionId, popups }] : [];
+    });
+  }
+
+  // 画面がポップアップを映し始めた・やめた（place が null）。映している間だけ、絵とカーソルの形を送る
+  viewPopup(sessionId: string, tabId: string, place: unknown): void {
+    const guest = this.popupOf(sessionId, tabId);
+    if (!guest) return;
+    const at = sanitizePopupPlace(place);
+    if (!at) {
+      guest.popup!.view.watch(null, null, null);
+      return;
+    }
+    guest.popup!.view.watch(
+      at,
+      (frame) => this.deps.send(this.deps.channels.popupFrame, { sessionId, tabId, ...frame }),
+      (cursor) => this.deps.send(this.deps.channels.popupCursor, { sessionId, tabId, cursor }),
+    );
+  }
+
+  // 画面がポップアップの絵を描き終えた
+  popupFrameDone(sessionId: string, tabId: string): void {
+    this.popupOf(sessionId, tabId)?.popup!.view.done();
+  }
+
+  // 人がポップアップの絵の上で操作した。Claude の操作ではないので、許す先の確かめはしない（タブで人が操作するのと同じ）
+  popupInput(sessionId: string, tabId: string, raw: unknown): void {
+    const input = sanitizePopupInput(raw);
+    if (input) this.popupOf(sessionId, tabId)?.popup!.view.input(input);
+  }
+
+  // 人が「実物を開く」を押した。別ウインドウを出す
+  revealPopup(sessionId: string, tabId: string): void {
+    this.popupOf(sessionId, tabId)?.popup!.view.reveal();
+  }
+
+  // 人がポップアップのタブを閉じた。別ウインドウを閉じる（一覧から外れるのは、中身が無くなったとき）
+  closePopupTab(sessionId: string, tabId: string): void {
+    this.popupOf(sessionId, tabId)?.popup!.close();
+  }
+
+  private popupOf(sessionId: unknown, tabId: unknown): Guest | null {
+    if (typeof sessionId !== 'string' || typeof tabId !== 'string') return null;
+    const guest = this.sessions.get(sessionId)?.tabs.get(tabId);
+    return guest?.popup && !guest.contents.isDestroyed() ? guest : null;
   }
 
   // ページが新しいウインドウ（タブ・ポップアップ）を開こうとして、開かなかった（browser-windows.ts と openFromPage）。
@@ -626,6 +719,8 @@ export class BrowserControl {
   // 一覧に入れたポップアップが閉じた（ページの window.close・人が閉じた・開いたタブを閉じた・close_tab）。
   // 今のタブにしていたなら、画面の今のタブへ戻し、次の呼び出しでそう伝える（呼び出しの間に閉じても、気づけるように）
   private popupGone(session: Tabs, guest: Guest): void {
+    // 画面で見ていたポップアップなら、画面は開いたタブへ戻る（PreviewPane）
+    if (session.shown === guest.tabId) session.shown = session.tabs.has(guest.popup!.opener) ? guest.popup!.opener : null;
     if (session.active !== guest.tabId) return;
     const number = [...session.tabs.keys()].indexOf(guest.tabId) + 1;
     const back = session.shown && session.tabs.has(session.shown) ? session.shown : guest.popup!.opener;
@@ -640,9 +735,9 @@ export class BrowserControl {
     const origins = [...new Set(session.popups.map((url) => (isBlank(url) ? 'about:blank' : originShown(url))))].join(', ');
     const ids = [...session.tabs.keys()];
     const numbers = session.popupTabs.map((id) => ids.indexOf(id) + 1).filter((n) => n > 0);
-    if (numbers.length === 0) return `Opened a popup window (${origins}) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.`;
+    if (numbers.length === 0) return `Opened a popup window (${origins}). It has already closed or is not in list_tabs, so you cannot operate it.`;
     return (
-      `Opened a popup window (${origins}) in a separate window: ${numbers.length === 1 ? `tab ${numbers[0]}` : `tabs ${numbers.join(', ')}`} in list_tabs. ` +
+      `Opened a popup window (${origins}): ${numbers.length === 1 ? `tab ${numbers[0]}` : `tabs ${numbers.join(', ')}`} in list_tabs (the user sees it as a popup tab in the in-app browser). ` +
       'The current tab did not change. To read or operate the popup, switch to it with select_tab. ' +
       'If it shows a page that is not allowed for Claude (such as a login page of another site), ask the user to act there with ask_user_to_act.'
     );
@@ -1532,13 +1627,14 @@ export class BrowserControl {
     return textResult(`Closed tab ${number} (${count(session.tabs.size, 'tab')} left)`);
   }
 
-  // ポップアップを今のタブにする。画面のタブは替えない（別ウインドウは、タブの帯に無い）
+  // ポップアップを今のタブにする。画面もそのポップアップのタブにする（Claude が操作しているものを、人が見られるように）
   private selectPopup(sessionId: string, guest: Guest, index: unknown): ToolResult {
     this.tabsOf(sessionId).active = guest.tabId;
+    this.deps.send(this.deps.channels.selectTab, { sessionId, tabId: guest.tabId });
     const result = this.pageResult(guest, `Switched to tab ${String(index)}, a popup window opened by tab ${this.numberOf(sessionId, guest.popup!.opener)}`);
     const url = guest.contents.getURL();
     if (!isBlank(url) && !this.allowedIn(guest, url)) {
-      result.content.push({ type: 'text', text: 'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. The user sees the popup in its own window.' });
+      result.content.push({ type: 'text', text: 'If the user needs to act there (for example, to log in), ask them with ask_user_to_act. The user sees the popup as a tab in the in-app browser.' });
     }
     return result;
   }
@@ -1553,6 +1649,7 @@ export class BrowserControl {
       session.active = session.tabs.has(back) ? back : null;
     }
     guest.popup!.close();
+    this.sendPopups(sessionId);
     const current = session.active ? this.numberOf(sessionId, session.active) : 0;
     return textResult(`Closed tab ${number}, a popup window (${count(session.tabs.size, 'tab')} left${current > 0 ? `; the current tab is tab ${current}` : ''})`);
   }

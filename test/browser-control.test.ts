@@ -1067,7 +1067,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     );
     expect(result).toBe(
       'Clicked: button#login\n' +
-        'Opened a popup window (http://localhost:3000) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.',
+        'Opened a popup window (http://localhost:3000). It has already closed or is not in list_tabs, so you cannot operate it.',
     );
     // 次の呼び出しには残らない
     expect(textOf(await ctx.call('get_console_logs'))).toBe('No console messages.');
@@ -1079,7 +1079,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'about:blank')).toBe(true)));
     expect(result).toBe(
       'Clicked: button#login\n' +
-        'Opened a popup window (about:blank) in a separate window. It has already closed or is not in list_tabs, so you cannot operate it.',
+        'Opened a popup window (about:blank). It has already closed or is not in list_tabs, so you cannot operate it.',
     );
   });
 
