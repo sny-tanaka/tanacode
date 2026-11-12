@@ -126,6 +126,34 @@ describe('欄に入れるスクリプト（jsdom）', () => {
     expect(document.querySelector<HTMLInputElement>('#email')!.value).toBe('');
   });
 
+  it('selector が無ければ、二段階認証のコードの欄（type=password でも）にはパスワードを入れない。そういう欄しか無ければ、oneTimePasswordSelector を使うよう返す', () => {
+    // OneLogin のコードの欄
+    document.body.innerHTML = `<input id="security-code" data-testid="security-code" type="password" autocomplete="off" maxlength="255">`;
+    const code = document.querySelector<HTMLInputElement>('#security-code')!;
+    code.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 20, left: 0, top: 0, right: 100, bottom: 20, toJSON: () => ({}) }) as DOMRect;
+    const result = run(fillScript({ username: null, password: PASS })) as { error: string };
+    expect(result.error).toContain('input#security-code looks like a field for a two-factor code');
+    expect(result.error).toContain('oneTimePasswordSelector');
+    expect(code.value).toBe('');
+
+    // id・name・data-testid・autocomplete のどれで見分けても同じ。コードの欄とパスワードの欄があれば、パスワードの欄に入れる
+    for (const attrs of ['name="otp"', 'data-testid="mfa-input"', 'autocomplete="one-time-code"', 'id="totp"', 'name="verification"']) {
+      document.body.innerHTML = `<input ${attrs} type="password"><input id="pw" type="password">`;
+      for (const el of document.querySelectorAll('input')) {
+        el.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 20, left: 0, top: 0, right: 100, bottom: 20, toJSON: () => ({}) }) as DOMRect;
+      }
+      expect(run(fillScript({ username: null, password: PASS }))).toEqual({ filled: [{ field: 'password', element: 'input#pw' }] });
+      expect(document.querySelector<HTMLInputElement>('input:not(#pw)')!.value).toBe('');
+    }
+
+    // ふつうのパスワードの欄の名前は、コードの欄と見なさない
+    for (const id of ['password', 'passwd', 'user_pw', 'login-password']) {
+      document.body.innerHTML = `<input id="${id}" name="${id}" type="password" autocomplete="current-password">`;
+      document.querySelector('input')!.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 20, left: 0, top: 0, right: 100, bottom: 20, toJSON: () => ({}) }) as DOMRect;
+      expect(run(fillScript({ username: null, password: PASS }))).toEqual({ filled: [{ field: 'password', element: `input#${id}[name="${id}"]` }] });
+    }
+  });
+
   it('ユーザー名だけを入れる（ユーザー名とパスワードを別の画面で聞くログイン）', () => {
     expect(run(fillScript({ usernameSelector: '#email', username: USER, password: null }))).toEqual({ filled: [{ field: 'username', element: 'input#email[name="email"]' }] });
     expect(document.querySelector<HTMLInputElement>('#pw')!.value).toBe('');
@@ -466,6 +494,23 @@ describe('fill_credential', () => {
     opResult = { ...item(['http://localhost:3000']), fields: [] };
     expect(textOf(await ctx.call('fill_credential', { item: LINK, oneTimePasswordSelector: '#code' }))).toBe('The 1Password item "Example" has no one-time password. Nothing was filled.');
     expect(filled).toHaveLength(before);
+  });
+
+  it('定義に無い引数は、推測した名前でも黙って無視せず断り、今の引数の名前と説明を返す。1Password もページも触らない', async () => {
+    const ctx = env();
+    opResult = item(['http://localhost:3000']);
+    page(ctx, 'http://localhost:3000/login');
+    const result = await ctx.call('fill_credential', { item: LINK, field: 'otp' });
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toMatch(/^fill_credential has no argument named "field", so nothing was done\. /);
+    expect(text).toContain('- oneTimePasswordSelector: CSS selector of the field for the two-factor code');
+    expect(text).toContain('- fields: ');
+    expect(opCalls).toEqual([]);
+    expect(filled).toEqual([]);
+    // ほかのブラウザのツールも同じ
+    expect(textOf(await ctx.call('screenshot', { fullpage: true, x: 1 }))).toMatch(/^screenshot has no argument named "fullpage", "x", so nothing was done\. Its arguments are .*\n- selector: /);
+    expect(textOf(await ctx.call('get_accessibility_tree', { selector: '#a' }))).toBe('get_accessibility_tree has no argument named "selector", so nothing was done. It takes no arguments.');
   });
 
   it('1Password のアイテムを控えたサイトは、許す先として扱う（ログインでリダイレクトしても止めず、聞かずに開け、読んで操作できる）', async () => {
