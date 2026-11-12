@@ -195,7 +195,7 @@ export function matchingUrl(pageUrl: string, itemUrls: readonly string[]): strin
   return null;
 }
 
-// 入れる欄。selector を省くと、ページの中で見つける（見えているパスワードの欄と、その前の入力欄）。
+// 入れる欄。selector を省くと、ページの中で見つける（見えているパスワードの欄（二段階認証のコードの欄に見えるものを除く）と、その前の入力欄）。
 // extra: ユーザー名・パスワードのほかに入れるもの（ワンタイムパスワード・アイテムのほかの欄。selector は省けない）。
 // label: 答えに書く名前 / secret: 隠す欄の値（控えて、パスワードの欄でない欄に入れたら、文字のまま見えるものとして読み取りを止める）/
 // split: selector が値の文字数と同じ数の欄に当たれば、1 文字ずつ入れる（1 桁ずつ欄が分かれたワンタイムパスワード）
@@ -205,6 +205,10 @@ export type FillTarget = { usernameSelector?: string; passwordSelector?: string;
 // 目印（作り物のテストがスクリプトの種類を見分ける。test/helpers/fake-electron.ts）
 export const FILL_MARK = '__tanacodeCredentialFill';
 export const CHECK_MARK = '__tanacodeCredentialCheck';
+
+// selector を省いたときに、パスワードの入れ先にしない欄（二段階認証のコードの欄）の、id・name・data-testid・autocomplete に含まれる語。
+// autocomplete="one-time-code" にも当たる。パスワードの欄の名前（password・passwd・pw など）には当たらないようにする
+export const CODE_FIELD_WORDS = /code|otp|totp|security|2fa|mfa|one-?time|verif/i;
 
 // 欄を見つけて値を入れるスクリプト（ページとは別の JavaScript の世界で動かす。ページのスクリプトには、この中の変数は見えない）。
 // 値は、ページの中では欄に入れるだけで、結果には返さない（返すのは、入れた欄の名前か、入れられなかった理由）。
@@ -221,10 +225,19 @@ export function fillScript(target: FillTarget): string {
   const extra = ${extra};
   const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
   const name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.name ? '[name="' + e.name + '"]' : '');
+  const codeLike = (el) => [el.id, el.getAttribute('name'), el.getAttribute('data-testid'), el.getAttribute('autocomplete')].some((v) => v && ${CODE_FIELD_WORDS}.test(v));
   const pick = (s) => { try { return document.querySelector(s); } catch (e) { return { error: 'bad selector: ' + s }; } };
   let pass = null, user = null;
   if (values.p !== null || sel.p) {
-    pass = sel.p ? pick(sel.p) : [...document.querySelectorAll('input[type=password]')].find(shown) || null;
+    if (sel.p) pass = pick(sel.p);
+    else {
+      // 二段階認証のコードの欄も type=password のことがある（OneLogin など）。見た目では分からないので、属性で見分けて、パスワードを入れない
+      const visible = [...document.querySelectorAll('input[type=password]')].filter(shown);
+      pass = visible.find((el) => !codeLike(el)) || null;
+      if (!pass && visible.length > 0) {
+        return { error: name(visible[0]) + ' looks like a field for a two-factor code, not for the password, so the password was not filled into it. To fill the one-time password, pass its selector as oneTimePasswordSelector' };
+      }
+    }
     if (pass && pass.error) return { error: pass.error };
     if (!pass) return { error: sel.p ? 'no element matches ' + sel.p : 'no visible password field on the page' };
     if (pass.tagName !== 'INPUT' || pass.type !== 'password') return { error: name(pass) + ' is not a password field (<input type=password>)' };

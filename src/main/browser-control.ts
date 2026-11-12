@@ -20,7 +20,7 @@ import {
 } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserLoginChange, BrowserPoint, BrowserRememberChange, BrowserRect, BrowserThrottleChange, IpcChannel, IpcEvent } from '@shared/ipc';
-import { mcpToolLabel } from '@shared/mcp-tools';
+import { mcpToolLabel, unknownArgumentsError } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { describeDialog, PageDialogs } from './browser-dialogs';
 import { BrowserDownloads, describeDownload, MAX_DOWNLOAD_BYTES, MAX_DOWNLOADS_PER_CALL } from './browser-downloads';
@@ -859,6 +859,8 @@ export class BrowserControl {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId, args);
     const tool = browserTool(name);
     if (!tool) return textResult(`Unknown tool: ${name}`, true);
+    const unknownArgs = unknownArgumentsError(tool, args);
+    if (unknownArgs) return textResult(unknownArgs, true);
     if (!this.deps.enabled()) return textResult(`The user has turned off the tanacode MCP "${t('tools.server.browser')}" in tanacode > ${t('main.menu.mcpSettings')}.`, true);
     if (!this.deps.hasSession(sessionId)) return textResult('This session is not in tanacode.', true);
     if (tool.kind === 'ask') {
