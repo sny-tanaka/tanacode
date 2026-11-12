@@ -284,6 +284,9 @@ type Guest = {
   // このタブを遅くしている様子（throttle。cpu: 何倍遅くするか。1 は遅くしていない / network: 通信の速さ。null は遅くしていない）。
   // タブを閉じるか、CDP が外れるまで、読み込み直しても・別のページへ移っても残る
   throttle: { cpu: number; network: NetworkPresetName | null };
+  // ページを、フォーカスがある扱いにしているか（focusPage）と、最後の操作から外すまでの時計。CDP が外れると扱いも消えるので false に戻す
+  focusEmulated?: boolean;
+  focusIdle?: NodeJS.Timeout;
   // Claude の操作の間に、許していない先へ移ろう（開こう）として止めた先。navigate の action: "continue" で、人に許可を求めて開く。
   // newWindow: ページが新しいウインドウで開こうとしたもの（新しいタブで開く）
   stopped: { url: string; newWindow: boolean } | null;
@@ -536,6 +539,8 @@ export class BrowserControl {
       guest.cdp = false;
       guest.children.clear();
       guest.emulated = null;
+      guest.focusEmulated = false;
+      clearTimeout(guest.focusIdle);
       if (guest.throttle.cpu !== 1 || guest.throttle.network) {
         guest.throttle = { cpu: 1, network: null };
         this.sendThrottle(sessionId, guest);
@@ -546,6 +551,7 @@ export class BrowserControl {
       if (method === 'Target.detachedFromTarget' && params.sessionId) guest.children.delete(params.sessionId);
     });
     contents.once('destroyed', () => {
+      clearTimeout(guest.focusIdle);
       const current = this.sessions.get(sessionId);
       if (current?.tabs.get(tabId) !== guest) return;
       if (guest.popup) this.popupGone(current, guest);
@@ -1040,6 +1046,9 @@ export class BrowserControl {
     // Claude が決めた画面の大きさが、このタブに当たっていなければ当てる（CDP が外れて消えた・当てる前に操作した）
     // 当てられなくても（CDP をつなげない など）、ツールは続ける（読むツールまで止めない）。当たっていないので、次の呼び出しでまた当てる
     if (name !== 'set_viewport') await this.emulate(guest, this.tabsOf(sessionId).viewport).catch(() => undefined);
+    // ページに入力する操作なら、欄の focus・blur が起きるよう、ページにフォーカスがある扱いにする（読むだけのツールでは、しない）。
+    // できなくても、ツールは続ける（今までどおり、イベントが出ないだけ）
+    if (FOCUS_TOOLS.has(name)) await this.focusPage(guest).catch(() => undefined);
     const refusal = await this.credentialGuard.refusal(name, guest.contents.id, async () => (await this.world(guest, CHECK_SCRIPT)) === true);
     if (refusal) throw new ToolError(refusal);
     switch (name) {
@@ -2469,6 +2478,27 @@ export class BrowserControl {
     guest.emulated = emulation;
   }
 
+  // Claude が操作するタブのページを、フォーカスがある扱いにする（CDP の Emulation.setFocusEmulationEnabled）。
+  // - tanacode は、人のキーボードのフォーカスを奪わないよう、ページ（webview）にフォーカスを渡さない。そのままでは、ページは
+  //   フォーカスの無いウインドウの扱い（document.hasFocus() が false）で、欄にフォーカスが移っても focus・blur・focusin・focusout が
+  //   出ない。欄から出たときに処理が走るフォーム（楽楽精算の明細で、内訳コード・金額の欄から出たら、税率・小計を読み込む など）が動かなかった
+  // - この扱いは、ページの中だけのもので、アプリの画面のフォーカス（人が打っている所）は動かさない
+  // - この扱いのあいだ、ページは見えている扱いにもなり、隠れていても描かれ続ける（Chromium がタブを映している扱いにするため）。
+  //   電気を使い続けないよう、最後の操作から FOCUS_EMULATION_IDLE_MS たったら外す。外すと、ページには人がウインドウを離れたときと同じく
+  //   blur が届く（次に操作すれば、また focus が届く）
+  // - CDP が外れると（DevTools を開いた など）扱いも消えるので、次の操作でまた付ける（focusEmulated を watchGuest が戻す）
+  private async focusPage(guest: Guest): Promise<void> {
+    clearTimeout(guest.focusIdle);
+    guest.focusIdle = setTimeout(() => {
+      if (!guest.focusEmulated || guest.contents.isDestroyed()) return;
+      guest.focusEmulated = false;
+      void this.cdp(guest, 'Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined);
+    }, FOCUS_EMULATION_IDLE_MS);
+    if (guest.focusEmulated) return;
+    await this.cdp(guest, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+    guest.focusEmulated = true;
+  }
+
   // 指でさわる（CDP の Input.dispatchTouchEvent。ページには本物のタッチ・pointerType が touch のポインターのイベントとして届く）。
   // 指の位置は、ブラウザを見ている人に丸で見せる（動かすあいだも）
   private async touch(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
@@ -3622,6 +3652,10 @@ function modifierBits(names: string[]): number {
 }
 // 本物の押下のあと、アプリの画面のフォーカスが webview へ移るのを見る長さの上限と間隔（keepHumanFocus。移らなければ、そのまま）
 const KEEP_FOCUS_WAIT_MS = 1000;
+// Claude の最後の操作から、ページをフォーカスがある扱い（focusPage）から外すまで
+const FOCUS_EMULATION_IDLE_MS = 10 * 60 * 1000;
+// ページをフォーカスがある扱いにして動かすツール（ページに入力するもの。evaluate は、ページのスクリプトで focus()・blur() を呼ぶことがあるため）
+const FOCUS_TOOLS = new Set(['click', 'type', 'press_key', 'touch', 'hover', 'drag', 'evaluate', 'fill_credential']);
 const KEEP_FOCUS_POLL_MS = 50;
 // 押す要素（locate・pointAt）。cross: 別オリジンの iframe の中（スクリプトからは押せない）。child: その iframe が別プロセスなら、そのセッションと中の位置
 type Target = { rect: BrowserRect; description: string; covered: string | null; cross?: boolean; child?: { session: string; x: number; y: number } };

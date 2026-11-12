@@ -393,3 +393,65 @@ describe('足したキー（press_key）', () => {
     ]);
   });
 });
+
+// Claude が操作するタブのページを、フォーカスがある扱いにする（focusPage）。そうしないと、ページはフォーカスの無いウインドウの扱いで、
+// 欄の focus・blur・focusin・focusout が出ない（欄から出たときに処理が走るフォームが動かない）。イベントが届くことは
+// test/e2e/browser-focus.test.ts が確かめる
+describe('ページをフォーカスがある扱いにする（Emulation.setFocusEmulationEnabled）', () => {
+  const focusCommands = (page: Page) => page.debugger.sent('Emulation.setFocusEmulationEnabled').map((c) => (c.params as { enabled: boolean }).enabled);
+
+  it('入力する操作の前に 1 回だけ付ける（本物の押下より前）。読むだけのツールでは付けない', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.text = () => ({ title: 'T', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] });
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'input#code');
+    await call('get_text');
+    expect(focusCommands(page)).toEqual([]);
+    expect(textOf(await call('click', { selector: '#code' }))).toBe('Clicked: input#code');
+    expect(focusCommands(page)).toEqual([true]);
+    await call('click', { selector: '#code', real: true });
+    await call('type', { text: 'A01' });
+    expect(focusCommands(page)).toEqual([true]);
+    const methods = page.debugger.commands.map((c) => c.method);
+    expect(methods.indexOf('Emulation.setFocusEmulationEnabled')).toBeLessThan(methods.indexOf('Input.dispatchMouseEvent'));
+  });
+
+  it('最後の入力する操作から 10 分たったら外す（隠れたタブを描き続けないため）。そのあとの操作で、また付ける', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'input#code');
+    await call('click', { selector: '#code' });
+    await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+    // 途中の操作で、数え直す
+    await call('type', { text: 'A' });
+    await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+    expect(focusCommands(page)).toEqual([true]);
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(focusCommands(page)).toEqual([true, false]);
+    await call('click', { selector: '#code' });
+    expect(focusCommands(page)).toEqual([true, false, true]);
+  });
+
+  it('CDP が外れたら（DevTools を開いた など。扱いも消える）、次の操作で付け直す。外れたあとは、外す命令を送らない', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'input#code');
+    await call('click', { selector: '#code' });
+    page.debugger.detachNow();
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(focusCommands(page)).toEqual([true]);
+    await call('click', { selector: '#code' });
+    expect(focusCommands(page)).toEqual([true, true]);
+  });
+
+  it('付けられなくても（CDP が断る）、操作は続ける', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'input#code');
+    page.debugger.handler = (method) => {
+      if (method === 'Emulation.setFocusEmulationEnabled') throw new Error('使えない命令です');
+      return {};
+    };
+    expect(textOf(await call('click', { selector: '#code' }))).toBe('Clicked: input#code');
+  });
+});
