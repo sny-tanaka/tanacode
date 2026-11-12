@@ -31,7 +31,7 @@ import { sendAsClaude } from './claude-input';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { MAX_POPUPS } from './browser-windows';
 import { textResult, type ToolResult } from './mcp-bridge';
-import { CHECK_SCRIPT, CredentialGuard, fillScript, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, parseItemRef, type CredentialSource, type FillResult, type Login } from './browser-credentials';
+import { CHECK_SCRIPT, CredentialGuard, fillScript, findField, HAS_PASSWORD_SCRIPT, looksLikeLoginRequest, matchingUrl, oneTimePassword, parseItemRef, type CredentialSource, type ExtraFill, type FillResult, type Login } from './browser-credentials';
 import { linkForPage, normalizeSite, type CredentialLink } from '@shared/credential-links';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
@@ -45,7 +45,7 @@ import { linkForPage, normalizeSite, type CredentialLink } from '@shared/credent
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
 // その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）。
-// 許す先（isClaudeAllowedUrl）の外のページも開けるが、開くたびに人の許可を求める（フックが Claude Code の許可の確認を出させる。browser-gate.ts）。
+// 許す先（isClaudeAllowedUrl と、1Password のアイテムを控えたサイト）の外のページも開けるが、開くたびに人の許可を求める（フックが Claude Code の許可の確認を出させる。browser-gate.ts）。
 // 人が許したら、そのタブでそのオリジンを許可し、タブを閉じるまで、その中の操作（読む・押す・同じオリジンの中の移動）には許可を求めない。
 // 別のオリジンへ移ろうとしたら止め、続けるなら、また人に許可を求める（navigate の action: "continue"）。別オリジンの iframe には、許可は効かない。
 // ページが出すダイアログ（alert・confirm・離れるのを拒んだこと）は、止まったページを待たずに Claude に伝え、handle_dialog で答えさせる（browser-dialogs.ts）。
@@ -1283,6 +1283,8 @@ export class BrowserControl {
     const started = Date.now();
     const usernameSelector = optionalString(args.usernameSelector);
     const passwordSelector = optionalString(args.passwordSelector);
+    const otpSelector = optionalString(args.oneTimePasswordSelector);
+    const fields = credentialFields(args.fields);
     const pageUrl = guest.contents.getURL();
     // current() が通したページ（許す先か、人が許したオリジン）なので、いつも http(s) のオリジンがある
     const origin = webOrigin(pageUrl)!;
@@ -1312,19 +1314,28 @@ export class BrowserControl {
       const sites = [...new Set(login.urls.map((u) => webOrigin(/^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`) ?? u))].join(', ');
       throw new ToolError(`The 1Password item "${login.title}" is for ${sites}, not for this page (${origin}). Nothing was filled.`);
     }
-    // 入れる欄。selector を 1 つだけ渡したら、その欄だけ（ユーザー名とパスワードを別の画面で聞くログイン）
-    const both = usernameSelector === undefined && passwordSelector === undefined;
+    // 入れる欄。selector を渡したら、渡した欄だけ（ユーザー名とパスワードを別の画面で聞くログイン・二段階認証のコードの画面）。
+    // 何も渡さなければ、ユーザー名とパスワード
+    const both = usernameSelector === undefined && passwordSelector === undefined && otpSelector === undefined && fields.length === 0;
     const wantUser = usernameSelector !== undefined || (both && login.username !== null);
     const wantPass = passwordSelector !== undefined || (both && login.password !== null);
     if (wantUser && login.username === null) throw new ToolError(`The 1Password item "${login.title}" has no username. Nothing was filled.`);
     if (wantPass && login.password === null) throw new ToolError(`The 1Password item "${login.title}" has no password. Nothing was filled.`);
-    if (!wantUser && !wantPass) throw new ToolError(`The 1Password item "${login.title}" has neither a username nor a password. Nothing was filled.`);
+    if (!wantUser && !wantPass && both) throw new ToolError(`The 1Password item "${login.title}" has neither a username nor a password. Nothing was filled.`);
+    const extra: ExtraFill[] = [];
+    if (otpSelector !== undefined) extra.push({ label: 'one-time password', selector: otpSelector, value: oneTimePassword(login), secret: false, split: true });
+    for (const f of fields) {
+      const found = findField(login, f.field);
+      // ワンタイムパスワードは、すぐに使えなくなり、ページにも文字のまま出るものなので、隠す欄として扱わない
+      extra.push({ label: `field ${JSON.stringify(f.field)}`, selector: f.selector, value: found.value!, secret: found.kind === 'secret', split: found.kind === 'otp' });
+    }
     // 入れる前に控える（スクリプトが途中で止まっても、読み取りを止める側に倒す）
     this.credentialGuard.mark(guest.contents, pageUrl);
-    const script = fillScript({ usernameSelector, passwordSelector, username: wantUser ? login.username : null, password: wantPass ? login.password : null });
+    const script = fillScript({ usernameSelector, passwordSelector, username: wantUser ? login.username : null, password: wantPass ? login.password : null, extra });
     const result = (await this.world(guest, script).catch(() => ({ error: 'the page did not respond' }))) as FillResult | null;
     if (!result || 'error' in result) throw new ToolError(`Could not fill the credential: ${result?.error ?? 'the page did not respond'}. Nothing was filled.`);
-    const where = result.filled.map((f) => `${f.field} into ${f.element}`).join(' and ');
+    const parts = result.filled.map((f) => `${f.field} into ${f.element}`);
+    const where = parts.length <= 2 ? parts.join(' and ') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
     const hint = this.offerToRemember(sessionId, given, pageUrl, login.title);
     return textResult(
       `Filled the ${where} from the 1Password item "${login.title}" on ${origin}${saved ? ' (the item the user saved for this site)' : ''}. The values were not shown to you and are not in this result. ` +
@@ -1438,7 +1449,7 @@ export class BrowserControl {
     const index = marks.findIndex((m) => m.url === url && m.newTab === newTab && m.tabId === tabId);
     if (index === -1) {
       throw new ToolError(
-        `${what} (${origin}) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added under "${t('mcpSettings.hostsTitle')}" in tanacode > ${t('main.menu.mcpSettings')}), ` +
+        `${what} (${origin}) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local, the hosts added under "${t('mcpSettings.hostsTitle')}" and the sites under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}), ` +
           'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
           'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
       );
@@ -3057,7 +3068,7 @@ export class BrowserControl {
     }
     if (!this.allowedIn(guest, url)) {
       throw new ToolError(
-        `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added under "${t('mcpSettings.hostsTitle')}" in tanacode > ${t('main.menu.mcpSettings')}), ` +
+        `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local, the hosts added under "${t('mcpSettings.hostsTitle')}" and the sites under "${t('mcpSettings.credentialLinksTitle')}" in tanacode > ${t('main.menu.mcpSettings')}), ` +
           'and the user has not permitted it in this tab. To use it, open it with navigate (tanacode asks the user for permission).',
       );
     }
@@ -3107,9 +3118,13 @@ export class BrowserControl {
     return (this.running.get(sessionId) ?? 0) > 0 || Date.now() - (this.endedAt.get(sessionId) ?? 0) < OPERATING_GRACE_MS;
   }
 
-  // 許す先（既定と、ユーザーが足した先）のページか
+  // 許す先（既定と、ユーザーが足した先）のページか。人が 1Password のアイテムを控えたサイト（credentialLinks）も許す先に含める
+  // （ユーザーの判断: 控えた時点で、Claude がそのサイトでログインすることを許している。ログインで外の認証のサイト（OneLogin など）へ
+  // リダイレクトしても止まらず、聞かずに fill_credential で入れられるように）。照合は linkForPage と同じ（ホスト名（とポート）がそのまま合うもの）
   private allowed(url: string): boolean {
-    return isClaudeAllowedUrl(url, this.deps.extraHosts());
+    if (isClaudeAllowedUrl(url, this.deps.extraHosts())) return true;
+    const links = this.deps.credentials?.links();
+    return !!links && links.length > 0 && linkForPage(links, url) !== null;
   }
 
   // そのタブで、Claude が読んで・操作してよいページか。許す先か、人がそのタブで開くことを許したオリジン（別オリジンの iframe には使わない）
@@ -3684,6 +3699,19 @@ function requiredString(value: unknown, name: string): string {
   const text = optionalString(value);
   if (!text) throw new ToolError(`Provide ${name}.`);
   return text;
+}
+
+// fill_credential の fields（入れるアイテムの欄と、入れる先の selector の組）を読む
+function credentialFields(value: unknown): { field: string; selector: string }[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new ToolError('fields must be an array of { field, selector }.');
+  return value.map((entry, i) => {
+    const { field, selector } = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    const name = optionalString(field);
+    const target = optionalString(selector);
+    if (!name || !target) throw new ToolError(`fields[${i}] needs both field (the name of the 1Password item's field) and selector.`);
+    return { field: name, selector: target };
+  });
 }
 
 function stringList(value: unknown): string[] | undefined {

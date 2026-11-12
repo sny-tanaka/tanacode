@@ -2007,7 +2007,7 @@
       "inputLabel": "Site to add"
     },
     "credentialLinks": {
-      "description": "On the sites listed here, Claude can fill login forms with the site's 1Password item without writing the link (Claude never sees the values). Only the link is saved, never the password. To get a link, use \"Copy Private Link\" on the item in 1Password.",
+      "description": "On the sites listed here, Claude fills login forms and two-factor codes with the site's 1Password item without writing the link or asking you (Claude never sees the values). Like the hosts allowed for Claude, these sites open and can be operated without asking. Only the link is saved, never the password. To get a link, use \"Copy Private Link\" on the item in 1Password.",
       "none": "None yet",
       "invalidSite": "Invalid site: {site} (e.g., example.com, localhost:3000)",
       "invalidLink": "Not a 1Password item link (in 1Password, use \"Copy Private Link\" on the item and paste it)",

@@ -5,7 +5,9 @@ import {
   CredentialGuard,
   fillScript,
   CredentialError,
+  findField,
   loginFromSdkItem,
+  oneTimePassword,
   matchingUrl,
   parseItemRef,
   sdkFailure,
@@ -19,6 +21,8 @@ import {
 import { cleanLinks, isItemLink, linkForPage, normalizeSite, type CredentialLink } from '../src/shared/credential-links';
 import { IpcChannel, type BrowserAskChange, type BrowserRememberChange } from '../src/shared/ipc';
 import { setup, textOf, type Tab } from './helpers/browser-control';
+import { browserToolId } from '../src/shared/browser-tools';
+import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
 
@@ -28,10 +32,25 @@ vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electr
 
 const USER = 'alice@example.com';
 const PASS = 'S3cret-Pa55-do-not-leak';
+const CODE = '482913';
+const PIN = 'Pin-7731-do-not-leak';
 const LINK = 'https://start.1password.com/open/i?a=ABCDEFGHIJKLMNOPQRSTUVWXYZ&v=abcdefghijklmnopqrstuvwxyz&i=zyxwvutsrqponmlkjihgfedcba&h=my.1password.com';
 
 // 取り出し役が返すログイン
-const item = (urls: string[]): Login => ({ title: 'Example', urls, username: USER, password: PASS });
+const item = (urls: string[]): Login => ({
+  title: 'Example',
+  urls,
+  username: USER,
+  password: PASS,
+  fields: [
+    { title: 'username', section: null, kind: 'text', value: USER },
+    { title: 'password', section: null, kind: 'secret', value: PASS },
+    { title: 'one-time password', section: null, kind: 'otp', value: CODE },
+    { title: 'PIN', section: '社内', kind: 'secret', value: PIN },
+    { title: 'PIN', section: '古い', kind: 'secret', value: 'old' },
+    { title: 'customer ID', section: null, kind: 'text', value: 'C-100' },
+  ],
+});
 
 describe('アイテムの参照', () => {
   it('共有リンクから、アカウント・保管庫・アイテムの ID を読む', () => {
@@ -110,6 +129,72 @@ describe('欄に入れるスクリプト（jsdom）', () => {
   it('ユーザー名だけを入れる（ユーザー名とパスワードを別の画面で聞くログイン）', () => {
     expect(run(fillScript({ usernameSelector: '#email', username: USER, password: null }))).toEqual({ filled: [{ field: 'username', element: 'input#email[name="email"]' }] });
     expect(document.querySelector<HTMLInputElement>('#pw')!.value).toBe('');
+  });
+
+  const otp = (selector: string) => ({ label: 'one-time password', selector, value: CODE, secret: false, split: true });
+
+  it('ワンタイムパスワードを 1 つの欄に入れる。ユーザー名・パスワードは入れず、控えもしない（読み取りを止めない）', () => {
+    document.body.innerHTML += '<input id="code" autocomplete="one-time-code">';
+    const result = run(fillScript({ username: null, password: null, extra: [otp('#code')] }));
+    expect(result).toEqual({ filled: [{ field: 'one-time password', element: 'input#code' }] });
+    expect(JSON.stringify(result)).not.toContain(CODE);
+    expect(document.querySelector<HTMLInputElement>('#code')!.value).toBe(CODE);
+    expect(document.querySelector<HTMLInputElement>('#email')!.value).toBe('');
+    expect((window as { __tanacodeFilled?: unknown[] }).__tanacodeFilled).toEqual([]);
+  });
+
+  it('1 桁ずつ分かれた欄には 1 文字ずつ入れる。欄の数が合わなければ、どれにも入れない', () => {
+    document.body.innerHTML += [...'123456'].map((i) => `<input class="d" id="d${i}" maxlength="1">`).join('');
+    expect(run(fillScript({ username: null, password: null, extra: [otp('.d')] }))).toEqual({ filled: [{ field: 'one-time password', element: '6 fields from input#d1' }] });
+    expect([...document.querySelectorAll<HTMLInputElement>('.d')].map((el) => el.value).join('')).toBe(CODE);
+    document.querySelector('#d6')!.remove();
+    for (const el of document.querySelectorAll<HTMLInputElement>('.d')) el.value = '';
+    expect(run(fillScript({ username: null, password: null, extra: [otp('.d')] }))).toEqual({
+      error: '.d matches 5 elements (pass a selector of one field, or of one field per character of the code)',
+    });
+    expect([...document.querySelectorAll<HTMLInputElement>('.d')].map((el) => el.value).join('')).toBe('');
+  });
+
+  it('ほかの欄: 隠す欄の値は控える（パスワードの欄でなければ、文字のまま見えるものとして読み取りを止める）。入れられない欄があれば、どれにも入れない', () => {
+    document.body.innerHTML += '<input id="pin"><input id="off" disabled><input id="box" type="checkbox">';
+    const pin = { label: 'field "PIN"', selector: '#pin', value: PIN, secret: true, split: false };
+    expect(run(fillScript({ usernameSelector: '#email', username: USER, password: null, extra: [pin, { ...pin, selector: '#off' }] }))).toEqual({ error: 'input#off is disabled' });
+    expect(run(fillScript({ username: null, password: null, extra: [{ ...pin, selector: '#box' }] }))).toEqual({ error: 'input#box is not a text field for the field "PIN"' });
+    expect(run(fillScript({ username: null, password: null, extra: [{ ...pin, selector: '#search, #email' }] }))).toEqual({ error: '#search, #email matches 2 elements (pass a selector of one field)' });
+    expect(document.querySelector<HTMLInputElement>('#email')!.value).toBe('');
+    expect(document.querySelector<HTMLInputElement>('#pin')!.value).toBe('');
+    expect(run(fillScript({ username: null, password: null, extra: [pin] }))).toEqual({ filled: [{ field: 'field "PIN"', element: 'input#pin' }] });
+    expect(document.querySelector<HTMLInputElement>('#pin')!.value).toBe(PIN);
+    expect((window as { __tanacodeFilled?: unknown[] }).__tanacodeFilled).toEqual([document.querySelector('#pin')]);
+  });
+});
+
+describe('アイテムの欄', () => {
+  const login = item(['https://example.com']);
+
+  it('ワンタイムパスワードは今のコード。無い・求められなければ理由を返す', () => {
+    expect(oneTimePassword(login)).toBe(CODE);
+    expect(() => oneTimePassword({ ...login, fields: [] })).toThrow('The 1Password item "Example" has no one-time password. Nothing was filled.');
+    expect(() => oneTimePassword({ ...login, fields: [{ title: 'otp', section: null, kind: 'otp', value: null, error: 'bad secret' }] })).toThrow(
+      '1Password could not compute the one-time password of the item "Example" (bad secret). Nothing was filled.',
+    );
+  });
+
+  it('名前で探す（大文字・小文字は問わない）。同じ名前がいくつもあれば「セクション/名前」で。無ければ名前の一覧を返し、値は返さない', () => {
+    expect(findField(login, 'Customer id').value).toBe('C-100');
+    expect(findField(login, '社内/pin').value).toBe(PIN);
+    expect(() => findField(login, 'PIN')).toThrow(/^Several fields of the 1Password item "Example" are named "PIN"; name one as "section\/field"/);
+    let message = '';
+    try {
+      findField(login, 'member number');
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe(
+      'The 1Password item "Example" has no field named "member number" (its fields: "username", "password", "one-time password", "社内/PIN", "古い/PIN", "customer ID"). Nothing was filled.',
+    );
+    for (const value of [USER, PASS, CODE, PIN]) expect(message).not.toContain(value);
+    expect(() => findField({ ...login, fields: [{ title: 'memo', section: null, kind: 'text', value: null }] }, 'memo')).toThrow('The field "memo" of the 1Password item "Example" is empty. Nothing was filled.');
   });
 });
 
@@ -345,6 +430,61 @@ describe('fill_credential', () => {
     expect(filled.at(-1)).toContain('"u":null');
   });
 
+  it('二段階認証のコード・ほかの欄だけを入れる。コード・値は Claude に返さない', async () => {
+    const ctx = env();
+    opResult = item(['http://localhost:3000']);
+    const tab = page(ctx, 'http://localhost:3000/login');
+    tab.page.credentialFill = (code) => (filled.push(code), { filled: [{ field: 'one-time password', element: 'input#code' }] });
+    const result = await ctx.call('fill_credential', { item: LINK, oneTimePasswordSelector: '#code' });
+    expect(textOf(result)).toContain('Filled the one-time password into input#code from the 1Password item "Example"');
+    expect(filled.at(-1)).toContain('"u":null,"p":null');
+    expect(filled.at(-1)).toContain(`{"l":"one-time password","s":"#code","v":"${CODE}","secret":false,"split":true}`);
+    expect(textOf(result)).not.toContain(CODE);
+    noLeak(ctx, textOf(result));
+
+    tab.page.credentialFill = (code) => (
+      filled.push(code),
+      {
+        filled: [
+          { field: 'username', element: 'input#email' },
+          { field: 'field "社内/PIN"', element: 'input#pin' },
+          { field: 'field "customer ID"', element: 'input#cid' },
+        ],
+      }
+    );
+    const fields = await ctx.call('fill_credential', { item: LINK, usernameSelector: '#email', fields: [{ field: '社内/PIN', selector: '#pin' }, { field: 'customer ID', selector: '#cid' }] });
+    expect(textOf(fields)).toContain('Filled the username into input#email, field "社内/PIN" into input#pin and field "customer ID" into input#cid');
+    expect(filled.at(-1)).toContain(`"v":"${PIN}","secret":true,"split":false`);
+    expect(filled.at(-1)).toContain('"p":null');
+    expect(textOf(fields)).not.toContain(PIN);
+
+    // 名前の違う欄・形の違う fields・コードの無いアイテムでは、ページに何も送らない
+    const before = filled.length;
+    expect(textOf(await ctx.call('fill_credential', { item: LINK, fields: [{ field: 'nope', selector: '#x' }] }))).toMatch(/^The 1Password item "Example" has no field named "nope" \(its fields: /);
+    expect(textOf(await ctx.call('fill_credential', { item: LINK, fields: [{ field: 'PIN' }] }))).toBe("fields[0] needs both field (the name of the 1Password item's field) and selector.");
+    expect(textOf(await ctx.call('fill_credential', { item: LINK, fields: 'PIN' }))).toBe('fields must be an array of { field, selector }.');
+    opResult = { ...item(['http://localhost:3000']), fields: [] };
+    expect(textOf(await ctx.call('fill_credential', { item: LINK, oneTimePasswordSelector: '#code' }))).toBe('The 1Password item "Example" has no one-time password. Nothing was filled.');
+    expect(filled).toHaveLength(before);
+  });
+
+  it('1Password のアイテムを控えたサイトは、許す先として扱う（ログインでリダイレクトしても止めず、聞かずに開け、読んで操作できる）', async () => {
+    const ctx = env();
+    opResult = item(['https://login.example.net']);
+    const gate = async (url: string) => JSON.parse(textOf(await ctx.control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url } }))) as { outside: string | null };
+    page(ctx, 'http://localhost:3000/');
+    expect(await gate('https://login.example.net/')).toEqual({ outside: 'https://login.example.net' });
+    page(ctx, 'https://login.example.net/login');
+    expect(textOf(await ctx.call('fill_credential', {}))).toMatch(/^The current page \(https:\/\/login\.example\.net\) is not allowed for Claude/);
+    links = [{ site: 'login.example.net', link: LINK }];
+    expect(await gate('https://login.example.net/')).toEqual({ outside: null });
+    // サブドメイン・ほかのホストは含めない
+    expect(await gate('https://sso.login.example.net/')).toEqual({ outside: 'https://sso.login.example.net' });
+    const result = await ctx.call('fill_credential', {});
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('(the item the user saved for this site)');
+  });
+
   it('URL の無いアイテムには入れない', async () => {
     const ctx = env();
     opResult = (item([]));
@@ -504,7 +644,7 @@ describe('1Password SDK の取り出し役', () => {
   it('リンクのアカウントでデスクトップアプリ連携のクライアントを作り、保管庫とアイテムの ID で引く。クライアントは使い回す', async () => {
     const fake = fakeSdk(async () => sdkItem());
     const source = sdkSource(fake.load, '2.8.4');
-    await expect(source.read(parseItemRef(LINK))).resolves.toEqual({ title: 'Example', urls: ['https://example.com'], username: USER, password: PASS });
+    await expect(source.read(parseItemRef(LINK))).resolves.toMatchObject({ title: 'Example', urls: ['https://example.com'], username: USER, password: PASS });
     await source.read(parseItemRef(LINK));
     expect(fake.made).toEqual([{ account: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', integrationName: 'tanacode', integrationVersion: '2.8.4' }]);
     expect(fake.gets).toEqual([
@@ -557,6 +697,30 @@ describe('1Password SDK の取り出し役', () => {
 
   it('名前の無いアイテムは (untitled)、空の URL は除く', () => {
     expect(loginFromSdkItem(sdkItem({ title: '', websites: [{ url: '' }, { url: 'https://a.test' }] }))).toMatchObject({ title: '(untitled)', urls: ['https://a.test'] });
+  });
+
+  it('すべての欄を、セクションの名前を添えて fields にする。ワンタイムパスワードは今のコードで、もとの鍵は持たない', () => {
+    const login = loginFromSdkItem(
+      sdkItem({
+        sections: [{ id: 's1', title: '二段階認証' }],
+        fields: [
+          { id: 'username', title: 'username', fieldType: 'Text', value: USER },
+          { id: 'otp1', title: 'ワンタイムパスワード', fieldType: 'Totp', value: 'otpauth://totp/x?secret=ABC', sectionId: 's1', details: { type: 'Otp', content: { code: CODE } } },
+          { id: 'otp2', title: 'broken', fieldType: 'Totp', value: 'bad', details: { type: 'Otp', content: { errorMessage: 'invalid secret' } } },
+          { id: 'pin', fieldType: 'Concealed', value: PIN, sectionId: 'gone' },
+          { id: 'memo', title: 'memo', fieldType: 'Text', value: '' },
+        ],
+      }),
+    );
+    expect(login.fields).toEqual([
+      { title: 'username', section: null, kind: 'text', value: USER },
+      { title: 'ワンタイムパスワード', section: '二段階認証', kind: 'otp', value: CODE },
+      { title: 'broken', section: null, kind: 'otp', value: null, error: 'invalid secret' },
+      { title: 'pin', section: null, kind: 'secret', value: PIN },
+      { title: 'memo', section: null, kind: 'text', value: null },
+    ]);
+    expect(JSON.stringify(login)).not.toContain('otpauth');
+    expect(oneTimePassword(login)).toBe(CODE);
   });
 
   it('組み込みの欄だけをユーザー名・パスワードにする', () => {

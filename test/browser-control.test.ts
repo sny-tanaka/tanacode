@@ -655,7 +655,7 @@ describe('開く（navigate）', () => {
     const refused = await call('navigate', { url: 'https://example.com/path?token=secret' });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toBe(
-      'The URL to open (https://example.com) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added under "Claude に許す先" in tanacode > MCP の設定…), ' +
+      'The URL to open (https://example.com) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local, the hosts added under "Claude に許す先" and the sites under "サイトごとの 1Password のアイテム" in tanacode > MCP の設定…), ' +
         'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
         'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
     );
