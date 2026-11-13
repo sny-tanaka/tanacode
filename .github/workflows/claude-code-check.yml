@@ -2,6 +2,7 @@
 # チャット（stream-json）・ターミナルモードとの切り替え・会話ログ・statusLine・フックを、アプリと同じ部品で確かめる（npm run test:cli）。手動の実行では、確かめるバージョンを指定できる。
 # PR では、動作確認済のバージョン（src/shared/claude-code.ts）での同じ確認を、ci.yml の cli のジョブで流す
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しいバージョンへの追従は、毎日の確認と、それが作る PR で行う）
+# - 定期の実行で、最新が動作確認済のバージョンと同じで控えもコミット済みなら、確かめ直さない（precheck のジョブ）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
 # - 行の目録（行の種類とフィールド。test/transcript-inventory.ts）が、動作確認済のバージョンの目録と違っても、PR の CI が通ればマージする
@@ -29,7 +30,35 @@ permissions:
   contents: read
 
 jobs:
+  # 定期の実行で、その日の最新が動作確認済のバージョンと同じで、その控え（目録も）がコミット済みなら、確かめ直さない
+  # （macOS のランナーで毎日同じバージョンを流さない。動作確認済のバージョンでの確認は、PR ごとに ci.yml の cli のジョブが流す）。
+  # 手動の実行は、いつも確かめる。最新のバージョンが調べられなかったときも確かめる
+  precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 確かめるかを決める
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          run=true
+          if [ "$EVENT" = schedule ]; then
+            latest=$(npm view @anthropic-ai/claude-code version 2> /dev/null || true)
+            verified=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+            echo "最新: ${latest:-（調べられない）} / 動作確認済: $verified"
+            if [ -n "$latest" ] && [ "$latest" = "$verified" ] && [ -n "$(git ls-files "test/fixtures/claude-code/$latest/inventory.json")" ]; then
+              echo "::notice::Claude Code $latest は確認済みなので、確かめ直しません"
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   compat:
+    needs: precheck
+    if: needs.precheck.outputs.run == 'true'
     runs-on: macos-latest
     permissions:
       contents: read
