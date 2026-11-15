@@ -46,6 +46,8 @@ type BaseOptions = {
   // セッション限定の指定。/model や /effort と違い、ユーザーの既定値（~/.claude/settings.json）を書き換えない
   model: string | null;
   effort: string | null;
+  // --agent で渡すエージェント定義の名前（役）。null・無いものは役なし
+  agent?: string | null;
   // 設定ファイルを選んでいるとき、アプリの設定と登録した設定を合わせたファイルと、その model。null なら標準の設定のまま
   settings: PreparedSettings | null;
   // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む。TUI の間だけ動く）
@@ -308,7 +310,7 @@ export class ClaudeSession {
 // kind を省くと tui（ターミナルモード）
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'kind' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs' | 'instructions'>>,
+    Partial<Pick<Options, 'kind' | 'agent' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs' | 'instructions'>>,
 ): string[] {
   const {
     kind = 'tui',
@@ -317,6 +319,7 @@ export function claudeArgs(
     remoteControlName,
     model,
     effort,
+    agent = null,
     permissionMode,
     settings = null,
     worktree = null,
@@ -338,7 +341,11 @@ export function claudeArgs(
   if (remoteControlName && kind === 'tui') args.push('--remote-control', remoteControlName);
   // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する。
   // --model は設定ファイルの model を上書きするので、登録した設定ファイルに model があれば、選んでいないときはそれを渡す
-  args.push('--model', model ?? settings?.model ?? 'default');
+  // 役（エージェント定義）を渡すときは、モデルを選んでいなければ --model を付けない（--model は default でも役の定義の model を
+  // 上書きする。付けなければ、役の定義の model か、無ければ Claude Code の既定になる。--resume でも前回のモデルでなく役のものになる。2.1.325 で実測）
+  const chosenModel = model ?? settings?.model ?? null;
+  if (chosenModel || !agent) args.push('--model', chosenModel ?? 'default');
+  if (agent) args.push('--agent', agent);
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
   // --add-dir も値をいくつも取るので、--settings より前に置く（次の -- で終わる）

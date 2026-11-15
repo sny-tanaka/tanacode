@@ -205,6 +205,7 @@ function fakeHost(cwd: string): SessionsHost {
     modeOf: () => 'manual',
     currentModel: () => null,
     currentEffort: () => null,
+    agentNames: async () => null,
     conversation: async () => [],
     create: (dir: string, _options: NewSessionOptions, parentId: string | null) => {
       sessions.push({ ...summary('22222222-0000-4000-8000-000000000002', dir), parentId });

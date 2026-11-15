@@ -387,6 +387,8 @@ export type SessionSummary = {
   effort: string | null;
   // 起動に重ねる、登録した設定ファイルの ID（SettingsFile.id）。null は標準の設定のまま
   settingsFile: string | null;
+  // 起動時に --agent で渡すエージェント定義の名前（start_session の agent）。無いもの・null は役なし（Claude Code の既定）
+  agent?: string | null;
   // Remote Control を使うか（このセッションの指定。実際につながっているかは会話ログの bridge_status で分かる）
   remoteControl: boolean;
   // 最適化圧縮を自動で始めるか（このセッションの指定。チャットのヘッダーの「自動」のトグル）。無いものはオン
@@ -531,9 +533,10 @@ export type SessionOptions = { model: string | null; effort: string | null; sett
 // worktree: claude --worktree で、新しい worktree に分けて始める
 // addedFolders: 新規セッションの画面でワークスペースに追加したフォルダ（SessionSummary.addedFolders）。無いものは追加なし
 // capMode: 起動のモードを、開き直すときの上限として残す（Claude が start_session で始めたセッション。子は親があれば残す）
+// agent: --agent で渡すエージェント定義の名前（start_session の agent）。無いもの・null は役なし
 // 発言の送り方。asParent: 新規セッションの画面の「親として始める」（最初の指示の前に、TANACODE_PARENT.md を付ける）
 export type SubmitOptions = { asParent?: boolean };
-export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[]; capMode?: boolean };
+export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[]; capMode?: boolean; agent?: string | null };
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };

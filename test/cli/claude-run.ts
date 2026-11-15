@@ -64,6 +64,8 @@ type Options = {
   // 起動の引数に付けるモデル・エフォート（claudeArgs の model・effort）。無ければ付けない
   model?: string;
   effort?: string;
+  // 起動の引数に付ける役（claudeArgs の agent。start_session の agent）。無ければ付けない
+  agent?: string;
   // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料（SessionManager の browser）。無ければ足さない
   browser?: BrowserMcpLaunch;
   // セッションの MCP サーバー（中継）を足すときの材料（SessionManager の sessionsMcp）。無ければ足さない
@@ -298,6 +300,7 @@ export class ClaudeRun {
         mode: this.options.mode ?? 'manual',
         remoteControl: false,
         worktree: false,
+        ...(this.options.agent ? { agent: this.options.agent } : {}),
       });
       return;
     }

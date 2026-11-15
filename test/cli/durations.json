@@ -1,5 +1,6 @@
 {
   "test/cli/adopt.test.ts": 9,
+  "test/cli/agents.test.ts": 4,
   "test/cli/background.test.ts": 8,
   "test/cli/basic.test.ts": 5,
   "test/cli/browser.test.ts": 57,

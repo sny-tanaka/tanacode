@@ -23,6 +23,9 @@ export type SessionRecord = {
   effort?: string | null;
   // 起動に重ねる、登録した設定ファイルの ID（SettingsFile.id）。null・無いものは標準の設定のまま
   settingsFile?: string | null;
+  // 起動時に --agent で渡すエージェント定義の名前（start_session の agent）。再開（--resume）・起こし直しでも同じ役で起動する。
+  // 無いもの・null は役なし
+  agent?: string | null;
   // Remote Control を使うか。無いもの（この指定ができる前のセッション）は使う
   remoteControl?: boolean;
   // 最適化圧縮を自動で始めるか。無いもの（新しいセッション・この指定ができる前のセッション）はオン
