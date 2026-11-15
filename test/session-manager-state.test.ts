@@ -12,6 +12,7 @@ import { readChatLog } from '../src/main/chat-log';
 import { QUESTION } from './scenario';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 import { removeLine } from './helpers/tombstone';
+import { fakeClaudeOnPath } from './helpers/fake-claude';
 
 // SessionManager の一覧・状態・読み取り（本物の claude なしで動かす。test/session-manager.test.ts の続き）
 
@@ -343,6 +344,15 @@ describe('statusLine', () => {
     // statusLine にモデルやエフォートが無ければ、起動の指定
     app.manager.statusLineChanged(id, { ...info(null), model: null, effort: null });
     expect([app.manager.currentModel(id), app.manager.currentEffort(id)]).toEqual(['sonnet', 'low']);
+  });
+
+  it('使える役（エージェント定義）の名前は、そのフォルダで claude に聞く（start_session の agent を確かめる）', async () => {
+    const restore = fakeClaudeOnPath(`[ "$(pwd -P)" = "$(cd "${app.cwd}" && pwd -P)" ] && echo "--agent '$3' not found. Available agents: claude, game-producer" >&2\nexit 1`);
+    try {
+      expect(await app.manager.agentNames(app.cwd)).toEqual(['claude', 'game-producer']);
+    } finally {
+      restore();
+    }
   });
 
   it('stream-json の行から作る: モデルは init と本体の応答、バージョンは init、エフォートは get_settings、コストは result', async () => {
