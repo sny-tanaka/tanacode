@@ -62,6 +62,7 @@ import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply
 import { checkedContent, type ElicitationReply, type PendingElicitation } from '@shared/elicitation';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, retract, withoutRepeatedState, type ChainEntry } from './chat-log';
+import { availableAgents } from './claude-agents';
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
@@ -590,6 +591,7 @@ export class SessionManager {
           model: r.model ?? null,
           effort: r.effort ?? null,
           settingsFile: r.settingsFile ?? null,
+          ...(r.agent ? { agent: r.agent } : {}),
           remoteControl: this.wantsRemote(r),
           autoCompact: r.autoCompact !== false,
           ...(r.away && !r.parentId ? { away: true } : {}),
@@ -692,6 +694,7 @@ export class SessionManager {
       model: options.model,
       effort: options.effort,
       settingsFile: options.settingsFile,
+      ...(options.agent ? { agent: options.agent } : {}),
       remoteControl: options.remoteControl,
       worktree,
       ...(parentId ? { parentId } : {}),
@@ -1074,6 +1077,11 @@ export class SessionManager {
 
   currentEffort(id: string): string | null {
     return this.runtimes.get(id)?.statusLine?.effort ?? this.store.get(id)?.effort ?? null;
+  }
+
+  // cwd で起動した Claude Code が --agent で使えるエージェント定義（役）の名前（start_session の agent を確かめる）。調べられなければ null
+  agentNames(cwd: string): Promise<string[] | null> {
+    return availableAgents(cwd, this.claudeDir);
   }
 
   // 会話（動かしたことがあれば直近の起動からのイベント、なければ会話ログから作ったもの）
@@ -2778,6 +2786,7 @@ export class SessionManager {
         remoteControlName: tui && this.wantsRemote(record) ? remoteName(record.cwd) : null,
         model: record.model ?? null,
         effort: record.effort ?? null,
+        agent: record.agent ?? null,
         permissionMode,
         settings,
         statusFile: this.statusLines.fileFor(id),

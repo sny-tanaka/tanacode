@@ -77,6 +77,8 @@ export type SessionsHost = {
   // 今のモデル（--model に渡せる値）とエフォート。分からなければ null
   currentModel(id: string): string | null;
   currentEffort(id: string): string | null;
+  // cwd で起動した Claude Code が --agent で使えるエージェント定義（役）の名前。調べられなければ null
+  agentNames(cwd: string): Promise<string[] | null>;
   conversation(id: string): Promise<ChatEvent[]>;
   create(cwd: string, options: NewSessionOptions, parentId: string | null): string;
   createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null): Promise<string>;
@@ -535,11 +537,14 @@ export class SessionsControl {
     if (!PERMISSION_MODES.includes(wanted as PermissionMode)) throw new ToolError(`Unknown permission mode: ${String(wanted)}`);
     const mode = wanted as PermissionMode;
     if (!modeWithin(mode, limit)) throw new ToolError(`Permission mode ${mode} cannot be used because it is more permissive than this session's (${limit}).`);
-    // モデルとエフォートは、省けばこのセッションの今のもの（途中で変えていれば、変えたあとのもの）。分からなければ Claude Code の既定
-    const callerEffort = host.currentEffort(caller.id);
+    const agent = await this.agentArg(args.agent, folder);
+    // モデルとエフォートは、省けばこのセッションの今のもの（途中で変えていれば、変えたあとのもの）。分からなければ Claude Code の既定。
+    // 役を渡すときは、省けば役の定義のもの（無ければ Claude Code の既定）。親のものを渡すと、役の定義の model を上書きしてしまう
+    const callerEffort = agent ? null : host.currentEffort(caller.id);
     const options: NewSessionOptions = {
-      model: stringArg(args.model) || host.currentModel(caller.id),
+      model: stringArg(args.model) || (agent ? null : host.currentModel(caller.id)),
       effort: stringArg(args.effort) || (callerEffort && EFFORTS.includes(callerEffort) ? callerEffort : null),
+      ...(agent ? { agent } : {}),
       // 登録した設定ファイル（別のアカウントなど）は、親と同じものを使う
       settingsFile: caller.settingsFile,
       mode,
@@ -580,6 +585,7 @@ export class SessionsControl {
       folder: child?.cwd ?? folder,
       worktree: child?.worktree ? { name: child.worktree.name, branch: child.worktree.branch } : null,
       independent,
+      agent: agent ?? null,
       model: options.model,
       effort: options.effort,
       permission_mode: mode,
@@ -595,6 +601,23 @@ export class SessionsControl {
     const rules = independent || signal?.aborted ? null : (host.takeParentRules?.(caller.id) ?? null);
     const used = result.content.reduce((sum, c) => sum + (c.type === 'text' ? c.text.length : 0), 0);
     return rules ? { content: [...result.content, { type: 'text', text: parentRulesResult(rules, used) }] } : result;
+  }
+
+  // start_session の agent（エージェント定義の名前）。省けば null。Claude Code がその名前の定義を読めなければ断る
+  // （無い名前を渡すと、Claude Code は起動せずに終わる。子が起動に失敗してから気づくより先に、親に分かる形で返す）。調べられなければ、確かめずに渡す
+  private async agentArg(value: unknown, folder: string): Promise<string | null> {
+    if (value === undefined) return null;
+    if (typeof value !== 'string' || !value.trim()) throw new ToolError('Pass agent as the name of an agent definition (a non-empty string).');
+    const agent = value.trim();
+    // 名前の一覧を調べられないときも、ほかの引数として読まれるもの（- で始まる）・空白を含むものは渡さない
+    if (agent.startsWith('-') || /\s/.test(agent)) throw new ToolError(`"${agent}" is not a valid agent name.`);
+    const names = await this.deps.host.agentNames(folder);
+    if (names && !names.includes(agent)) {
+      throw new ToolError(
+        `There is no agent definition named "${agent}" that Claude Code can use in ${folder}. Available agents: ${names.join(', ')}. Agent definitions are read from ~/.claude/agents/ (the user's), .claude/agents/ of the project, plugins and the built-in agents; the name is the name field in the frontmatter of the definition.`,
+      );
+    }
+    return agent;
   }
 
   private async sendMessage(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
@@ -1372,6 +1395,8 @@ export class SessionsControl {
         : null,
       // 親の ID は、呼び出し元から見える親のときだけ（見えない親の ID は出さない）
       parent_id: s.parentId && this.visibleParent(s.parentId, caller) ? s.parentId : null,
+      // 起動に渡した役（エージェント定義の名前）。役なしなら出さない
+      ...(s.agent ? { agent: s.agent } : {}),
     };
   }
 
@@ -1392,6 +1417,7 @@ export class SessionsControl {
       `- State: ${SESSION_STATE_LABEL[state]} (${state})`,
       `- Folder: ${target.cwd}`,
       ...(target.worktree ? [`- Worktree: ${target.worktree.name} (branch ${target.worktree.branch})`] : []),
+      ...(target.agent ? [`- Agent: ${target.agent}`] : []),
       ...(parent ? [`- Parent: ${label(parent)}`] : []),
       ...(children.length > 0 ? [`- Children: ${children.map(label).join(', ')}`] : []),
     ];

@@ -335,10 +335,13 @@ class FakeHost implements SessionsHost {
   modeOf = (id: string) => this.modes.get(id) ?? null;
   currentModel = (id: string) => this.models.get(id) ?? null;
   currentEffort = (id: string) => this.efforts.get(id) ?? null;
+  // Claude Code が使える役の名前（null は調べられなかった）。テストが入れる
+  agentDefs: string[] | null = ['claude', 'Explore', 'game-producer', 'game-qa-tester'];
+  agentNames = async (_cwd: string) => this.agentDefs;
   conversation = async (id: string) => this.events.get(id) ?? [];
   create = (cwd: string, options: NewSessionOptions, parentId: string | null) => {
     this.created.push({ cwd, options, parentId, worktree: false });
-    this.add('99999999-0000-4000-8000-000000000009', cwd, { parentId }, 'starting');
+    this.add('99999999-0000-4000-8000-000000000009', cwd, { parentId, ...(options.agent ? { agent: options.agent } : {}) }, 'starting');
     return '99999999-0000-4000-8000-000000000009';
   };
   createInWorktree = async (cwd: string, options: NewSessionOptions, parentId: string | null) => {
@@ -576,6 +579,45 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.kept).toEqual([started.session_id]);
     // worktree を使うかは必ず選ばせる
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
+  });
+
+  it('start_session: agent で役を渡す。省いたモデル・エフォートは親に合わせず役の定義に任せ、get_session・list_sessions に役を出す', async () => {
+    host.models.set(PARENT, 'opus');
+    host.efforts.set(PARENT, 'max');
+    const started = jsonOf<{ session_id: string; agent: string; model: string | null; effort: string | null }>(
+      await control.handle(PARENT, 'start_session', { prompt: '通しで遊んで不具合を探して', worktree: false, agent: 'game-qa-tester' }),
+    );
+    expect(started).toMatchObject({ agent: 'game-qa-tester', model: null, effort: null });
+    expect(host.created[0].options).toMatchObject({ agent: 'game-qa-tester', model: null, effort: null });
+    expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: started.session_id }))).toMatchObject({ agent: 'game-qa-tester' });
+    const listed = jsonOf<{ sessions: { id: string; agent?: string }[] }>(await control.handle(PARENT, 'list_sessions', {}));
+    expect(listed.sessions.find((s) => s.id === started.session_id)?.agent).toBe('game-qa-tester');
+    // 役なしの子には出さない
+    expect(listed.sessions.find((s) => s.id === CHILD)).not.toHaveProperty('agent');
+  });
+
+  it('start_session: 選んだモデルは役があっても渡す。役なしなら、これまでどおり親のモデルとエフォート', async () => {
+    host.models.set(PARENT, 'opus');
+    host.efforts.set(PARENT, 'high');
+    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, agent: 'game-producer', model: 'sonnet' });
+    expect(host.created[0].options).toMatchObject({ agent: 'game-producer', model: 'sonnet' });
+    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
+    expect(host.created[1].options).toMatchObject({ model: 'opus', effort: 'high' });
+    expect(host.created[1].options.agent).toBeUndefined();
+  });
+
+  it('start_session: Claude Code が読めない役の名前は、使える名前を添えて断り、子を始めない。調べられなければ確かめずに渡す', async () => {
+    const failed = await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, agent: 'game-qa' });
+    expect(failed.isError).toBe(true);
+    expect(textOf(failed)).toContain('no agent definition named "game-qa"');
+    expect(textOf(failed)).toContain('Available agents: claude, Explore, game-producer, game-qa-tester');
+    expect(host.created).toEqual([]);
+    expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, agent: '  ' })).isError).toBe(true);
+    host.agentDefs = null;
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, agent: '--dangerously-skip-permissions' }))).toContain('not a valid agent name');
+    expect(host.created).toEqual([]);
+    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, agent: 'somewhere-else' });
+    expect(host.created[0].options.agent).toBe('somewhere-else');
   });
 
   it('start_session: 親の決まり（TANACODE_PARENT.md）をまだ受け取っていない親には、結果に付けて渡す。2 本目・独立したセッション・受け取ったあとは付けない', async () => {

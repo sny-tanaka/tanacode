@@ -247,6 +247,31 @@ describe('起動', () => {
   });
 });
 
+describe('役（--agent）', () => {
+  const base = { claudeSessionId: CLAUDE_ID, resume: false, remoteControlName: null, effort: null, permissionMode: null };
+  const valueOf = (args: string[], flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+
+  it('役を渡すと --agent を付け、モデルを選んでいなければ --model を付けない（役の定義の model を上書きしないため）', () => {
+    const args = claudeArgs({ ...base, model: null, agent: 'game-qa-tester' });
+    expect(valueOf(args, '--agent')).toBe('game-qa-tester');
+    expect(args).not.toContain('--model');
+    // 再開でも同じ役で起動する
+    expect(valueOf(claudeArgs({ ...base, resume: true, model: null, agent: 'game-qa-tester' }), '--agent')).toBe('game-qa-tester');
+  });
+
+  it('役があっても、選んだモデルは --model で渡す', () => {
+    const args = claudeArgs({ ...base, model: 'sonnet', agent: 'game-producer' });
+    expect(valueOf(args, '--model')).toBe('sonnet');
+    expect(valueOf(args, '--agent')).toBe('game-producer');
+  });
+
+  it('役が無ければ、これまでどおり --model を必ず付け、--agent は付けない', () => {
+    const args = claudeArgs({ ...base, model: null });
+    expect(valueOf(args, '--model')).toBe('default');
+    expect(args).not.toContain('--agent');
+  });
+});
+
 describe('操作と終わり方', () => {
   it('打った文字と大きさの変更を pty に送り、出力と終了を受け取る。終わったあとは何も送らない', () => {
     const { claude, got } = session();
