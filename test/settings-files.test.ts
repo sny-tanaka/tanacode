@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs, prepareLaunch } from '../src/main/claude-session';
@@ -174,7 +174,8 @@ describe('起動の準備', () => {
     const { id } = files.add(file('a.json', { model: 'sonnet', env: { ANTHROPIC_AUTH_TOKEN: 'sk-secret' } }), 'one');
     const prepared = prepareLaunch(new LaunchFiles(runDir), { sessionId: 'session-1' }, (flags) => files.compose(id, flags.browser, flags.checklist, flags.terminal, flags.instructions));
     expect(prepared).toMatchObject({ model: 'sonnet', registered: true, mcpConfigFile: null });
-    expect(prepared.settingsFile).toMatch(new RegExp(`^${runDir}/session-1\.[0-9a-f]{16}\.json$`));
+    expect(dirname(prepared.settingsFile)).toBe(runDir);
+    expect(basename(prepared.settingsFile)).toMatch(/^session-1\.[0-9a-f]{16}\.json$/);
     const written = JSON.parse(readFileSync(prepared.settingsFile, 'utf8'));
     expect(written.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-secret');
     expect(written.statusLine.command).toContain('TANACODE_STATUS_FILE');

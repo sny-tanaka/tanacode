@@ -35,7 +35,7 @@ function fakeSettingsFiles(model: string | null = 'opus') {
 // 名前は <セッション ID>.<中身の hash>.json（MCP は .mcp.json）
 const launchDir = () => join(app.userData, 'session-settings');
 const isLaunchFile = (path: string | null, id: string, suffix = '.json') =>
-  !!path && dirname(path) === launchDir() && new RegExp(`^${id}\\.[0-9a-f]{16}${suffix.replace('.', '\\.')}$`).test(basename(path));
+  !!path && dirname(path) === launchDir() && new RegExp(`^${escapeRegExp(id)}\\.[0-9a-f]{16}${escapeRegExp(suffix)}$`).test(basename(path));
 // そのセッションのファイルの名前（並べ替えたもの）
 const filesOf = (id: string) => (existsSync(launchDir()) ? readdirSync(launchDir()).filter((name) => name.startsWith(`${id}.`)).sort() : []);
 
