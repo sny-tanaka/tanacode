@@ -28,6 +28,21 @@ export function licenseOf(license: string | null | undefined, text: string | nul
   return license ?? (/^\s*The MIT License/i.test(text ?? '') ? 'MIT' : null);
 }
 
+// GPL 系の字を含むライセンスでも、例外として許す依存（名前とライセンスの表記がどちらも一致するときだけ）。
+// elkjs（mermaid 12.3 から使う図の配置）は EPL-2.0 と GPL-3.0 の二重ライセンスで、tanacode は EPL-2.0 の側で使う。
+// EPL-2.0 は配るときにソースの入手先を示す決まりがあるので、表示に Source を書いている（format を参照）
+const ALLOWED_EXCEPTIONS: Record<string, string> = {
+  elkjs: 'EPL-2.0 OR GPL-3.0-or-later',
+};
+
+// アプリやデモのページに入れてよい依存か。ライセンスが分からないものと GPL 系は、上の例外を除いて止める
+export function isAllowedDependency(dependency: Pick<Dependency, 'name' | 'license' | 'licenseText'>): boolean {
+  const kind = licenseOf(dependency.license, dependency.licenseText);
+  if (!kind) return false;
+  if (dependency.name && ALLOWED_EXCEPTIONS[dependency.name] === kind) return true;
+  return !/GPL/i.test(kind);
+}
+
 // 「github:owner/repo」「owner/repo」「git://…」「git+https://….git」などの書き方を、https の URL にそろえる
 function sourceOf(repository: PackageJson['repository'] | Dependency['repository'], homepage: string | null | undefined): string | null {
   const raw = typeof repository === 'string' ? repository : (repository?.url ?? null);
