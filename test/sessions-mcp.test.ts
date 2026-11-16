@@ -53,6 +53,7 @@ import { WorktreeError, withSetupNote, type WorktreeSetupTrouble } from '../src/
 import type { WaitingText } from '../src/main/session-manager';
 import type { ScheduledMessage } from '../src/shared/scheduled';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // ほかのセッションを扱う MCP（tanacode-sessions）。中継・起動の引数・会話ログの見分け・ツールの実行（親子・見える範囲・知らせ）
 
@@ -88,10 +89,10 @@ describe('中継と起動の引数', () => {
   type Hook = { matcher: string; hooks: { command: string }[] };
 
   it('ブラウザとセッションの MCP サーバーは、1 つの --mcp-config と 1 つの --allowedTools にまとめる', () => {
-    const args = claudeArgs({ ...base, browser: launch, sessions: { ...launch, script: '/Apps/out/main/sessions-mcp.js' }, sessionId: 's1' });
+    const args = launchArgs({ ...base, browser: launch, sessions: { ...launch, script: '/Apps/out/main/sessions-mcp.js' }, sessionId: 's1' });
     expect(args.filter((a) => a === '--mcp-config')).toHaveLength(1);
     expect(args.filter((a) => a === '--allowedTools')).toHaveLength(1);
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string>; timeout?: number }> };
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { env: Record<string, string>; timeout?: number }> };
     expect(Object.keys(config.mcpServers)).toEqual(['tanacode-browser', 'tanacode-sessions']);
     expect(config.mcpServers['tanacode-sessions'].env).toMatchObject({ TANACODE_SESSIONS_SOCKET: '/u/x.sock', TANACODE_SESSIONS_SESSION: 's1' });
     // 時間のかかるツール（end_session の worktree の削除など）があるので、Claude Code がツールの呼び出しを待つ上限を、サーバーごとに長くする
@@ -109,7 +110,7 @@ describe('中継と起動の引数', () => {
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     // 子セッションの起動と tanacode の再起動には、権限モードによらず確認を出させるフック（ツールごとの許可で常に許可にしたときを除く。tool-permissions.test.ts）
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
+    const settings = fileArg(args, '--settings') as { hooks: { PreToolUse: Hook[] } };
     for (const name of ['start_session', 'restart_app'])
       expect(settings.hooks.PreToolUse.filter((h) => h.matcher === `^${sessionToolId(name)}$`)).toEqual([
         { matcher: `^${sessionToolId(name)}$`, hooks: [{ type: 'command', command: toolPermissionCommand(sessionToolId(name), 'always'), timeout: 10 }] },
@@ -130,8 +131,8 @@ describe('中継と起動の引数', () => {
   });
 
   it('子セッションには、読むだけのツールと自分への予約だけを見せる（子は孫を作れず、指示できる子もいない。人に通知しないので、報告もしない）', () => {
-    const args = claudeArgs({ ...base, sessions: { ...launch, child: true }, sessionId: 's2' });
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
+    const args = launchArgs({ ...base, sessions: { ...launch, child: true }, sessionId: 's2' });
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-sessions'].env.TANACODE_SESSIONS_CHILD).toBe('1');
     expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name).sort()).toEqual([
       'cancel_wakeup',

@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
-import { claudeArgs } from '../src/main/claude-session';
+import { claudeArgs, prepareLaunch } from '../src/main/claude-session';
+import { LaunchFiles } from '../src/main/launch-files';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
 import { toolPermissionHooks } from '../src/main/tool-permissions';
 import { IDLE_FILE_COMMAND } from '../src/main/statusline';
@@ -33,7 +34,9 @@ const file = (name: string, value: unknown) => {
 };
 
 // アプリの設定の保存先を共有して作る（作り直すと、保存した登録が読み直される）
-const make = () => new SettingsFiles(new AppSettings(settingsPath), runDir, (files) => changes.push(files));
+const make = () => new SettingsFiles(new AppSettings(settingsPath), (files) => changes.push(files));
+// 合わせた設定（アプリが JSON でファイルに書くもの）。書いた形に直して見る
+const composed = (files: SettingsFiles, id: string, ...flags: boolean[]) => JSON.parse(JSON.stringify(files.compose(id, ...flags).settings));
 
 describe('defaultName', () => {
   it('settings- と .json を外す。外すと空になるときはそのまま', () => {
@@ -166,12 +169,13 @@ describe('mergeSettings', () => {
 });
 
 describe('起動の準備', () => {
-  it('合わせた設定を自分だけが読めるファイルに書き、パスと model を返す', () => {
+  it('合わせた設定を自分だけが読めるファイルに書き（prepareLaunch）、パスと model を返す', () => {
     const files = make();
     const { id } = files.add(file('a.json', { model: 'sonnet', env: { ANTHROPIC_AUTH_TOKEN: 'sk-secret' } }), 'one');
-    const prepared = files.prepare('session-1', id);
-    expect(prepared.model).toBe('sonnet');
-    expect(prepared.settingsFile).toBe(join(runDir, 'session-1.json'));
+    const prepared = prepareLaunch(new LaunchFiles(runDir), { sessionId: 'session-1' }, (flags) => files.compose(id, flags.browser, flags.checklist, flags.terminal, flags.instructions));
+    expect(prepared).toMatchObject({ model: 'sonnet', registered: true, mcpConfigFile: null });
+    expect(dirname(prepared.settingsFile)).toBe(runDir);
+    expect(basename(prepared.settingsFile)).toMatch(/^session-1\.[0-9a-f]{16}\.json$/);
     const written = JSON.parse(readFileSync(prepared.settingsFile, 'utf8'));
     expect(written.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-secret');
     expect(written.statusLine.command).toContain('TANACODE_STATUS_FILE');
@@ -184,12 +188,12 @@ describe('起動の準備', () => {
     const files = make();
     const mine = { hooks: [{ type: 'command', command: 'npm test' }] };
     const { id } = files.add(file('a.json', { hooks: { Stop: [mine] } }));
-    const without = JSON.parse(readFileSync(files.prepare('s', id, false).settingsFile, 'utf8'));
+    const without = composed(files, id, false);
     // ターンの終わりを書くだけのフックは、いつも足す
     const idle = { hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] };
     expect(without.hooks.Stop).toEqual([mine, idle]);
     expect(without.hooks.UserPromptSubmit).toBeUndefined();
-    const written = JSON.parse(readFileSync(files.prepare('s', id, false, true).settingsFile, 'utf8'));
+    const written = composed(files, id, false, true);
     expect(written.hooks.Stop).toEqual([mine, idle, { hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] }]);
     expect(written.hooks.UserPromptSubmit).toHaveLength(1);
     expect(written.hooks.SessionStart[0].matcher).toBe('compact');
@@ -199,8 +203,8 @@ describe('起動の準備', () => {
     const files = make();
     const mine = { matcher: 'startup', hooks: [{ type: 'command', command: 'echo hi' }] };
     const { id } = files.add(file('a.json', { hooks: { SessionStart: [mine] } }));
-    expect(JSON.parse(readFileSync(files.prepare('s', id).settingsFile, 'utf8')).hooks.SessionStart).toEqual([mine]);
-    const written = JSON.parse(readFileSync(files.prepare('s', id, false, true, false, true).settingsFile, 'utf8'));
+    expect(composed(files, id).hooks.SessionStart).toEqual([mine]);
+    const written = composed(files, id, false, true, false, true);
     expect(written.hooks.SessionStart).toEqual([
       mine,
       { matcher: 'startup|resume|clear|compact', hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_INSTRUCTIONS_HOOK=1') })] },
@@ -211,26 +215,8 @@ describe('起動の準備', () => {
   it('登録した設定の statusLine は、アプリの statusLine が包んで動かす', () => {
     const files = make();
     const { id } = files.add(file('a.json', { statusLine: { type: 'command', command: 'my-line' } }));
-    const written = JSON.parse(readFileSync(files.prepare('s', id).settingsFile, 'utf8'));
+    const written = composed(files, id);
     expect(written.statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | my-line');
-  });
-
-  it('書き直しても、前のファイルの権限を緩めない', () => {
-    const files = make();
-    const { id } = files.add(file('a.json', {}));
-    const first = files.prepare('s', id).settingsFile;
-    writeFileSync(first, '{}', { mode: 0o644 });
-    files.prepare('s', id);
-    expect(statSync(first).mode & 0o777).toBe(0o600);
-  });
-
-  it('release でファイルを消す。無くても失敗しない', () => {
-    const files = make();
-    const { id } = files.add(file('a.json', {}));
-    const { settingsFile } = files.prepare('s', id);
-    files.release('s');
-    expect(() => statSync(settingsFile)).toThrow();
-    expect(() => files.release('s')).not.toThrow();
   });
 
   it('model が文字でない・空なら、model は無いものとする', () => {
@@ -238,17 +224,16 @@ describe('起動の準備', () => {
     expect(files.add(file('a.json', { model: 123 })).model).toBeNull();
     expect(files.add(file('b.json', { model: '' })).model).toBeNull();
     const { id } = files.add(file('c.json', { model: '' }));
-    expect(files.prepare('s', id).model).toBeNull();
+    expect(files.compose(id).model).toBeNull();
   });
 
   it('アプリ内ブラウザの確認のフックは使うときだけ、ツールごとの許可のフックはいつも足す', () => {
     const files = make();
     const { id } = files.add(file('a.json', {}));
-    const matchers = (sessionId: string, ...flags: boolean[]) =>
-      (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
+    const matchers = (...flags: boolean[]) => (composed(files, id, ...flags).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
     const tools = toolPermissionHooks().map((h) => h.matcher);
-    expect(matchers('s1')).toEqual(['Bash', ...tools]);
-    expect(matchers('s2', true)).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__handle_dialog|mcp__tanacode-browser__evaluate|mcp__tanacode-browser__upload_file)$', ...tools]);
+    expect(matchers()).toEqual(['Bash', ...tools]);
+    expect(matchers(true)).toEqual(['Bash', '^(mcp__tanacode-browser__navigate|mcp__tanacode-browser__handle_dialog|mcp__tanacode-browser__evaluate|mcp__tanacode-browser__upload_file)$', ...tools]);
   });
 
   it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {
@@ -265,12 +250,12 @@ describe('起動の準備', () => {
     const { id } = files.add(path, 'one');
     rmSync(path);
     expect(() => files.check(id)).toThrow('「one」');
-    expect(() => files.prepare('s', id)).toThrow('ファイルが見つかりません');
+    expect(() => files.compose(id)).toThrow('ファイルが見つかりません');
     writeFileSync(path, '{ not json');
     expect(() => files.check(id)).toThrow('JSON として読めません');
     files.remove(id);
     expect(() => files.check(id)).toThrow('登録から外されています');
-    expect(() => files.prepare('s', id)).toThrow('登録から外されています');
+    expect(() => files.compose(id)).toThrow('登録から外されています');
   });
 });
 
@@ -292,13 +277,13 @@ describe('ホームのフォルダ', () => {
     file('.claude/settings.json', { statusLine: { type: 'command', command: 'user-line' } });
     const files = make();
     const plain = files.add(file('a.json', {}));
-    expect(JSON.parse(readFileSync(files.prepare('s1', plain.id).settingsFile, 'utf8')).statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | user-line');
+    expect(composed(files, plain.id).statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | user-line');
     const fixed = files.add(file('b.json', { statusLine: { type: 'static', command: 'their-line' } }));
-    expect(JSON.parse(readFileSync(files.prepare('s2', fixed.id).settingsFile, 'utf8')).statusLine.command).toBe('cat > "$TANACODE_STATUS_FILE"');
+    expect(composed(files, fixed.id).statusLine.command).toBe('cat > "$TANACODE_STATUS_FILE"');
   });
 
   it('知らせる先を省いても、登録・名前の変更・削除ができる', () => {
-    const files = new SettingsFiles(new AppSettings(settingsPath), runDir);
+    const files = new SettingsFiles(new AppSettings(settingsPath));
     const { id } = files.add(file('a.json', {}), 'one');
     files.rename(id, 'two');
     expect(files.list().map((f) => f.name)).toEqual(['two']);
@@ -309,24 +294,29 @@ describe('ホームのフォルダ', () => {
 
 describe('claudeArgs と設定ファイル', () => {
   const base = { claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null };
+  const prepared = (model: string | null, registered = true) => ({ settingsFile: '/run/s.json', mcpConfigFile: null, model, registered });
 
-  it('設定ファイルを選んでいなければ、今までどおり JSON を --settings に渡す', () => {
-    const args = claudeArgs(base);
+  it('設定ファイルを選んでいなくても、中身は引数に載せず、アプリの設定を書いたファイルのパスを渡す', () => {
+    const args = claudeArgs({ ...base, settings: prepared(null, false) });
     expect(args[args.indexOf('--model') + 1]).toBe('default');
-    expect(args[args.indexOf('--settings') + 1]).toMatch(/^\{.*"statusLine"/);
+    expect(args[args.indexOf('--settings') + 1]).toBe('/run/s.json');
   });
 
   it('設定ファイルを選んでいれば、合わせたファイルのパスを 1 つだけ渡し、モデルは設定の model にする', () => {
-    const args = claudeArgs({ ...base, settings: { settingsFile: '/run/s.json', model: 'sonnet' } });
+    const args = claudeArgs({ ...base, settings: prepared('sonnet') });
     expect(args.filter((a) => a === '--settings')).toHaveLength(1);
     expect(args[args.indexOf('--settings') + 1]).toBe('/run/s.json');
     expect(args[args.indexOf('--model') + 1]).toBe('sonnet');
   });
 
   it('モデルを選んでいれば、それが設定の model より優先される。設定に model が無ければ既定', () => {
-    const picked = claudeArgs({ ...base, model: 'opus', settings: { settingsFile: '/run/s.json', model: 'sonnet' } });
+    const picked = claudeArgs({ ...base, model: 'opus', settings: prepared('sonnet') });
     expect(picked[picked.indexOf('--model') + 1]).toBe('opus');
-    const none = claudeArgs({ ...base, settings: { settingsFile: '/run/s.json', model: null } });
+    const none = claudeArgs({ ...base, settings: prepared(null) });
     expect(none[none.indexOf('--model') + 1]).toBe('default');
+  });
+
+  it('用意が無ければ、中身を引数に載せずに断る', () => {
+    expect(() => claudeArgs({ ...base, settings: null })).toThrow();
   });
 });

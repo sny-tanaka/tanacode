@@ -196,10 +196,18 @@ export function mcpServerEntry(def: McpServerDef, launch: McpLaunch, env: Record
   };
 }
 
+// --mcp-config に渡すファイルの中身。サーバーが無ければ null（--mcp-config を付けない）。
+// 引数には載せず、launch-files.ts がファイルに書いてパスを渡す（引数の文字に当たる pkill -f などで止められないように）
+export function mcpConfig(entries: McpServerEntry[]): Record<string, unknown> | null {
+  if (entries.length === 0) return null;
+  return { mcpServers: Object.fromEntries(entries.map((e) => [e.name, e.config])) };
+}
+
 // --mcp-config と --allowedTools。どちらも 1 回にまとめて渡す（値をいくつも取る引数で、2 回渡したときの扱いが決まっていないため）。
+// configFile: mcpConfig の中身を書いたファイル。
 // 読むだけのツールは許可済みにし、それ以外は --allowedTools に入れない（確認を出すかは、--settings のツールごとの許可のフックが決める。tool-permissions.ts）
-export function mcpArgs(entries: McpServerEntry[]): string[] {
+export function mcpArgs(entries: McpServerEntry[], configFile: string | null): string[] {
   if (entries.length === 0) return [];
-  const servers = Object.fromEntries(entries.map((e) => [e.name, e.config]));
-  return ['--mcp-config', JSON.stringify({ mcpServers: servers }), '--allowedTools', entries.flatMap((e) => e.allowed).join(',')];
+  if (!configFile) throw new Error('MCP servers need a config file');
+  return ['--mcp-config', configFile, '--allowedTools', entries.flatMap((e) => e.allowed).join(',')];
 }

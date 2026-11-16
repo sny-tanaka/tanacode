@@ -4,12 +4,13 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
-import { childEnv, claudeArgs, claudeEnv, ClaudeSession, transcriptPath } from '../src/main/claude-session';
+import { childEnv, claudeEnv, ClaudeSession, transcriptPath } from '../src/main/claude-session';
 import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from '../src/main/stream/protocol';
 import { STATUS_FILE_ENV } from '../src/main/statusline';
 import { ScriptedHost } from './helpers/scripted-claude';
 import { exactMatcher } from '../src/main/tool-permissions';
+import { fileArg, launchArgs, testLaunch } from './helpers/launch';
 
 // claude の起動・引き継ぎ・止め方と、会話ログの追いかけ（ClaudeSession）。pty ホストは偽物（ScriptedHost）
 
@@ -38,12 +39,18 @@ async function waitFor(label: string, check: () => boolean, timeoutMs = 3000): P
 
 const CLAUDE_ID = '11111111-0000-4000-8000-000000000001';
 
+// 起動の指定に、アプリと同じく --settings・--mcp-config のファイルを書いた用意を付ける（settings を指定していれば、それを使う）
+type SessionOptions = ConstructorParameters<typeof ClaudeSession>[1];
+function withLaunch(options: SessionOptions): SessionOptions {
+  return options.settings ? options : { ...options, settings: testLaunch(options) };
+}
+
 // 起動の指定（必要なところだけ変える）と、受け取ったもの
 function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> = {}, adopted: HostedPtyInfo | null = null) {
   const got = { data: [] as string[], exits: [] as number[], entries: [] as unknown[], history: 0, switches: [] as string[] };
   const claude = new ClaudeSession(
     host,
-    {
+    withLaunch({
       sessionId: 's1',
       kind: 'tui',
       cwd: join(root, 'work'),
@@ -60,7 +67,7 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
       cols: 120,
       rows: 40,
       ...patch,
-    } as ConstructorParameters<typeof ClaudeSession>[1],
+    } as ConstructorParameters<typeof ClaudeSession>[1]),
     {
       onData: (data) => got.data.push(data),
       onExit: (code) => got.exits.push(code),
@@ -178,7 +185,7 @@ describe('起動', () => {
     session({ checklist }).claude.start();
     const { env, args } = host.spawned[0].request;
     expect(env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist.sock', TANACODE_CHECKLIST_SESSION: 's1', TANACODE_CHECKLIST_COMMAND: 'node', TANACODE_CHECKLIST_SCRIPT: '/x/checklist-mcp.js' });
-    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual([
+    expect(Object.keys(fileArg(args, '--settings').hooks)).toEqual([
       'PreToolUse',
       'PermissionRequest',
       'Notification',
@@ -190,7 +197,7 @@ describe('起動', () => {
     ]);
     session().claude.start();
     expect(host.spawned[1].request.env.TANACODE_CHECKLIST_SOCKET).toBeUndefined();
-    expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
+    expect(Object.keys(fileArg(host.spawned[1].request.args, '--settings').hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
   });
 
   it('TANACODE.md を渡すフックを足すときは、探すフォルダ（worktree なら元のリポジトリも）と実行ファイルを環境変数で渡し、設定にフックを入れる', () => {
@@ -207,19 +214,19 @@ describe('起動', () => {
     session({ instructions, claudeDir: '/Users/me/.claude-personal' }).claude.start();
     expect(host.spawned.at(-1)!.request.env.TANACODE_INSTRUCTIONS_PROFILE).toBe('/Users/me/.claude-personal');
     host.spawned.pop();
-    expect(JSON.parse(host.spawned[0].arg('--settings')!).hooks.SessionStart[0].hooks[0].command).toContain('TANACODE_INSTRUCTIONS_HOOK=1');
+    expect(fileArg(host.spawned[0].request.args, '--settings').hooks.SessionStart[0].hooks[0].command).toContain('TANACODE_INSTRUCTIONS_HOOK=1');
     const worktree = join(root, 'work', '.claude', 'worktrees', 'w1');
     session({ instructions, cwd: worktree, worktree: 'w1', worktreeRoot: join(root, 'work') }).claude.start();
     expect(host.spawned[1].request.env.TANACODE_INSTRUCTIONS_DIRS).toBe(JSON.stringify([worktree, join(root, 'work')]));
     session().claude.start();
     expect(host.spawned[2].request.env.TANACODE_INSTRUCTIONS_DIRS).toBeUndefined();
-    expect(JSON.parse(host.spawned[2].arg('--settings')!).hooks.SessionStart).toBeUndefined();
+    expect(fileArg(host.spawned[2].request.args, '--settings').hooks.SessionStart).toBeUndefined();
   });
 
   it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
     const terminal = { command: 'node', script: '/x/terminal-mcp.js', socketPath: '/u/terminal.sock', version: '1' };
     const gateHooks = (args: string[]) =>
-      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === exactMatcher(TERMINAL_GATED_TOOL));
+      (fileArg(args, '--settings') as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === exactMatcher(TERMINAL_GATED_TOOL));
     session({ terminal }).claude.start();
     const parent = host.spawned[0].request;
     expect(parent.env).toMatchObject({ TANACODE_TERMINAL_SOCKET: '/u/terminal.sock', TANACODE_TERMINAL_SESSION: 's1', TANACODE_TERMINAL_COMMAND: 'node', TANACODE_TERMINAL_SCRIPT: '/x/terminal-mcp.js' });
@@ -228,7 +235,7 @@ describe('起動', () => {
     const child = host.spawned[1].request;
     expect(child.env.TANACODE_TERMINAL_SOCKET).toBeUndefined();
     expect(gateHooks(child.args)).toEqual([]);
-    expect(child.args[child.args.indexOf('--mcp-config') + 1]).toContain('"TANACODE_TERMINAL_CHILD":"1"');
+    expect(fileArg<{ mcpServers: Record<string, { env: Record<string, string> }> }>(child.args, '--mcp-config').mcpServers['tanacode-terminal'].env.TANACODE_TERMINAL_CHILD).toBe('1');
   });
 
   it('引き継ぐときは起動せず、今の画面を先に描き直してから、続きの出力を渡す', () => {
@@ -252,21 +259,21 @@ describe('役（--agent）', () => {
   const valueOf = (args: string[], flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 
   it('役を渡すと --agent を付け、モデルを選んでいなければ --model を付けない（役の定義の model を上書きしないため）', () => {
-    const args = claudeArgs({ ...base, model: null, agent: 'game-qa-tester' });
+    const args = launchArgs({ ...base, model: null, agent: 'game-qa-tester' });
     expect(valueOf(args, '--agent')).toBe('game-qa-tester');
     expect(args).not.toContain('--model');
     // 再開でも同じ役で起動する
-    expect(valueOf(claudeArgs({ ...base, resume: true, model: null, agent: 'game-qa-tester' }), '--agent')).toBe('game-qa-tester');
+    expect(valueOf(launchArgs({ ...base, resume: true, model: null, agent: 'game-qa-tester' }), '--agent')).toBe('game-qa-tester');
   });
 
   it('役があっても、選んだモデルは --model で渡す', () => {
-    const args = claudeArgs({ ...base, model: 'sonnet', agent: 'game-producer' });
+    const args = launchArgs({ ...base, model: 'sonnet', agent: 'game-producer' });
     expect(valueOf(args, '--model')).toBe('sonnet');
     expect(valueOf(args, '--agent')).toBe('game-producer');
   });
 
   it('役が無ければ、これまでどおり --model を必ず付け、--agent は付けない', () => {
-    const args = claudeArgs({ ...base, model: null });
+    const args = launchArgs({ ...base, model: null });
     expect(valueOf(args, '--model')).toBe('default');
     expect(args).not.toContain('--agent');
   });
@@ -365,7 +372,7 @@ describe('stream-json（チャット）', () => {
     const got = { messages: [] as [string, boolean][], permissions: [] as string[], cancels: [] as string[], exits: [] as [number, string | undefined][] };
     const claude = new ClaudeSession(
       host,
-      {
+      withLaunch({
         sessionId: 's1',
         kind: 'stream',
         cwd: join(root, 'work'),
@@ -382,7 +389,7 @@ describe('stream-json（チャット）', () => {
         cols: 120,
         rows: 40,
         ...patch,
-      } as ConstructorParameters<typeof ClaudeSession>[1],
+      } as ConstructorParameters<typeof ClaudeSession>[1]),
       {
         onData: () => {},
         stream: {
@@ -417,7 +424,7 @@ describe('stream-json（チャット）', () => {
     expect(pipe.request.env.COLORTERM).toBeUndefined();
     expect(pipe.request.env).toMatchObject({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1', CLAUDE_CODE_CLASSIFIER_SUMMARY: '0', [ASK_FILE_ENV]: '/status/s1.ask.json' });
     // TUI は --remote-control を付ける（前のセッションに自動でつながり直す）
-    expect(claudeArgs({ claudeSessionId: CLAUDE_ID, resume: true, remoteControlName: 'tanacode-work', model: null, effort: null, permissionMode: 'manual' })).toContain('--remote-control');
+    expect(launchArgs({ claudeSessionId: CLAUDE_ID, resume: true, remoteControlName: 'tanacode-work', model: null, effort: null, permissionMode: 'manual' })).toContain('--remote-control');
     expect(claudeEnv('tui').TERM).toBe('xterm-256color');
     // TUI は要約を裏で作る（ターンの終わりを待たせない）ので、Claude Code のとおりモデルで作らせる
     expect(claudeEnv('tui').CLAUDE_CODE_CLASSIFIER_SUMMARY).toBeUndefined();

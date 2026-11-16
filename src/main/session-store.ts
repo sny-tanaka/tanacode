@@ -69,6 +69,9 @@ export type SessionRecord = {
   // 最後に起動したチャットの claude（initialize の返事の pid と、起動したときの会話の ID）。常駐のホストが止める間もなく落ちると
   // claude だけが残るので、開き直す前に残っていないかを確かめて止める（leftover-claude.ts）
   claudeProcess?: ClaudeProcess | null;
+  // 動いている claude が --settings・--mcp-config で使っているファイルの名前（userData/session-settings の中。launch-files.ts）。
+  // claude を動かしたままアプリを終えたとき、次のアプリが、引き継いだ claude の使っているもの以外を片付けるため。終わったら消す
+  launchFiles?: string[] | null;
   // 最後に起動したチャットの claude の initialize の返事のうち、引き継いだあとも要るもの（モデル・エフォートの確かめ、auto を使えるか、
   // / の候補、Remote Control を使えるか）。引き継いだ claude には initialize を送り直さないので、ここから戻す
   claudeInit?: SavedInit | null;

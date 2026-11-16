@@ -1,12 +1,13 @@
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
-import type { PreparedSettings } from './settings-files';
+import type { LaunchFiles, PreparedLaunch } from './launch-files';
+import type { ComposedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
 import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
 import { instructionsHookEnv, type InstructionsLaunch } from './instructions-launch';
 import { instructionDirs } from './project-instructions';
 import { walkthroughMcpServer } from './walkthrough-bridge';
-import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
+import { mcpArgs, mcpConfig, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import { TOOL_PERMISSIONS_DIR_ENV } from './tool-permissions';
 import { terminalGateEnv, terminalMcpServer, type TerminalMcpLaunch } from './terminal-bridge';
@@ -48,8 +49,8 @@ type BaseOptions = {
   effort: string | null;
   // --agent で渡すエージェント定義の名前（役）。null・無いものは役なし
   agent?: string | null;
-  // 設定ファイルを選んでいるとき、アプリの設定と登録した設定を合わせたファイルと、その model。null なら標準の設定のまま
-  settings: PreparedSettings | null;
+  // 起動の前に書いた、--settings・--mcp-config に渡すファイル（launch-files.ts）。引き継ぐ claude（起動しない）だけ null
+  settings: PreparedLaunch | null;
   // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む。TUI の間だけ動く）
   statusFile: string;
   // フックが書くファイルの名前の元（質問のファイル。許可の確認の入力・止めるファイルの名前は、ここから作る）
@@ -309,8 +310,8 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う。
 // kind を省くと tui（ターミナルモード）
 export function claudeArgs(
-  options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'kind' | 'agent' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs' | 'instructions'>>,
+  options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> & { settings: PreparedLaunch | null } &
+    Partial<Pick<Options, 'kind' | 'agent' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'terminal' | 'addDirs'>>,
 ): string[] {
   const {
     kind = 'tui',
@@ -321,18 +322,12 @@ export function claudeArgs(
     effort,
     agent = null,
     permissionMode,
-    settings = null,
+    settings,
     worktree = null,
-    browser = null,
-    sessions = null,
-    checklist = null,
-    walkthrough = null,
-    sessionId = '',
-    claudeDir = null,
-    terminal = null,
     addDirs = [],
-    instructions = null,
   } = options;
+  // 引き継ぐ claude は起動しないので、ここには来ない。起動するのに用意が無ければ、中身を引数に載せずに断る
+  if (!settings) throw new Error('claude needs its launch files (launch-files.ts) to start');
   const args: string[] = kind === 'stream' ? [...STREAM_ARGS] : [];
   args.push(resume ? '--resume' : '--session-id', claudeSessionId);
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
@@ -350,18 +345,57 @@ export function claudeArgs(
   if (permissionMode) args.push('--permission-mode', permissionMode);
   // --add-dir も値をいくつも取るので、--settings より前に置く（次の -- で終わる）
   if (addDirs.length > 0) args.push('--add-dir', ...addDirs);
-  // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
+  // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く。
+  // サーバーの中身は、起動の前に書いたファイル（launch-files.ts）で渡す
+  args.push(...mcpArgs(mcpServers(options), settings.mcpConfigFile));
+  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。どちらの起動でも同じ中身にする（statusline.ts の ownSettings）。
+  // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたものを 1 つ渡す。
+  // 中身は引数に載せず、起動の前に書いたファイルのパスを渡す（launch-files.ts。引数の文字に当たる pkill -f などで止められないように）
+  args.push('--settings', settings.settingsFile);
+  return args;
+}
+
+// アプリの設定（statusLine・フック）に入れるフックの種類（statusline.ts の ownSettings）
+export type LaunchFlags = {
+  // アプリ内ブラウザの MCP サーバーを足すか（JavaScript の実行の確認のフックを入れる）
+  browser: boolean;
+  // チェックリストの MCP サーバーを足すか（チェックリストを使い続けさせるフックを入れる）
+  checklist: boolean;
+  // 人のターミナルの MCP サーバーを、打つツールごと足すか（打つ前の確認のフックを入れる。子セッションは読むだけなので入れない）
+  terminal: boolean;
+  // TANACODE.md を渡すフックを入れるか
+  instructions: boolean;
+};
+
+// 起動の前に、--settings・--mcp-config に渡すファイルを書く（launch-files.ts。中身を引数に載せない）。claudeArgs はそのパスを渡す。
+// compose: 登録した設定ファイルを選んでいれば、アプリの設定と合わせたものを返す（settings-files.ts の compose。使えなければ投げる）。
+// 選んでいなければ null（アプリの設定だけ）
+export function prepareLaunch(
+  files: LaunchFiles,
+  options: Partial<Pick<Options, 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'terminal' | 'claudeDir' | 'instructions'>> & { sessionId: string },
+  compose: ((flags: LaunchFlags) => ComposedSettings) | null,
+): PreparedLaunch {
+  const { browser, checklist, terminal, instructions, claudeDir = null, sessionId } = options;
+  const flags: LaunchFlags = { browser: !!browser, checklist: !!checklist, terminal: !!terminal && !terminal.child, instructions: !!instructions };
+  const composed = compose?.(flags) ?? null;
+  const settings = composed?.settings ?? sessionSettings(flags.browser, claudeDir, flags.checklist, flags.terminal, flags.instructions);
+  const written = files.write(sessionId, settings, mcpConfig(mcpServers(options)));
+  return { ...written, model: composed?.model ?? null, registered: composed !== null };
+}
+
+// 起動する claude に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル）。
+// --mcp-config のファイルの中身（session-manager が起動の前に書く）と、--allowedTools（claudeArgs）の両方を、これから作る
+export function mcpServers(
+  options: Partial<Pick<Options, 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'terminal' | 'sessionId'>>,
+): McpServerEntry[] {
+  const { browser = null, sessions = null, checklist = null, walkthrough = null, terminal = null, sessionId = '' } = options;
   const servers: McpServerEntry[] = [];
   if (browser) servers.push(browserMcpServer(browser, sessionId));
   if (sessions) servers.push(sessionsMcpServer(sessions, sessionId));
   if (checklist) servers.push(checklistMcpServer(checklist, sessionId));
   if (walkthrough) servers.push(walkthroughMcpServer(walkthrough, sessionId));
   if (terminal) servers.push(terminalMcpServer(terminal, sessionId));
-  args.push(...mcpArgs(servers));
-  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。どちらの起動でも同じ中身にする（statusline.ts の ownSettings）。
-  // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, claudeDir, !!checklist, !!terminal && !terminal.child, !!instructions));
-  return args;
+  return servers;
 }
 
 // 会話ログのファイル（Claude Code の設定のフォルダの projects の下）。claudeDir: プロファイルの設定のフォルダ（null は既定のプロファイル）

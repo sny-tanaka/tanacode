@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parentRoleText, parseParentRole, PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { transcriptPath } from '../src/main/claude-session';
 import { line, ScriptedApp, stream, type ScriptedPty } from './helpers/scripted-claude';
+import { fileArg } from './helpers/launch';
 
 // 「親にする」（SessionManager の parentInstructions・becomeParent・withParentRole）と、TANACODE.md を渡すフックの材料の渡し方。
 // TANACODE_PARENT.md は、押したときに 1 回だけ、tanacode からの発言として読ませる。押さずに子を始めた親には、start_session の結果で 1 回だけ渡す
@@ -276,7 +277,7 @@ describe('TANACODE.md を渡すフック', () => {
 
   it('起動する Claude Code に、フックの設定と、探すフォルダ・実行ファイルの環境変数を渡す（子のセッションにも）', async () => {
     const { id, pipe } = await idleSession();
-    const settings = (p: typeof pipe) => JSON.parse(p.arg('--settings')!) as { hooks: { SessionStart?: { matcher: string; hooks: { command: string }[] }[] } };
+    const settings = (p: typeof pipe) => fileArg(p.request.args, '--settings') as { hooks: { SessionStart?: { matcher: string; hooks: { command: string }[] }[] } };
     expect(settings(pipe).hooks.SessionStart?.[0]).toMatchObject({ matcher: 'startup|resume|clear|compact' });
     expect(pipe.request.env).toMatchObject({
       TANACODE_INSTRUCTIONS_COMMAND: '/Apps/tanacode Helper',

@@ -165,8 +165,8 @@ export class Profile {
       (id, request, at) => this.manager.permissionRequested(id, request, at),
       (id, input) => this.manager.tuiStopHook(id, input),
     );
-    // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
-    this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);
+    // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせる（書くのは session-manager。session-settings に置く）
+    this.settingsFiles = new SettingsFiles(this.settings, (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);
     this.browser = new BrowserControl({
       send,
       enabled: () => this.appSettings.browserControlEnabled(),

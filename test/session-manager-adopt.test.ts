@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -97,6 +97,34 @@ describe('adopt', () => {
     await app.ready(adopted);
     await app.manager.submit(adopted, 'つづき');
     expect(attached(adopted)?.prompts.map((p) => p.message.content)).toEqual(['つづき']);
+  });
+
+  it('起動したら、動いている claude が使っているもののほかの --settings・--mcp-config のファイルを消す（落ちている間に終わったもの・片付けの途中で残ったもの・書きかけ）', async () => {
+    const dir = join(app.userData, 'session-settings');
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    const adopted = await previous();
+    const legacy = await previous();
+    const gone = await previous();
+    const running = app.create().id;
+    const runningFiles = readdirSync(dir).filter((name) => name.startsWith(`${running}.`));
+    expect(runningFiles).toHaveLength(1);
+    // 前のアプリが起動して、動かしたまま終えた claude（使っているファイルを記録してある）と、その前に使っていて片付けの途中で残ったもの
+    const used = [`${adopted}.0123456789abcdef.json`, `${adopted}.0123456789abcdef.mcp.json`];
+    store.update(adopted, { launchFiles: used });
+    // 使っているものを記録していない claude（前のバージョンのアプリが起動したもの。前の名前のファイル）は、そのセッションのものを残す
+    const legacyFiles = [`${legacy}.json`];
+    // アプリが落ちている間に終わった claude のものと、書きかけ
+    const stale = [`${adopted}.fedcba9876543210.json`, `${gone}.0123456789abcdef.json`, `${gone}.json`, `${gone}.0123456789abcdef.json.42.tmp`];
+    for (const name of [...used, ...legacyFiles, ...stale]) writeFileSync(join(dir, name), '{}');
+    app.host.hosted = [hosted(adopted), hosted(legacy)];
+    await app.manager.adopt();
+    expect(app.manager.summary(adopted)?.running).toBe(true);
+    expect(readdirSync(dir).sort()).toEqual([...used, ...legacyFiles, ...runningFiles].sort());
+    // 引き継いだ claude が終わったら、そのセッションのものも消し、記録も消す
+    attached(adopted)!.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(adopted) === 'exited');
+    expect(readdirSync(dir).filter((name) => name.startsWith(`${adopted}.`))).toEqual([]);
+    expect(store.get(adopted)?.launchFiles ?? null).toBeNull();
   });
 
   it('控えている行の送り直しを頼み、前のアプリの頃の行から状態を組み立て直す（通知は出さない）。読み終えてからターンの終わりを決める', async () => {
