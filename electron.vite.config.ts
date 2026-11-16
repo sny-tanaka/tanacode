@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
 import license from 'rollup-plugin-license';
 import { backgroundElectron } from './scripts/background-electron';
 import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
@@ -12,6 +13,23 @@ const sourcemap = process.env.TANACODE_SOURCEMAP === '1';
 // ソースマップには元のソースを埋め込まない（カバレッジは src のファイルを読んで戻すので要らない）。
 // 埋め込むと、画面側のビルドの最大メモリが 0.7GB ほど増える（5.1GB → 5.8GB）
 const output = { sourcemapExcludeSources: true };
+
+// 束ねる道具の実行時の部品だけの塊（rolldown の中のモジュール \0rolldown/runtime.js だけの rolldown-runtime-*.js など）にも、ソースマップを書き出す。
+// rolldown は、写す元のファイルが無い塊にはソースマップを作らない（作らせる設定も無い）。
+// 塊のモジュールが全部、元のファイルの無いモジュール（ID が \0 で始まる）のときだけ、どのファイルにも写らないソースマップ（sources が空）を書く。
+// E2E のカバレッジ（scripts/e2e-coverage.mjs）は、ソースマップの無いスクリプトを失敗にするので、これが無いと止まる
+const virtualChunkSourcemap: Plugin = {
+  name: 'tanacode:virtual-chunk-sourcemap',
+  generateBundle(_options, bundle) {
+    if (!sourcemap) return;
+    for (const chunk of Object.values(bundle)) {
+      if (chunk.type !== 'chunk' || chunk.map || chunk.moduleIds.length === 0) continue;
+      if (!chunk.moduleIds.every((id) => id.startsWith('\0'))) continue;
+      const map = { version: 3, file: basename(chunk.fileName), sources: [], names: [], mappings: '' };
+      this.emitFile({ type: 'asset', fileName: `${chunk.fileName}.map`, source: JSON.stringify(map) });
+    }
+  },
+};
 
 // 裏で起動する（TANACODE_BACKGROUND=1）npm run dev・npm start は、LSUIElement を足した Electron の写しで起動する（scripts/background-electron.ts）。
 // 起動の直後も Dock に出さず、前面を奪わないため。electron-vite は ELECTRON_EXEC_PATH の Electron を起動する（自分で決めていれば、そのまま使う）
@@ -26,6 +44,7 @@ const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as
 export default defineConfig({
   main: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
+    plugins: [virtualChunkSourcemap],
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
     // instructions-hook: TANACODE.md を Claude に渡す SessionStart のフック（Claude Code が起動する）
@@ -51,12 +70,14 @@ export default defineConfig({
   preload: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     build: { sourcemap, rolldownOptions: { output } },
+    plugins: [virtualChunkSourcemap],
   },
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     define: { __APP_VERSION__: JSON.stringify(version) },
     build: { sourcemap, rolldownOptions: { output } },
     plugins: [
+      virtualChunkSourcemap,
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。
       // GPL 系のライセンスや、ライセンスの分からない依存が混ざったらビルドを止める
