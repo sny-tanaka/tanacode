@@ -390,6 +390,18 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await shutdown(path);
   });
 
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い要求の行を読む時間が、行の長さの 2 乗で伸びた
+  it('長い要求の行（端末に貼り付けた大きな文字など）を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    const started = performance.now();
+    // 知らない id への書き込みは飛ばす。読み終えたかは、あとの一覧の返事で見る（同じ接続の行は、送った順に読む）
+    c.send({ t: 'write', id: 'none', data: 'x'.repeat(30 * 1024 * 1024) });
+    expect(await list(c, 8)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1000);
+    await shutdown(path);
+  });
+
   it('アプリも claude も無い状態が 10 秒続いたら、終わる', async () => {
     const path = await startHost();
     const c = await client(path);

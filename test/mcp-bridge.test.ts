@@ -120,6 +120,25 @@ describe('McpBridge（アプリ側の待ち受け）', () => {
     expect(await callBridge(b.socketPath, { ...request, tool: 'string' }, 5000, CLOSED)).toEqual(textResult('こわれた', true));
   });
 
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い呼び出しを読む時間が、行の長さの 2 乗で伸びた
+  it('長い呼び出し（大きな引数）を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+    const b = await bridge(async (_session, _tool, args) => textResult(String((args.text as string).length)));
+    const client = await rawClient(b.socketPath);
+    const started = performance.now();
+    client.socket.write(`${JSON.stringify({ id: 1, ...request, args: { text: 'x'.repeat(30 * 1024 * 1024) } })}\n`);
+    while (client.lines().length === 0) await sleep(10);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(client.lines()).toEqual([{ id: 1, result: textResult(String(30 * 1024 * 1024)) }]);
+  });
+
+  it('1 行の上限（32MB）を超えたら、改行を待たずに接続を切る', async () => {
+    const b = await bridge(async () => textResult('呼ばれない'));
+    const client = await rawClient(b.socketPath);
+    client.socket.write('x'.repeat(32 * 1024 * 1024 + 1));
+    while (!client.closed()) await sleep(10);
+    expect(client.lines()).toEqual([]);
+  });
+
   it('中継がソケットを閉じたら、その呼び出しの signal を abort し、返事は書かない', async () => {
     let signal: AbortSignal | null = null;
     let finish!: () => void;
@@ -166,6 +185,19 @@ describe('callBridge（中継の側）', () => {
       setTimeout(() => socket.write(`${text.slice(10)}\n`), 20);
     });
     expect(await callBridge(path, request, 5000, CLOSED)).toEqual(textResult('分かれた返事'));
+  });
+
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い返事（スクリーンショットの入った結果）を読む時間が、行の長さの 2 乗で伸びた
+  it('長い返事を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+    const big = 'x'.repeat(30 * 1024 * 1024);
+    const path = await fakeApp((socket, line) => {
+      const { id } = JSON.parse(line) as { id: number };
+      socket.write(`${JSON.stringify({ id, result: textResult(big) })}\n`);
+    });
+    const started = performance.now();
+    const result = await callBridge(path, request, 10_000, CLOSED);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result).toEqual(textResult(big));
   });
 
   it('読めない返事・違う呼び出しへの返事・結果の無い返事は、読めなかったとして返す', async () => {

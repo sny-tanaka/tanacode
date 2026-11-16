@@ -2,6 +2,7 @@ import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { language } from '@shared/i18n';
 import { allowedToolIds, type McpServerDef } from '@shared/mcp-tools';
+import { splitLines } from './split-lines';
 
 // tanacode が Claude Code に足す MCP サーバーの中継（browser-mcp.ts・sessions-mcp.ts。Claude Code が起動する）とアプリのやりとり。
 // userData の Unix ソケット（自分だけが読み書きできる権限）に、JSON を 1 行ずつ書く。中継はツールの呼び出しのたびにつなぎ、返事を受け取ったら切る。
@@ -73,20 +74,15 @@ export class McpBridge {
     // 中継は呼び出しのたびにつなぐので、ソケットが閉じたら、その呼び出しはもう誰も待っていない
     const closed = new AbortController();
     socket.on('close', () => closed.abort());
-    let buffered = '';
-    socket.on('data', (chunk: string) => {
-      buffered += chunk;
-      if (buffered.length > MAX_LINE) {
-        socket.destroy();
-        return;
-      }
-      let newline: number;
-      while ((newline = buffered.indexOf('\n')) >= 0) {
-        const line = buffered.slice(0, newline);
-        buffered = buffered.slice(newline + 1);
-        if (line) void this.answer(socket, line, closed.signal);
-      }
-    });
+    socket.on(
+      'data',
+      splitLines(
+        (line) => {
+          if (line) void this.answer(socket, line, closed.signal);
+        },
+        { maxLength: MAX_LINE, onTooLong: () => socket.destroy() },
+      ),
+    );
     socket.on('error', () => socket.destroy());
   }
 
@@ -121,7 +117,6 @@ export function callBridge(
 ): Promise<ToolResult> {
   return new Promise((resolve) => {
     const id = 1;
-    let buffered = '';
     let done = false;
     const cancel = () => finish(textResult('Canceled.', true));
     const finish = (result: ToolResult) => {
@@ -139,17 +134,19 @@ export function callBridge(
       timeoutMs,
     );
     socket.once('connect', () => socket.write(`${JSON.stringify({ id, ...request } satisfies BridgeRequest)}\n`));
-    socket.on('data', (chunk: string) => {
-      buffered += chunk;
-      const newline = buffered.indexOf('\n');
-      if (newline < 0) return;
-      try {
-        const response = JSON.parse(buffered.slice(0, newline)) as BridgeResponse;
-        finish(response.id === id && response.result ? response.result : textResult('Could not read the response from tanacode.', true));
-      } catch {
-        finish(textResult('Could not read the response from tanacode.', true));
-      }
-    });
+    // 返事は最初の 1 行だけを読む
+    socket.on(
+      'data',
+      splitLines((line) => {
+        try {
+          const response = JSON.parse(line) as BridgeResponse;
+          finish(response.id === id && response.result ? response.result : textResult('Could not read the response from tanacode.', true));
+        } catch {
+          finish(textResult('Could not read the response from tanacode.', true));
+        }
+        return true;
+      }),
+    );
     socket.on('error', (error: NodeJS.ErrnoException) => {
       const closed = error.code === 'ENOENT' || error.code === 'ECONNREFUSED';
       finish(

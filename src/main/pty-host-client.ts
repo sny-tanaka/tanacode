@@ -15,6 +15,7 @@ import {
   type PtySpawnRequest,
 } from './pty-host-protocol';
 import { socketPathIn } from './socket-path';
+import { splitLines } from './split-lines';
 
 // ホストを起動してから、待ち受けを始めるまで待つ時間
 const START_TIMEOUT_MS = 5000;
@@ -603,30 +604,4 @@ function hello(socket: Socket): Promise<number | null> {
     socket.on('data', onData);
     socket.write(`${JSON.stringify({ t: 'hello', protocol: PROTOCOL } satisfies ClientMessage)}\n`);
   });
-}
-
-// ホストから届いた断片を行に分けて、onLine に渡す（onLine が true を返したら、同じ断片の残りは渡さない）。
-// 改行は、新しく届いた断片の中だけを探す。溜めた全体を先頭から探し直すと、長い行（大きな出力の stream-json の 1 行）を
-// 細かい断片で受け取る時間が、行の長さの 2 乗で伸びる（main が止まる）
-export function splitLines(onLine: (line: string) => boolean | void): (chunk: string) => void {
-  let pending = '';
-  return (chunk) => {
-    let newline = chunk.indexOf('\n');
-    if (newline < 0) {
-      pending += chunk;
-      return;
-    }
-    let line = pending + chunk.slice(0, newline);
-    pending = '';
-    for (;;) {
-      if (onLine(line) === true) return;
-      const start = newline + 1;
-      newline = chunk.indexOf('\n', start);
-      if (newline < 0) {
-        pending = chunk.slice(start);
-        return;
-      }
-      line = chunk.slice(start, newline);
-    }
-  };
 }
