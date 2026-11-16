@@ -261,7 +261,7 @@ describe('QuestionCard', () => {
 
     it('Tab で選択肢に移ったときにも出す。カードからマウスが外れたら、フォーカスした選択肢のものに戻し、フォーカスが外れたら消す', () => {
       render(<QuestionCard sessionId="s1" question={pending(layout)} />);
-      // キーボードで移ったフォーカス（:focus-visible）。jsdom も、直前がマウスの操作なら、そう見なさない
+      // キーボードで移ったフォーカス（:focus-visible）。直前がマウスの操作なら、そう見なさない（dom.ts）
       fireEvent.keyDown(document.body, { key: 'Tab' });
       act(() => option('横').focus());
       expect(shown()).toBe('横の図');

@@ -9,10 +9,8 @@ export const tabStops = (root: ParentNode = document) => [...root.querySelectorA
 // フォーカスのある要素でキーを押す
 export const key = (name: string, init: KeyboardEventInit = {}) => fireEvent.keyDown(document.activeElement ?? document.body, { key: name, ...init });
 // Tab で入ったのと同じに、フォーカスを移す（:focus-visible にする）。
-// jsdom（の :focus-visible の見分け）は、はじめて調べたときにイベントを聞き始め、直前の操作（Tab・マウス）で見分けるので、先に調べてから Tab を押す。
-// Tab は body で押す（今フォーカスのある要素で押すと、jsdom は、その前に枠を出した要素へ戻るときしかキーで移ったと見ない）
+// :focus-visible は、直前の操作（キー・マウス）で見分ける（dom.ts）ので、Tab を押してから移す
 export const focusByTab = (el: HTMLElement) => {
-  document.body.matches(':focus-visible');
   fireEvent.keyDown(document.body, { key: 'Tab' });
   el.focus();
 };
