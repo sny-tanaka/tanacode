@@ -470,16 +470,12 @@ export class PtyHost implements PtyHostApi {
 
   private use(socket: Socket): void {
     this.socket = socket;
-    let buffered = '';
-    socket.on('data', (chunk: string) => {
-      buffered += chunk;
-      let newline: number;
-      while ((newline = buffered.indexOf('\n')) >= 0) {
-        const line = buffered.slice(0, newline);
-        buffered = buffered.slice(newline + 1);
+    socket.on(
+      'data',
+      splitLines((line) => {
         if (line) this.receive(JSON.parse(line) as HostMessage);
-      }
-    });
+      }),
+    );
     socket.on('close', () => {
       if (this.socket !== socket) return;
       // ホストが終わった。pty の claude は端末が閉じて一緒に止まる。パイプの claude は、ホストが終わる前にグループごと止める
@@ -587,22 +583,18 @@ async function waitForHost(path: string): Promise<Socket> {
 // ホストの形（PROTOCOL）を聞く。答えが無ければ null
 function hello(socket: Socket): Promise<number | null> {
   return new Promise((resolve) => {
-    let buffered = '';
     const timer = setTimeout(() => finish(null), 2000);
-    const onData = (chunk: string) => {
-      buffered += chunk;
-      let newline: number;
-      while ((newline = buffered.indexOf('\n')) >= 0) {
-        const line = buffered.slice(0, newline);
-        buffered = buffered.slice(newline + 1);
-        try {
-          const message = JSON.parse(line) as HostMessage;
-          if (message.t === 'hello') return finish(message.protocol);
-        } catch {
-          // 読めない行は飛ばす
+    const onData = splitLines((line) => {
+      try {
+        const message = JSON.parse(line) as HostMessage;
+        if (message.t === 'hello') {
+          finish(message.protocol);
+          return true;
         }
+      } catch {
+        // 読めない行は飛ばす
       }
-    };
+    });
     const finish = (protocol: number | null) => {
       clearTimeout(timer);
       socket.off('data', onData);
@@ -611,4 +603,30 @@ function hello(socket: Socket): Promise<number | null> {
     socket.on('data', onData);
     socket.write(`${JSON.stringify({ t: 'hello', protocol: PROTOCOL } satisfies ClientMessage)}\n`);
   });
+}
+
+// ホストから届いた断片を行に分けて、onLine に渡す（onLine が true を返したら、同じ断片の残りは渡さない）。
+// 改行は、新しく届いた断片の中だけを探す。溜めた全体を先頭から探し直すと、長い行（大きな出力の stream-json の 1 行）を
+// 細かい断片で受け取る時間が、行の長さの 2 乗で伸びる（main が止まる）
+export function splitLines(onLine: (line: string) => boolean | void): (chunk: string) => void {
+  let pending = '';
+  return (chunk) => {
+    let newline = chunk.indexOf('\n');
+    if (newline < 0) {
+      pending += chunk;
+      return;
+    }
+    let line = pending + chunk.slice(0, newline);
+    pending = '';
+    for (;;) {
+      if (onLine(line) === true) return;
+      const start = newline + 1;
+      newline = chunk.indexOf('\n', start);
+      if (newline < 0) {
+        pending = chunk.slice(start);
+        return;
+      }
+      line = chunk.slice(start, newline);
+    }
+  };
 }
