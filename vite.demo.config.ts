@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import license from 'rollup-plugin-license';
 import { defineConfig } from 'vite';
-import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
+import { isAllowedDependency, thirdPartyNotices } from './scripts/third-party-notices';
 
 // デモのサイト（GitHub Pages で公開する、ブラウザで動くデモ）。npm run demo:dev で開き、npm run demo:build で demo-site/ に書き出す。
 // 画面はアプリと同じ部品で、window.tanacode を作り物（src/renderer/src/demo/backend.ts）に差し替えて動かす。
@@ -28,10 +28,7 @@ export default defineConfig({
       thirdParty: {
         includePrivate: false,
         allow: {
-          test: (dependency) => {
-            const kind = licenseOf(dependency.license, dependency.licenseText);
-            return !!kind && !/GPL/i.test(kind);
-          },
+          test: isAllowedDependency,
           failOnUnlicensed: true,
           failOnViolation: true,
         },

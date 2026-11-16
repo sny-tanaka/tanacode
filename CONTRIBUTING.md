@@ -2200,5 +2200,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - ビルドすると、アプリに入れて配る依存のライセンスを `out/renderer/THIRD_PARTY_NOTICES.txt` にまとめます。作り方は `scripts/third-party-notices.ts`。
   - 画面に同梱した依存は rollup-plugin-license で集めます。CSS だけを読み込むフォントと、main が使う依存（node_modules ごと入るもの）は書き足します。
   - GPL 系のライセンスや、ライセンスの分からない依存が混ざると、ビルドが止まります。
+    - 例外は、`scripts/third-party-notices.ts` の `ALLOWED_EXCEPTIONS` に、パッケージの名前とライセンスの表記の組で書いたものだけ。今は elkjs（`EPL-2.0 OR GPL-3.0-or-later`。mermaid が使う図の配置）だけで、EPL-2.0 の側で使います。EPL-2.0 は配るときにソースの入手先を示す決まりがあるので、表示の各項目に `Source:` を書いています。
+    - 例外は 1 つずつ人が決めてから足します。ライセンスの種類（EPL-2.0 など）をまるごと許す緩め方はしません。ライセンスの表記が変わったら、ビルドが止まるので確かめ直します。
 - アプリの `Contents/Resources/` には、この表示と一緒に、tanacode の `LICENSE.txt`、Electron と Chromium のライセンスも入れます。
   - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。Electron は `npm install` では本体を取り込まず、初めて使うときに取り込むので、`scripts/electron-builder.mjs` がビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。

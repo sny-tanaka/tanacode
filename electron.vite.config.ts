@@ -4,7 +4,7 @@ import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import license from 'rollup-plugin-license';
 import { backgroundElectron } from './scripts/background-electron';
-import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
+import { isAllowedDependency, thirdPartyNotices } from './scripts/third-party-notices';
 
 // TANACODE_SOURCEMAP=1 でビルドすると、ソースマップ（.map）も書き出す。E2E のカバレッジを src の行に戻すのに使う
 // （npm run coverage:e2e。.map はアプリには入れない）
@@ -59,15 +59,12 @@ export default defineConfig({
     plugins: [
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。
-      // GPL 系のライセンスや、ライセンスの分からない依存が混ざったらビルドを止める
+      // GPL 系のライセンスや、ライセンスの分からない依存が混ざったらビルドを止める（例外は scripts/third-party-notices.ts の ALLOWED_EXCEPTIONS）
       license({
         thirdParty: {
           includePrivate: false,
           allow: {
-            test: (dependency) => {
-              const kind = licenseOf(dependency.license, dependency.licenseText);
-              return !!kind && !/GPL/i.test(kind);
-            },
+            test: isAllowedDependency,
             failOnUnlicensed: true,
             failOnViolation: true,
           },
