@@ -355,6 +355,56 @@ describe('貼り付けた長い文の札', () => {
   });
 });
 
+describe('⌘⇧V で、札にせず文字のまま貼る', () => {
+  const LOG = Array.from({ length: 30 }, (_, i) => `ログの ${i + 1} 行目`).join('\n');
+  const readText = vi.fn<() => Promise<string>>();
+  beforeEach(() => {
+    readText.mockReset();
+    Object.defineProperty(navigator, 'clipboard', { value: { readText }, configurable: true });
+  });
+
+  it('長い文も、札にせず、カーソルの位置（選んだ範囲を置き換えて）に文字のまま入る。制御文字は除く', async () => {
+    readText.mockResolvedValue(`${LOG}\r\n\x1b[201~`);
+    const values: string[] = [];
+    const pastes: string[][] = [];
+    render(<Harness initial="前後" onValue={(v) => values.push(v)} onPastes={(p) => pastes.push(p)} />);
+    const el = box();
+    el.focus();
+    el.setSelectionRange(1, 1);
+    // キーの既定の動きは止める（貼るのは自分で行う）
+    expect(fireEvent.keyDown(el, { key: 'v', metaKey: true, shiftKey: true })).toBe(false);
+    await waitFor(() => expect(values.at(-1)).toBe(`前${LOG}\n[201~後`));
+    expect(pastes).toEqual([]);
+    expect(document.querySelector('.paste-chip')).toBeNull();
+  });
+
+  it('⌘V・⌥⇧⌘V では読まない（⌘V はふつうの貼り付けで、長ければ札になる）', () => {
+    render(<Harness />);
+    const el = box();
+    el.focus();
+    expect(fireEvent.keyDown(el, { key: 'v', metaKey: true })).toBe(true);
+    expect(fireEvent.keyDown(el, { key: 'v', metaKey: true, shiftKey: true, altKey: true })).toBe(true);
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('読んでいる間にフォーカスが外れたら入れない。読めなかったときも何もしない', async () => {
+    const read = deferred<string>();
+    readText.mockReturnValueOnce(read.promise).mockRejectedValueOnce(new Error('denied'));
+    const values: string[] = [];
+    render(<Harness onValue={(v) => values.push(v)} />);
+    const el = box();
+    el.focus();
+    fireEvent.keyDown(el, { key: 'V', metaKey: true, shiftKey: true });
+    el.blur();
+    await act(async () => read.resolve('あとから届いた文'));
+    el.focus();
+    fireEvent.keyDown(el, { key: 'v', metaKey: true, shiftKey: true });
+    await act(async () => {});
+    expect(readText).toHaveBeenCalledTimes(2);
+    expect(values).toEqual([]);
+  });
+});
+
 describe('読んでいる・保存している間に変わったら、古い結果を使わない', () => {
   const source = (key: string, list: Promise<SlashCommand[]>): CompletionSource => ({
     key,

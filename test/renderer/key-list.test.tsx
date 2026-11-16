@@ -104,7 +104,6 @@ describe('一覧（keyList）', () => {
   // 直す前: マウスで押した行も前にいた行として覚え、あとで Tab で入ったときにそこへ飛んでいた（チャットで昔のカードを押しておくと、上へ飛ぶ）
   it('前にいた行として覚えるのは、キーで入った行だけ。マウスで押した行は覚えない', () => {
     render(<Chat />);
-    document.body.matches(':focus-visible');
     fireEvent.pointerDown(row('カード A'));
     fireEvent.mouseDown(row('カード A'));
     row('カード A').focus();

@@ -271,7 +271,7 @@ PR で、次のものを流します。develop への push では流しません
 - 画面（renderer）のテストは `test/renderer/` に置き、ファイルの先頭の `// @vitest-environment jsdom` で DOM の代わり（jsdom）を使います。型は `tsconfig.web.json` で確かめます（DOM の型が要るため）。
   - happy-dom は使いません。DOMPurify（Markdown の無害化）の結果が、本物のブラウザと食い違ったためです。
 - `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
-- `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
+- `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。`:focus-visible` の見分け（マウスで押して入ったフォーカスは、入力欄でなければ `:focus-visible` にしない）も、ブラウザと同じに補います（jsdom 31 からは `:focus` と同じに見るため）。使う部品のテストの先頭で読み込みます。
 - 画面のボタン・入力は、テストでひとつ残らず押し、押した結果（IPC に渡った引数・表示・props の受け手に渡った値）まで確かめます。セッションまわり・ソース管理・エクスプローラー・検索・エディタは `press-sessions*.test.tsx`。
   - Monaco エディタを使う部品（エディタ・差分）のボタンは、`editor/monaco.ts` を `vi.mock` で作り物（モデルの内容の読み書きと、内容が変わった知らせだけを持つ）に差し替えて押します（`press-sessions-editor.test.tsx`）。エディタそのものの動き（打ち込み・色付けなど）は E2E で確かめます。
 - 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
@@ -815,6 +815,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 画像は、`image` のブロックで送ります。形式は名前でなく中身の頭で決め（PNG・JPEG・GIF・WebP）、送れないもの（ほかの形式・読めない）は、黙って落とさずにチャットに知らせます。大きな画像は Claude Code が縮めて送るので、アプリでは縮めません（6.7MB の PNG は 474KB の JPEG に、3024×1964 は 2000×1299 に。2.1.301 で実測）。
 - 送り方は、Claude Code の CLI と同じ規則にしています。自分で打った文はふつうの入力として送り、入力欄に外から貼り付けた長い文は、入力欄で札にして、貼り付けとして送ります。
   - 札にする境目は `isLongPaste`（`shared/paste.ts`）。4 行以上、または 800 文字より長い貼り付けで、Claude Code が入力欄で `[Pasted text #1 +30 lines]` の目印に置き換える境目と同じです（2026-10-12・2.1.296 で確かめた: 3 行・767 文字の貼り付けは文字のまま、4 行・1,569 文字は目印になる）。入力欄への貼り付け（`ChatInput` の `onPaste`）と、ほかのパネルからの差し込み（`insertIntoChat`。ターミナルの「Claude へ送る」・アプリ内ブラウザで選んだ要素）の両方で見ます。短いものは、文字のまま入力欄に入ります。
+  - ⌘⇧V は、長くても札にせず文字のまま入れます（`ChatInput` の `onKeyDown`）。paste イベントには修飾キーが載らず、Electron の編集メニューの「ペーストしてスタイルを合わせる」は ⌥⇧⌘V なので、キーで受けて `navigator.clipboard.readText`（主ウインドウに許している `clipboard-read`）で読み、`execCommand('insertText')` で入れます（⌘Z で取り消せる）。制御文字は、ふつうの貼り付けと同じく除きます。
   - 札（`pastes: string[]`）は、画像の添付と同じ道筋で持ち回ります: 入力欄の state・セッションごとの書きかけ（`ClaudePane` の `drafts`）・起動待ち（`PendingSend`）・予約（`ScheduledMessage.pastes`。前のバージョンの保存には無いので、空として読む）・IPC の `sessions:submit` と `scheduled:add` の末尾の引数。札の部品は `chat/PastedChips.tsx`（入力欄・チャットの発言・予約の行で共通）。
   - 札は、`user` の行の `pasted_content`（文字列の配列）で渡します。Claude Code の CLI が、打った文のあとに足し、ログインして使うときは、TUI と同じ `<pasted_content>` の囲みに入れて Claude に渡します（2026-10-17・2.1.301）。囲むかどうかは、Claude Code が自分の規則で決めます。
   - 会話ログでは、札の中身が、発言の文のあとに `\n\n<pasted_content id="…">\n…\n</pasted_content id="…">\n` の形で足されます（札 2 つなら、囲みが 2 つ続く。id は同じ会話の中では同じ。2026-10-12・Claude Code 2.1.296）。`splitPasted`（`shared/chat.ts`）が文と札に分け、user イベントの `pastes` に入れます。チャットでは、文の下に札として畳んで出します。全体が 1 つの囲みだけの発言は、札にせず文として出します（前のバージョンのアプリは、複数行の発言を丸ごと貼り付けで送っていたので、前の会話の複数行の発言はどれもこの形。札にすると、どれも畳まれてしまう）。
@@ -2200,5 +2201,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - ビルドすると、アプリに入れて配る依存のライセンスを `out/renderer/THIRD_PARTY_NOTICES.txt` にまとめます。作り方は `scripts/third-party-notices.ts`。
   - 画面に同梱した依存は rollup-plugin-license で集めます。CSS だけを読み込むフォントと、main が使う依存（node_modules ごと入るもの）は書き足します。
   - GPL 系のライセンスや、ライセンスの分からない依存が混ざると、ビルドが止まります。
+    - 例外は、`scripts/third-party-notices.ts` の `ALLOWED_EXCEPTIONS` に、パッケージの名前とライセンスの表記の組で書いたものだけ。今は elkjs（`EPL-2.0 OR GPL-3.0-or-later`。mermaid が使う図の配置）だけで、EPL-2.0 の側で使います。EPL-2.0 は配るときにソースの入手先を示す決まりがあるので、表示の各項目に `Source:` を書いています。
+    - 例外は 1 つずつ人が決めてから足します。ライセンスの種類（EPL-2.0 など）をまるごと許す緩め方はしません。ライセンスの表記が変わったら、ビルドが止まるので確かめ直します。
 - アプリの `Contents/Resources/` には、この表示と一緒に、tanacode の `LICENSE.txt`、Electron と Chromium のライセンスも入れます。
   - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。Electron は `npm install` では本体を取り込まず、初めて使うときに取り込むので、`scripts/electron-builder.mjs` がビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。
