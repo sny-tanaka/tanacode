@@ -15,6 +15,7 @@ import { textResult, type ToolResult } from '../src/main/mcp-bridge';
 import { respond } from '../src/main/mcp-relay';
 import { WalkthroughControl } from '../src/main/walkthrough-control';
 import { draftWalkthroughComment, type CommentDeps } from '../src/main/walkthrough-github';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // ウォークスルー（Claude がエディタでコードを示しながら説明し、人が「次へ」で進めて質問する）。
 // MCP のツール（手順の確かめ・寄り道・今の場所・PR への投稿）・画面からの操作・起動の引数・チャットの表示・質問の文
@@ -588,10 +589,10 @@ describe('中継・起動の引数・設定', () => {
   it('起動の引数に足し、PR への投稿のほかは許可済みにする（投稿は Claude Code の許可の確認を通す）', () => {
     const launch = { command: '/Apps/tanacode Helper', script: '/Apps/out/main/walkthrough-mcp.js', socketPath: '/u/walkthrough.sock', version: '1.0.0' };
     const checklist = { ...launch, script: '/Apps/out/main/checklist-mcp.js', socketPath: '/u/checklist.sock' };
-    const args = claudeArgs({ claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null, checklist, walkthrough: launch, sessionId: 's1' });
+    const args = launchArgs({ claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null, checklist, walkthrough: launch, sessionId: 's1' });
     // --mcp-config と --allowedTools は 1 回ずつ
     expect(args.filter((a) => a === '--mcp-config')).toHaveLength(1);
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(Object.keys(config.mcpServers)).toEqual(['tanacode-checklist', 'tanacode-walkthrough']);
     // 言語は、中継が tools/list で返すツールの短い名前に使う
     expect(config.mcpServers['tanacode-walkthrough'].env).toMatchObject({ TANACODE_WALKTHROUGH_SOCKET: '/u/walkthrough.sock', TANACODE_WALKTHROUGH_SESSION: 's1', TANACODE_LANGUAGE: 'ja' });

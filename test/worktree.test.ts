@@ -21,6 +21,7 @@ import {
   type WorktreePlan,
 } from '../src/main/worktree';
 import { stages } from './helpers/stages';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // worktree のセッション（claude --worktree）の、アプリが受け持つところ。本物の git で確かめる。
 // Claude Code が worktree を作るところは、Claude Code と同じ形（.claude/worktrees/<名前>・ブランチ worktree-<名前>・
@@ -166,9 +167,9 @@ describe('名前と場所', () => {
 
   it('claude に --worktree を付けるのは新しい会話だけ', () => {
     const base = { claudeSessionId: 'id', remoteControlName: null, model: null, effort: null, permissionMode: null };
-    expect(claudeArgs({ ...base, resume: false, worktree: 'tc-1' }).slice(0, 4)).toEqual(['--session-id', 'id', '--worktree', 'tc-1']);
-    expect(claudeArgs({ ...base, resume: true, worktree: 'tc-1' })).not.toContain('--worktree');
-    expect(claudeArgs({ ...base, resume: false })).not.toContain('--worktree');
+    expect(launchArgs({ ...base, resume: false, worktree: 'tc-1' }).slice(0, 4)).toEqual(['--session-id', 'id', '--worktree', 'tc-1']);
+    expect(launchArgs({ ...base, resume: true, worktree: 'tc-1' })).not.toContain('--worktree');
+    expect(launchArgs({ ...base, resume: false })).not.toContain('--worktree');
   });
 });
 

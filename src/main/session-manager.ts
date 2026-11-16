@@ -63,7 +63,7 @@ import { checkedContent, type ElicitationReply, type PendingElicitation } from '
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, retract, withoutRepeatedState, type ChainEntry } from './chat-log';
 import { availableAgents } from './claude-agents';
-import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
+import { ClaudeSession, prepareLaunch, transcriptPath, type LaunchFlags, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { blockedByPreCompact } from './auto-compact';
@@ -75,7 +75,8 @@ import { instructionDirs, instructionFiles, instructionsProblemText, type Instru
 import { PendingQuestions } from './pending-questions';
 import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
-import type { PreparedSettings, SettingsFiles } from './settings-files';
+import type { ComposedSettings, SettingsFiles } from './settings-files';
+import { LaunchFiles, type PreparedLaunch } from './launch-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import { outsideReadOf, outsideRules, within, type OutsideRules } from './outside-reads';
 import { askQuestionsOf, elicitationOf, elicitationResult, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
@@ -383,7 +384,8 @@ type Runtime = {
   lastBridgeUrl: string | null | undefined;
   // この起動で、会話のタイトルを作らせた（generate_session_title。最初のターンのあとに 1 回だけ）
   titleRequested: boolean;
-  // この起動で --settings に渡した、登録した設定ファイルを合わせたファイル（登録した設定ファイルを使っていなければ null）
+  // この起動で --settings に渡した、登録した設定ファイルを合わせたファイル（登録した設定ファイルを使っていなければ null。
+  // Claude Code が知らせる、設定の読めない項目が、登録した設定のものかを見分ける）
   settingsPath: string | null;
   // worktree の準備の途中（Claude Code が worktree を作るのを待っている・node_modules の用意）。終わるまで ready を配信しない
   preparing: WorktreePreparing | null;
@@ -473,6 +475,12 @@ export class SessionManager {
     // 起動する Claude Code に、TANACODE.md を渡すフックを足すときの材料。null なら足さない
     private readonly instructionsHook: () => InstructionsLaunch | null = () => null,
   ) {}
+
+  // 起動する claude の --settings・--mcp-config のファイルを置く場所（userData/session-settings。launch-files.ts）
+  private launchFilesCache: LaunchFiles | null = null;
+  private get launchFiles(): LaunchFiles {
+    return (this.launchFilesCache ??= new LaunchFiles(join(dirname(this.statusLines.dir), 'session-settings')));
+  }
 
   // 答えを待っている AskUserQuestion（セッションごと。stream-json の can_use_tool の要求）
   private readonly questions = new PendingQuestions((id) => this.questionsChanged(id));
@@ -871,7 +879,7 @@ export class SessionManager {
       if (rt && this.runtimes.get(id) === rt) this.runtimes.delete(id);
       rt?.process?.kill();
     }
-    this.settingsFiles?.release(id);
+    this.releaseLaunchFiles(id);
     this.questions.releaseAll(id);
     if (rt) this.releaseRequests(id, rt);
     rt?.workflows.dispose();
@@ -2072,25 +2080,16 @@ export class SessionManager {
     this.settingsFiles.check(settingsFile);
   }
 
-  // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
-  // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
-  // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
-  // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（合わせる設定に、打つ前の確認のフックを入れる）
-  private prepareSettings(
-    id: string,
-    settingsFile: string | null | undefined,
-    browser: boolean,
-    checklist: boolean,
-    terminal: boolean,
-    instructions: boolean,
-  ): PreparedSettings | null {
-    if (!settingsFile) {
-      // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
-      this.settingsFiles?.release(id);
-      return null;
-    }
+  // そのセッションの --settings・--mcp-config のファイルを消す（claude が終わった・アーカイブした・claude ごと終えた）
+  private releaseLaunchFiles(id: string): void {
+    this.launchFiles.release(id);
+    if (this.store.get(id)?.launchFiles) this.store.update(id, { launchFiles: null });
+  }
+
+  // 登録した設定ファイルを、アプリの設定と合わせる（起動の前。claude-session.ts の prepareLaunch が書く）。使えなければ理由を添えて投げる
+  private composeSettings(settingsFile: string, flags: LaunchFlags): ComposedSettings {
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, checklist, terminal, instructions);
+    return this.settingsFiles.compose(settingsFile, flags.browser, flags.checklist, flags.terminal, flags.instructions);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -2445,6 +2444,14 @@ export class SessionManager {
       // pty の claude は、前のアプリがターミナルモードで起動したもの（PROTOCOL 3 のホストには、ほかに pty の claude はいない）
       this.start(record.id, null, info);
     }
+    // 動いている claude が使っているもののほかの、--settings・--mcp-config のファイルを消す（アプリが落ちている間に終わった claude の
+    // ものなど）。起動は、書いてからプロセスを持つまでを続けて行うので、ここで動いていないセッションのファイルは、次に起動するときに書く。
+    // 使っているものを記録していない claude（前のバージョンのアプリが起動したもの）は、そのセッションのものをすべて残す（終わったら消す）
+    this.launchFiles.sweep((id, name) => {
+      if (!this.runtimes.get(id)?.process) return false;
+      const used = this.store.get(id)?.launchFiles;
+      return !used || used.includes(name);
+    });
   }
 
   // アプリの終了時。claude は止めずに見るのをやめる（次に起動したアプリが引き継ぐ）。stop: claude も止める
@@ -2458,7 +2465,7 @@ export class SessionManager {
       this.store.update(id, { waiting: waiting.length > 0 ? waiting : null });
       if (stop) {
         rt.process?.kill();
-        this.settingsFiles?.release(id);
+        this.releaseLaunchFiles(id);
       } else {
         // 次のアプリが claude を引き継いだときに、送信中・順番待ちを戻せるよう残す（送った行は残さない。画像を含み、引き継ぐ claude には
         // 送り直さない）。再起動で送り直すのを待っているものは、引き継ぐ claude の順番待ちに無いので残さない
@@ -2507,9 +2514,9 @@ export class SessionManager {
   // 起動するときの権限モード。指定（新規セッションの画面・子の起動のモード・起動し直すときの今のモード）があればそれ。
   // 無ければ設定の defaultMode、それも無ければ auto（決めたこと。設計書 15 節）。止まっていたセッションを開き直すときも同じで、
   // 前回のモードは使わない（今のアプリの動きのまま）。bypassPermissions は引き継がない（起動し直しと同じ）
-  private startMode(record: SessionRecord, requested: PermissionMode | null, settings: PreparedSettings | null): PermissionMode {
+  private startMode(record: SessionRecord, requested: PermissionMode | null, settings: PreparedLaunch | null): PermissionMode {
     if (requested) return requested;
-    const configured = appMode(settingsDefaultMode(record.cwd, settings?.settingsFile ?? null, this.claudeDir));
+    const configured = appMode(settingsDefaultMode(record.cwd, settings?.registered ? settings.settingsFile : null, this.claudeDir));
     if (configured && configured !== 'bypassPermissions') return configured;
     return 'auto';
   }
@@ -2533,7 +2540,16 @@ export class SessionManager {
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!checklist, !!terminal && !terminal.child, !!instructions);
+    const registered = record.settingsFile;
+    const settings = adopted
+      ? null
+      : prepareLaunch(
+          this.launchFiles,
+          { browser, sessions, checklist, walkthrough, terminal, instructions, claudeDir: this.claudeDir, sessionId: id },
+          registered ? (flags) => this.composeSettings(registered, flags) : null,
+        );
+    // 使っているファイルを記録する（次のアプリが、引き継いだ claude の使っているもののほかを片付けるため）
+    if (settings) this.store.update(id, { launchFiles: [settings.settingsFile, ...(settings.mcpConfigFile ? [settings.mcpConfigFile] : [])].map((file) => basename(file)) });
     // 引き継ぐ claude は起動しないので、渡すモードは使わない（前のアプリが渡したモードのまま動いている）
     const permissionMode = adopted ? (record.knownMode ?? 'manual') : this.startMode(record, mode, settings);
 
@@ -2746,7 +2762,7 @@ export class SessionManager {
     runtime.promptLine = null;
     runtime.starterSeen = false;
     runtime.titleRequested = false;
-    runtime.settingsPath = settings?.settingsFile ?? null;
+    runtime.settingsPath = settings?.registered ? settings.settingsFile : null;
     runtime.caughtUp = !adopted;
     this.stopProgress(id, runtime);
     this.stopStartWatch(id, runtime);
@@ -2835,7 +2851,7 @@ export class SessionManager {
           runtime.process = null;
           runtime.stderr = stderr ?? '';
           runtime.ready = false;
-          this.settingsFiles?.release(id);
+          this.releaseLaunchFiles(id);
           this.questions.releaseAll(id);
           this.releaseRequests(id, runtime);
           rt.workflows.stopRunning();

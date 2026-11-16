@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { language, setLanguage } from '@shared/i18n';
 import type { McpServerDef } from '@shared/mcp-tools';
-import { callBridge, McpBridge, MCP_LANGUAGE_ENV, mcpArgs, mcpServerEntry, textResult, type BridgeHandler } from '../src/main/mcp-bridge';
+import { callBridge, McpBridge, MCP_LANGUAGE_ENV, mcpArgs, mcpConfig, mcpServerEntry, textResult, type BridgeHandler } from '../src/main/mcp-bridge';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
 
 // MCP サーバーの中継とアプリのやりとり（McpBridge・callBridge）と、中継の JSON-RPC（respond・runRelay）の、
@@ -266,8 +266,12 @@ describe('起動の引数', () => {
     }
   });
 
-  it('mcpArgs: サーバーが無ければ何も付けない', () => {
-    expect(mcpArgs([])).toEqual([]);
+  it('mcpArgs: サーバーが無ければ何も付けない。あれば、中身はファイルで渡す（無ければ断る）', () => {
+    expect(mcpArgs([], null)).toEqual([]);
+    expect(mcpConfig([])).toBeNull();
+    const entry = mcpServerEntry(def, { command: 'node', script: '/x/mcp.js', socketPath: '/x/mcp.sock', version: '1' }, {});
+    expect(mcpArgs([entry], '/run/s1.mcp.json')).toEqual(['--mcp-config', '/run/s1.mcp.json', '--allowedTools', entry.allowed.join(',')]);
+    expect(() => mcpArgs([entry], null)).toThrow();
   });
 });
 

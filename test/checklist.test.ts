@@ -24,6 +24,7 @@ import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { textResult, type ToolResult } from '../src/main/mcp-bridge';
 import type { NoticeHost } from '../src/main/session-notices';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // チェックリスト（人と Claude が一緒に見て、編集するリスト）。保存と書き換え・番号の読み方・MCP のツール・Claude への知らせ・
 // 別のセッションへのコピー・起動の引数・会話ログの見分け
@@ -465,8 +466,8 @@ describe('中継・起動の引数・画面からの値', () => {
 
   it('起動の引数に足し、ツールはすべて許可済みにする（アプリのデータだけを変え、ゴミ箱から戻せるため）', () => {
     const launch = { command: '/Apps/tanacode Helper', script: '/Apps/out/main/checklist-mcp.js', socketPath: '/u/checklist.sock', version: '1.0.0' };
-    const args = claudeArgs({ claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null, checklist: launch, sessionId: 's1' });
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
+    const args = launchArgs({ claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null, checklist: launch, sessionId: 's1' });
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-checklist'].env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist.sock', TANACODE_CHECKLIST_SESSION: 's1' });
     const allowed = args[args.indexOf('--allowedTools') + 1].split(',');
     expect(allowed).toEqual(allowedToolIds(CHECKLIST_MCP));

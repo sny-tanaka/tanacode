@@ -15,6 +15,7 @@ import {
   terminalGateEnv,
   terminalGateOutput,
 } from '../src/main/terminal-bridge';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // 人のターミナルの中継と、打つ前の確認のフック（terminal-bridge.ts・terminal-mcp.ts）。
 // - 起動の引数: 親には 3 つのツールと確認のフック、子には読むツールだけ（確認のフックも足さない）
@@ -38,24 +39,24 @@ const decision = (output: string) =>
 
 describe('起動の引数', () => {
   it('親には 3 つのツール（読む 2 つは許可済み）と、打つ前の確認のフックを足す', () => {
-    const args = claudeArgs({ ...base, terminal: launch, sessionId: 's1' });
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
+    const args = launchArgs({ ...base, terminal: launch, sessionId: 's1' });
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-terminal'].args).toEqual([launch.script]);
     expect(config.mcpServers['tanacode-terminal'].env).toMatchObject({ TANACODE_TERMINAL_SOCKET: '/u/terminal.sock', TANACODE_TERMINAL_SESSION: 's1' });
     expect(config.mcpServers['tanacode-terminal'].env.TANACODE_TERMINAL_CHILD).toBeUndefined();
     expect(args[args.indexOf('--allowedTools') + 1].split(',')).toEqual([terminalToolId('list_terminals'), terminalToolId('read_terminal')]);
     expect(allowedTerminalToolIds()).not.toContain(terminalToolId('type_in_terminal'));
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
+    const settings = fileArg(args, '--settings') as { hooks: { PreToolUse: Hook[] } };
     expect(settings.hooks.PreToolUse.filter((h) => h.matcher === `^${TERMINAL_GATED_TOOL}$`)).toEqual([
       { matcher: `^${terminalToolId('type_in_terminal')}$`, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] },
     ]);
   });
 
   it('子には読むツールだけを見せ、確認のフックも足さない', () => {
-    const args = claudeArgs({ ...base, terminal: { ...launch, child: true }, sessionId: 's2' });
-    const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
+    const args = launchArgs({ ...base, terminal: { ...launch, child: true }, sessionId: 's2' });
+    const config = fileArg(args, '--mcp-config') as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-terminal'].env.TANACODE_TERMINAL_CHILD).toBe('1');
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
+    const settings = fileArg(args, '--settings') as { hooks: { PreToolUse: Hook[] } };
     expect(settings.hooks.PreToolUse.some((h) => h.matcher === `^${TERMINAL_GATED_TOOL}$`)).toBe(false);
   });
 

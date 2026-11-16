@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 import { t } from '@shared/i18n';
@@ -12,9 +12,9 @@ import { ownSettings, userStatusLineCommand } from './statusline';
 
 type Settings = Record<string, unknown>;
 
-export type PreparedSettings = {
-  // アプリの設定と登録した設定ファイルを合わせたファイル（--settings に渡す）
-  settingsFile: string;
+export type ComposedSettings = {
+  // アプリの設定と登録した設定ファイルを合わせたもの（launch-files.ts がファイルに書いて --settings に渡す）
+  settings: Settings;
   // 設定ファイルの model。--model が設定の model を上書きするので、モデルを選んでいないときはこれを渡す
   model: string | null;
 };
@@ -97,11 +97,10 @@ export function defaultName(path: string): string {
 }
 
 export class SettingsFiles {
-  // runDir: 起動中のセッションが使う、合わせた設定のファイルを置く場所。onChanged: 登録が変わったとき（画面に新しい一覧を知らせる）。
+  // onChanged: 登録が変わったとき（画面に新しい一覧を知らせる）。
   // claudeDir: プロファイルの Claude Code の設定のフォルダ（登録した設定に statusLine が無いとき、ユーザー自身のものを探す。null は既定のプロファイル）
   constructor(
     private readonly store: Store,
-    private readonly runDir: string,
     private readonly onChanged: (files: SettingsFile[]) => void = () => {},
     private readonly claudeDir: string | null = null,
   ) {}
@@ -154,27 +153,16 @@ export class SettingsFiles {
     readSettings(this.find(id));
   }
 
-  // セッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。
-  // API キーが入っていることがあるので、引数（ps で見える）には載せず、自分だけが読めるファイルにして、パスだけを渡す
+  // セッションの起動前に、アプリの設定と登録した設定を合わせる。ファイルに書くのは launch-files.ts（API キーが入っていることがあるので、
+  // 引数（ps で見える）には載せず、自分だけが読めるファイルにして、パスだけを渡す）
   // browser: アプリ内ブラウザの MCP サーバーを足すか（JavaScript の実行の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（チェックリストを使い続けさせるフックを入れる）
   // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（打つ前の確認のフックを入れる）
   // instructions: TANACODE.md を渡すフックを入れるか
-  prepare(sessionId: string, id: string, browser = false, checklist = false, terminal = false, instructions = false): PreparedSettings {
+  compose(id: string, browser = false, checklist = false, terminal = false, instructions = false): ComposedSettings {
     const profile = readSettings(this.find(id));
-    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, this.claudeDir, checklist, terminal, instructions));
-    mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
-    chmodSync(this.runDir, 0o700);
-    const settingsFile = join(this.runDir, `${sessionId}.json`);
-    writeFileSync(settingsFile, JSON.stringify(merged), { mode: 0o600 });
-    // 前に書いたファイルがあると mode は効かないので、あらためて絞る
-    chmodSync(settingsFile, 0o600);
-    return { settingsFile, model: modelOf(profile) };
-  }
-
-  // セッションが終わったら、合わせたファイルを消す
-  release(sessionId: string): void {
-    rmSync(join(this.runDir, `${sessionId}.json`), { force: true });
+    const settings = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, this.claudeDir, checklist, terminal, instructions));
+    return { settings, model: modelOf(profile) };
   }
 
   private find(id: string): StoredSettingsFile {

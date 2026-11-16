@@ -1,6 +1,6 @@
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { language } from '@shared/i18n';
-import { MCP_LANGUAGE_ENV, mcpArgs, mcpServerEntry, type McpLaunch, type McpServerEntry } from './mcp-bridge';
+import { MCP_LANGUAGE_ENV, mcpServerEntry, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 
 // アプリ内ブラウザの中継（browser-mcp.ts。Claude Code が起動する MCP サーバー）に渡すもの。ソケットのやりとりは mcp-bridge.ts
 
@@ -39,7 +39,3 @@ export function browserMcpServer(launch: BrowserMcpLaunch, sessionId: string): M
   return mcpServerEntry(BROWSER_MCP, launch, { [BROWSER_SOCKET_ENV]: launch.socketPath, [BROWSER_SESSION_ENV]: sessionId });
 }
 
-// アプリ内ブラウザだけを足すときの --mcp-config と --allowedTools
-export function browserMcpArgs(launch: BrowserMcpLaunch, sessionId: string): string[] {
-  return mcpArgs([browserMcpServer(launch, sessionId)]);
-}

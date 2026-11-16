@@ -99,7 +99,6 @@ describe('起動', () => {
     const u = (name: string) => join(state.userData, name);
     expect(argsOf('SessionStore')).toEqual([u('sessions.json')]);
     expect(argsOf('StatusLineWatcher')[0]).toBe(u('statusline'));
-    expect(argsOf('SettingsFiles')[1]).toBe(u('session-settings'));
     expect(argsOf('ChecklistStore')[0]).toBe(u('checklists'));
     expect(argsOf('ScheduledMessages')[0]).toBe(u('scheduled-messages.json'));
     expect(argsOf('ScheduledMessages')[1]).toBe(manager());
@@ -418,7 +417,7 @@ describe('部品から画面への知らせ', () => {
     expect(the('OpenFileWatchers').rootsChanged).toHaveBeenCalledTimes(1);
     fnArg('OpenFileWatchers', 0)();
     expect(the('WorkspaceWatchers').roots).toHaveBeenCalledTimes(1);
-    fnArg('SettingsFiles', 2)([{ id: 'f1' }]);
+    fnArg('SettingsFiles', 1)([{ id: 'f1' }]);
     fnArg('ChecklistStore', 1)('s1', [{ id: 'l1' }]);
     fnArg('ScheduledMessages', 2)([{ id: 'm1' }]);
     // 予約が変わったら、親の再開の予約を待って預かっている子の知らせを見直させる

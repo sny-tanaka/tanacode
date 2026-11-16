@@ -238,18 +238,17 @@ const statusOf = (model: string, effort: string | null): StatusLineInfo => ({
 });
 
 describe('切り替えられないとき・切り替えた先が起動できないとき', () => {
-  // 登録した設定ファイルの作り物。broken なら確かめで、failPrepare 回めの準備で失敗する
+  // 登録した設定ファイルの作り物。broken なら確かめで、failPrepare 回めの合成で失敗する
   const settings = { broken: false, prepared: 0, failPrepare: 0 };
   const files = {
     check: () => {
       if (settings.broken) throw new Error('設定ファイルを読めません');
     },
-    prepare: (sessionId: string) => {
+    compose: () => {
       settings.prepared += 1;
       if (settings.prepared === settings.failPrepare) throw new Error('設定ファイルを書けません');
-      return { settingsFile: `/run/${sessionId}.json`, model: null };
+      return { settings: {}, model: null };
     },
-    release: () => {},
   } as unknown as SettingsFiles;
   beforeEach(() => {
     Object.assign(settings, { broken: false, prepared: 0, failPrepare: 0 });

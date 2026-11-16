@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PreparedSettings, SettingsFiles } from '../src/main/settings-files';
+import type { ComposedSettings, SettingsFiles } from '../src/main/settings-files';
+import type { SessionStore } from '../src/main/session-store';
+import { fileArg } from './helpers/launch';
 import { line, ScriptedApp, stream, type ScriptedOptions } from './helpers/scripted-claude';
 
 // 起動のしかた: 登録した設定ファイル（--settings・--model）と、アプリが足す MCP サーバー（--mcp-config）、プロファイルの設定のフォルダ（SessionManager）
@@ -11,7 +13,8 @@ let app: ScriptedApp;
 const start = (options: ScriptedOptions = {}) => (app = new ScriptedApp(options));
 afterEach(() => app.dispose());
 
-// 登録した設定ファイルの作り物。broken は読めない（check・prepare で失敗する）。呼ばれた順に控える
+// 登録した設定ファイルの作り物。broken は読めない（check・compose で失敗する）。呼ばれた順に控える。
+// 合わせたものには、どの設定ファイルかの印（registered）を入れる
 function fakeSettingsFiles(model: string | null = 'opus') {
   const calls: string[] = [];
   const files = {
@@ -19,17 +22,24 @@ function fakeSettingsFiles(model: string | null = 'opus') {
       calls.push(`check:${settingsId}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
     },
-    prepare(sessionId: string, settingsId: string, browser = false, checklist = false): PreparedSettings {
-      calls.push(`prepare:${settingsId}:${browser}:${checklist}`);
+    compose(settingsId: string, browser = false, checklist = false): ComposedSettings {
+      calls.push(`compose:${settingsId}:${browser}:${checklist}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
-      return { settingsFile: `/run/${sessionId}.json`, model };
-    },
-    release(sessionId: string) {
-      calls.push(`release:${sessionId}`);
+      return { settings: { registered: settingsId, ...(model ? { model } : {}) }, model };
     },
   };
   return { files: files as unknown as SettingsFiles, calls };
 }
+
+// アプリが --settings・--mcp-config のファイルを書く場所（userData/session-settings。launch-files.ts）
+// 名前は <セッション ID>.<中身の hash>.json（MCP は .mcp.json）
+const launchDir = () => join(app.userData, 'session-settings');
+const isLaunchFile = (path: string | null, id: string, suffix = '.json') =>
+  !!path && dirname(path) === launchDir() && new RegExp(`^${id}\\.[0-9a-f]{16}${suffix.replace('.', '\\.')}$`).test(basename(path));
+// そのセッションのファイルの名前（並べ替えたもの）
+const filesOf = (id: string) => (existsSync(launchDir()) ? readdirSync(launchDir()).filter((name) => name.startsWith(`${id}.`)).sort() : []);
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const NEW = { model: null, effort: null, settingsFile: null, mode: null, remoteControl: false, worktree: false };
 
@@ -38,8 +48,9 @@ describe('登録した設定ファイル', () => {
     const { files, calls } = fakeSettingsFiles();
     start({ settingsFiles: files });
     const { id, pipe } = app.create({ settingsFile: 'work' });
-    expect(calls).toEqual(['check:work', 'prepare:work:false:false']);
-    expect(pipe.arg('--settings')).toBe(`/run/${id}.json`);
+    expect(calls).toEqual(['check:work', 'compose:work:false:false']);
+    expect(isLaunchFile(pipe.arg('--settings'), id)).toBe(true);
+    expect(fileArg(pipe.request.args, '--settings')).toMatchObject({ registered: 'work' });
     expect(pipe.arg('--model')).toBe('opus');
     expect(app.manager.summary(id)?.settingsFile).toBe('work');
   });
@@ -58,11 +69,11 @@ describe('登録した設定ファイル', () => {
       ],
     }));
     const { id, pipe } = app.create({ settingsFile: 'work' });
-    merged = `/run/${id}.json`;
+    merged = pipe.arg('--settings')!;
     await app.waitFor('止める', () => pipe.requests('end_session').length === 1);
     expect(app.events(id).flatMap((e) => (e.type === 'info' ? [e.text] : []))).toEqual([
       expect.stringMatching(/^設定ファイルに読めない項目があります。[\s\S]*\/x\/settings\.json: model/),
-      expect.stringMatching(new RegExp(`^設定ファイルに読めない項目があるため、Claude Code を止めました。[\\s\\S]*/run/${id}\\.json: permissions\\.allow`)),
+      expect.stringMatching(new RegExp(`^設定ファイルに読めない項目があるため、Claude Code を止めました。[\\s\\S]*${escapeRegExp(merged)}: permissions\\.allow`)),
     ]);
     expect(app.events(id).some((e) => e.type === 'ready')).toBe(false);
   });
@@ -90,12 +101,14 @@ describe('登録した設定ファイル', () => {
     // 設定ファイルにモデルが無ければ、既定のモデル
     expect(app.pipe(id).arg('--model')).toBe('default');
     expect(app.pipe(id).arg('--effort')).toBeNull();
-    expect(app.pipe(id).arg('--settings')).toBe(`/run/${id}.json`);
+    expect(fileArg(app.pipe(id).request.args, '--settings')).toMatchObject({ registered: 'work' });
     calls.length = 0;
     await app.manager.configure(id, { model: null, effort: null, settingsFile: null });
-    // 止まった claude の分と、標準に戻した分
-    expect(calls).toEqual([`release:${id}`, `release:${id}`]);
-    expect(app.pipe(id).arg('--settings')).not.toBe(`/run/${id}.json`);
+    // 標準に戻すと、アプリの設定だけのファイルで起動し直す
+    expect(calls).toEqual([]);
+    expect(isLaunchFile(app.pipe(id).arg('--settings'), id)).toBe(true);
+    expect(fileArg(app.pipe(id).request.args, '--settings')).not.toHaveProperty('registered');
+    expect(fileArg(app.pipe(id).request.args, '--settings')).toHaveProperty('statusLine');
   });
 
   it('configure: 使えない設定ファイルには変えない（記録も、動いている claude もそのまま）', async () => {
@@ -145,7 +158,7 @@ describe('登録した設定ファイル', () => {
     pipe.exitOnEnd = false;
     const restarting = app.manager.restart(id);
     await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
-    files.prepare = () => {
+    files.compose = () => {
       throw new Error('設定ファイルを読めません: work');
     };
     pipe.exit(0);
@@ -154,30 +167,143 @@ describe('登録した設定ファイル', () => {
     expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(true);
   });
 
-  it('claude が終わった・アーカイブした・アプリを終えて claude も止めたときは、合わせた設定のファイルを片付ける', async () => {
-    const { files, calls } = fakeSettingsFiles();
-    start({ settingsFiles: files });
+});
+
+describe('--settings・--mcp-config のファイル', () => {
+  const launch = (name: string, version = '1.0.0') => ({ command: '/Apps/tanacode Helper', script: `/Apps/out/main/${name}.js`, socketPath: `/u/${name}.sock`, version });
+
+  it('中身を引数に載せず、自分だけが読み書きできるファイルに書いてパスを渡す（pkill -f などの引数の文字での指定に当たらないように）', () => {
+    start({ sessionsMcp: () => launch('sessions-mcp'), checklistMcp: () => launch('checklist-mcp') });
+    const { id, pipe } = app.create();
+    const args = pipe.request.args;
+    expect(isLaunchFile(pipe.arg('--settings'), id)).toBe(true);
+    expect(isLaunchFile(pipe.arg('--mcp-config'), id, '.mcp.json')).toBe(true);
+    // 設定の中身（worktree の見張りのフックの awk のプログラムなど）と、MCP の中身（中継のソケットのパス）は、どの引数にも入らない
+    expect(JSON.stringify(fileArg(args, '--settings'))).toContain('pushd');
+    expect(args.filter((a) => a.includes('pushd') || a.includes('"hooks"') || a.includes('/u/sessions-mcp.sock'))).toEqual([]);
+    expect(fileArg(args, '--mcp-config').mcpServers['tanacode-sessions'].env.TANACODE_SESSIONS_SOCKET).toBe('/u/sessions-mcp.sock');
+    // 自分だけ
+    expect(statSync(launchDir()).mode & 0o777).toBe(0o700);
+    expect(statSync(pipe.arg('--settings')!).mode & 0o777).toBe(0o600);
+    expect(statSync(pipe.arg('--mcp-config')!).mode & 0o777).toBe(0o600);
+  });
+
+  it('起動のたびに今の中身から書く。中身が変われば（アプリの更新など）、起動し直した claude（--resume）に新しい中身が渡る', async () => {
+    let version = '1.0.0';
+    start({ checklistMcp: () => launch('checklist-mcp', version) });
+    const { id, pipe } = app.create();
+    // 会話があるので、起動し直すと --resume で続ける
+    const transcript = app.transcript(id);
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, `${JSON.stringify({ ...line.user('はじめ'), sessionId: pipe.arg('--session-id'), cwd: app.cwd })}\n`);
+    await app.ready(id);
+    const mcpOf = (args: string[]) => fileArg(args, '--mcp-config').mcpServers['tanacode-checklist'].env.TANACODE_VERSION;
+    expect(mcpOf(pipe.request.args)).toBe('1.0.0');
+    // 中身が同じなら、同じファイル（書き直さない）
+    await app.manager.restart(id);
+    const same = app.pipe(id);
+    expect(same.arg('--resume')).toBe(app.claudeId(id));
+    expect(same.arg('--mcp-config')).toBe(pipe.arg('--mcp-config'));
+    await app.ready(id);
+    // 更新したアプリの中身
+    version = '2.0.0';
+    await app.manager.restart(id);
+    const next = app.pipe(id);
+    expect(next.arg('--resume')).toBe(app.claudeId(id));
+    expect(next.arg('--mcp-config')).not.toBe(pipe.arg('--mcp-config'));
+    expect(mcpOf(next.request.args)).toBe('2.0.0');
+    // 前の起動のファイルは、その claude が終わったときに消えている
+    expect(filesOf(id)).toEqual([basename(next.arg('--mcp-config')!), basename(next.arg('--settings')!)].sort());
+  });
+
+  it('動いている claude が使っているファイルは、中身が変わったあとの起動で書き換えない（新しい起動は別のファイル）', async () => {
+    let version = '1.0.0';
+    start({ checklistMcp: () => launch('checklist-mcp', version) });
+    const a = app.create();
+    await app.ready(a.id);
+    const used = a.pipe.arg('--mcp-config')!;
+    const before = readFileSync(used, 'utf8');
+    const writtenAt = statSync(used).mtimeMs;
+    // 中身が変わった（アプリの更新など）あとに、ほかのセッションを起動しても、動いている claude のファイルはそのまま
+    version = '2.0.0';
+    const b = app.create();
+    expect(fileArg(b.pipe.request.args, '--mcp-config').mcpServers['tanacode-checklist'].env.TANACODE_VERSION).toBe('2.0.0');
+    expect(readFileSync(used, 'utf8')).toBe(before);
+    expect(statSync(used).mtimeMs).toBe(writtenAt);
+    // そのセッションを起動し直すと、新しい中身の別のファイルで起動し、前のファイルは前の claude が終わったときに消える
+    await app.manager.restart(a.id);
+    const next = app.pipe(a.id);
+    expect(next.arg('--mcp-config')).not.toBe(used);
+    expect(fileArg(next.request.args, '--mcp-config').mcpServers['tanacode-checklist'].env.TANACODE_VERSION).toBe('2.0.0');
+    expect(existsSync(used)).toBe(false);
+  });
+
+  it('足す MCP サーバーが無くなったら、--mcp-config を付けない（前の起動の MCP のファイルは、その claude が終わったときに消えている）', async () => {
+    let checklist = true;
+    start({ checklistMcp: () => (checklist ? launch('checklist-mcp') : null) });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    expect(isLaunchFile(pipe.arg('--mcp-config'), id, '.mcp.json')).toBe(true);
+    checklist = false;
+    await app.manager.restart(id);
+    expect(app.pipe(id).request.args).not.toContain('--mcp-config');
+    expect(filesOf(id)).toEqual([basename(app.pipe(id).arg('--settings')!)]);
+  });
+
+  it('claude が終わった・アーカイブした・アプリを終えて claude も止めたときは消す', async () => {
+    const { files } = fakeSettingsFiles();
+    start({ settingsFiles: files, checklistMcp: () => launch('checklist-mcp') });
     const a = app.create({ settingsFile: 'work' });
-    const b = app.create({ settingsFile: 'work' });
-    const c = app.create({ settingsFile: 'work' });
-    calls.length = 0;
+    const b = app.create();
+    const c = app.create();
+    for (const id of [a.id, b.id, c.id]) expect(filesOf(id)).toHaveLength(2);
     a.pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(a.id) === 'exited');
-    expect(calls).toEqual([`release:${a.id}`]);
+    expect(filesOf(a.id)).toEqual([]);
     await app.manager.archive(b.id);
-    expect(calls).toEqual([`release:${a.id}`, `release:${b.id}`]);
-    calls.length = 0;
+    expect(filesOf(b.id)).toEqual([]);
     app.manager.closeAll(true);
-    // 起動したことのあるセッションは、どれも片付ける（アーカイブしたものは片付け済み）
-    expect(calls.sort()).toEqual([`release:${a.id}`, `release:${c.id}`].sort());
+    expect(filesOf(c.id)).toEqual([]);
     expect(c.pipe.kills).toEqual(['SIGTERM']);
+  });
+
+  it('起動と終了・起動し直しを何回くり返しても、ファイルは増え続けない（同じ中身なら同じファイル。終わったら消す）', async () => {
+    start({ checklistMcp: () => launch('checklist-mcp') });
+    const { id } = app.create();
+    await app.ready(id);
+    const counts: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      await app.manager.restart(id);
+      await app.ready(id);
+      counts.push(readdirSync(launchDir()).length);
+    }
+    for (let i = 0; i < 5; i++) {
+      app.pipe(id).exit(0);
+      await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+      counts.push(readdirSync(launchDir()).length);
+      await app.manager.open(id);
+      await app.ready(id);
+      counts.push(readdirSync(launchDir()).length);
+    }
+    // 動いている間は 2 つ（--settings と --mcp-config）、終わっている間は 0
+    expect(counts).toEqual([2, 2, 2, 2, 2, ...Array.from({ length: 5 }, () => [0, 2]).flat()]);
+    // 使っているファイルを、セッションの記録に残す（次のアプリが、引き継いだ claude の使っているもののほかを片付けるため）
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    expect([...(store.get(id)?.launchFiles ?? [])].sort()).toEqual(filesOf(id));
+  });
+
+  it('claude を動かしたまま終えるときは、ファイルを残す（次のアプリが引き継ぐ claude が使う）', () => {
+    start();
+    const { id, pipe } = app.create();
+    app.manager.closeAll(false);
+    expect(filesOf(id)).toEqual([basename(pipe.arg('--settings')!)]);
+    expect(readFileSync(pipe.arg('--settings')!, 'utf8')).toContain('statusLine');
   });
 });
 
 describe('アプリが足す MCP サーバー', () => {
   const launch = (name: string) => ({ command: '/Apps/tanacode Helper', script: `/Apps/out/main/${name}.js`, socketPath: `/u/${name}.sock`, version: '1.0.0' });
-  const mcpOf = (args: string[]) =>
-    JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
+  const mcpOf = (args: string[]) => fileArg<{ mcpServers: Record<string, { args: string[]; env: Record<string, string> }> }>(args, '--mcp-config');
 
   it('アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーを 1 つの --mcp-config で足し、設定ファイルにブラウザ・チェックリストのフックを入れる（セッションの確認は、ツールごとの許可のフックで、いつも入る）', () => {
     const { files, calls } = fakeSettingsFiles();
@@ -189,7 +315,7 @@ describe('アプリが足す MCP サーバー', () => {
       walkthroughMcp: () => launch('walkthrough-mcp'),
     });
     const { id, pipe } = app.create({ settingsFile: 'work' });
-    expect(calls).toContain('prepare:work:true:true');
+    expect(calls).toContain('compose:work:true:true');
     // 最適化圧縮が、このセッションで使えるかを見る
     expect(app.manager.hasChecklistMcp(id)).toBe(true);
     expect(app.manager.hasChecklistMcp('nope')).toBeNull();

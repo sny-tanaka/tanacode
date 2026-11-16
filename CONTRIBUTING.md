@@ -588,10 +588,18 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - bypassPermissions は、起動し直すとき（切り替えも）に引き継ぎません（`relaunchMode`）。子は、起動したときのモード（`launchMode`）より強くしません。
 - 環境変数は `childEnv`（親の Claude Code がそのセッションのために付ける変数と `TANACODE_*` を消し、プロファイルの `CLAUDE_CONFIG_DIR` を足す）。TUI だけ `TERM`・`COLORTERM` を付け、チャットだけ `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`（`rewind_files` に要る）と `CLAUDE_CODE_CLASSIFIER_SUMMARY=0` を足します（`claudeEnv`）。
   - `CLAUDE_CODE_CLASSIFIER_SUMMARY=0`: Remote Control でつないでいると、Claude Code はターンの途中と終わりに、スマホ・claude.ai のセッションの一覧に出す要約（`system/task_summary`・`system/post_turn_summary`）を作ります。モデルで作るとき、`-p` ではターンの終わりの要約を作り終えるまで Stop フックと `result` を出さず、チャットの作業中が 1 回 1.5〜5.5 秒延びました（チェックリストのフックがターンの終わりを止めると、止めるたびに作り直す。2.1.302 で実測。TUI では裏で作るので待たない）。`0` にすると、モデルを呼ばずに応答の文などから作ります（決めたこと。一覧の一言は簡素になる）。確かめは `test/cli/turn-summary.test.ts`。
-- 設定ファイル（登録した Claude Code の設定ファイル。セッションごとに選ぶ。`SessionRecord.settingsFile` に登録の ID を持つ）を選んだセッションは、`--settings` にアプリの設定と登録した設定を合わせたファイルを渡します（`settings-files.ts`）。
+- `--settings`（アプリの設定）と `--mcp-config`（アプリが足す MCP サーバー）は、中身を引数に載せず、起動の前にファイルに書いてパスだけを渡します（`claude-session.ts` の `prepareLaunch`・`launch-files.ts`）。
+  - 引数は `ps` で誰からも見え、`pkill -f` のような「引数のどこかに含む文字」での指定にも当たります。前は設定の JSON をそのまま渡していて、その中のフックのプログラム（`worktree-guard.ts` の awk）にある `pushd` が、Claude が自分の裏の処理を止めるつもりで実行した `pkill -f p.sh`（`.` は任意の 1 文字）に当たり、アプリの Claude Code がすべて止まりました。引数を短いパスとオプションだけにして、こうした指定に当たりにくくします。確かめは `test/claude-args-pkill.test.ts`（アプリと同じ引数の stub が `pgrep -f p.sh`・`pgrep -f pushd` に当たらない）。
+  - 置き場所は `userData/session-settings/<セッション ID>.<中身の hash>.json` と `<セッション ID>.<中身の hash>.mcp.json`（`0600`、フォルダは `0700`。中継のソケットのパスや、登録した設定の API キーが入るため）。セッションごとに分けます（MCP の `env` にセッション ID が入り、足すフックもサーバーの有無で変わるため）。
+  - 起動のたびに（`--resume` で起動し直すときも）、今のアプリの中身から作ります。アプリを更新したあとに起動・起動し直した Claude Code には、新しい中身が渡ります。
+  - 動いている Claude Code が使っているファイルは書き換えません。中身が変われば名前（hash）も変わるので、新しい起動は別のファイルを使います。同じ名前があれば中身も同じなので、書かずにそのまま使います。更新の前から動いていて、次のアプリが引き継ぐ Claude Code に、新しいアプリにしか無いスクリプトの場所などが途中から混ざらないようにするためです。Claude Code 2.1.323 で実測すると、`--settings` に渡したファイルは書き換えても読み直しませんでした（`get_settings` の `effective`。同じときに書き換えたプロジェクトの `.claude/settings.local.json` は 1.5 秒以内に読み直した）。先のバージョンで読み直すようになっても困らないよう、書き換えない形にしています。
+  - Claude Code が終わった・アーカイブした・アプリが Claude Code ごと終了したときに、そのセッションのものをすべて消します。アプリだけ終了して Claude Code を動かしたままにするときは残します（次のアプリが引き継ぐ Claude Code が使うため）。アプリの起動時にも、引き継いだあと（`adopt`）に、動いている Claude Code が使っているもののほかを消します（アプリが落ちている間に終わった Claude Code のもの・片付けの途中で止まって残ったもの・書きかけの `.tmp`・前のバージョンの名前のものなど。`LaunchFiles.sweep`）。使っているファイルの名前は、セッションの記録（`SessionRecord.launchFiles`）に起動のときに残し、終わったら消します。記録の無い Claude Code（前のバージョンのアプリが起動したもの）は、そのセッションのものをすべて残します（終わったら消える）。
+  - 片付けは、置き場所のフォルダを見て消すので、どの時点で落ちても、次の起動でまとめて片付きます。同じ中身なら同じファイルを使うので、起動・終了・起動し直しを何回くり返しても、ファイルは動いている Claude Code の分（1 つにつき `--settings` と `--mcp-config` の 2 つまで）しか残りません。
+- 設定ファイル（登録した Claude Code の設定ファイル。セッションごとに選ぶ。`SessionRecord.settingsFile` に登録の ID を持つ）を選んだセッションは、`--settings` にアプリの設定と登録した設定を合わせたものを渡します（`settings-files.ts` の `compose`。書くのは上と同じ `prepareLaunch`）。
   - Claude Code は `--settings` を 2 回渡しても合わせず、最後の 1 つしか使いません（実測）。そのため、登録した設定ファイルを 2 つ目として足さず、アプリが合わせます。`hooks` と `claudeMdExcludes` は両方を残し、`statusLine` はアプリのもの（登録した設定の statusLine は、そのコマンドを `tee` の先で動かして包む）、`env`・`model` などは登録した設定のままにします。
   - 登録するのは名前とパス（`userData/settings.json` の `settingsFiles`。`AppSettings`）だけで、ファイルの中身は預かりません。名前を変えても、セッションが指す先（ID）は変わりません。読めないファイル（無い・JSON でない）は登録できません。
-  - 合わせたファイルは `userData/session-settings/<セッション ID>.json`（`0600`、フォルダは `0700`）。登録した設定の `env` に API キーが入るので、引数（`ps` に見える）や pty ホストへの要求には載せず、パスだけを渡します。起動のたびに書き直し、Claude Code が終わった・アーカイブした・標準に戻した・アプリが Claude Code ごと終了したときに消します（アプリだけ終了して引き継ぐときは残します）。
+  - 合わせたものも、上と同じ `userData/session-settings` に書きます。登録した設定の `env` に API キーが入るので、引数（`ps` に見える）や pty ホストへの要求には載せず、パスだけを渡します。標準に戻したら、アプリの設定だけのファイルで起動し直します。
+  - Claude Code が設定の読めない項目を知らせたとき（`get_settings` の `errors`）に止めるのは、登録した設定を合わせたファイルのときだけです（`Runtime.settingsPath`）。アプリの設定だけのファイルなら、ほかのファイルと同じく知らせて続けます。
   - `--model` は設定ファイルの `model` を上書きするので（実測）、モデルを選んでいないときは登録した設定の `model` を `--model` に渡します。設定ファイルを変えたら、モデルとエフォートは `null` に戻します（設定によって使えるモデルが違うため）。
   - 登録が外れている・ファイルが無い・読めないときは、記録を作る前・起動し直す前・動いている Claude Code を止める前に断ります。標準の設定に黙って切り替えると、意図しない契約で動いてしまうためです。登録を外すのは、使っているセッションがあっても止めません（次に起動するときに断られる）。
   - `-p` は、形の違う設定ファイル（壊れた JSON・型の違う値・形の不正な hooks）を、ファイルごと黙って無視します（標準出力にも標準エラーにも何も出ない。実測）。同じ理由で黙って切り替えないよう、起動の直後に `get_settings` を送り、`errors` があれば、理由をチャットに出して Claude Code を止めます。
@@ -647,8 +655,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - モデル別の週の枠: `rate_limit_event` に無いので、ターンの終わり（`result`）に `get_usage` で聞きます（`refreshUsage`。サーバーに聞くので、プロファイル（`SessionManager`）ごとに 5 分に 1 回まで。使わない `behaviors` のために手元の会話ログを集計させないよう、`skip_behaviors: true` を付けます）。出す枠は Claude Code の `/usage` に合わせます（`usageLimitsOf`。2.1.302）: 返事の `model_scoped`（サーバーの一覧）と、プランが max・team か分からない（`subscription_type` が null）ときだけ `seven_day_sonnet`（一覧に同じ名前があれば一覧の方）。`seven_day_opus` は読みません。Claude Code は一覧を作れたときだけ `model_scoped` を付けるので、無いのは「分からない」、空の配列は「この人には無い」です（`UsageReport.modelsKnown`）。`UsageMonitor` は、モデルの一覧を持つ知らせ（`model_scoped` のある `get_usage`・Claude Code の控えの `weekly_scoped`）ではモデル別の枠を置き換え、持たない知らせ（statusLine・`rate_limit_event`・`model_scoped` の無い `get_usage`）では届かなかったモデルの枠を前の値から残します（リセットの時刻を過ぎたものと、得てから 7 日を超えたものは残さない。`KEEP_MODEL_MS`。Claude Code が `/usage` に出すモデルの許可リストから外した行を、一覧の無い返事が続く間、残し続けないため）。Claude Code の控えのモデル別の行は許可リストを通していないので、直前の `get_usage` のモデルの一覧に出た名前に絞ります。一覧が分からない間（まだ聞いていない・直前の返事に一覧が無かった）は、控えのモデル別の行を使わず、前の値のモデル別の枠を期限まで残します（一覧の無い返事は、許可リストから外れたモデルの行をサーバーが返し続けるときにも来るので、その前の一覧で絞ると、外れたモデルの枠が控えから戻ってしまう）。残した枠には、その値を得た時刻（`UsageLimit.updatedAt`）を持たせ、新しく見せません。チャットの statusLine は、費用やコンテキストの量が変わったときにも前の利用枠を送り直すので、利用枠を受け取った時刻（`StatusLineInfo.rateLimitsAt`）を添え、`UsageMonitor` はその時刻で新旧を比べます
     - 権限モード: initialize の返事の `current_permission_mode`・`system/init` と `system/status` の `permissionMode`・`set_permission_mode` の返事・会話ログの発言の行の `permissionMode`。知らない名前（`dontAsk` など）は manual。
 - アプリ内ブラウザを Claude に操作させる設定・ほかのセッションを扱わせる設定・チェックリストとウォークスルーとターミナルの設定がオンなら、`--mcp-config` でそれぞれの MCP サーバー（中継）を、`--allowedTools` で許可済みにするツール（読むだけのもの・アプリ内ブラウザの `ask_user_to_act`・チェックリストのすべて・ウォークスルーの PR への投稿のほかのすべて）の許可を足します（下の「アプリ内ブラウザ（Claude による操作）」「セッション間の連携（Claude による操作）」「チェックリスト」「ウォークスルー」「ターミナル」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
-  - 2 つのサーバーを足すときも、`--mcp-config` と `--allowedTools` は 1 回ずつにまとめて渡します（`mcpArgs`）。2 回渡したときの扱いが決まっていないためです。
-- アプリが起動する Claude Code にだけ、`--settings` で statusLine と hooks を足します。チャットとターミナルモードで同じ中身にします（`statusline.ts` の `ownSettings`）。
+  - 2 つのサーバーを足すときも、`--mcp-config` と `--allowedTools` は 1 回ずつにまとめて渡します（`mcpArgs`）。2 回渡したときの扱いが決まっていないためです。`--mcp-config` の中身はファイルで渡します（上の `prepareLaunch`。中身は `mcpConfig`、足すサーバーは `claude-session.ts` の `mcpServers` で、`--allowedTools` も同じものから作ります）。
+- アプリが起動する Claude Code にだけ、`--settings` で statusLine と hooks を足します。チャットとターミナルモードで同じ中身にします（`statusline.ts` の `ownSettings`）。中身はファイルで渡します（上の `prepareLaunch`）。
   - statusLine: Claude Code は応答のたびに JSON を渡してきます。中身はモデル・エフォート・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。statusLine は TUI でしか動かない（`-p` では動かない）ので、使うのはターミナルモードの間だけです。
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。チャットの間は、ユーザーの statusLine も動きません（決めたこと）。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
 - チェックリストを Claude に扱わせるときは、`--settings` に、今のチェックリストを Claude に渡すフック（`UserPromptSubmit`・`Stop`・`SessionStart`）も足します（下の「チェックリスト」）。どれも `-p` で動きます（2.1.301 で実測）。
@@ -1930,7 +1938,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値（statusLine が動く、ターミナルモードの間に書かれる） |
 | `statusline/<id>.permission.json`・`<id>.notification.json`・`<id>.idle.json` | 書くだけのフックが書く、許可の確認の直前のツールの名前と入力・Claude Code の知らせ・ターンの終わり（ターミナルモードの間に使う） |
 | `statusline/<id>.auto-compact.json`・`<id>.auto-compact.hit.json` | 自動の最適化圧縮で、ターンの途中で止めるためのファイル（アプリが書く）と、フックが止めた印（フックが名前を変える）。ターンが終わったら消す |
-| `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
+| `session-settings/<id>.<hash>.json`・`<id>.<hash>.mcp.json` | 起動する Claude Code に `--settings`・`--mcp-config` で渡す、アプリの設定（設定ファイルを選んだセッションは、登録した設定と合わせたもの）と MCP サーバー（`0600`。API キーや中継のソケットのパスを含むことがある。Claude Code が終わると消す） |
 | `stream-logs/<id>.log`・`<id>.log.1` | チャットの claude との stream-json の送受信の控え（不具合を調べるため。発言・ツールの入出力がそのまま入る。`0600`。4MB を超えたら `.1` に回す。セッションを一覧から削除すると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `claude-compat.json` | 最後に読めた、Claude Code の対応表（`compat.json`）と、読んだアプリのバージョン（アプリを入れ替えたあとは使わない） |
@@ -2009,6 +2017,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `split-lines.ts`: ソケットに 1 行ずつ書いた JSON を、届いた断片から行に分ける（`splitLines`。pty ホストとアプリ・中継とアプリの両側で使う。改行は新しく届いた断片の中だけを探し、長い行も行の長さに比例する時間で読む）。別々のビルドの入口から読むので、ほかのものを読み込まない
   - `pending-questions.ts`: 答えを待っている質問（セッションごと。返事・1 問ずつの答え・待つのをやめる）
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
+  - `launch-files.ts`: 起動する Claude Code の `--settings`・`--mcp-config` に渡すファイル（`userData/session-settings`。書く・消す・引き継いだあとの片付け）
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts` / `pipe-backlog.ts`: Claude Code を持っておく常駐プロセス（ターミナルモードの claude は pty、チャットの claude はパイプ。パイプの出力の行の控えは `PipeBacklog`）と、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`・`PipeHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
@@ -2091,7 +2100,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき・押して確かめたときの返事）
   - `homebrew-update.test.ts`: Homebrew での更新（brew の返事の読み取り・Homebrew で入れたかの判定・ダウンロードとやり直し・入れ替えのシェル・シェルを起動できないときは入れ替えずに起動し直す（`upgradeOrRelaunch`）。シェルは本物の sh で、作り物の brew を動かす）
   - `app-restart.test.ts`: Claude が頼む tanacode の再起動（入れ替えるか・`only_if_update`・終了の途中で断る・結果を返してから終える・理由と知らせの文）
-  - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
+  - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、起動引数）
+  - `launch-files.test.ts`: `--settings`・`--mcp-config` に渡すファイル（権限・中身の hash の名前・動いているものを書き換えない・後始末・引き継いだあとの片付け）
+  - `claude-args-pkill.test.ts`: アプリと同じ引数で起動した stub が、`pgrep -f p.sh`・`pgrep -f pushd`（`pkill -f` と同じ当て方）に当たらないこと（本物のプロセスと `pgrep` で）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの（awk で確かめられない形も）・出させないもの。確かめの入り口をビルドして、フックのシェルから動かすものも）
   - `worktree-guard-check.test.ts`: 歯止めの確かめ（コマンドの読み方・許す形でないもの・消すブランチと worktree に失うものが無いか。本物の git で）

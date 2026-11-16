@@ -18,7 +18,7 @@ import {
 import { setLanguage, t } from '../src/shared/i18n';
 import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
-import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
+import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, type BrowserMcpLaunch } from '../src/main/browser-bridge';
 import { McpBridge as BrowserBridge, callBridge as rawCallBridge, textResult, type BridgeRequest } from '../src/main/mcp-bridge';
 import { BROWSER_GATE_COMMAND, gateOutput, leaveGateOutput, navigateGateOutput, readAnswer, readGateInput, readLeaveAnswer, readNavigateAnswer, runGate } from '../src/main/browser-gate';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
@@ -26,6 +26,7 @@ import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
 import { ownSettings } from '../src/main/statusline';
 import { permissionFile, TOOL_PERMISSIONS_DIR_ENV } from '../src/main/tool-permissions';
+import { fileArg, launchArgs } from './helpers/launch';
 
 // アプリ内ブラウザの MCP。中継（MCP の JSON-RPC）・アプリとのソケット・Claude に許す先・起動の引数
 
@@ -382,16 +383,15 @@ describe('起動の引数', () => {
   const base = { claudeSessionId: 'c1', resume: true, remoteControlName: null, model: null, effort: null, permissionMode: null };
 
   it('--mcp-config に中継を、--allowedTools に読むだけのツールを渡す。セッションは中継の env で', () => {
-    const args = browserMcpArgs(launch, 's1');
-    expect(args[0]).toBe('--mcp-config');
-    const config = JSON.parse(args[1]) as { mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> };
+    const args = launchArgs({ ...base, browser: launch, sessionId: 's1' });
+    const config = fileArg<{ mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }>(args, '--mcp-config');
     expect(config.mcpServers['tanacode-browser']).toEqual({
       type: 'stdio',
       command: launch.command,
       args: [launch.script],
       env: { ELECTRON_RUN_AS_NODE: '1', TANACODE_BROWSER_SOCKET: launch.socketPath, TANACODE_BROWSER_SESSION: 's1', TANACODE_VERSION: '1.0.0', TANACODE_LANGUAGE: 'ja' },
     });
-    expect(args.slice(2)).toEqual(['--allowedTools', allowedBrowserToolIds().join(',')]);
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe(allowedBrowserToolIds().join(','));
     expect(allowedBrowserToolIds()).toContain(browserToolId('screenshot'));
     // ユーザーに操作を頼むのは、読むだけのツールと同じく許可済み
     expect(allowedBrowserToolIds()).toContain(browserToolId(BROWSER_ASK_TOOL));
@@ -403,10 +403,10 @@ describe('起動の引数', () => {
   const gateHooks = (settings: { hooks?: { PreToolUse?: Hook[] } }) => (settings.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => x.command === BROWSER_GATE_COMMAND));
 
   it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行・ファイルの添付と開く先の確認を決める', () => {
-    const args = claudeArgs({ ...base, browser: launch, sessionId: 's1' });
+    const args = launchArgs({ ...base, browser: launch, sessionId: 's1' });
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
+    const settings = fileArg(args, '--settings') as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
     expect(gateHooks(settings)).toEqual([
       { matcher: `^(${browserToolId('navigate')}|${browserToolId('handle_dialog')}|${browserToolId('evaluate')}|${browserToolId('upload_file')})$`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] },
     ]);
@@ -414,10 +414,10 @@ describe('起動の引数', () => {
     expect(settings).not.toHaveProperty('permissions');
     expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('handle_dialog'), browserToolId('evaluate'), browserToolId('upload_file')]);
     // オフなら足さない
-    const off = claudeArgs(base);
+    const off = launchArgs(base);
     expect(off).not.toContain('--mcp-config');
     expect(off).not.toContain('--allowedTools');
-    expect(gateHooks(JSON.parse(off[off.indexOf('--settings') + 1]) as { hooks?: { PreToolUse?: Hook[] } })).toEqual([]);
+    expect(gateHooks(fileArg(off, '--settings') as { hooks?: { PreToolUse?: Hook[] } })).toEqual([]);
   });
 
   it('フックは、起動する Claude Code の環境の変数（中継のコマンド・入口・ソケット・セッション・確認の理由の言語）で中継の入口を --gate 付きで動かす', () => {

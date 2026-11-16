@@ -19,6 +19,7 @@ import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
 export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 
 // アプリが起動する Claude Code にだけ渡す設定（--settings。ユーザーの設定ファイルは書き換えない。フックはユーザーのものと一緒に動く）。
+// 引数には載せず、launch-files.ts がファイルに書いてパスを渡す（引数の文字に当たる pkill -f などで止められないように）。
 // チャット（stream-json）とターミナルモード（TUI）で同じ中身にする（設計書 4 節）。
 // statusLine: 上のとおり。TUI の間だけ動く（stream-json では動かない。害は無い）。--settings の statusLine はプロジェクトの設定のものより
 // 優先されるので、プロジェクトの statusLine はこのセッションでは動かない。
@@ -48,8 +49,8 @@ export function sessionSettings(
   checklist = false,
   terminal = false,
   instructions = false,
-): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, claudeDir, checklist, terminal, instructions));
+): Record<string, unknown> {
+  return ownSettings(userStatusLineCommand(claudeDir), browser, claudeDir, checklist, terminal, instructions);
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
