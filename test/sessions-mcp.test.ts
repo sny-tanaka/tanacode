@@ -463,6 +463,14 @@ class FakeHost implements SessionsHost {
     if (this.removal instanceof Error) throw this.removal;
     return this.removal;
   };
+  // restore_session: アーカイブから戻した子。本物（SessionManager.unarchive）と同じく、戻すだけで起動しない（状態の変化も知らせない）
+  unarchived: string[] = [];
+  unarchive(id: string): void {
+    this.unarchived.push(id);
+    const session = this.sessions.find((s) => s.id === id);
+    if (session) session.archived = false;
+    this.states.set(id, 'exited');
+  }
 }
 
 const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
@@ -1399,7 +1407,7 @@ describe('ツールの実行（SessionsControl）', () => {
         ['question', 'answer_question'],
         ['permission', 'answer_permission'],
         ['terminal', 'switch it back to the chat'],
-        ['archived', t('sessions.sidebar.unarchive')],
+        ['archived', 'restore_session'],
       ];
       for (const [state, hint] of cases) {
         host.set(SIBLING, state);
@@ -1512,7 +1520,7 @@ describe('ツールの実行（SessionsControl）', () => {
           ['question', 'answer_question'],
           ['permission', 'answer_permission'],
           ['terminal', 'switch it back to the chat'],
-          ['archived', t('sessions.sidebar.unarchive')],
+          ['archived', 'restore_session'],
         ];
         for (const [state, hint] of cases) {
           host.set(SIBLING, state);
@@ -1670,6 +1678,78 @@ describe('ツールの実行（SessionsControl）', () => {
     host.set(CHILD, 'idle');
     expect(await listed()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a' });
     expect(await got()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a' });
+  });
+
+  describe('restore_session', () => {
+    const restore = (id: string, caller = PARENT) => control.handle(caller, 'restore_session', { session_id: id });
+
+    it('アーカイブした子を一覧に戻すだけ。起動せず、何も送らず、人の確認も無い（instruct）', async () => {
+      const result = await restore(FAR_CHILD);
+      expect(result.isError).toBeFalsy();
+      const restored = jsonOf<{ note: string }>(result);
+      expect(restored).toMatchObject({ session_id: FAR_CHILD, name: 's-77', restored: true, already_active: false, state: 'exited', worktree: null });
+      expect(restored.note).toContain('send it an instruction with send_message');
+      expect(host.unarchived).toEqual([FAR_CHILD]);
+      expect(host.opened).toEqual([]);
+      expect(host.submitted).toEqual([]);
+      expect(host.stateOf(FAR_CHILD)).toBe('exited');
+      expect(SESSIONS_MCP.tools.find((tool) => tool.name === 'restore_session')?.kind).toBe('instruct');
+      expect(allowedSessionToolIds()).toContain(sessionToolId('restore_session'));
+    });
+
+    it('戻した子には send_message で指示を送れ、そのとき起動する', async () => {
+      await restore(FAR_CHILD);
+      const sent = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: '続けて' }));
+      expect(sent.note).toContain('Restarted the child.');
+      expect(host.opened).toEqual([FAR_CHILD]);
+    });
+
+    it('end_session で終えた子を戻すと、終えた印を外す（戻した子への指示を送れなかったことは、また親に知らせる）', async () => {
+      const ended = (control as unknown as { ended: Set<string> }).ended;
+      await control.handle(PARENT, 'end_session', { session_id: SIBLING });
+      expect(ended.has(SIBLING)).toBe(true);
+      await restore(SIBLING);
+      expect(ended.has(SIBLING)).toBe(false);
+      expect(host.stateOf(SIBLING)).toBe('exited');
+    });
+
+    it('worktree を消した子: 起動するときに作り直すことを返す。worktree が残っていれば exists', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = null;
+      host.removal = { backupRef: null, branches: [] };
+      await control.handle(PARENT, 'end_session', { session_id: CHILD });
+      const restored = jsonOf<{ note: string }>(await restore(CHILD));
+      expect(restored).toMatchObject({ restored: true, worktree: { name: 'tc-a', branch: 'worktree-tc-a', folder: 'recreated_on_start' } });
+      expect(restored.note).toContain('it is recreated when the child starts');
+      mkdirSync(`${repo}/.claude/worktrees/tc-a`, { recursive: true });
+      host.set(CHILD, 'archived');
+      expect(jsonOf(await restore(CHILD))).toMatchObject({ restored: true, worktree: { folder: 'exists' } });
+    });
+
+    it('ターミナルモードで止まった子は、send_message では起動できないことを添える', async () => {
+      host.sessions.find((s) => s.id === FAR_CHILD)!.terminal = true;
+      expect(jsonOf<{ note: string }>(await restore(FAR_CHILD)).note).toContain('send_message cannot start it');
+    });
+
+    it('アーカイブしていない子には何もしない。自分の子でないセッション・子からの呼び出しは断る', async () => {
+      expect(jsonOf(await restore(SIBLING))).toMatchObject({ restored: false, already_active: true, state: 'idle' });
+      expect(host.unarchived).toEqual([]);
+      expect(textOf(await restore(PEER))).toContain('is not a child session');
+      // 親の無い、アーカイブしたセッション（同じリポジトリなので見える）も戻させない
+      const stranger = '99999999-0000-4000-8000-000000000009';
+      host.add(stranger, repo, { archived: true }, 'archived');
+      expect(textOf(await restore(stranger))).toContain('is not a child session');
+      expect(host.unarchived).toEqual([]);
+      // 子には見せない（PARENT_ONLY）。子からの呼び出しも断る（子には子がいない）
+      expect(SESSIONS_MCP_FOR_CHILD.tools.map((tool) => tool.name)).not.toContain('restore_session');
+      expect(textOf(await restore(FAR_CHILD, CHILD))).toContain('is not a child session');
+    });
+
+    it('アーカイブ済みの子への configure_session は、restore_session を案内する', async () => {
+      expect(textOf(await control.handle(PARENT, 'configure_session', { session_id: FAR_CHILD, effort: 'high' }))).toBe(
+        '"s-77" is archived. To change it, restore it with restore_session first, then call configure_session again.',
+      );
+    });
   });
 
   describe('end_session', () => {
@@ -3314,7 +3394,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
     it('send_message: 空の指示・アーカイブ済み・ターミナルモードの子には送らない（ターミナルモードの子には預からない）', async () => {
       expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: ' ' }))).toBe('message (the instruction to send) is empty.');
-      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: 'x' }))).toBe(`"s-77" is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: 'x' }))).toBe('"s-77" is archived. To continue it, restore it with restore_session first, then send the message again.');
       host.set(CHILD, 'terminal');
       expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toBe(
         '"s-22" is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.',

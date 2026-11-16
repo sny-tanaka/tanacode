@@ -281,7 +281,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     // 片付けは人の確認なしに（アーカイブは一覧から戻せ、worktree を消しても未コミットの変更の控えと、手元にしか無いコミットのあるブランチが残るので、失うものが無い）
     kind: 'instruct',
     description:
-      "Ends a child session that has done its job: archives it (Claude Code stops, and it leaves the session list) and, by default, removes its worktree. Use it when the child's work is no longer needed (its pull request was merged, or the user said so) and you have checked its result; never end a child whose result you have not checked. Nothing is lost: the user can restore an archived session from the session list, uncommitted changes in the worktree are saved as a commit under refs/tanacode/backup/ (put back when the user restores the session), and of its branches (the one it started on and the one it is on now, such as a branch it created with git switch -c for its pull request), one with commits that exist only locally is kept (commits in its pull request count as pushed, even after the pull request was squash-merged). Only works on a child that is idle, exited, or waiting for background tasks (those tasks are stopped with Claude Code; processes the child detached from Claude Code, such as with nohup or open, keep running, so have the child stop them first). A child that is working, waiting on a question or a permission prompt, in terminal mode, or waiting for the user to act in the in-app browser is refused. A child that is starting up is refused too, unless it has been starting for 5 minutes or more (its start is stuck): then its Claude Code is stopped and it is ended. Calling it again on an archived child removes a worktree that is still left. Returns what was done and what was kept.",
+      "Ends a child session that has done its job: archives it (Claude Code stops, and it leaves the session list) and, by default, removes its worktree. Use it when the child's work is no longer needed (its pull request was merged, or the user said so) and you have checked its result; never end a child whose result you have not checked. Nothing is lost: an archived child can be restored (with restore_session, or by the user from the session list), uncommitted changes in the worktree are saved as a commit under refs/tanacode/backup/ (put back when the user restores the session), and of its branches (the one it started on and the one it is on now, such as a branch it created with git switch -c for its pull request), one with commits that exist only locally is kept (commits in its pull request count as pushed, even after the pull request was squash-merged). Only works on a child that is idle, exited, or waiting for background tasks (those tasks are stopped with Claude Code; processes the child detached from Claude Code, such as with nohup or open, keep running, so have the child stop them first). A child that is working, waiting on a question or a permission prompt, in terminal mode, or waiting for the user to act in the in-app browser is refused. A child that is starting up is refused too, unless it has been starting for 5 minutes or more (its start is stuck): then its Claude Code is stopped and it is ended. Calling it again on an archived child removes a worktree that is still left. Returns what was done and what was kept.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -294,6 +294,15 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
       required: ['session_id'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'restore_session',
+    // アーカイブから戻すだけ（画面の「アクティブに戻す」と同じ）。Claude Code の起動も worktree の作り直しも、次の send_message まで行わない。
+    // 戻すだけでは何も失わず、利用枠も使わないので、end_session と同じく人の確認なしに（ユーザーと決めたこと）
+    kind: 'instruct',
+    description:
+      "Restores a child session that was archived (by end_session, or by the user in the session list) back to the session list, the same as restoring it in tanacode. Use it when you need an ended child again, for example to fix its pull request after a review or to ask it about its work, instead of starting a new child that does not know that conversation. Find archived children with list_sessions with include_archived. Restoring only brings the child back: it does not start its Claude Code and sends it nothing, so it stays exited (no usage) until you send it an instruction with send_message, which starts it with its earlier conversation. If its worktree was removed, it is recreated when it starts: on the branch it was using if that branch was kept, with its uncommitted changes put back from the backup. A child that is not archived is left as it is. Returns its state and what happens to its worktree.",
+    inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
   },
   {
     name: 'schedule_wakeup',
@@ -402,6 +411,7 @@ const PARENT_ONLY = new Set([
   'configure_session',
   'stop_session',
   'end_session',
+  'restore_session',
   'report_result',
   'set_away_mode',
   'get_app_update',
@@ -433,7 +443,7 @@ const PARENT_INSTRUCTIONS = [
   '- Rely on that notice: while you are working, it waits and arrives as soon as you are idle, and it is kept across a restart of the app. So while children are working and you have nothing else to do, end your turn (tell the user in one line that the children are still working) and wait for the notice. When it arrives, check that child with get_session (it returns at once). Do not schedule wake-ups to check on children: each one wakes you and uses the user\'s usage limits for nothing.',
   `- Never wait for children synchronously. While a tool call such as wait_sessions is running, the messages of the user do not reach you, so the user cannot talk to you. For work outside tanacode that sends no notice, such as the CI of a pull request, run a command that waits for it in the background (for example \`gh pr checks <number> --watch\` with the Bash tool's run_in_background) and end your turn: you are told when it finishes. Use schedule_wakeup only for things that have no other signal (for example, something that should happen at a given time).`,
   "- Child sessions do not notify the user. Answer the children's questions yourself when you can, and answer all of them: a child often asks several in a row, and answer_question returns the next one (next_question) when there is one. Answer their permission prompts yourself too when you can (answer_permission). When a child is in terminal mode (the user is working in its Claude Code screen, and only the user can answer its prompts there), waits on a permission prompt you cannot answer, or waits on a question from an MCP server, tell the user.",
-  "- Clean up after your children. When a child has done its job (its pull request was merged, or the user said it is no longer needed), end it with end_session: it archives the child and removes its worktree, so that neither Claude Code nor the worktree is left behind. Never end a child whose result you have not checked, and when you are not sure it is still needed, ask the user. Nothing is lost by ending one (the user can restore it from the session list), so do not ask for confirmation otherwise.",
+  "- Clean up after your children. When a child has done its job (its pull request was merged, or the user said it is no longer needed), end it with end_session: it archives the child and removes its worktree, so that neither Claude Code nor the worktree is left behind. Never end a child whose result you have not checked, and when you are not sure it is still needed, ask the user. Nothing is lost by ending one (you can bring it back with restore_session, and the user can restore it from the session list), so do not ask for confirmation otherwise. When an ended child is needed again (for example, its pull request needs a fix after a review), restore it with restore_session and send it the instruction with send_message, rather than starting a new child that does not know its earlier work.",
   '- When the user asks you to open a new or separate session for them (for example, from Remote Control, where they cannot open one themselves), start it with start_session and independent: true. It is not a child: the user runs it, and you do not manage it.',
 ];
 // 子でないセッション（人が動かすセッション。独立したセッションも）にだけ渡すもの。子は人に通知しないので、報告もしない
