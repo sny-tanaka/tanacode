@@ -43,11 +43,8 @@ const press = (init: KeyboardEventInit, target: Element = document.activeElement
 const cmd = (code: string, key: string, extra: KeyboardEventInit = {}) => press({ code, key, metaKey: true, ...extra });
 // メニューを押した・アプリ内ブラウザのページで押した（main からの知らせ。画面にはキーが届かない）
 const viaMain = (shortcut: Shortcut) => act(() => api.emit('shortcuts.onRun', shortcut));
-// マウスで押した（このあとのフォーカスは :focus-visible にならない）。
-// jsdom（の :focus-visible の見分け）は、mousedown をマウスの操作と見る。見分けるものは、はじめて :focus-visible を調べたときに
-// イベントを聞き始めるので、先に一度調べておく（でないと、ファイルの中でこのテストだけを流したときに、マウスで押したことが伝わらない）
+// マウスで押した（このあとのフォーカスは :focus-visible にならない。見分けは dom.ts）
 const mouse = () => {
-  document.body.matches(':focus-visible');
   fireEvent.pointerDown(document.body);
   fireEvent.mouseDown(document.body);
 };
