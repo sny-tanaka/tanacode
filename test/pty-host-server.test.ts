@@ -348,6 +348,45 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await shutdown(path);
   });
 
+  it('止めるよう頼まれたら（kill）、どのプロセスに何の合図かを記録する。終わるよう頼まれたとき（shutdown）も記録する', async () => {
+    // アプリの頼みで止まったのか、外からの合図（pkill など）で止まったのかを、あとで「終了しました」の行と見比べて分けるため
+    const path = await startHost();
+    const c = await client(path);
+    c.send(pipe('k1', ['ready']));
+    c.send(sh('k2'));
+    await waitFor('出力', () => linesOf(c, 'k1').length === 1 && output(c, 'k2').includes('$ '));
+    const pid = ((await list(c, 1)) as HostedPipeInfo[]).find((h) => h.id === 'k1')!.pid;
+    c.send({ t: 'kill', id: 'k1', signal: 'SIGTERM' });
+    await waitFor('終了', () => exitOf(c, 'k1') !== undefined);
+    c.send({ t: 'kill', id: 'k2' });
+    await waitFor('終了', () => exitOf(c, 'k2') !== undefined);
+    c.send({ t: 'kill', id: 'nope', signal: 'SIGKILL' });
+    await waitFor('記録', () => logs.some((l) => l.includes('知らないプロセス')));
+    const killed = logs.filter((l) => l.includes('止めるよう頼まれ')).map((l) => l.replace(/^\S+ /, ''));
+    expect(killed).toEqual([
+      `止めるよう頼まれました（pipe）: tag-k1 pid=${pid} signal=SIGTERM`,
+      expect.stringMatching(/^止めるよう頼まれました（pty）: tag-k2 pid=\d+ signal=SIGHUP$/),
+      '止めるよう頼まれましたが、知らないプロセスです: nope signal=SIGKILL',
+    ]);
+    // 終わった順は、頼んだ記録のあと
+    expect(logs.findIndex((l) => l.includes('終了しました（pipe）: tag-k1'))).toBeGreaterThan(logs.findIndex((l) => l.includes('止めるよう頼まれました（pipe）: tag-k1')));
+    await shutdown(path);
+    expect(logs.some((l) => l.includes('終わるよう指示されました'))).toBe(true);
+  });
+
+  it('もう終わったプロセスを止めるよう頼まれたら、終わっていたことを記録する', async () => {
+    const path = await startHost();
+    const first = await client(path);
+    first.send(pipe('k3', [], 'exit 3'));
+    first.socket.destroy();
+    // アプリが見ていない間に終わったので、終了コードを持ったまま一覧に残る
+    await untilListed(path, (hosted) => hosted.find((h) => h.id === 'k3')?.exitCode === 3);
+    const second = await client(path);
+    second.send({ t: 'kill', id: 'k3' });
+    await waitFor('記録', () => logs.some((l) => l.includes('止めるよう頼まれましたが、もう終わっています（pipe）: tag-k3 signal=SIGTERM')));
+    await shutdown(path);
+  });
+
   it('終わるときは、SIGTERM で終わらないパイプのプロセスを、少し待ってから SIGKILL で止める', async () => {
     const path = await startHost();
     const c = await client(path);

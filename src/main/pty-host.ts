@@ -301,6 +301,12 @@ function handle(socket: Socket, message: ClientMessage): void {
     }
     case 'kill': {
       const entry = hosted.get(message.id);
+      // アプリが止めるよう頼んだことを残す（claude がアプリの頼みで止まったのか、外からの合図（pkill など）で止まったのかを、
+      // あとで「終了しました」の行と見比べて分けるため）。pty の既定は SIGHUP、パイプの既定は SIGTERM
+      const signal = message.signal ?? (entry?.kind === 'pty' ? 'SIGHUP' : 'SIGTERM');
+      if (!entry) log(`止めるよう頼まれましたが、知らないプロセスです: ${message.id} signal=${signal}`);
+      else if (entry.exitCode !== null) log(`止めるよう頼まれましたが、もう終わっています（${entry.kind}）: ${entry.req.tag} signal=${signal}`);
+      else log(`止めるよう頼まれました（${entry.kind}）: ${entry.req.tag} pid=${entry.kind === 'pipe' ? entry.pid : entry.proc.pid} signal=${signal}`);
       if (entry) kill(entry, message.signal);
       return;
     }
