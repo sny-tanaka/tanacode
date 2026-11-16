@@ -3,7 +3,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hostExecutable, PtyHost, splitLines } from '../src/main/pty-host-client';
+import { hostExecutable, PtyHost } from '../src/main/pty-host-client';
 import { PROTOCOL, type ClientMessage, type HostedInfo, type HostedPipeInfo, type HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { socketPathIn } from '../src/main/socket-path';
 import { StreamClient } from '../src/main/stream/client';
@@ -634,38 +634,6 @@ describe('PtyHost', () => {
     expect((host as unknown as { queued: unknown[] }).queued).toEqual([]);
     await expect(PtyHost.start(dir, hostScript('dead'))).rejects.toThrow(`pty ホストに繋がりません: ${socketPath()}`);
   }, 20_000);
-});
-
-describe('splitLines（ホストから届いた断片を行に分ける）', () => {
-  const split = (chunks: string[], stopAt?: string) => {
-    const lines: string[] = [];
-    const push = splitLines((line) => {
-      lines.push(line);
-      return line === stopAt;
-    });
-    for (const chunk of chunks) push(chunk);
-    return lines;
-  };
-
-  it('断片の切れ目をまたぐ行をつなぎ、1 つの断片の中の行は順に渡す。改行の無い末尾は、次の断片まで持っておく', () => {
-    expect(split(['a', 'b\nc\n', '\nd', 'e', '\n', 'f'])).toEqual(['ab', 'c', '', 'de']);
-  });
-
-  it('true を返したら、同じ断片の残りの行は渡さない（hello の返事を受けたら、そこで聞くのをやめる）', () => {
-    expect(split(['x\nhello\ny\n'], 'hello')).toEqual(['x', 'hello']);
-  });
-
-  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い行を受け取る時間が行の長さの 2 乗で伸びた
-  // （9MB の行 2 本で約 1 秒。大きな出力の stream-json の 1 行で main が止まり、ほかのテストと流すと時間切れで落ちた）
-  it('長い行を細かい断片で受け取っても、行の長さに比例する時間で済む（改行は新しく届いた断片の中だけを探す）', () => {
-    const chunk = 'x'.repeat(16 * 1024);
-    const chunks = [...Array<string>(4096).fill(chunk), '\n'];
-    const started = performance.now();
-    const lines = split(chunks);
-    // 64MB の行。探し直すと 4096 回 × 平均 32MB を読み直すので 10 秒ほどかかる。比例する時間なら数十ミリ秒
-    expect(performance.now() - started).toBeLessThan(1000);
-    expect(lines.map((line) => line.length)).toEqual([64 * 1024 * 1024]);
-  });
 });
 
 describe('hostExecutable', () => {

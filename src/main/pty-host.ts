@@ -11,6 +11,7 @@ import * as pty from 'node-pty';
 import { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { PipeBacklog, readLines } from './pipe-backlog';
+import { splitLines } from './split-lines';
 import {
   PROTOCOL,
   STDERR_TAIL,
@@ -367,21 +368,17 @@ function removeSocket(): void {
 
 const server = createServer((socket) => {
   socket.setEncoding('utf8');
-  let buffered = '';
-  socket.on('data', (chunk: string) => {
-    buffered += chunk;
-    let newline: number;
-    while ((newline = buffered.indexOf('\n')) >= 0) {
-      const line = buffered.slice(0, newline);
-      buffered = buffered.slice(newline + 1);
-      if (!line) continue;
+  socket.on(
+    'data',
+    splitLines((line) => {
+      if (!line) return;
       try {
         handle(socket, JSON.parse(line) as ClientMessage);
       } catch (error) {
         log(`読めない要求: ${String(error)}`);
       }
-    }
-  });
+    }),
+  );
   socket.on('error', () => socket.destroy());
   socket.on('close', () => {
     clients.delete(socket);

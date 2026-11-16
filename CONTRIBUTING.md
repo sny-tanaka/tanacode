@@ -1997,6 +1997,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `terminal-mcp.ts` / `terminal-bridge.ts`: 人のターミナルの中継の入り口（`--gate` では、打つ前の確認のフック）と、中継とフックに渡す環境変数・`--mcp-config` のエントリ・フックの出力
   - `walkthrough-github.ts`: ウォークスルーを GitHub の PR にコメントとして載せる（PR・HEAD・ファイルの確かめと、下見・投稿。画面からと Claude から）
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル）の置き場所
+  - `split-lines.ts`: ソケットに 1 行ずつ書いた JSON を、届いた断片から行に分ける（`splitLines`。pty ホストとアプリ・中継とアプリの両側で使う。改行は新しく届いた断片の中だけを探し、長い行も行の長さに比例する時間で読む）。別々のビルドの入口から読むので、ほかのものを読み込まない
   - `pending-questions.ts`: 答えを待っている質問（セッションごと。返事・1 問ずつの答え・待つのをやめる）
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts` / `pipe-backlog.ts`: Claude Code を持っておく常駐プロセス（ターミナルモードの claude は pty、チャットの claude はパイプ。パイプの出力の行の控えは `PipeBacklog`）と、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`・`PipeHandle`。互換性の確認では偽物に差し替える）
