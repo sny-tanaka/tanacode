@@ -361,9 +361,7 @@ describe('HostedPipe', () => {
     fake!.send({ t: 'replayed', id: 'q3' });
     await waitFor('送り直し', () => got.length === 3);
     expect(got).toEqual([1, 2, 3]);
-    // 溜める上限（16MB）を超える 18MB を送るので、ほかのテストと並んで CPU を取り合うと 5 秒（既定の上限）を超えることがある。
-    // 届き切るのを 10 秒まで待つので、テストの上限もそれが収まる長さにする
-  }, 15_000);
+  });
 
   it('detach: claude を止めずに見るのをやめる。ホストが落ちたら、動いていたプロセスを -1 で終わらせる', async () => {
     const { host } = await connect();
