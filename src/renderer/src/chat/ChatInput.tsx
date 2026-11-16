@@ -17,6 +17,27 @@ const MAX_COMMANDS = 200;
 // ワークスペースのファイル一覧を読み直す間隔
 const FILES_TTL_MS = 30_000;
 
+// 札にしない貼り付けのキー（⌘⇧V）。⌥ 付き（⌥⇧⌘V。メニューの「ペーストしてスタイルを合わせる」）は含めない
+function isPlainPasteKey(e: { key: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean }): boolean {
+  return e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'v';
+}
+
+// クリップボードの文を、札にせず文字のまま入力欄の選択範囲に入れる（⌘⇧V）。制御文字は、ふつうの貼り付けと同じく除く。
+// execCommand('insertText') で入れると、⌘Z で取り消せる。使えないとき（テストの jsdom など）は、setRangeText で入れて input を送る
+async function pastePlainText(el: HTMLTextAreaElement): Promise<void> {
+  let text: string;
+  try {
+    text = stripControlChars(await navigator.clipboard.readText());
+  } catch {
+    return;
+  }
+  // 読んでいる間に、欄が消えた・ほかへフォーカスが移ったときは入れない
+  if (!text || !el.isConnected || document.activeElement !== el) return;
+  if (document.execCommand?.('insertText', false, text)) return;
+  el.setRangeText(text, el.selectionStart, el.selectionEnd, 'end');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 // @ の候補に出すファイル。path: Claude Code に渡すパス（セッションのフォルダの中は相対、ワークスペースに追加したフォルダの中は絶対）。
 // shown: 候補に出すパス（追加したフォルダの中は、エクスプローラーと同じくフォルダの名前から）
 export type CompletionFile = { path: string; shown: string };
@@ -428,6 +449,13 @@ export function ChatInput({
                 setDismissed(token?.start ?? null);
                 return;
               }
+            }
+            // ⌘⇧V: 長くても札にせず、文字のまま貼る（ほかのアプリの「テキストとして貼り付け」と同じキー）。
+            // paste イベントには修飾キーが載らないので、キーで受けてクリップボードの文を自分で入れる
+            if (isPlainPasteKey(e)) {
+              e.preventDefault();
+              void pastePlainText(e.currentTarget);
+              return;
             }
             // Enter は改行。変換確定の Enter（isComposing / keyCode 229）では送信しない
             if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || composing) return;
