@@ -682,6 +682,7 @@ function registerIpc(): void {
     P(e).scheduled.add(String(sessionId), String(text ?? ''), strings(attachments), Number(at), strings(pastes));
   });
   handle(IpcChannel.ScheduledReschedule, (e, id: string, at: number) => P(e).scheduled.reschedule(String(id), Number(at)));
+  handle(IpcChannel.ScheduledEdit, (e, id: string, text: string) => P(e).scheduled.edit(String(id), String(text ?? '')));
   handle(IpcChannel.ScheduledSendNow, (e, id: string) => P(e).scheduled.sendNow(String(id)));
   handle(IpcChannel.ScheduledCancel, (e, id: string) => P(e).scheduled.cancel(String(id)));
   handle(IpcChannel.SessionsRename, (e, id: string, title: string) => P(e).manager.rename(id, title));

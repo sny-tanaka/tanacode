@@ -6979,9 +6979,9 @@ body.resizing-rows webview {
   color: var(--text-secondary);
 }
 
-/* 予約したメッセージ（時刻を指定して送信）。右上の操作（今すぐ送る・時刻を変える・取り消す）の下に、文字が潜らないようにする */
+/* 予約したメッセージ（時刻を指定して送信）。右上の操作（文を編集・今すぐ送る・時刻を変える・取り消す。20px のボタン 4 つ）の下に、文字が潜らないようにする */
 .chat-user.scheduled {
-  padding-right: 72px;
+  padding-right: 96px;
 }
 .chat-user.scheduled.trouble {
   border-color: var(--warn);
@@ -7030,6 +7030,42 @@ body.resizing-rows webview {
   right: 6px;
   display: flex;
   gap: 2px;
+}
+/* 予約の文を書き直す欄（予約の枠の中）。書いた文の高さに合わせて伸ばす */
+.chat-scheduled-editor {
+  display: block;
+}
+.chat-scheduled-editor textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  max-height: 320px;
+  field-sizing: content;
+  resize: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-focus);
+  outline: none;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  white-space: pre-wrap;
+}
+.chat-scheduled-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+/* 保存・キャンセルは、同じ大きさにそろえる */
+.chat-scheduled-editor-actions button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+/* 書き直している間は、右上の操作を出さないので、その分の余白も空けない */
+.chat-user.scheduled.editing {
+  padding-right: 12px;
 }
 
 /* 予約の時刻を選ぶメニュー（入力欄の時計のボタン・予約の「時刻を変える」）。位置は、開くときにボタンから決める */

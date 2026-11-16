@@ -53,6 +53,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('PlayIcon', '実行'),
       item('SendIcon', '送る'),
       item('ScheduleIcon', '時刻を指定して送る（予約）'),
+      item('EditIcon', '書いたものを書き直す（編集）'),
       item('CompressIcon', '会話を圧縮'),
       item('OptimizedCompressIcon', '会話を消して、チェックリストから再開（最適化圧縮）'),
       item('RewindIcon', 'ここまで戻す'),

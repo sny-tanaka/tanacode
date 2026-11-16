@@ -553,6 +553,7 @@ const modules: Record<string, Record<string, unknown>> = {
       list: echo('scheduled.list'),
       add: echo('scheduled.add'),
       reschedule: echo('scheduled.reschedule'),
+      edit: echo('scheduled.edit'),
       sendNow: echo('scheduled.sendNow'),
       cancel: echo('scheduled.cancel'),
       hasClaudeWakeup: () => false,

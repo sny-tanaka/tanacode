@@ -51,6 +51,7 @@ export const IpcChannel = {
   ScheduledChanged: 'scheduled:changed',
   ScheduledAdd: 'scheduled:add',
   ScheduledReschedule: 'scheduled:reschedule',
+  ScheduledEdit: 'scheduled:edit',
   ScheduledSendNow: 'scheduled:send-now',
   ScheduledCancel: 'scheduled:cancel',
   // メニュー（⌘N）から。新規セッションの画面を開かせる
@@ -781,6 +782,8 @@ export type TanacodeApi = {
     add(sessionId: string, text: string, attachments: string[], at: number, pastes?: string[]): Promise<void>;
     // 時刻を変える（送れなかったもの・時刻を過ぎていたものは、もう一度待つ）
     reschedule(id: string, at: number): Promise<void>;
+    // 文を書き直す（画像と札はそのまま）。送っている途中・もう送ったもの・利用枠の再開の予約は、理由を添えて失敗する
+    edit(id: string, text: string): Promise<void>;
     // 時刻を待たずに送る（手が空くのは待つ）
     sendNow(id: string): Promise<void>;
     // 取り消す。取り消した予約を返す（入力欄に戻すため。もう無ければ null）
@@ -1169,6 +1172,7 @@ export type IpcInvoke = {
   [IpcChannel.ScheduledList]: Api['scheduled']['list'];
   [IpcChannel.ScheduledAdd]: Api['scheduled']['add'];
   [IpcChannel.ScheduledReschedule]: Api['scheduled']['reschedule'];
+  [IpcChannel.ScheduledEdit]: Api['scheduled']['edit'];
   [IpcChannel.ScheduledSendNow]: Api['scheduled']['sendNow'];
   [IpcChannel.ScheduledCancel]: Api['scheduled']['cancel'];
   [IpcChannel.PrefsSync]: Api['prefs']['sync'];

@@ -103,6 +103,19 @@ export class ScheduledMessages {
     this.update(id, { at, state: 'scheduled', error: null, limitResetsAt: undefined });
   }
 
+  // 文を書き直す（画像と札はそのまま）。時刻と状態は変えない（送れなかったもの・時刻を過ぎていたものは、そのまま人の対応を待つ）。
+  // 送っている途中・もう送ったものは変えない（編集している間に時刻になっても、送るのは止めない）。
+  // 利用枠の再開の予約は、本文を囲みごと持っていて、書き直すと囲みが壊れるので変えない
+  edit(id: string, text: string): void {
+    const message = this.messages.find((m) => m.id === id);
+    if (!message) throw new Error(t('main.scheduled.editGone'));
+    if (message.state === 'sending') throw new Error(t('main.scheduled.editSending'));
+    if (message.by === 'usage-limit') throw new Error(t('main.scheduled.editUsageLimit'));
+    if (!text.trim() && message.attachments.length === 0 && message.pastes.length === 0) throw new Error(t('main.scheduled.empty'));
+    if (message.text === text) return;
+    this.update(id, { text });
+  }
+
   // アプリが、時刻を待っている予約の時刻を変える（利用枠の再開の予約を並べ直す。usage-limit-resume.ts）。人が変えたときと違い、印は残す
   retime(id: string, at: number): void {
     const message = this.messages.find((m) => m.id === id);

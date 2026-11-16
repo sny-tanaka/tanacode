@@ -41,6 +41,7 @@ import { useParentInstructions } from './parentRole';
 import { RewindCard } from './RewindCard';
 import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
+import { useScheduledEdits } from './scheduled';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { AwayToggle } from './AwayToggle';
 import { useCanCompact } from './compactState';
@@ -667,6 +668,12 @@ export const ClaudePane = memo(function ClaudePane({
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
+  // 予約の文の書き直し。書き直している間に送られた・取り消された予約は、書いた文を捨てないよう入力欄に戻して知らせる
+  // （一覧から消えたと分かるのは、そのセッションを開いているときなので、戻す先は今の入力欄）
+  const scheduledEdits = useScheduledEdits(session.id, scheduled, (text) => {
+    setInput((prev) => [text, prev].filter((t) => t.trim()).join('\n'));
+    window.alert(t('chat.pane.editedScheduledGone'));
+  });
   // 巻き戻す。会話を戻したら、戻した発言の文を入力欄に戻す（打ちかけの文字の前に）。
   // 返事が来るまでにほかのセッションへ移っていたら、移った先のカードと入力欄には触らず、戻した文は元のセッションの書きかけに戻す
   const applyRewind = (messageId: string, choice: RewindChoice) => {
@@ -1022,6 +1029,13 @@ export const ClaudePane = memo(function ClaudePane({
               onSendNow={() => void window.tanacode.scheduled.sendNow(message.id).catch(reportError('chat.pane.sendNowFailed'))}
               onReschedule={(at) => void window.tanacode.scheduled.reschedule(message.id, at).catch(reportError('chat.pane.rescheduleFailed'))}
               onTake={() => takeScheduled(message.id)}
+              edit={{
+                draft: scheduledEdits.draftOf(message.id),
+                onStart: () => scheduledEdits.start(message),
+                onChange: (text) => scheduledEdits.change(message.id, text),
+                onSave: () => scheduledEdits.save(message.id).catch(reportError('chat.pane.editScheduledFailed')),
+                onDiscard: () => scheduledEdits.discard(message.id),
+              }}
             />
           ))}
           {/* 起動中（npm install などの準備の間は、準備の知らせを出す）。時間がかかっていれば、経過と標準エラーの末尾 */}

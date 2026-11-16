@@ -309,6 +309,14 @@ export const ScheduleIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 編集: 鉛筆（書いたものを書き直す）
+export const EditIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M4.5 19.5l.9-4.2L15.3 5.4a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L8.7 18.6z" />
+    <path d="M13.3 7.4l3.3 3.3" />
+  </Svg>
+);
+
 // 圧縮: 上下から中心へ
 export const CompressIcon: IconComponent = (p) => (
   <Svg {...p}>

@@ -987,10 +987,12 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 
 ### 時刻を指定して送信（予約）
 
-- 予約は main の `ScheduledMessages`（`scheduled-messages.ts`）が持ち、`scheduled-messages.json` に保存します。画面（`chat/SchedulePicker.tsx`・`chat/ScheduledRow.tsx`）は IPC（`scheduled:*`）で予約・時刻の変更・今すぐ送る・取り消しを頼み、`scheduled:changed` で一覧を受け取るだけ。画面を閉じていても、時刻になれば送ります。
+- 予約は main の `ScheduledMessages`（`scheduled-messages.ts`）が持ち、`scheduled-messages.json` に保存します。画面（`chat/SchedulePicker.tsx`・`chat/ScheduledRow.tsx`）は IPC（`scheduled:*`）で予約・時刻の変更・文の書き直し・今すぐ送る・取り消しを頼み、`scheduled:changed` で一覧を受け取るだけ。画面を閉じていても、時刻になれば送ります。
 - 時刻になったら、子セッションへの指示と同じ `SessionManager.submitWhenReady` で送ります。Claude Code が受け付けられるようになってから、`priority: "later"` の発言として送るので、作業中に時刻になっても今のターンには入らず、ターンが終わってから別のターンになります（Claude Code が順番待ちにする）。待つ時間の上限は無し。待っている間に取り消したら、`AbortSignal` で待つのをやめます（送ったあとは止めない）。画像は、チャットの入力欄からの送信と同じく、`image` のブロックで送ります。送り先がターミナルモードなら、預からずに断り、送れなかったもの（`failed`）として残します（決めたこと）。
 - 止まっているセッション（`exited`）は、`SessionManager.open` で再開してから送ります。起動が終わるまでは、`submitWhenReady` が待ちます。
 - 時刻を `SCHEDULE_LATE_MS`（5 分）より過ぎてから気づいたもの（アプリが閉じていた・Mac がスリープしていてタイマーが遅れて動いた）は、送らずに `missed` にします。何時間も前の指示が、急に動き出さないようにするためです。送っている途中（`sending`）でアプリを閉じたものは、まだ送っていないので、時刻を待っていたものと同じに扱います。
+- 文の書き直し（`ScheduledMessages.edit`・`scheduled:edit`）は、`text` だけを変えます（保存の形は変えません）。時刻と状態（`missed`・`failed` も）はそのまま。送っている途中（`sending`）・もう無いもの・利用枠の再開の予約（本文を囲みごと持つ）は断ります。
+  - 画面では、書いている文を `ClaudePane` が予約の id ごとに持ちます（`chat/scheduled.ts` の `useScheduledEdits`）。セッションを移って戻っても続けられます。書いている間に時刻になっても送るのは止めず、開いているセッションの一覧から予約が消えたら（`lostEdits`）、変えた文を入力欄に戻して知らせます。保存の返事の前に消えていたら、断られたわけは重ねて出しません。
 - 送れなかったもの（`failed`）と `missed` は、macOS の通知で知らせます（`scheduledNotice`）。どちらも一覧に残し、人が今すぐ送る・時刻を変える・取り消すを選びます。
 - セッションがアーカイブされた・一覧から消えたら（`SessionManager.watchState` で状態が `archived` か、知らないセッションになったら）、そのセッションの予約を取り消します。
 - タイマーは、いちばん早い予約に 1 つだけ掛けます。`setTimeout` の上限（約 24.8 日）より先なら、途中で一度起きて測り直します。

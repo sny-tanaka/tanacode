@@ -765,6 +765,8 @@ describe('送信と予約', () => {
       ['7', '', [], 1_700_000_000_000, []],
     ]);
     await expect(invoke(IpcChannel.ScheduledReschedule, 3, '42')).resolves.toEqual(call('scheduled.reschedule', '3', 42));
+    await expect(invoke(IpcChannel.ScheduledEdit, 3, '直した文')).resolves.toEqual(call('scheduled.edit', '3', '直した文'));
+    await expect(invoke(IpcChannel.ScheduledEdit, 3, null)).resolves.toEqual(call('scheduled.edit', '3', ''));
     await expect(invoke(IpcChannel.ScheduledSendNow, 3)).resolves.toEqual(call('scheduled.sendNow', '3'));
     await expect(invoke(IpcChannel.ScheduledCancel, 3)).resolves.toEqual(call('scheduled.cancel', '3'));
   });

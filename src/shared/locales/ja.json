@@ -216,7 +216,10 @@
       "empty": "送る内容がありません",
       "pastTime": "これから先の時刻を指定してください",
       "sending": "送っている途中のため、時刻を変えられません",
-      "notFound": "予約が見つかりません"
+      "notFound": "予約が見つかりません",
+      "editGone": "もう送ったか、取り消された予約のため、文を変えられません",
+      "editSending": "送っている途中のため、文を変えられません",
+      "editUsageLimit": "利用枠の再開の予約は、文を変えられません"
     },
     "context": {
       "start": "会話の始まり",
@@ -648,6 +651,8 @@
       "takeBackTip": "送るのをやめて入力欄に戻す",
       "sendNowFailed": "送れませんでした: {error}",
       "rescheduleFailed": "時刻を変えられませんでした: {error}",
+      "editScheduledFailed": "文を変えられませんでした: {error}",
+      "editedScheduledGone": "書き直していた予約は、送られたか取り消されたため、書き直した文を入力欄に戻しました",
       "slowStart": "Claude Code の起動に時間がかかっています（{elapsed}）。MCP サーバーや SessionStart のフックを待っていることがあります",
       "archived": "このセッションはアーカイブされています",
       "unarchive": "アクティブに戻す",
@@ -1028,6 +1033,12 @@
       "sendNow": "今すぐ送る",
       "sendNowTip": "時刻を待たずに送る（Claude Code の手が空くのは待ちます）",
       "reschedule": "時刻を変える",
+      "edit": "文を編集",
+      "editTip": "予約したまま、送る文を書き直す（画像と貼り付けはそのまま残します）",
+      "editLabel": "予約の文",
+      "save": "保存",
+      "saveTip": "書き直した文を保存（⌘Enter）",
+      "discard": "編集をやめる（Esc）",
       "cancel": "取り消す",
       "claude": "Claude の予約",
       "claudeTip": "Claude が自分に入れた予約です。時刻になると、このセッションの Claude に知らせとして送ります",
