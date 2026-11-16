@@ -112,6 +112,7 @@ const api: TanacodeApi = {
     list: () => invoke(IpcChannel.ScheduledList),
     add: (sessionId, text, attachments, at, pastes) => invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at, pastes),
     reschedule: (id, at) => invoke(IpcChannel.ScheduledReschedule, id, at),
+    edit: (id, text) => invoke(IpcChannel.ScheduledEdit, id, text),
     sendNow: (id) => invoke(IpcChannel.ScheduledSendNow, id),
     cancel: (id) => invoke(IpcChannel.ScheduledCancel, id),
     onChanged: (listener) => subscribe(IpcChannel.ScheduledChanged, listener),

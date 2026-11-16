@@ -411,6 +411,60 @@ describe('ScheduledMessages の断る・片付ける', () => {
     expect(scheduled.list().map((m) => m.at)).toEqual([START + MINUTE]);
   });
 
+  it('文を書き直せる。画像と札・時刻・状態はそのまま残し、保存して、時刻になったら書き直した文を送る', async () => {
+    const { scheduled, sent, changes } = create({ s1: 'idle' });
+    const message = scheduled.add('s1', '朝にテストを流して', ['/tmp/a.png'], START + 30 * MINUTE, ['ログ']);
+    scheduled.edit(message.id, '朝にテストを流して、落ちたら直して');
+    expect(scheduled.list()).toEqual([{ ...message, text: '朝にテストを流して、落ちたら直して' }]);
+    expect(changes.at(-1)?.[0]?.text).toBe('朝にテストを流して、落ちたら直して');
+    // 保存の形は変えない（項目を足さない）。起動し直しても、書き直した文が残る
+    expect(new ScheduledMessages(file, fakeHost({ s1: 'idle' }).host, () => {}).list()).toEqual(scheduled.list());
+    // 同じ文なら、保存し直さない
+    const count = changes.length;
+    scheduled.edit(message.id, '朝にテストを流して、落ちたら直して');
+    expect(changes).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(30 * MINUTE);
+    expect(sent.map(({ text, attachments, pastes }) => ({ text, attachments, pastes }))).toEqual([
+      { text: '朝にテストを流して、落ちたら直して', attachments: ['/tmp/a.png'], pastes: ['ログ'] },
+    ]);
+  });
+
+  it('送れなかった・時刻を過ぎていた予約も書き直せる。状態はそのまま（人が今すぐ送るか時刻を変えるまで待つ）', async () => {
+    const { scheduled } = create({ s1: 'idle' });
+    const message = scheduled.add('s1', '送る', [], START + MINUTE);
+    vi.setSystemTime(START + 10 * MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(scheduled.list()[0]?.state).toBe('missed');
+    scheduled.edit(message.id, '書き直して送る');
+    expect(scheduled.list()[0]).toMatchObject({ text: '書き直して送る', state: 'missed' });
+  });
+
+  it('Claude の予約も書き直せて、送るときは囲みに入れる。利用枠の再開の予約は書き直せない', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    const wakeup = scheduled.add('s1', '子を見る', [], START + MINUTE, [], 'claude');
+    const limit = scheduled.add('s1', usageResumeText(), [], START + 2 * MINUTE, [], 'usage-limit', START + MINUTE);
+    scheduled.edit(wakeup.id, '子と CI を見る');
+    expect(() => scheduled.edit(limit.id, '続けて')).toThrow('利用枠の再開の予約は、文を変えられません');
+    expect(scheduled.list().find((m) => m.id === limit.id)?.text).toBe(usageResumeText());
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(sent[0]?.text).toBe(wakeupText('子と CI を見る'));
+  });
+
+  it('送っている途中・もう送った予約は書き直せない。文だけの予約は空にできない（画像や札があれば空にできる）', async () => {
+    const { scheduled, sent } = create({ s1: 'working' });
+    const message = scheduled.add('s1', '送る', [], START + MINUTE);
+    const image = scheduled.add('s1', '画像', ['/tmp/a.png'], START + 10 * MINUTE);
+    expect(() => scheduled.edit(message.id, '  ')).toThrow('送る内容がありません');
+    scheduled.edit(image.id, '');
+    expect(scheduled.list().find((m) => m.id === image.id)?.text).toBe('');
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(() => scheduled.edit(message.id, '書き直す')).toThrow('送っている途中のため、文を変えられません');
+    sent[0]!.resolve();
+    await flush();
+    expect(() => scheduled.edit(message.id, '書き直す')).toThrow('もう送ったか、取り消された予約のため、文を変えられません');
+    expect(sent[0]?.text).toBe('送る');
+  });
+
   it('画像だけの予約もできる', () => {
     const { scheduled } = create({ s1: 'idle' });
     expect(scheduled.add('s1', '', ['/tmp/a.png'], START + MINUTE).attachments).toEqual(['/tmp/a.png']);

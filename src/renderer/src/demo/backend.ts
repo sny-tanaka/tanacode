@@ -486,6 +486,7 @@ export class DemoBackend {
         list: () => ok([]),
         add: () => ok(undefined),
         reschedule: () => ok(undefined),
+        edit: () => ok(undefined),
         sendNow: () => ok(undefined),
         cancel: () => ok(null),
         onChanged: () => () => {},

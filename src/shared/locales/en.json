@@ -219,7 +219,10 @@
       "empty": "Nothing to send",
       "pastTime": "Choose a time in the future",
       "sending": "Can't change the time while the message is being sent",
-      "notFound": "Scheduled message not found"
+      "notFound": "Scheduled message not found",
+      "editGone": "Can't change the text because the message was already sent or canceled",
+      "editSending": "Can't change the text while the message is being sent",
+      "editUsageLimit": "Can't change the text of a usage limit resume message"
     },
     "context": {
       "start": "Start of conversation",
@@ -656,6 +659,8 @@
       "takeBackTip": "Cancel sending and move the message back to the input box",
       "sendNowFailed": "Couldn't send: {error}",
       "rescheduleFailed": "Couldn't change the time: {error}",
+      "editScheduledFailed": "Couldn't change the text: {error}",
+      "editedScheduledGone": "The scheduled message you were editing was sent or canceled, so your edited text was moved to the chat input",
       "slowStart": "Claude Code is taking a long time to start ({elapsed}). It may be waiting for MCP servers or SessionStart hooks",
       "archived": "This session is archived",
       "unarchive": "Unarchive",
@@ -1067,6 +1072,12 @@
       "sendNow": "Send now",
       "sendNowTip": "Send now instead of at the scheduled time (still waits until Claude Code is idle)",
       "reschedule": "Reschedule",
+      "edit": "Edit text",
+      "editTip": "Rewrite the text while keeping it scheduled (images and pasted text are kept)",
+      "editLabel": "Scheduled message text",
+      "save": "Save",
+      "saveTip": "Save the rewritten text (⌘Enter)",
+      "discard": "Stop editing (Esc)",
       "cancel": "Cancel",
       "claude": "Claude's wake-up",
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",

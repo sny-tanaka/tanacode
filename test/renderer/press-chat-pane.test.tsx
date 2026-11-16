@@ -1377,6 +1377,110 @@ describe('入力欄', () => {
   });
 });
 
+describe('予約の文の書き直し', () => {
+  const at = () => Date.now() + 30 * 60_000;
+  const human = () => ({ id: 'm1', sessionId: 's1', text: '朝にテストを流して', attachments: [], pastes: [], at: at(), createdAt: 0, state: 'scheduled' as const, error: null });
+  const rowOf = (text: string) => screen.getByText(text, { exact: false }).closest('.chat-user.scheduled') as HTMLElement;
+  const editButton = (row: HTMLElement) => within(row).queryByRole('button', { name: '文を編集' });
+  const editor = (row: HTMLElement) => within(row).getByRole('textbox', { name: '予約の文' }) as HTMLTextAreaElement;
+
+  it('人の予約と Claude の予約は、枠の中で文を書き直して保存できる。利用枠の再開の予約・送っている途中の予約は書き直せない', async () => {
+    const wakeup = { ...human(), id: 'w1', text: '子の状態を確かめる', by: 'claude' as const };
+    const limit = { ...human(), id: 'u1', text: '続きをお願いします', by: 'usage-limit' as const };
+    const sending = { ...human(), id: 's1x', text: '送っている予約', state: 'sending' as const };
+    render(<ClaudePane {...props({ scheduled: [human(), wakeup, limit, sending] })} />);
+    expect(editButton(rowOf('続きをお願いします'))).toBeNull();
+    expect(editButton(rowOf('送っている予約'))).toBeNull();
+
+    const row = rowOf('朝にテストを流して');
+    fireEvent.click(editButton(row)!);
+    // 書き直している間は、今すぐ送る・時刻を変える・取り消すを出さない（書き直す前の文が送られないように）
+    expect(row.querySelector('.chat-scheduled-actions')).toBeNull();
+    expect(editor(row).value).toBe('朝にテストを流して');
+    fireEvent.change(editor(row), { target: { value: '朝にテストを流して、落ちたら直して' } });
+    // 入力欄の書きかけには触らない
+    fireEvent.change(box(), { target: { value: '書きかけ' } });
+    fireEvent.keyDown(editor(row), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(api.argsOf('scheduled.edit')).toEqual([['m1', '朝にテストを流して、落ちたら直して']]);
+    expect(within(row).queryByRole('textbox')).toBeNull();
+    expect(box().value).toBe('書きかけ');
+
+    const claudeRow = rowOf('子の状態を確かめる');
+    fireEvent.click(editButton(claudeRow)!);
+    fireEvent.change(editor(claudeRow), { target: { value: '子の状態と CI を確かめる' } });
+    fireEvent.click(within(claudeRow).getByRole('button', { name: '保存' }));
+    await settle();
+    expect(api.argsOf('scheduled.edit').at(-1)).toEqual(['w1', '子の状態と CI を確かめる']);
+  });
+
+  it('Esc・キャンセルでやめると、保存しない。文だけの予約は、空にすると保存できない（画像や札があれば空にできる）', () => {
+    const withImage = { ...human(), id: 'm2', text: '画像を見て', attachments: ['/tmp/a.png'] };
+    render(<ClaudePane {...props({ scheduled: [human(), withImage] })} />);
+    const row = rowOf('朝にテストを流して');
+    fireEvent.click(editButton(row)!);
+    fireEvent.change(editor(row), { target: { value: '   ' } });
+    expect((within(row).getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(editor(row), { key: 'Escape' });
+    expect(within(row).queryByRole('textbox')).toBeNull();
+    expect(row.textContent).toContain('朝にテストを流して');
+
+    const imageRow = rowOf('画像を見て');
+    fireEvent.click(editButton(imageRow)!);
+    fireEvent.change(editor(imageRow), { target: { value: '' } });
+    expect((within(imageRow).getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(imageRow).getByRole('button', { name: 'キャンセル' }));
+    expect(api.argsOf('scheduled.edit')).toEqual([]);
+  });
+
+  it('保存を断られたら、わけを出して、書いた文は残す', async () => {
+    install({ 'scheduled.edit': () => Promise.reject(new Error("Error invoking remote method 'scheduled:edit': Error: 送っている途中のため、文を変えられません")) });
+    render(<ClaudePane {...props({ scheduled: [human()] })} />);
+    const row = rowOf('朝にテストを流して');
+    fireEvent.click(editButton(row)!);
+    fireEvent.change(editor(row), { target: { value: '直した文' } });
+    fireEvent.click(within(row).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(alerts).toEqual(['文を変えられませんでした: 送っている途中のため、文を変えられません']));
+    expect(editor(row).value).toBe('直した文');
+  });
+
+  it('書き直している間に予約が送られたら、書いた文を入力欄に戻して知らせる。変えていなければ戻さない。セッションを移って戻っても、書きかけは残る', async () => {
+    const other = { ...human(), id: 'm2', text: '夜にまとめて' };
+    const view = render(<ClaudePane {...props({ scheduled: [human(), other] })} />);
+    fireEvent.click(editButton(rowOf('朝にテストを流して'))!);
+    fireEvent.change(editor(rowOf('朝にテストを流して')), { target: { value: '朝にテストを流して、直して' } });
+    fireEvent.click(editButton(rowOf('夜にまとめて'))!);
+
+    // ほかのセッションへ移って戻る（予約はそのセッションの一覧に無いが、消えたことにはしない）
+    view.rerender(<ClaudePane {...props({ session: S2, scheduled: [] })} />);
+    view.rerender(<ClaudePane {...props({ scheduled: [human(), other] })} />);
+    expect(editor(rowOf('朝にテストを流して')).value).toBe('朝にテストを流して、直して');
+
+    fireEvent.change(box(), { target: { value: '書きかけ' } });
+    // 時刻になって 2 つとも送った（一覧から消えた）
+    view.rerender(<ClaudePane {...props({ scheduled: [] })} />);
+    await settle();
+    expect(box().value).toBe('朝にテストを流して、直して\n書きかけ');
+    expect(alerts).toEqual(['書き直していた予約は、送られたか取り消されたため、書き直した文を入力欄に戻しました']);
+  });
+
+  it('保存の返事の前に予約が送られていたら、断られたわけは重ねて出さない（書いた文は入力欄に戻す）', async () => {
+    let reject: (error: Error) => void = noop;
+    install({ 'scheduled.edit': () => new Promise((_resolve, r) => (reject = r)) });
+    const view = render(<ClaudePane {...props({ scheduled: [human()] })} />);
+    const row = rowOf('朝にテストを流して');
+    fireEvent.click(editButton(row)!);
+    fireEvent.change(editor(row), { target: { value: '直した文' } });
+    fireEvent.click(within(row).getByRole('button', { name: '保存' }));
+    view.rerender(<ClaudePane {...props({ scheduled: [] })} />);
+    await settle();
+    reject(new Error('もう送ったか、取り消された予約のため、文を変えられません'));
+    await settle();
+    expect(box().value).toBe('直した文');
+    expect(alerts).toEqual(['書き直していた予約は、送られたか取り消されたため、書き直した文を入力欄に戻しました']);
+  });
+});
+
 describe('貼り付けた長い文の札', () => {
   const LOG = Array.from({ length: 30 }, (_, i) => `ログの ${i + 1} 行目`).join('\n');
   const paste = (text: string) => fireEvent.paste(box(), { clipboardData: { files: [], getData: () => text } });
