@@ -1114,6 +1114,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__answer_permission",
     "mcp__tanacode-sessions__configure_session",
     "mcp__tanacode-sessions__end_session",
+    "mcp__tanacode-sessions__restore_session",
     "mcp__tanacode-sessions__schedule_wakeup",
     "mcp__tanacode-sessions__list_wakeups",
     "mcp__tanacode-sessions__cancel_wakeup",
@@ -1454,6 +1455,22 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "instruct",
       "label": "子セッションを終える",
       "name": "end_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "子セッションを戻す",
+      "name": "restore_session",
     },
     {
       "inputSchema": {

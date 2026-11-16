@@ -54,6 +54,7 @@ import { WorktreeError, type WorktreeFailure } from './worktree';
 // ツールの入力の全文を親に渡せていて、親の権限モードが acceptEdits 以上のときだけ（manual・plan の親は、断ることだけ）。
 // start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ。
 // end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す。
+// restore_session は、アーカイブした自分の子を一覧に戻す（画面の「アクティブに戻す」と同じ。起動と worktree の作り直しは、次の send_message で）。
 // configure_session は、自分の子の権限モード（親より強くできない）・モデル・エフォート・Remote Control（親がオンのときだけオンにできる）を変える。
 // 画面のモード欄・モデル欄・ヘッダーの Remote Control のトグルと同じ処理を通す。
 // アプリ内ブラウザでの人の操作待ちは、ツールでは状態 browser として見せる（SessionManager.stateOf は作業中のまま。withBrowserState）
@@ -117,6 +118,8 @@ export type SessionsHost = {
   workflows(id: string): WorkflowRun[];
   // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
   worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
+  // アーカイブから戻す（画面の「アクティブに戻す」と同じ。Claude Code は起動しない）
+  unarchive(id: string): void;
   // worktree の準備（node_modules）でうまくいかなかったこと（無ければ null）
   worktreeSetup(id: string): WorktreeSetupTrouble | null;
   // Claude がアプリ内ブラウザで人に操作を頼んでいるか（ask_user_to_act）
@@ -376,6 +379,8 @@ export class SessionsControl {
           return await this.stopSession(caller, args);
         case 'end_session':
           return await this.endSession(caller, args);
+        case 'restore_session':
+          return this.restoreSession(caller, args);
         case 'schedule_wakeup':
           return this.scheduleWakeup(caller, args);
         case 'list_wakeups':
@@ -631,7 +636,7 @@ export class SessionsControl {
     // 起動中・止まっている子では得が無く、最初の指示（priority: later）を追い越すおそれがあるので、効かせない
     const nextStep = args.deliver === 'next_step' && (state === 'working' || state === 'idle' || state === 'background');
     const who = `"${nameOf(child)}"`;
-    if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
+    if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, restore it with restore_session first, then send the message again.`);
     if (state === 'question') {
       const asked = askingElicitation(host, child.id);
       if (asked) throw new ToolError(`${who} is waiting for the user to answer a question from the MCP server "${asked.server}". Only the user can answer it, in the child session, so the message was not sent. Tell the user.`);
@@ -861,7 +866,7 @@ export class SessionsControl {
     }
     const switching = !!model || !!effort;
     const state = host.stateOf(child.id) ?? 'exited';
-    if (state === 'archived') throw new ToolError(`${who} is archived. To change it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
+    if (state === 'archived') throw new ToolError(`${who} is archived. To change it, restore it with restore_session first, then call configure_session again.`);
     const allowed = switching ? MODEL_SWITCHABLE_STATES : remote !== null ? REMOTE_SWITCHABLE_STATES : MODE_SWITCHABLE_STATES;
     if (!allowed.has(state)) {
       throw new ToolError(`${who} ${CONFIGURE_REFUSAL[state] ?? `cannot be changed while it is ${SESSION_STATE_LABEL[state]}.`}`);
@@ -992,7 +997,7 @@ export class SessionsControl {
     this.stopped.delete(child.id);
     this.backgroundTold.delete(`${caller.id}:${child.id}`);
     const alreadyArchived = before === 'archived';
-    const notes = [alreadyArchived ? 'It was already archived.' : `Archived. The user can restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`];
+    const notes = [alreadyArchived ? 'It was already archived.' : `Archived. If it is needed again, restore it with restore_session (the user can also restore it with "${t('sessions.sidebar.unarchive')}" in the session list).`];
     if (before === 'starting') {
       notes.push(
         'It had been starting up for a long time (its start seemed stuck). Its Claude Code and anything tanacode was running to set it up (such as installing dependencies) were stopped, and the instructions still waiting to be sent to it were not sent.',
@@ -1017,7 +1022,7 @@ export class SessionsControl {
       if (!removeWorktree) notes.push('Kept its worktree (remove_worktree was false). Call end_session again without it to remove the worktree.');
       else if (failure !== null) notes.push('Could not remove its worktree (see worktree.error), so the folder and the branches are still there. Tell the user, or call end_session again once the cause is gone.');
       else if (folder === 'already_removed') notes.push('Its worktree folder was already gone.');
-      else notes.push('Removed its worktree. If the user restores the session, the worktree is recreated (on the branch it was using, if that branch was kept, with its uncommitted changes put back).');
+      else notes.push('Removed its worktree. If the session is restored, the worktree is recreated when it starts (on the branch it was using, if that branch was kept, with its uncommitted changes put back).');
       if (removal?.backupRef) notes.push(`It had uncommitted changes or untracked files (or commits on no branch). They are saved as a commit at ${removal.backupRef} (gitignored files are not included).`);
       const deleted = removal?.branches.filter((b) => b.deleted).map((b) => b.name) ?? [];
       if (deleted.length > 0) notes.push(`Deleted the ${deleted.length === 1 ? 'branch' : 'branches'} ${deleted.join(', ')}.`);
@@ -1034,6 +1039,37 @@ export class SessionsControl {
       worktree,
       note: notes.join(' '),
     });
+  }
+
+  // アーカイブした子を一覧に戻す（画面の「アクティブに戻す」と同じ SessionManager.unarchive）。戻すだけで、Claude Code は起動せず、何も送らない
+  // （利用枠を使わない。起動と worktree の作り直しは、次の send_message の host.open で）。人の確認は出さない（ユーザーと決めたこと）。
+  // アーカイブしていない子には何もしない（何度呼んでも同じ結果になる。end_session と対）
+  private restoreSession(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    const { host } = this.deps;
+    const child = this.resolve(caller, args.session_id, true);
+    const archived = host.stateOf(child.id) === 'archived';
+    if (archived) {
+      host.unarchive(child.id);
+      // 本物の unarchive は状態の変化を知らせないので、ここで見直す（終えた印を外す。戻した子への指示を送れなかったことは、また知らせる）
+      this.stateChanged(child.id);
+    }
+    const state = host.stateOf(child.id) ?? 'exited';
+    const notes = [
+      archived
+        ? 'Restored it to the session list. Its Claude Code is not running yet: send it an instruction with send_message, which starts it with its earlier conversation.'
+        : `It was not archived (it is ${SESSION_STATE_LABEL[state]}), so nothing was changed.`,
+    ];
+    let worktree: Record<string, unknown> | null = null;
+    if (child.worktree) {
+      const exists = existsSync(child.cwd);
+      worktree = { name: child.worktree.name, branch: child.worktree.branch, folder: exists ? 'exists' : 'recreated_on_start' };
+      if (archived && !exists) {
+        notes.push('Its worktree was removed, so it is recreated when the child starts: on the branch it was using if that branch was kept, with its uncommitted changes put back from the backup.');
+      }
+    }
+    // ターミナルモードで止まった子は、起動すると TUI になって親からは送れない（send_message が断る）
+    if (archived && child.terminal) notes.push('It was stopped in terminal mode, so it starts again in its Claude Code screen, where only the user can type: send_message cannot start it. Tell the user.');
+    return json({ session_id: child.id, name: nameOf(child), restored: archived, already_active: !archived, state, worktree, note: notes.join(' ') });
   }
 
   // --- 自分への予約と、人への報告 ---
