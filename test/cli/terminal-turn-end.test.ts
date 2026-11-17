@@ -10,8 +10,9 @@ import { MockApi, usageLimitFailure, type ApiFailure, type Block } from './mock-
 // ターミナルモード（TUI）のターンの終わりの、会話ログの行。アプリは、TUI のターンの終わりを、書くだけの Stop のフックではなく、
 // 会話ログのターンの終わりの行（turn_duration）で知る（session-manager.ts の tuiStopHook・tuiEntry）。それが書かれることに頼っているので、
 // - 一緒に動くチェックリストの Stop のフックが続けさせたターン: Stop のフックは 2 回動くが、turn_duration は続きを終えたあとに 1 回だけ
-// - API エラーで終わったターン（529 の再試行をあきらめた・400・プランの利用枠の上限）: Stop のフックは動かないが、エラーの行
-//   （isApiErrorMessage の応答）のあとに turn_duration が書かれる
+// - API エラーで終わったターン（529 の再試行をあきらめた・400・プランの利用枠の上限）: Stop のフックは動かず、2.1.326 からは
+//   turn_duration も書かれない（2.1.322 までは書かれた）。アプリはエラーの行（isApiErrorMessage の応答）でターンを終えるので、
+//   応答の行より先に、エラーの行が書かれることを確かめる
 // を確かめる。アプリの道（ClaudeRun）では TUI に発言を送れない（キーは押さない。決めたこと）ので、ここだけは TUI を node-pty で直に起動し、
 // 最初の発言を起動の引数で渡す。画面は読まず、会話ログの行だけを見る
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
@@ -97,6 +98,19 @@ async function startTui(prompt: string, steps: Block[][], { stopHook, failure, o
   };
 }
 
+// API エラーで終わったターンの、最初のエラーの行が書かれるまで待ち、そこまでの行を返す（ターンの終わりの行は、書かれても書かれなくても
+// よい。バージョンで違う）
+async function untilApiError(lines: () => string[]): Promise<string[]> {
+  const until = Date.now() + 60_000;
+  for (;;) {
+    const seen = lines();
+    const error = seen.findIndex((l) => l.startsWith('API エラー: '));
+    if (error !== -1) return seen.slice(0, error + 1);
+    if (Date.now() > until) throw new Error(`エラーの行が書かれません: ${JSON.stringify(seen)}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 // 最初のターンの終わりの行が書かれるまで待ち、そこまでの行を返す（会話ログは途中まで書かれた形でも、前から順に並ぶ）
 async function untilTurnEnd(lines: () => string[]): Promise<string[]> {
   const until = Date.now() + 60_000;
@@ -123,19 +137,19 @@ describe(`Claude Code ${claudeVersion()} のターミナルモードのターン
     ]);
   }, 90_000);
 
-  it('529 を返し続けて再試行をあきらめたターンも、エラーの行のあとに turn_duration が書かれる', async () => {
+  it('529 を返し続けて再試行をあきらめたターンは、エラーの行で終わる', async () => {
     const lines = await startTui('ターミナルモードで 529 を確かめます', [say('届かない返事')], { failure: { status: 529, errorType: 'overloaded_error', message: 'Overloaded' } });
-    expect(await untilTurnEnd(lines)).toEqual(['API エラー: ', TURN_END]);
+    expect(await untilApiError(lines)).toEqual(['API エラー: ']);
   }, 90_000);
 
-  it('400 で終わったターンも、エラーの行のあとに turn_duration が書かれる', async () => {
+  it('400 で終わったターンは、エラーの行で終わる', async () => {
     const lines = await startTui('ターミナルモードで 400 を確かめます', [say('届かない返事')], { failure: { status: 400, errorType: 'invalid_request_error', message: 'Bad request' } });
-    expect(await untilTurnEnd(lines)).toEqual(['API エラー: ', TURN_END]);
+    expect(await untilApiError(lines)).toEqual(['API エラー: ']);
   }, 90_000);
 
-  it('プランの利用枠の上限で止まったターンも、エラーの行（usage_limit_reached）のあとに turn_duration が書かれる', async () => {
+  it('プランの利用枠の上限で止まったターンは、エラーの行（usage_limit_reached）で終わる', async () => {
     const reset = Math.floor(Date.now() / 1000) * 1000 + 3 * 60 * 60_000;
     const lines = await startTui('ターミナルモードで利用枠を確かめます', [say('届かない返事')], { failure: usageLimitFailure(reset), oauth: true });
-    expect(await untilTurnEnd(lines)).toEqual(['API エラー: usage_limit_reached', TURN_END]);
+    expect(await untilApiError(lines)).toEqual(['API エラー: usage_limit_reached']);
   }, 90_000);
 });
