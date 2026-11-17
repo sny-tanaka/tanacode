@@ -26,8 +26,8 @@ const read = (id: string, tag: string, expression: string): Block[] => tool(id, 
 const SIZE = '({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, touchPoints: navigator.maxTouchPoints, coarse: matchMedia("(pointer: coarse)").matches })';
 // ページの拡大とスクロールの様子（タッチの位置がずれたときの手がかり）
 const VIEW = '({ scale: visualViewport.scale, left: visualViewport.pageLeft, top: visualViewport.pageTop, scrollX, scrollY, width: innerWidth, height: innerHeight })';
-// 決まった量の計算にかかる時間（3 回のうち、いちばん短いもの）
-const WORK = 'Promise.resolve({ ms: Math.min(work(), work(), work()) })';
+// 決まった量の計算にかかる時間（3 回のうち、いちばん短いもの）。runs: 3 回の時間（落ちたときに、ばらつきを読めるように）
+const WORK = 'Promise.resolve((() => { const runs = [work(), work(), work()]; return { ms: Math.min(...runs), runs }; })())';
 const FETCH = '(async () => { const t = performance.now(); await fetch("/ping?" + Math.random()); return { ms: performance.now() - t }; })()';
 const EVENTS = 'Promise.resolve({ events: takeEvents() })';
 
@@ -184,7 +184,8 @@ describe('Claude がスマホ向けのページを確かめる', () => {
 
   it('CPU を遅くすると測った時間が延び、通信を遅くすると読み込みが遅れる。ツールバーに印が出る', async () => {
     const ms = (tag: string) => reads()[tag]!.ms as number;
-    expect(ms('work-slow')).toBeGreaterThan(ms('work-normal') * 2.5);
+    // CI で 1 回だけ 2.3 倍で落ちた（手元では再現しない）。落ちたときに、3 回ずつの時間を読めるようにする
+    expect(ms('work-slow'), JSON.stringify({ normal: reads()['work-normal'], slow: reads()['work-slow'] })).toBeGreaterThan(ms('work-normal') * 2.5);
     // 低速 3G は、1 回のやりとりに 2 秒の遅れ
     expect(ms('fetch-slow')).toBeGreaterThan(1500);
     expect(ms('fetch-normal')).toBeLessThan(1000);
