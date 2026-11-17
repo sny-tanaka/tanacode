@@ -546,6 +546,15 @@ export const line = {
     ...extra,
   }),
   turnEnd: () => ({ ...base(), type: 'system', subtype: 'turn_duration', durationMs: 100 }),
+  // API エラーで終わった（再試行をあきらめた 529・400 などで、Claude Code が書く合成の応答の行）
+  apiError: (text: string) => ({
+    ...base(),
+    type: 'assistant',
+    message: { id: randomUUID(), role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text }] },
+    error: 'invalid_request',
+    isApiErrorMessage: true,
+    apiErrorStatus: 400,
+  }),
   // プランの利用枠に当たって止まった（Claude Code 2.1.302 が書く合成の応答の行。resetsAt はミリ秒で渡す。会話ログは秒）
   limit: (resetsAt: number | null, rateLimitType = 'five_hour') => {
     const info = { status: 'rejected', ...(resetsAt === null ? {} : { resetsAt: resetsAt / 1000 }), rateLimitType, overageStatus: 'rejected', isUsingOverage: false };

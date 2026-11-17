@@ -143,14 +143,33 @@ describe('ターミナルモードの間', () => {
     expect(pty.killed).toBe(true);
   });
 
-  it('TUI のターンが利用枠で止まり、ターンの終わりの行が無いまま次のターンが始まっても、止まったことを次のターンに持ち越さない', async () => {
+  it('TUI のターンが API エラーで終わったら、エラーの行でターンを終えて完了を知らせる（2.1.326 からはターンの終わりの行が無い）', async () => {
+    const { id } = await chatting();
+    await app.manager.setTerminalMode(id, true);
+    const before = app.turnsCompleted.length;
+    app.append(id, line.user('TUI で打った指示'));
+    await app.waitFor('作業中', () => app.sessions.find((s) => s.id === id)?.terminalWorking === true);
+    app.append(id, line.apiError('API Error: 400 Bad request'));
+    await app.waitFor('ターンの終わり', () => app.turnsCompleted.length === before + 1);
+    expect(app.sessions.find((s) => s.id === id)?.terminalWorking).toBe(false);
+    // 2.1.322 までは、エラーの行のあとにターンの終わりの行も書く。完了を 2 回知らせない
+    app.append(id, line.turnEnd());
+    app.append(id, line.user('もう一度'), line.text('もう一度の返事'), line.turnEnd());
+    // 返事（ターンの始まり）のあとに作業中が外れた＝次のターンの終わりの行まで読んだ
+    await app.waitFor('次のターンの終わり', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === 'もう一度の返事') && app.manager.summary(id)?.terminalWorking === false);
+    expect(app.turnsCompleted.length).toBe(before + 2);
+  });
+
+  it('TUI のターンが利用枠で止まったら、エラーの行でターンを終えて止まったことを知らせ、次のターンには持ち越さない', async () => {
     const { id } = await chatting();
     await app.manager.setTerminalMode(id, true);
     const before = app.turnLimits.length;
-    app.append(id, line.user('TUI で打った指示'), line.limit(Date.now() + 3_600_000));
-    await app.waitFor('止まった', () => app.events(id).some((e) => e.type === 'api-error'));
+    const resetsAt = Date.now() + 3_600_000;
+    app.append(id, line.user('TUI で打った指示'), line.limit(resetsAt));
+    await app.waitFor('止まった', () => app.turnLimits.length === before + 1);
+    expect(app.turnLimits.at(-1)?.limit?.resetsAt).toBe(resetsAt);
     app.append(id, line.user('もう一度'), line.text('はい'), line.turnEnd());
-    await app.waitFor('次のターンの終わり', () => app.turnLimits.length === before + 1);
+    await app.waitFor('次のターンの終わり', () => app.turnLimits.length === before + 2);
     expect(app.turnLimits.at(-1)?.limit).toBeNull();
   });
 

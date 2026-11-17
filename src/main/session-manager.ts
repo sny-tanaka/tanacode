@@ -269,9 +269,11 @@ type Runtime = {
   restarting: { process: ClaudeSession; done: Promise<void> } | null;
   // アーカイブ・一覧からの削除で片付けている途中（worktree も消すときは、止め終わるまで一覧から外さない）。止めたあとに起動し直さない
   closing: boolean;
-  // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行で終わる。書くだけの Stop のフックでは終えない。
-  // 一緒に動くチェックリストやユーザーの Stop のフックが、文を渡して続けさせることがあるため）
+  // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か API エラーの行で終わる。書くだけの Stop のフックでは
+  // 終えない。一緒に動くチェックリストやユーザーの Stop のフックが、文を渡して続けさせることがあるため）
   tuiTurn: boolean;
+  // ターミナルモードで、今のターンを API エラーの行で終えた（Claude Code 2.1.322 までは、そのあとにターンの終わりの行も書く。完了を 2 回知らせない）
+  tuiErrorEnded: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）。
   // at: フックがファイルに書いた時刻（これより前に書かれた会話ログの行は、答えではない）
   tuiAsk: { kind: 'permission' | 'question'; menu: Menu; at: number } | null;
@@ -1332,6 +1334,8 @@ export class SessionManager {
   }
 
   // ターミナルモードで、会話ログに行が増えた。人の発言でターンが始まり、ターンの終わりの行で終わる（終わりは完了の知らせを出す）。
+  // API エラー（再試行をあきらめた 529・400・プランの利用枠の上限）で終わったターンは、エラーの行で終える（Claude Code 2.1.326 から、
+  // エラーで終わったターンにはターンの終わりの行を書かない。2.1.322 までは、エラーの行のあとに書く）。
   // TUI が出した確認・質問は、答え（ツールの結果などの user の行）が書かれたら済んだことにする
   // isHistory: 起動したときに読み直した行（アプリを起動し直して TUI を引き継いだときは、済んだターンの行も読み直す）。
   // 読み直した行では、今がターンの途中かを組み立てるだけにして、完了は知らせない（流し直した行は通知しない。設計書 5 節）
@@ -1349,6 +1353,7 @@ export class SessionManager {
     // コマンドや知らせになるので、応答で分かる）。モデルを呼ばないコマンド（/model など）は応答もターンの終わりの行も無いので数えない
     if (events.some((e) => (e.type === 'user' && !e.command) || e.type === 'assistant-text' || e.type === 'thinking' || e.type === 'tool-use')) {
       rt.tuiTurn = true;
+      rt.tuiErrorEnded = false;
       changed = true;
     }
     // 人の発言で始まったターンは、新しいターン。前のターンが利用枠で止まったまま、ターンの終わりの行が書かれなかったときも、
@@ -1357,11 +1362,16 @@ export class SessionManager {
       rt.turnLimit = null;
       rt.turnAnswered = false;
     }
-    if (events.some((e) => e.type === 'turn-end')) {
+    // エラーの行で終えたターンの、あとから書かれたターンの終わりの行（2.1.322 まで）は、もう終えたので数えない
+    const turnEnd = events.some((e) => e.type === 'turn-end');
+    const errorEnd = rt.tuiTurn && events.some((e) => e.type === 'api-error');
+    if (errorEnd || (turnEnd && !rt.tuiErrorEnded)) {
       rt.tuiTurn = false;
       changed = true;
       if (!isHistory) this.turnCompleted(id, rt);
     }
+    if (errorEnd) rt.tuiErrorEnded = true;
+    else if (turnEnd) rt.tuiErrorEnded = false;
     if (!changed) return;
     this.updateAttention(id, rt);
     // 一覧の「ターミナルモード・作業中」を出し直し、待っている知らせ（TUI に貼るもの）に、メニューが閉じた・手が空いたことを知らせる
@@ -2628,6 +2638,7 @@ export class SessionManager {
         launchNotes: [],
         loweredFrom: null,
         tuiTurn: false,
+        tuiErrorEnded: false,
         tuiAsk: null,
         redrawFromHost: null,
         init: null,
@@ -2724,6 +2735,7 @@ export class SessionManager {
     runtime.tuiBaseline = resumed?.baseline ?? null;
     runtime.tuiRemoteSeen = false;
     runtime.tuiTurn = false;
+    runtime.tuiErrorEnded = false;
     runtime.tuiAsk = resumed?.ask ?? null;
     if (resumed?.ask) runtime.permissionAt = resumed.ask.at;
     runtime.launchNotes = [];
@@ -2874,6 +2886,7 @@ export class SessionManager {
             this.emitQueue(id, runtime);
           }
           runtime.tuiTurn = false;
+          runtime.tuiErrorEnded = false;
           runtime.tuiAsk = null;
           // チャットとターミナルモードの切り替え・再起動で、アプリが止めたときは、終了を出さない（すぐ起動し直す。起動できなければ、
           // そこで出す）。切り替えの途中でも、claude が自分で終わった（落ちた）ときは出す（出さないと止まったと分からず、送った発言が黙って消える）

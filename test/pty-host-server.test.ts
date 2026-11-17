@@ -149,9 +149,12 @@ async function list(c: Client, req: number): Promise<HostedInfo[]> {
 // アプリが見ていない間の振る舞い（終わったプロセスの記録を残す）を変えずに、決まった時間でなく、終わったのを見て進む
 async function untilListed(path: string, check: (hosted: HostedInfo[]) => boolean): Promise<void> {
   const peek = await client(path, 0);
+  // テストの時間切れ（5 秒）より先に、最後の一覧とホストのログを出して落ちる（CI で落ちたときに原因を読めるように）
+  const until = Date.now() + 4000;
   for (let req = 1000; ; req++) {
-    if (check(await list(peek, req))) break;
-    if (req > 1250) throw new Error('一覧: 時間切れ');
+    const hosted = await list(peek, req);
+    if (check(hosted)) break;
+    if (Date.now() > until) throw new Error(`一覧: 時間切れ ${JSON.stringify(hosted)}\n${logs.join('\n')}`);
     await sleep(20);
   }
   peek.socket.destroy();
@@ -377,7 +380,10 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
   it('もう終わったプロセスを止めるよう頼まれたら、終わっていたことを記録する', async () => {
     const path = await startHost();
     const first = await client(path);
-    first.send(pipe('k3', [], 'exit 3'));
+    // 起動の頼みがホストに届いた（出力が来た）のを見てから切る（送った直後に切ると、頼みが届く前に接続が閉じうる）。
+    // 終わるのは、切ったあと
+    first.send(pipe('k3', ['ready'], 'sleep 0.3; exit 3'));
+    await waitFor('出力', () => linesOf(first, 'k3').length === 1);
     first.socket.destroy();
     // アプリが見ていない間に終わったので、終了コードを持ったまま一覧に残る
     await untilListed(path, (hosted) => hosted.find((h) => h.id === 'k3')?.exitCode === 3);
