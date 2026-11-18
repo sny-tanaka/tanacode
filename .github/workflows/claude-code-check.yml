@@ -124,7 +124,8 @@ jobs:
           - 失敗した実行: $RUN_URL
           - 失敗したテストのログに、そのときの Claude Code の標準エラーの末尾が出ています
           - 台本で、アプリの知らない種類の行が出たとき（ClaudeRun の stop）・tanacode が使うフィールドが目録から消えたとき（recorded.test.ts）も落ちます
-          - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
+          - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます
+          - 直す PR では、動作確認済のバージョンも上げます（\`TANACODE_RECORD=1\` で控えを取り、\`node scripts/update-verified-version.mjs <バージョン>\`）"
 
   # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。
   # GitHub Actions のトークン（GITHUB_TOKEN）で作った PR では PR の CI が動かないので、push・PR の作成・マージは GitHub App の token でする

@@ -533,6 +533,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`。行の目録も）
   - 動作確認済のバージョンの控えが無いと、`npm test` が落ちます（上の `recorded.test.ts`・`statusline.test.ts`・`context.test.ts`）。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
+  - 毎日の確認が落ちて立った Issue を直す PR では、動作確認済のバージョンも、その PR で上げます（上の手順で控えを取ってスクリプトを流し、変更を同じ PR に入れる）。直しだけを入れると、次の毎日の確認が通るまで（リリースしても）、そのバージョンは動作確認済になりません。
 - GitHub Actions: PR では `ci.yml`（`npm test` は `unit`、`npm run test:cli` は `cli` のジョブ）、毎日の定期の確認と「Run workflow」では `claude-code-check.yml`（`npm run test:cli` だけ）で流します。
   - 確かめる Claude Code は、毎日の定期の確認と「Run workflow」ではその日の最新、PR では動作確認済のバージョン（`VERIFIED_CLAUDE_CODE_VERSION`）。新しい Claude Code が出ても、関係のない PR が落ちないようにするためです。新しいバージョンへの追従は、毎日の確認と、それが作るバージョンを上げる PR で行います（その PR の CI は、上げたあとのバージョンで流れます）。
   - 定期の確認では、その日の最新が動作確認済のバージョンと同じで、その控え（目録も）がコミット済みなら、確かめ直さずに終わります（`precheck` のジョブ。macOS のランナーで毎日同じバージョンを流さないため。動作確認済のバージョンでの確認は、PR ごとに `ci.yml` の `cli` のジョブが流す）。「Run workflow」では、いつも確かめます。
