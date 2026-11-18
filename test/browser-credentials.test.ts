@@ -726,6 +726,48 @@ describe('1Password SDK の取り出し役', () => {
     expect(fake.made).toHaveLength(2);
   });
 
+  it('承認が切れた以外のエラーでも、クライアントを作り直して 1 回だけやり直す。元のエラーはログに残す', async () => {
+    let calls = 0;
+    const fake = fakeSdk(async () => {
+      if (calls++ === 0) throw Object.assign(new Error(`item not found\n${'x'.repeat(10)}`), { name: 'Error' });
+      return sdkItem();
+    });
+    const logs: string[] = [];
+    await expect(sdkSource(fake.load, '1', (line) => logs.push(line)).read(parseItemRef(LINK))).resolves.toMatchObject({ password: PASS });
+    expect(fake.made).toHaveLength(2);
+    expect(logs).toEqual([expect.stringContaining('Error: item not found')]);
+    expect(logs[0]).not.toContain('x'.repeat(10));
+  });
+
+  it('作り直しても失敗したら、そのエラーを返す（やり直しは 1 回だけ）', async () => {
+    const fake = fakeSdk(async () => {
+      throw new Error('item not found');
+    });
+    const logs: string[] = [];
+    await expect(sdkSource(fake.load, '1', (line) => logs.push(line)).read(parseItemRef(LINK))).rejects.toThrow(/item was not found/);
+    expect(fake.made).toHaveLength(2);
+    expect(fake.gets).toHaveLength(2);
+    expect(logs).toHaveLength(2);
+  });
+
+  it('ユーザーが承認を断ったときは、作り直さない', async () => {
+    const fake = fakeSdk(async () => {
+      throw new Error('authorization denied by user');
+    });
+    await expect(sdkSource(fake.load, '1', () => {}).read(parseItemRef(LINK))).rejects.toThrow(/did not approve/);
+    expect(fake.made).toHaveLength(1);
+    expect(fake.gets).toHaveLength(1);
+  });
+
+  it('ログに残す元のエラー文は長さを切る', async () => {
+    const fake = fakeSdk(async () => {
+      throw new Error('y'.repeat(500));
+    });
+    const logs: string[] = [];
+    await expect(sdkSource(fake.load, '1', (line) => logs.push(line)).read(parseItemRef(LINK))).rejects.toThrow(CredentialError);
+    expect(logs.every((line) => !line.includes('y'.repeat(201)))).toBe(true);
+  });
+
   it('失敗は Claude に返す文にする（アプリが無い・承認されなかった）', async () => {
     const fake = fakeSdk(async () => {
       throw new Error('Native library is not available.');
