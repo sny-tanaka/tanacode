@@ -63,17 +63,22 @@ export type SdkModule = {
   DesktopAuth: new (accountName: string) => unknown;
 };
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// ユーザーが 1Password の承認を断ったときの、SDK のエラー文に含まれる語（断られたときは、クライアントを作り直してやり直さない）
+const DENIED = /denied|declined|dismiss|cancel|reject/;
+
 const SDK_SETUP_HINT = 'Ask the user to open and unlock the 1Password app, and turn on "Integrate with 1Password SDKs" in its Settings > Developer.';
 
 // SDK の失敗を、Claude に返す文にする。SDK のエラー文は値を含まない（アイテムの値は成功したときの答えにだけ入る）。
 // どの文で失敗するかは、本物の 1Password で確かめていない（文書にも無い）ので、当たらなければ 1 行目を添える
 export function sdkFailure(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
+  const text = errorText(error);
   const lower = text.toLowerCase();
   if (/desktop application not found|native library is not available/.test(lower)) {
     return 'Could not reach the 1Password app: it is not installed in /Applications, or tanacode could not load its integration library. Ask the user to install the 1Password app for Mac.';
   }
-  if (/denied|declined|dismiss|cancel|reject/.test(lower)) return 'The user did not approve the 1Password prompt, so nothing was filled. Do not retry unless the user asks.';
+  if (DENIED.test(lower)) return 'The user did not approve the 1Password prompt, so nothing was filled. Do not retry unless the user asks.';
   if (/not enabled|integration.*(off|disabled)|sdk.*disabled|connection refused|could not connect|failed to connect/.test(lower)) return `Could not connect to the 1Password app. ${SDK_SETUP_HINT}`;
   if (/locked/.test(lower)) return 'The 1Password app is locked. Ask the user to unlock it, then try again.';
   if (/account/.test(lower) && /not found|no account|unknown/.test(lower)) return 'The 1Password account in the link was not found in the 1Password app (the user may not be signed in to that account there).';
@@ -129,10 +134,15 @@ export function oneTimePassword(login: Login): string {
 
 // SDK を使う取り出し役。load: SDK を読み込む（初めて使うときに読み込む。SDK は読み込むときに 14MB の WebAssembly をコンパイルするので、
 // アプリの起動では読み込まない）。version: 1Password の承認のダイアログ・連携の一覧に出す tanacode のバージョン。
-// クライアントはアカウントごとに使い回す（1Password の承認はプロセスとアカウントごと。使わずに 10 分たつと切れる。切れたら作り直して 1 回だけやり直す）
-export function sdkSource(load: () => Promise<SdkModule>, version: string): CredentialSource {
+// クライアントはアカウントごとに使い回す（1Password の承認はプロセスとアカウントごと。使わずに 10 分たつと切れる）。
+// 失敗したら、控えたクライアントを捨てて作り直し、1 回だけやり直す。承認が切れたとき（DesktopSessionExpiredError）だけでなく、
+// 1Password アプリの再起動・再サインインのあとなどに、古いクライアントが別のエラー（アイテムが見つからない、など）を返し続けることがあるため。
+// ユーザーが承認を断ったときは、もう一度承認を求めることになるので、やり直さない。
+// log: 失敗したときに、元のエラー（name と message の 1 行目）を残す先（main のログ）。sdkFailure が Claude に返す文に置き換えると、元のエラー文が分からなくなるため
+export function sdkSource(load: () => Promise<SdkModule>, version: string, log: (line: string) => void = (line) => console.warn(line)): CredentialSource {
   const clients = new Map<string, Promise<SdkClient>>();
-  const client = async (account: string): Promise<SdkClient> => {
+  // 控えた Promise をそのまま返す（作り直すときに、自分が使ったものかを見分ける）
+  const client = (account: string): Promise<SdkClient> => {
     let made = clients.get(account);
     if (!made) {
       made = load().then((sdk) => sdk.createClient({ auth: new sdk.DesktopAuth(account), integrationName: 'tanacode', integrationVersion: version }));
@@ -143,14 +153,17 @@ export function sdkSource(load: () => Promise<SdkModule>, version: string): Cred
     return made;
   };
   const get = async (ref: ItemRef, retry: boolean): Promise<SdkItem> => {
+    // クライアントを作れなかったときは、やり直さない（作れなかったものは控えないので、次の呼び出しでまた作る）
+    const made = client(ref.account);
+    const sdk = await made;
     try {
-      return await (await client(ref.account)).items.get(ref.vault, ref.item);
+      return await sdk.items.get(ref.vault, ref.item);
     } catch (error) {
-      if (retry && error instanceof Error && error.name === 'DesktopSessionExpiredError') {
-        clients.delete(ref.account);
-        return get(ref, false);
-      }
-      throw error;
+      if (!retry || DENIED.test(errorText(error).toLowerCase())) throw error;
+      log(`[1Password] アイテムを読めなかったので、クライアントを作り直してやり直します: ${errorSummary(error)}`);
+      // 別の呼び出しがもう作り直していれば、それを使う
+      if (clients.get(ref.account) === made) clients.delete(ref.account);
+      return get(ref, false);
     }
   };
   return {
@@ -158,10 +171,18 @@ export function sdkSource(load: () => Promise<SdkModule>, version: string): Cred
       try {
         return loginFromSdkItem(await get(ref, true));
       } catch (error) {
+        log(`[1Password] アイテムを読めませんでした: ${errorSummary(error)}`);
         throw new CredentialError(sdkFailure(error));
       }
     },
   };
+}
+
+// ログに残す、エラーの name と message の 1 行目。SDK のエラー文はアイテムの値を含まない前提だが、念のため長さを切る
+function errorSummary(error: unknown): string {
+  const name = (error instanceof Error ? error.name : typeof error).slice(0, 80);
+  const first = errorText(error).split('\n').find((l) => l.trim())?.trim() ?? '';
+  return `${name}: ${first.length > 200 ? `${first.slice(0, 200)}…` : first}`;
 }
 
 // アイテムの URL のうち、今のページに合うもの（無ければ null）。
