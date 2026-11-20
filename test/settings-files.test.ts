@@ -7,7 +7,7 @@ import { claudeArgs, prepareLaunch } from '../src/main/claude-session';
 import { LaunchFiles } from '../src/main/launch-files';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
 import { toolPermissionHooks } from '../src/main/tool-permissions';
-import { IDLE_FILE_COMMAND } from '../src/main/statusline';
+import { IDLE_FILE_COMMAND, statusLineCommand } from '../src/main/statusline';
 import type { SettingsFile } from '../src/shared/settings-file';
 
 // 登録した設定ファイル。選んだセッションだけ、アプリの設定と合わせて Claude Code を起動する
@@ -216,7 +216,7 @@ describe('起動の準備', () => {
     const files = make();
     const { id } = files.add(file('a.json', { statusLine: { type: 'command', command: 'my-line' } }));
     const written = composed(files, id);
-    expect(written.statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | my-line');
+    expect(written.statusLine.command).toBe(statusLineCommand('my-line'));
   });
 
   it('model が文字でない・空なら、model は無いものとする', () => {
@@ -277,9 +277,9 @@ describe('ホームのフォルダ', () => {
     file('.claude/settings.json', { statusLine: { type: 'command', command: 'user-line' } });
     const files = make();
     const plain = files.add(file('a.json', {}));
-    expect(composed(files, plain.id).statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | user-line');
+    expect(composed(files, plain.id).statusLine.command).toBe(statusLineCommand('user-line'));
     const fixed = files.add(file('b.json', { statusLine: { type: 'static', command: 'their-line' } }));
-    expect(composed(files, fixed.id).statusLine.command).toBe('cat > "$TANACODE_STATUS_FILE"');
+    expect(composed(files, fixed.id).statusLine.command).toBe(statusLineCommand(null));
   });
 
   it('知らせる先を省いても、登録・名前の変更・削除ができる', () => {

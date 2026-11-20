@@ -18,6 +18,21 @@ import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
 // ユーザーが自分の設定（~/.claude/settings.json）で statusLine を設定していれば（RunCat など）、同じ JSON をそのコマンドにも渡して表示もそのまま使う
 export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 
+// statusLine のコマンド。JSON を一時のファイル（<id>.json.<シェルの PID>）に書き終えてから、mv で置き換える。
+// `cat > <id>.json` で直に書くと、シェルが先にファイルを空にするので、書き終える前に TUI が止められる（チャットに戻す・セッションを止める）と、
+// statusLine のコマンドも一緒に止まり、空のファイルが残る（アプリを起動し直して TUI を引き継ぐときの peek で、前の値が読めない。
+// 互換性の確認では statusLine の控えが書けずに落ちた。2.1.327）。mv は同じフォルダの中なので、読む側には、前の中身か新しい中身のどちらかが見える。
+// 一時のファイルは、途中で止められたときだけ残る（名前が .json で終わらないので、StatusLineWatcher は読まない）。
+// inner（ユーザー自身の statusLine）には、書き終えたファイルを標準入力で渡す（tee で同時に渡すと、inner が標準入力を読まずに先に終わったとき、
+// tee が SIGPIPE で止まって書き終えられない）。終了の状態と出力は inner のもの。
+// inner は ( ) で包む（`a; b` のような並びでも全体が標準入力を受け取れるように。行末のコメントで ) が消えないよう、改行で閉じる）
+export function statusLineCommand(inner: string | null): string {
+  const file = `"$${STATUS_FILE_ENV}"`;
+  const temp = `"$${STATUS_FILE_ENV}.$$"`;
+  const write = `cat > ${temp} && mv -f ${temp} ${file}`;
+  return inner ? `${write} && (${inner}\n) < ${file}` : write;
+}
+
 // アプリが起動する Claude Code にだけ渡す設定（--settings。ユーザーの設定ファイルは書き換えない。フックはユーザーのものと一緒に動く）。
 // 引数には載せず、launch-files.ts がファイルに書いてパスを渡す（引数の文字に当たる pkill -f などで止められないように）。
 // チャット（stream-json）とターミナルモード（TUI）で同じ中身にする（設計書 4 節）。
@@ -63,7 +78,7 @@ export function ownSettings(
   terminal = false,
   instructions = false,
 ): Record<string, unknown> {
-  const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
+  const command = statusLineCommand(inner);
   const excludes = foreignClaudeMdExcludes(claudeDir);
   const writeOnly = (fileCommand: string) => ({ hooks: [{ type: 'command', command: fileCommand, timeout: 10 }] });
   const checklistEvents = checklist ? checklistHooks() : {};
@@ -163,8 +178,11 @@ const STOP_HIT_SUFFIX = '.auto-compact.hit.json';
 
 // 書くだけのフックのコマンド。<dir>/<id>.ask.json（ASK_FILE_ENV。名前の元にするだけで、このファイルはもう書かない・読まない）と同じフォルダの、
 // <id> に種類の名前を付けたファイルに、フックの入力を書く。何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
+// statusLine と同じく、一時のファイル（<名前>.<シェルの PID>）に書き終えてから mv で置き換える（書きかけで止められても、空のファイルを残さない。
+// 一時のファイルの名前は種類の名前で終わらないので、StatusLineWatcher は読まない。statusLineCommand）
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-const fileCommand = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"; printf '%s\\n' '${SUPPRESS_OUTPUT}'`;
+const fileCommand = (suffix: string) =>
+  `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"; cat > "$f.$$" && mv -f "$f.$$" "$f"; printf '%s\\n' '${SUPPRESS_OUTPUT}'`;
 // 許可の確認の直前（PermissionRequest）: <id>.permission.json
 export const PERMISSION_FILE_COMMAND = fileCommand(PERMISSION_SUFFIX);
 // Claude Code の知らせ（Notification。確認待ち・入力待ちなど）: <id>.notification.json

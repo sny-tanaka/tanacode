@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,7 @@ import {
   ownSettings,
   parseStatusLine,
   sessionSettings,
+  statusLineCommand,
   userStatusLineCommand,
   AUTO_COMPACT_STOP_COMMAND,
   IDLE_FILE_COMMAND,
@@ -95,11 +97,57 @@ describe('アプリが Claude Code に渡す設定', () => {
   it('ユーザーの statusLine が無ければ、JSON をファイルに書くだけ。あれば同じ JSON をそのコマンドにも渡す', () => {
     expect(userStatusLineCommand()).toBeNull();
     const plain = written(sessionSettings()) as { statusLine: { type: string; command: string } };
-    expect(plain.statusLine).toEqual({ type: 'command', command: `cat > "$${STATUS_FILE_ENV}"` });
+    expect(plain.statusLine).toEqual({ type: 'command', command: statusLineCommand(null) });
     writeSettings({ statusLine: { type: 'command', command: 'runcat-statusline' } });
     expect(userStatusLineCommand()).toBe('runcat-statusline');
     const withUser = written(sessionSettings()) as { statusLine: { command: string } };
-    expect(withUser.statusLine.command).toBe(`tee "$${STATUS_FILE_ENV}" | runcat-statusline`);
+    expect(withUser.statusLine.command).toBe(statusLineCommand('runcat-statusline'));
+  });
+
+  describe('statusLine のコマンドを動かす', () => {
+    let dir: string;
+    let file: string;
+    let env: NodeJS.ProcessEnv;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'tanacode-statusline-run-'));
+      file = join(dir, 's1.json');
+      env = { ...process.env, [STATUS_FILE_ENV]: file };
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const run = (inner: string | null, input: string) => execFileSync('/bin/sh', ['-c', statusLineCommand(inner)], { env, input, encoding: 'utf8' });
+
+    it('JSON をファイルに書き、一時のファイルは残さない', () => {
+      run(null, statusJson);
+      expect(readFileSync(file, 'utf8')).toBe(statusJson);
+      expect(readdirSync(dir)).toEqual(['s1.json']);
+    });
+
+    it('ユーザー自身の statusLine には、同じ JSON を標準入力で渡し、その出力を返す。並べたコマンドの全体に渡る', () => {
+      expect(run('wc -c | tr -d " "', statusJson).trim()).toBe(String(Buffer.byteLength(statusJson)));
+      expect(run('read -r first; printf "%s" "$first"; wc -l | tr -d " " # コメント', '{\n}\n\n')).toBe('{2\n');
+      expect(readFileSync(file, 'utf8')).toBe('{\n}\n\n');
+    });
+
+    it('ユーザー自身の statusLine が標準入力を読まずに終わっても、ファイルは書き終える', () => {
+      expect(run('echo line', statusJson)).toBe('line\n');
+      expect(readFileSync(file, 'utf8')).toBe(statusJson);
+    });
+
+    // TUI を止めると statusLine のコマンドも一緒に止まる。直に書いていたときは、空のファイルが残った（2.1.327 の互換性の確認で、控えが書けずに落ちた）
+    it('書き終える前に止められても、前の中身が残る', async () => {
+      writeFileSync(file, statusJson);
+      // TUI の pty が閉じたときと同じく、プロセスのグループごと止める（シェルだけを止めると、cat が残って書き続ける）
+      const child = spawn('/bin/sh', ['-c', statusLineCommand(null)], { env, stdio: ['pipe', 'ignore', 'ignore'], detached: true });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.stdin.write('{"model":');
+      // 一時のファイルが作られて（書き始めて）から止める
+      await vi.waitFor(() => expect(readdirSync(dir)).toContain(`s1.json.${child.pid}`));
+      process.kill(-child.pid!, 'SIGHUP');
+      await exited;
+      expect(readFileSync(file, 'utf8')).toBe(statusJson);
+    });
   });
 
   it('コマンドでない statusLine・コマンドが空のもの・読めない設定は使わない', () => {
@@ -128,14 +176,50 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
     expect(hooks.Notification).toEqual([{ hooks: [{ type: 'command', command: NOTIFICATION_FILE_COMMAND, timeout: 10 }] }]);
     expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] }]);
-    // 質問のファイル（<id>.ask.json）の名前から、種類ごとのファイルの名前を作る（ASK_FILE_ENV を含むので、チャットのフックの一覧に出ない）
-    // 何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
-    const write = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%.ask.json}.${suffix}.json"; printf '%s\\n' '{"suppressOutput":true}'`;
-    expect(PERMISSION_FILE_COMMAND).toBe(write('permission'));
-    expect(NOTIFICATION_FILE_COMMAND).toBe(write('notification'));
-    expect(IDLE_FILE_COMMAND).toBe(write('idle'));
+    // ASK_FILE_ENV を含むので、チャットのフックの一覧に出ない
+    for (const command of [PERMISSION_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, IDLE_FILE_COMMAND]) expect(command).toContain(ASK_FILE_ENV);
     // MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
     expect(written(sessionSettings(true)).hooks.PermissionRequest).toHaveLength(1);
+  });
+
+  it('書くだけのフックは、質問のファイル（<id>.ask.json）の名前から作った種類ごとのファイルに入力を書き、アプリのフックの印（suppressOutput）だけを出す', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tanacode-hook-run-'));
+    try {
+      const env = { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json') };
+      const cases = [
+        [PERMISSION_FILE_COMMAND, 's1.permission.json'],
+        [NOTIFICATION_FILE_COMMAND, 's1.notification.json'],
+        [IDLE_FILE_COMMAND, 's1.idle.json'],
+      ] as const;
+      for (const [command, name] of cases) {
+        const input = JSON.stringify({ hook: name });
+        expect(execFileSync('/bin/sh', ['-c', command], { env, input, encoding: 'utf8' })).toBe('{"suppressOutput":true}\n');
+        expect(readFileSync(join(dir, name), 'utf8')).toBe(input);
+      }
+      // 一時のファイルは残さない
+      expect(readdirSync(dir).sort()).toEqual(cases.map(([, name]) => name).sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // statusLine と同じく、書きかけで止められても空のファイルを残さない
+  it('書くだけのフックが、書き終える前に止められても、前の中身が残る', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tanacode-hook-kill-'));
+    try {
+      const file = join(dir, 's1.permission.json');
+      writeFileSync(file, '{"tool_name":"Bash"}');
+      const env = { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json') };
+      const child = spawn('/bin/sh', ['-c', PERMISSION_FILE_COMMAND], { env, stdio: ['pipe', 'ignore', 'ignore'], detached: true });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.stdin.write('{"tool_name":');
+      await vi.waitFor(() => expect(readdirSync(dir)).toContain(`s1.permission.json.${child.pid}`));
+      process.kill(-child.pid!, 'SIGHUP');
+      await exited;
+      expect(readFileSync(file, 'utf8')).toBe('{"tool_name":"Bash"}');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
@@ -245,6 +329,19 @@ describe('StatusLineWatcher', () => {
     writeFileSync(join(dir, 's1'), 'x');
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(infos).toHaveLength(1);
+  });
+
+  // 本物の statusLine と書くだけのフックのコマンドは、一時のファイルに書いてから mv で置き換える。置き換えに気づき、一時のファイルは読まない
+  it('statusLine と許可の確認のフックのコマンドが書いたファイルを読む（一時のファイルから mv で置き換える）', async () => {
+    await live(watcher!);
+    const request = { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'mkdir out' } };
+    const env = { ...process.env, [STATUS_FILE_ENV]: watcher!.fileFor('s1'), [ASK_FILE_ENV]: watcher!.askFileFor('s1') };
+    execFileSync('/bin/sh', ['-c', statusLineCommand(null)], { env, input: statusJson });
+    execFileSync('/bin/sh', ['-c', PERMISSION_FILE_COMMAND], { env, input: JSON.stringify(request) });
+    await expect.poll(() => infos.length).toBe(1);
+    await expect.poll(() => permissions.length).toBe(1);
+    expect(infos[0]).toMatchObject({ sessionId: 's1', info: { version: VERIFIED_CLAUDE_CODE_VERSION } });
+    expect(permissions[0]).toMatchObject({ sessionId: 's1', request });
   });
 
   it('前のバージョンのフックが書いた AskUserQuestion の入力のファイル（<id>.ask.json）は、statusLine として読まない', async () => {
