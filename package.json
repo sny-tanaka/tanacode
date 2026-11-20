@@ -12,7 +12,7 @@
   },
   "main": "out/main/index.js",
   "scripts": {
-    "postinstall": "node scripts/fix-node-pty-permissions.mjs",
+    "postinstall": "node scripts/fix-node-pty-permissions.mjs && node scripts/install-electron.mjs",
     "predev": "node scripts/build-translate-helper.mjs",
     "dev": "electron-vite dev",
     "prebuild": "node scripts/build-translate-helper.mjs",
