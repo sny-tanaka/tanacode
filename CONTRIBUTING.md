@@ -221,7 +221,7 @@ PR で、次のものを流します。develop への push では流しません
   - 同じものは 1 回だけ流します。アプリの JS は、カバレッジを測るためのソースマップ付きのビルドを 1 回だけ作り、そこから `.app` を作って E2E を流します（`.map` は `.app` に入りません）。デモのサイトも、PR では待ち時間 0 のビルド 1 回で、PC とスマホのツアーを流します。
   - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、どれか 1 つでも通っていなければ失敗にします。
 - CI の結果に関わらないファイルだけを変えた PR では、重いジョブ（`ci.yml` の `unit`・`storybook`・`cli`・`build`・`app` と、`demo-site.yml` の `tour`）を飛ばします。どちらのワークフローも、はじめに `changes` のジョブ（`.github/actions/changes`）が PR で変えたファイルの一覧を API で読み、すべて関わらないものなら飛ばします。
-  - 関わらないものは、`docs/`・`.claude/`（スキル）・いちばん上の Markdown（README・GUIDE・CONTRIBUTING など）・PR では動かないワークフロー（`release.yml`・`release-publish.yml`・`homebrew.yml`・`claude-code-check.yml`・`mutation.yml`）・`scripts/release-publish.sh` だけ。一覧は `.github/actions/changes/action.yml` の `ignored`。アプリ・テスト・ビルドが読むものは入れません（入れ忘れても CI が余分に動くだけですが、入れすぎると確かめ漏れになります）。`ci.yml`・`demo-site.yml`・アクションを変えた PR では、すべて流します。
+  - 関わらないものは、`docs/`・`.claude/`（スキル）・いちばん上の Markdown（README・GUIDE・CONTRIBUTING など）・PR では動かないワークフロー（`release.yml`・`release-publish.yml`・`homebrew.yml`・`claude-code-check.yml`・`mutation.yml`）・`scripts/release-publish.sh`・Claude Code の新しいバージョンの見張り（`tools/claude-code-watch/`）だけ。一覧は `.github/actions/changes/action.yml` の `ignored`。アプリ・テスト・ビルドが読むものは入れません（入れ忘れても CI が余分に動くだけですが、入れすぎると確かめ漏れになります）。`ci.yml`・`demo-site.yml`・アクションを変えた PR では、すべて流します。
   - ワークフローごと `paths-ignore` で止めないのは、必須のチェック（`check`・`build`・`tour`）が届かずに、PR がマージできなくなるためです。条件で飛ばしたジョブは、必須のチェックでは通ったことになります。
   - `check` は、`changes` が通って「関わらない」と出たときだけ、飛ばしたジョブを通ったことにします（カバレッジのまとめも飛ばす）。`changes` が落ちたときは失敗にします。`tour` は、`changes` が落ちたときは飛ばさずに流します（飛ばすと、確かめずに通ったことになるため）。
   - コードスキャン（CodeQL の default setup）は GitHub の設定で動くので、この仕組みの外です。
@@ -535,6 +535,12 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
   - 毎日の確認が落ちて立った Issue を直す PR では、動作確認済のバージョンも、その PR で上げます（上の手順で控えを取ってスクリプトを流し、変更を同じ PR に入れる）。直しだけを入れると、次の毎日の確認が通るまで（リリースしても）、そのバージョンは動作確認済になりません。
 - GitHub Actions: PR では `ci.yml`（`npm test` は `unit`、`npm run test:cli` は `cli` のジョブ）、毎日の定期の確認と「Run workflow」では `claude-code-check.yml`（`npm run test:cli` だけ）で流します。
+  - 新しいバージョンが出たときは、毎日の定期の確認を待たず、Cloudflare Workers の見張り（`tools/claude-code-watch/`。Cron Triggers で 10 分おき）が、そのバージョンを指定した「Run workflow」を送ります。GitHub の定期の実行は、混むと数時間遅れるためです（2026 年 10〜11 月は、6:17 の予定が毎回 2〜7 時間遅れて始まった）。毎日の定期の確認は、見張りが止まったときの保険として残します。
+    - 見張りは、npm の最新のバージョン（`https://registry.npmjs.org/@anthropic-ai/claude-code/latest`。全バージョンの一覧は読まない）を読み、`claude-code-check.yml` の手動の実行に、同じバージョンの名前（`run-name` の「Claude Code <バージョン> を確かめる」）のものが無ければ送ります。Worker には何も覚えさせません。確認が失敗して Issue が立っていても、同じバージョンでは送り直しません（直したあとは、手で「Run workflow」を流すか、毎日の定期の確認に任せる）。
+    - `claude-code-check.yml` は一度に 1 つだけ動きます（`concurrency`）。続けて 2 つのバージョンが出たときは、待っている実行が、あとから来たものに入れ替わります。
+    - 無料プランで足ります（1 日 144 回の実行・1 回に外へのリクエストは 2〜3 件・CPU 時間は 1 回 10 ms の上限に対して数 ms）。
+    - 置き方（最初の 1 回と、トークンを作り直したとき）: GitHub で fine-grained のトークンを作ります（リポジトリは tanacode だけ・権限は Actions の Read and write だけ）。`tools/claude-code-watch/` で `npx wrangler login` のあと、`npx wrangler secret put GITHUB_TOKEN` でトークンを入れ、`npx wrangler deploy` で置きます。トークンの期限が切れると送れなくなる（Cloudflare のダッシュボードの Worker のログに失敗が出て、確認は毎日の定期の確認だけになる）ので、切れる前に作り直して `secret put` し直します。
+    - 確かめ方: `npx wrangler dev --test-scheduled` で手元に起こし、`curl "http://localhost:8787/__scheduled"` で 1 回動かします（本物の GitHub に送るので、送ってよいときだけ）。
   - 確かめる Claude Code は、毎日の定期の確認と「Run workflow」ではその日の最新、PR では動作確認済のバージョン（`VERIFIED_CLAUDE_CODE_VERSION`）。新しい Claude Code が出ても、関係のない PR が落ちないようにするためです。新しいバージョンへの追従は、毎日の確認と、それが作るバージョンを上げる PR で行います（その PR の CI は、上げたあとのバージョンで流れます）。
   - 定期の確認では、その日の最新が動作確認済のバージョンと同じで、その控え（目録も）がコミット済みなら、確かめ直さずに終わります（`precheck` のジョブ。macOS のランナーで毎日同じバージョンを流さないため。動作確認済のバージョンでの確認は、PR ごとに `ci.yml` の `cli` のジョブが流す）。「Run workflow」では、いつも確かめます。
   - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
@@ -2131,6 +2137,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `github.test.ts`: gh で PR を調べる・コメントを書く（PATH に置いた偽の gh で、引数・作業フォルダ・標準入力・失敗したとき）
   - `commands.test.ts`: `/` の補完候補（カスタムコマンド・スキル・会話ログのスキルの一覧と、ほかの会話ログから借りるとき・並びと優先）
   - `session-discovery.test.ts`: アプリの外で作られた会話を探す（出さないもの・並び・件数・タイトルの優先・大きな会話ログの先頭と末尾の読み方）
+- `tools/claude-code-watch/`: Claude Code の新しいバージョンを見張り、出たら互換性の確認を起こす Cloudflare Workers（上の「Claude Code との互換性の確かめ方」）
 
 ## デモのサイト
 

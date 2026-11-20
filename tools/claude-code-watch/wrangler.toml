@@ -1,0 +1,14 @@
+# Claude Code の新しいバージョンの見張り（Cloudflare Workers）。置き方は CONTRIBUTING.md の「Claude Code との互換性の確かめ方」
+# GitHub のトークンは、ここには書かず、secret（GITHUB_TOKEN）に置く
+name = "tanacode-claude-code-watch"
+main = "index.js"
+compatibility_date = "2026-11-01"
+# HTTP では受けない（定期の実行だけ）
+workers_dev = false
+
+[triggers]
+# 10 分おき（UTC）
+crons = ["*/10 * * * *"]
+
+[observability]
+enabled = true
