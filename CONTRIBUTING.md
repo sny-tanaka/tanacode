@@ -31,6 +31,8 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 
 `npm run dev`・`npm run build`・`npm run dist` は、始める前に翻訳の補助プログラム（`build/native/tanacode-translate`）を作ります（`predev`・`prebuild`・`predist`。下の「翻訳」）。
 
+`npm install`（`npm ci`）は、あとの `postinstall` で Electron の本体（`node_modules/electron/dist/`）を落とします（`scripts/install-electron.mjs`）。Electron 45 から、Electron 自体は入れたときに本体を落とさず、初めて `require('electron')` したときに落とすようになりました。electron-vite（`npm run dev`・`npm start`）は本体の場所（`node_modules/electron/path.txt`）を直に読むので、本体が無いと「Electron uninstall」で止まります。環境変数 `ELECTRON_SKIP_BINARY_DOWNLOAD` があれば落としません（CI で本体の要らないジョブ。`.github/actions/npm-ci` など）。落とせなかったときは `npm install` が失敗するので、`node node_modules/electron/install.js` で落とし直します。
+
 ```bash
 npm install
 npm run dev
@@ -2089,7 +2091,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログの行の種類の分け方（`transcript-line.ts`）、会話ログからチャットへの変換（`chat.ts`）、サブエージェントの報告（`SubagentHandback`）の読み取り（`handback.ts`）、未知のイベントの型と作り方（`unknown-event.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、Claude に送る文のうち利用者が変えられるものの欄・既定の文・受け取った値の検査（`prompts.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりに数える条件と、次の発言・圧縮のあとに前のターンの分を頼むこと（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、貼り付けた文の扱い（`paste.ts`。札にする境目・ターミナルモードの TUI に貼るときのブラケットペースト・制御文字の除去）、権限モードと作業の進み具合と、通知に使う確認の形（`screen.ts`）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）と、その対応表の読み方（`claude-compat.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、離席モードで Claude に渡す文と待つ時間の選択肢（`away-mode.ts`）、Claude Code が答えを待っている質問・許可の確認と、その返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）、MCP サーバーの質問の型・項目の読み取り・入力の確かめ（`elicitation.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンと対応表の書き換え（`update-verified-version.mjs`・`compat-table.mjs`）、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）、Claude Code の行の目録の比べ方（`inventory-diff.mjs`）
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正と Electron の本体の取り込み（`postinstall`。`install-electron.mjs`）、README の紹介画像の撮影、動作確認済の Claude Code のバージョンと対応表の書き換え（`update-verified-version.mjs`・`compat-table.mjs`）、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）、Claude Code の行の目録の比べ方（`inventory-diff.mjs`）
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）と、カバレッジの下限（`coverage-thresholds.json`。上の「テストと CI」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
@@ -2233,4 +2235,4 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
     - 例外は、`scripts/third-party-notices.ts` の `ALLOWED_EXCEPTIONS` に、パッケージの名前とライセンスの表記の組で書いたものだけ。今は elkjs（`EPL-2.0 OR GPL-3.0-or-later`。mermaid が使う図の配置）だけで、EPL-2.0 の側で使います。EPL-2.0 は配るときにソースの入手先を示す決まりがあるので、表示の各項目に `Source:` を書いています。
     - 例外は 1 つずつ人が決めてから足します。ライセンスの種類（EPL-2.0 など）をまるごと許す緩め方はしません。ライセンスの表記が変わったら、ビルドが止まるので確かめ直します。
 - アプリの `Contents/Resources/` には、この表示と一緒に、tanacode の `LICENSE.txt`、Electron と Chromium のライセンスも入れます。
-  - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。Electron は `npm install` では本体を取り込まず、初めて使うときに取り込むので、`scripts/electron-builder.mjs` がビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。
+  - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。本体は `npm install` の `postinstall` で取り込みます（上の「始め方」）が、`ELECTRON_SKIP_BINARY_DOWNLOAD` で飛ばしたときのために、`scripts/electron-builder.mjs` もビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。
