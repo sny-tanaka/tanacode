@@ -26,6 +26,8 @@ runs:
             .github/workflows/claude-code-check.yml | .github/workflows/mutation.yml) return 0 ;;
             # リリースの点検と公開のスクリプト（/release と release-publish.yml だけが使う）
             scripts/release-publish.sh) return 0 ;;
+            # Claude Code の新しいバージョンの見張り（Cloudflare Workers に置く。アプリ・テスト・ビルドは読まない）
+            tools/claude-code-watch/*) return 0 ;;
             # ほかのフォルダの中のものは、関わるものとして扱う
             */*) return 1 ;;
             # いちばん上の Markdown（README・GUIDE・CONTRIBUTING・SECURITY・AGENTS など）

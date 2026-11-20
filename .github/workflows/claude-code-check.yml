@@ -14,8 +14,12 @@
 # どの台本でも、アプリの知らない種類の行が出たら落ちる）
 # アプリは macOS 専用なので、macOS のランナーで確かめる
 name: claude-code-check
+# 実行の名前に、確かめるバージョンを入れる。Cloudflare Workers の見張り（tools/claude-code-watch/）は、この名前で、そのバージョンを送ったことがあるかを調べる
+run-name: ${{ inputs.version && format('Claude Code {0} を確かめる', inputs.version) || 'Claude Code の最新を確かめる' }}
 
 on:
+  # 新しいバージョンが出たときは、Cloudflare Workers の見張り（tools/claude-code-watch/）が 10 分以内に、そのバージョンを指定して手動の実行を送る。
+  # GitHub の定期の実行は、混むと数時間遅れる（2026 年 10〜11 月は毎回 2〜7 時間遅れた）ので、こちらは見張りが止まったときの保険
   schedule:
     # 毎日 6:17（日本時間）
     - cron: '17 21 * * *'
@@ -24,6 +28,11 @@ on:
       version:
         description: 確かめる Claude Code のバージョン（空なら最新）
         required: false
+
+# 一度に 1 つだけ動かす（続けて 2 つのバージョンが出ても、PR を作るところで重ならないように）。待っている実行は、あとから来たものに入れ替わる
+concurrency:
+  group: claude-code-check
+  cancel-in-progress: false
 
 # 既定は読むだけ。書き込みは、それが要るジョブだけに付ける
 permissions:
