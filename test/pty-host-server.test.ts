@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL, type ClientMessage, type HostMessage, type HostedInfo, type HostedPipeInfo } from '../src/main/pty-host-protocol';
+import { fedChunks, resetFedChunks } from './helpers/fed-chunks';
 
 // pty ホスト（src/main/pty-host.ts）のやりとりを、テストのプロセスの中で動かして確かめる（カバレッジを測れるように）。
 // ホストはファイルを読み込むと待ち受けを始める（引数はソケットのパス）。終わるとき（process.exit）と作業フォルダの移動（process.chdir）は差し替える。
@@ -23,6 +24,9 @@ vi.mock('node-pty', async (importOriginal) => {
 
 // 長すぎる行を捨てるところを、小さな行で確かめられるようにする（本物は 32MB）
 vi.mock('../src/main/pty-host-protocol', async (importOriginal) => ({ ...(await importOriginal<typeof import('../src/main/pty-host-protocol')>()), MAX_LINE_BYTES: 4096 }));
+
+// 長い行を受け取るときに、届いた断片をそのまま splitLines に渡しているかを数える
+vi.mock('../src/main/split-lines', () => import('./helpers/fed-chunks'));
 
 let dir: string;
 const exits: number[] = [];
@@ -435,15 +439,20 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await shutdown(path);
   });
 
-  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い要求の行を読む時間が、行の長さの 2 乗で伸びた
-  it('長い要求の行（端末に貼り付けた大きな文字など）を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い要求の行を読む時間が、行の長さの 2 乗で伸びた。
+  // 比例する時間で読めることは test/split-lines.test.ts が確かめ、ここでは届いた断片をそのまま渡していること（test/helpers/fed-chunks.ts）を見る
+  it('長い要求の行（端末に貼り付けた大きな文字など）を細かい断片で受け取っても、届いた断片を 1 度ずつ splitLines に渡して読む', async () => {
     const path = await startHost();
     const c = await client(path);
-    const started = performance.now();
+    const line = `${JSON.stringify({ t: 'write', id: 'none', data: 'x'.repeat(30 * 1024 * 1024) })}\n`;
+    resetFedChunks();
     // 知らない id への書き込みは飛ばす。読み終えたかは、あとの一覧の返事で見る（同じ接続の行は、送った順に読む）
-    c.send({ t: 'write', id: 'none', data: 'x'.repeat(30 * 1024 * 1024) });
+    c.send(line);
     expect(await list(c, 8)).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(1000);
+    // 細かい断片で届き、渡した量は、長い行と一覧の要求の行の長さだけ（溜めた全体を渡し直すと、行の長さの何百倍にもなる）
+    const listLine = `${JSON.stringify({ t: 'list', req: 8 } satisfies ClientMessage)}\n`;
+    expect(fedChunks().chunks).toBeGreaterThan(1);
+    expect(fedChunks().length).toBe(line.length + listLine.length);
     await shutdown(path);
   });
 

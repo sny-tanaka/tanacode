@@ -4,11 +4,14 @@ import { connect, createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { language, setLanguage } from '@shared/i18n';
 import type { McpServerDef } from '@shared/mcp-tools';
 import { callBridge, McpBridge, MCP_LANGUAGE_ENV, mcpArgs, mcpConfig, mcpServerEntry, textResult, type BridgeHandler } from '../src/main/mcp-bridge';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
+import { fedChunks, resetFedChunks } from './helpers/fed-chunks';
+
+vi.mock('../src/main/split-lines', () => import('./helpers/fed-chunks'));
 
 // MCP サーバーの中継とアプリのやりとり（McpBridge・callBridge）と、中継の JSON-RPC（respond・runRelay）の、
 // 壊れた・足りない・取り消された・つながらないときの扱い。うまくいくときは test/browser-mcp.test.ts などが確かめる
@@ -120,15 +123,19 @@ describe('McpBridge（アプリ側の待ち受け）', () => {
     expect(await callBridge(b.socketPath, { ...request, tool: 'string' }, 5000, CLOSED)).toEqual(textResult('こわれた', true));
   });
 
-  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い呼び出しを読む時間が、行の長さの 2 乗で伸びた
-  it('長い呼び出し（大きな引数）を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い呼び出しを読む時間が、行の長さの 2 乗で伸びた。
+  // 比例する時間で読めることは test/split-lines.test.ts が確かめ、ここでは届いた断片をそのまま渡していること（test/helpers/fed-chunks.ts）を見る
+  it('長い呼び出し（大きな引数）を細かい断片で受け取っても、届いた断片を 1 度ずつ splitLines に渡して読む', async () => {
     const b = await bridge(async (_session, _tool, args) => textResult(String((args.text as string).length)));
     const client = await rawClient(b.socketPath);
-    const started = performance.now();
-    client.socket.write(`${JSON.stringify({ id: 1, ...request, args: { text: 'x'.repeat(30 * 1024 * 1024) } })}\n`);
+    const line = `${JSON.stringify({ id: 1, ...request, args: { text: 'x'.repeat(30 * 1024 * 1024) } })}\n`;
+    resetFedChunks();
+    client.socket.write(line);
     while (client.lines().length === 0) await sleep(10);
-    expect(performance.now() - started).toBeLessThan(1000);
     expect(client.lines()).toEqual([{ id: 1, result: textResult(String(30 * 1024 * 1024)) }]);
+    // 細かい断片で届き、渡した量は行の長さだけ（溜めた全体を渡し直すと、行の長さの何百倍にもなる）
+    expect(fedChunks().chunks).toBeGreaterThan(1);
+    expect(fedChunks().length).toBe(line.length);
   });
 
   it('1 行の上限（32MB）を超えたら、改行を待たずに接続を切る', async () => {
@@ -187,17 +194,22 @@ describe('callBridge（中継の側）', () => {
     expect(await callBridge(path, request, 5000, CLOSED)).toEqual(textResult('分かれた返事'));
   });
 
-  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い返事（スクリーンショットの入った結果）を読む時間が、行の長さの 2 乗で伸びた
-  it('長い返事を細かい断片で受け取っても、行の長さに比例する時間で読む', async () => {
+  // 直す前: 断片が届くたびに、溜めた全体を先頭から改行を探し直していたので、長い返事（スクリーンショットの入った結果）を読む時間が、行の長さの 2 乗で伸びた。
+  // 比例する時間で読めることは test/split-lines.test.ts が確かめ、ここでは届いた断片をそのまま渡していること（test/helpers/fed-chunks.ts）を見る
+  it('長い返事を細かい断片で受け取っても、届いた断片を 1 度ずつ splitLines に渡して読む', async () => {
     const big = 'x'.repeat(30 * 1024 * 1024);
+    let reply = '';
     const path = await fakeApp((socket, line) => {
       const { id } = JSON.parse(line) as { id: number };
-      socket.write(`${JSON.stringify({ id, result: textResult(big) })}\n`);
+      reply = `${JSON.stringify({ id, result: textResult(big) })}\n`;
+      socket.write(reply);
     });
-    const started = performance.now();
+    resetFedChunks();
     const result = await callBridge(path, request, 10_000, CLOSED);
-    expect(performance.now() - started).toBeLessThan(1000);
     expect(result).toEqual(textResult(big));
+    // 細かい断片で届き、渡した量は返事の行の長さだけ（溜めた全体を渡し直すと、行の長さの何百倍にもなる）
+    expect(fedChunks().chunks).toBeGreaterThan(1);
+    expect(fedChunks().length).toBe(reply.length);
   });
 
   it('読めない返事・違う呼び出しへの返事・結果の無い返事は、読めなかったとして返す', async () => {
