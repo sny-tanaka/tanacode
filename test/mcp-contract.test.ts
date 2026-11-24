@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NewSessionOptions, SessionSummary } from '@shared/ipc';
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
-import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
+import { allowedToolIds, MAX_MCP_DESCRIPTION_CHARS, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
 import { SESSION_STATE_LABEL, SESSION_TOOLS, SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD, isBusy, type SessionState } from '@shared/session-tools';
 import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from '@shared/terminal-tools';
 import { WALKTHROUGH_MCP } from '@shared/walkthrough-tools';
@@ -81,6 +81,11 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def, onlyWhenA
     expect(def.tools.filter((t) => !t.description.trim() || !mcpToolLabel(def, t).trim()).map((t) => t.name)).toEqual([]);
   });
 
+  it('サーバーの説明（instructions）とツールの説明が、Claude Code に切り詰められない長さ', () => {
+    expect(def.instructions.length).toBeLessThanOrEqual(MAX_MCP_DESCRIPTION_CHARS);
+    expect(def.tools.filter((t) => t.description.length > MAX_MCP_DESCRIPTION_CHARS).map((t) => t.name)).toEqual([]);
+  });
+
   it('説明（instructions）で、人に頼まれなくても使う（人のターミナルは、頼まれたときだけ使う）ことと、人が読むものは人が使っている言葉で書くことを伝える', () => {
     if (onlyWhenAsked) {
       expect(def.instructions).not.toContain('do not wait to be asked');
@@ -135,6 +140,11 @@ describe.each(SERVERS)('MCP サーバー $def.name と制御（$control）', ({ 
 });
 
 describe('子セッションに渡すセッションの MCP サーバー', () => {
+  it('子に渡す説明（セッション・ターミナル）も、Claude Code に切り詰められない長さ', () => {
+    expect(SESSIONS_MCP_FOR_CHILD.instructions.length).toBeLessThanOrEqual(MAX_MCP_DESCRIPTION_CHARS);
+    expect(TERMINAL_MCP_FOR_CHILD.instructions.length).toBeLessThanOrEqual(MAX_MCP_DESCRIPTION_CHARS);
+  });
+
   it('ツールは、親に渡すものの一部で、定義も同じ', () => {
     for (const tool of SESSIONS_MCP_FOR_CHILD.tools) expect(SESSIONS_MCP.tools.find((t) => t.name === tool.name)).toEqual(tool);
     expect(SESSIONS_MCP_FOR_CHILD.name).toBe(SESSIONS_MCP.name);
