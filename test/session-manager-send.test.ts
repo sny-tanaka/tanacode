@@ -160,7 +160,7 @@ describe('submit', () => {
     expect(app.events(id).filter((e) => e.type === 'queue')).toHaveLength(before);
   });
 
-  it('会話に出た発言は、発言を出してから送信中から外す（先に外すと、一瞬どちらにも出ない）', async () => {
+  it('会話に出た発言は、発言を出すのと同じ配信で送信中から外す（先に外すと一瞬どちらにも出ず、別の配信で外すと一瞬二重に出る）', async () => {
     const { id } = app.create();
     await app.ready(id);
     const uuid = await app.send(id, 'お願いします');
@@ -168,6 +168,10 @@ describe('submit', () => {
     await app.waitFor('会話に出た', () => queue(id).length === 0);
     const kinds = app.events(id).flatMap((e) => (e.type === 'user' ? ['user'] : e.type === 'queue' ? [`queue:${e.prompts.length}`] : []));
     expect(kinds.slice(-2)).toEqual(['user', 'queue:0']);
+    // 画面は配信ごとに描き直す。発言と、送信中から外すのを別の配信にすると、そのあいだの画面に同じ発言がふたつ出る
+    // （e2e の rewind で、戻したあとに送った発言が 2 つと数えられた）
+    const shown = app.batches.find((b) => b.sessionId === id && b.events.some((e) => e.type === 'user'));
+    expect(shown?.events.map((e) => (e.type === 'queue' ? `queue:${e.prompts.length}` : e.type)).filter((k) => k === 'user' || k.startsWith('queue'))).toEqual(['user', 'queue:0']);
   });
 
   it('親からの指示は、会話に出たときと同じく、囲みを外した本文と親の ID で送信中・順番待ちに出す', async () => {
