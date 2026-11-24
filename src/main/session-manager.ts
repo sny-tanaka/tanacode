@@ -4129,6 +4129,10 @@ export class SessionManager {
     }
     // 同じつながり・同じ PR の行（何度も書き直される）は、変わったときだけ積む
     if (rt) events = withoutRepeatedState(rt.events, events);
+    // 送った発言が会話に出たら、送信中の表示から外す。外すのは、発言を出すのと同じ配信にする（画面は配信ごとに描き直す。発言より先に
+    // 外すと一瞬どちらにも出ず、別の配信で外すと、そのあいだの画面に同じ発言がふたつ出る）。まとめた行では、まとめた発言のどれも外す
+    // （行の uuid だけを外すと、ほかの発言は、ターンの終わりの completed まで順番待ちに残り、チャットの発言と二重に見えていた）
+    if (rt && arrived.filter((uuid) => rt.unsent.delete(uuid)).length > 0) events = [...events, queueEvent(rt)];
     if (events.length === 0 && covered) this.emitPartial(id, rt!);
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
@@ -4140,18 +4144,12 @@ export class SessionManager {
         if (!wasFirst) changed = true;
       }
     }
-    // 送った発言が会話に出たら、送信中の表示から外す（発言を出してから外す。先に外すと、一瞬どちらにも出ない）
+    // 会話に出た発言を覚えておく
     if (rt) {
       for (const uuid of arrived) {
         rt.arrivedPrompts.add(uuid);
         if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
       }
-    }
-    // まとめた行では、まとめた発言のどれも外す（行の uuid だけを外すと、ほかの発言は、ターンの終わりの completed まで順番待ちに残り、
-    // チャットの発言と二重に見えていた）
-    if (rt && arrived.filter((uuid) => rt.unsent.delete(uuid)).length > 0) {
-      this.emitQueue(id, rt);
-      this.changed(id);
     }
     // 再起動で送り直すのを待っている発言が、起動し直した claude が読み直した会話ログに出ていた（止める直前に取り込まれていた）。送り直さない
     const replayed = rt && past && conversation ? sentUuidsOf(conversation).filter((uuid) => rt.unsent.get(uuid)?.carried) : [];
