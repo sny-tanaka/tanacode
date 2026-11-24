@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' wss: ws:; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>tanacode の確かめ</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Hiragino Sans", sans-serif; padding: max(16px, env(safe-area-inset-top)) 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lead { color: #888; font-size: 13px; margin: 0 0 16px; }
+  section { border: 1px solid #8884; border-radius: 12px; padding: 12px 14px; margin: 0 0 12px; }
+  h2 { font-size: 16px; margin: 0 0 6px; }
+  p { margin: 4px 0; font-size: 13px; color: #888; }
+  button { font: inherit; padding: 8px 12px; margin: 4px 6px 4px 0; border-radius: 8px; border: 1px solid #8886; background: #8881; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: #8881; padding: 8px; border-radius: 8px; margin: 6px 0 0; min-height: 1.6em; }
+  video { width: 100%; max-height: 200px; background: #000; border-radius: 8px; margin-top: 6px; }
+  .ok { color: #2c9a52; } .ng { color: #d4512b; }
+</style>
+</head>
+<body>
+  <h1>tanacode の確かめ</h1>
+  <p class="lead">遠隔操作の「先に確かめること」（Issue #464）を試すページ。Safari と、ホーム画面に置いたもの（PWA）の両方で開いて、上から順に押してください。</p>
+
+  <section>
+    <h2>1. 開き方</h2>
+    <p>開いたときの URL・フラグメント・PWA として開いているか。Safari で開いたときに置いた印が、PWA から見えるか。</p>
+    <pre id="env"></pre>
+  </section>
+
+  <section>
+    <h2>2. 接続元とヘッダー</h2>
+    <p>Mac のサーバーから見た接続元（tailscale serve の後ろで 127.0.0.1 に見えるか）と、転送が付けたヘッダー。</p>
+    <button data-run="info">調べる</button>
+    <pre id="info"></pre>
+  </section>
+
+  <section>
+    <h2>3. Cookie</h2>
+    <p>Safari で「置く」を押し、ホーム画面に置いた PWA で「確かめる」を押す。Safari の Cookie が PWA に写るか。</p>
+    <button data-run="cookieSet">置く</button>
+    <button data-run="cookieCheck">確かめる</button>
+    <pre id="cookie"></pre>
+  </section>
+
+  <section>
+    <h2>4. 束縛の鍵（取り出せない P-256）</h2>
+    <p>PWA で「作る」を押す。アプリを閉じる・iPhone を再起動する・数日たつ、などのあとに「確かめる」を押して、鍵が残っていて署名が通るか。</p>
+    <button data-run="bindCreate">作る</button>
+    <button data-run="bindCheck">確かめる</button>
+    <pre id="bind"></pre>
+  </section>
+
+  <section>
+    <h2>5. パスキー</h2>
+    <p>RP ID はこのページのホスト名。PWA で登録とログインを何度か試し、安定して使えるか。BE・BS・signCount も見る。</p>
+    <button data-run="passkeyRegister">登録する</button>
+    <button data-run="passkeyLogin">ログインする</button>
+    <pre id="passkey"></pre>
+  </section>
+
+  <section>
+    <h2>6. カメラ</h2>
+    <p>PWA の中でカメラが開けるか（QR を読む道に使う）。</p>
+    <button data-run="camera">開く</button>
+    <video id="video" playsinline muted hidden></video>
+    <pre id="camera"></pre>
+  </section>
+
+  <section>
+    <h2>7. Web Push</h2>
+    <p>PWA で「購読する」を押して許可し、「送ってもらう」で通知が届くか。PWA を閉じた状態でも届くか。</p>
+    <button data-run="pushSubscribe">購読する</button>
+    <button data-run="pushSend">送ってもらう</button>
+    <pre id="push"></pre>
+  </section>
+
+  <section>
+    <h2>8. WebSocket</h2>
+    <p>tailscale serve を通って WebSocket がつながるか。往復の時間。</p>
+    <button data-run="websocket">つなぐ</button>
+    <pre id="websocket"></pre>
+  </section>
+
+  <section>
+    <h2>9. 結果を送る</h2>
+    <p>ここまでの結果を Mac のサーバー（data/results.jsonl）に送る。下の文をそのまま写して渡してもよい。</p>
+    <button data-run="sendResults">送る</button>
+    <pre id="results"></pre>
+  </section>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

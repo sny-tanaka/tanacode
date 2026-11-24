@@ -1,0 +1,8 @@
+{
+  "name": "tanacode の確かめ",
+  "short_name": "確かめ",
+  "display": "standalone",
+  "background_color": "#121211",
+  "theme_color": "#121211",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

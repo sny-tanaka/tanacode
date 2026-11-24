@@ -1,0 +1,14 @@
+{
+  "name": "tanacode-remote-probe",
+  "private": true,
+  "description": "遠隔操作の「先に確かめること」（Issue #464）を試す道具。tanacode 本体には入れない",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "14.1.0",
+    "web-push": "4.0.0",
+    "ws": "8.23.0"
+  }
+}
