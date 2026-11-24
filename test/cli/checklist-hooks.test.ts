@@ -31,7 +31,8 @@ const TALK = '返事だけしてください';
 const REREAD = 'もう一度ファイルを読んでください';
 const CLEARED = '新しい話をします';
 const AGAIN = '新しい会話でも読んでください';
-const LATE = 'ended without touching the checklists';
+// 前のターンの分を頼む知らせ（説明（instructions）にも小文字で始まる同じ言い回しがあるので、文の頭から見る）
+const LATE = 'Your previous turn ended without touching the checklists';
 const version = claudeVersion();
 const say = (text: string): Block[] => [{ type: 'text', text }];
 

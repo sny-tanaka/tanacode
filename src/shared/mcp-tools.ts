@@ -33,6 +33,12 @@ export type McpTool<N extends string = string> = {
 // title: initialize で返す表示名 / instructions: initialize で返す説明（Claude Code は会話の先頭の system の発言に入れる）。Claude だけが読み、画面には出さないので、
 // Claude Code のシステムプロンプトにそろえて英語で書く。いつ使うかを書き、人が機能を知らなくても Claude が自分から使うようにする。
 // 人が読むもの（カード・説明・依頼の文など）は、人が使っている言葉で書くよう、それぞれの説明で伝える
+// Claude Code が MCP の説明を切り詰める長さ（文字数。2.1.331 で本体を読んで確かめた）。stdio のサーバーの説明（instructions）と、
+// 先に渡すツールの説明は 4,096 文字までで、超えた分は「… [truncated]」に置き換わり、Claude に届かない（Claude Code の画面にも出ない）。
+// 環境変数 CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH で変えられるが、人のほかの MCP サーバーにも効くので使わない。
+// 説明には、いつ使うか（人が機能を知らなくても Claude が自分から使うためのこと）だけを書き、使い方の細かいことはツールの説明に書く
+export const MAX_MCP_DESCRIPTION_CHARS = 4096;
+
 export type McpServerDef = { name: string; labels: McpToolGroup; title: string; instructions: string; tools: McpTool[] };
 
 export function mcpToolId(server: string, name: string): string {
