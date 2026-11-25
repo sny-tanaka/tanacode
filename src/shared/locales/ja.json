@@ -2621,6 +2621,8 @@
     "connected": "Mac とつながっています",
     "reconnecting": "Mac につなぎ直しています",
     "waiting": "ほかの {count} 件が答えを待っています",
+    "logout": "ログアウト",
+    "logoutConfirm": "この端末からログアウトしますか？ 次に使うときは、Face ID でログインし直します。",
     "pickOnMac": "ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）",
     "tab": {
       "chat": "チャット",

@@ -294,6 +294,7 @@ export class RemoteServerCore {
       void this.authRoute(req, res, path);
       return;
     }
+    if (req.method === 'POST' && path === '/api/logout') return this.logout(req, res);
     // WebSocket の券。セッションの Cookie と、main が作った乱数への束縛の鍵の署名が要る（begin で乱数を受け、署名して送る）
     if (req.method === 'POST' && (path === '/api/ticket/begin' || path === '/api/ticket')) {
       void this.ticketRoute(req, res, path);
@@ -321,6 +322,19 @@ export class RemoteServerCore {
       'content-type': file.type,
     });
     res.end(req.method === 'HEAD' ? undefined : file.body);
+  }
+
+  // ログアウト。そのセッションを消して（接続も切る）main にも消させ、Cookie を消す。スマホに残す鍵（束縛の鍵。IndexedDB）は消さない
+  // （消すと、登録し直しになる）。Clear-Site-Data では、キャッシュと Cookie だけを消させる
+  private logout(req: IncomingMessage, res: ServerResponse): void {
+    const session = this.sessionOf(req);
+    if (session) {
+      this.dropSession(session.sessionId);
+      this.post({ type: 'session-expired', sessionId: session.sessionId });
+    }
+    res.setHeader('set-cookie', `${SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0`);
+    res.setHeader('clear-site-data', '"cache", "cookies"');
+    this.reply(res, 200, { ok: true });
   }
 
   // 券の口。券は main が出し、ここでも控える（握手のときに、両方で確かめる）

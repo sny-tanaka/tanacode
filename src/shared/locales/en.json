@@ -2701,6 +2701,8 @@
     "connected": "Connected to the Mac",
     "reconnecting": "Reconnecting to the Mac",
     "waiting": "{count} other sessions are waiting for an answer",
+    "logout": "Log out",
+    "logoutConfirm": "Log out on this device? You'll sign in again with Face ID next time.",
     "pickOnMac": "Choose files and folders on the Mac (you can't browse the Mac's files from the phone)",
     "tab": {
       "chat": "Chat",

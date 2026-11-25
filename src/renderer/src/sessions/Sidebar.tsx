@@ -13,6 +13,8 @@ import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { preparingLabel } from './worktree';
 import { AccountPanel } from '../account/AccountPanel';
+import { LogoutButton } from '../remote/LogoutButton';
+import { isRemoteMode } from '../remote/mode';
 import { keyList, keyRow } from '../layout/keyRow';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
@@ -323,6 +325,7 @@ export const Sidebar = memo(function Sidebar({
         )}
       </div>
       <AccountPanel />
+      {isRemoteMode() && <LogoutButton />}
     </nav>
   );
 });

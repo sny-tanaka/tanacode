@@ -117,6 +117,23 @@ async function connect(port: number) {
 }
 
 describe('HTTP の口', () => {
+  it('ログアウト: セッションを消して main に知らせ、接続を切り、Cookie とキャッシュを消させる（束縛の鍵の入るストレージは消させない）', async () => {
+    const { port, posted } = await start();
+    const client = await connect(port);
+    const res = await send(port, 'POST', '/api/logout', { host: HOST, origin: ORIGIN, cookie });
+    expect(res.status).toBe(200);
+    expect(res.headers['set-cookie']).toEqual([`${SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0`]);
+    expect(res.headers['clear-site-data']).toBe('"cache", "cookies"');
+    expect(posted).toContainEqual({ type: 'session-expired', sessionId: 's1' });
+    expect(await client.closed).toBe(4001);
+    // もう券は取れない。Cookie が無い・古いログアウトも、同じく Cookie を消して返す
+    expect((await ticketFor(port)).status).toBe(401);
+    expect((await send(port, 'POST', '/api/logout', { host: HOST, origin: ORIGIN })).status).toBe(200);
+    // 別のサイトから頼ませるログアウト（Origin が違う）は受けない
+    // （つなぎを切るだけで、返事をしない）
+    expect((await send(port, 'POST', '/api/logout', { host: HOST, origin: 'https://evil.example', cookie })).status).toBeNull();
+  });
+
   it('Host が公開する URL と同じなら、認証の前の画面を、バージョンを出さず、守りのヘッダー付きで返す', async () => {
     const { port } = await start();
     const res = await send(port, 'GET', '/', { host: HOST });
