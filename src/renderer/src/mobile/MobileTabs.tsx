@@ -1,16 +1,23 @@
 import { t } from '@shared/i18n';
+import { ChatIcon, CodeIcon, ColumnsIcon, TerminalIcon, type IconComponent } from '../icons';
 
 // スマホの配置の下のタブ（Issue #464）。選んでいるセッションの中を切り替える（Mac の画面の 2〜4 列目とターミナル）
 export type MobileTab = 'chat' | 'panel' | 'editor' | 'terminal';
 
-const TABS: MobileTab[] = ['chat', 'panel', 'editor', 'terminal'];
+const TABS: { id: MobileTab; icon: IconComponent }[] = [
+  { id: 'chat', icon: ChatIcon },
+  { id: 'panel', icon: ColumnsIcon },
+  { id: 'editor', icon: CodeIcon },
+  { id: 'terminal', icon: TerminalIcon },
+];
 
 export function MobileTabs({ tab, onChange }: { tab: MobileTab; onChange: (tab: MobileTab) => void }) {
   return (
     <nav className="mobile-tabs" role="tablist">
-      {TABS.map((id) => (
+      {TABS.map(({ id, icon: Icon }) => (
         <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => onChange(id)}>
-          {t(`mobile.tab.${id}`)}
+          <Icon size={22} />
+          <span>{t(`mobile.tab.${id}`)}</span>
         </button>
       ))}
     </nav>
