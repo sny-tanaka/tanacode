@@ -29,6 +29,8 @@ export async function appFile(root: string, path: string): Promise<AppFile | nul
     return null;
   }
   if (rest === '' || rest === '/') rest = '/remote.html';
+  // 配るのは、スマホの入口と、その assets だけ（Mac の画面の入口などは出さない）
+  if (rest !== '/remote.html' && !rest.startsWith('/assets/')) return null;
   const type = TYPES[extname(rest).toLowerCase()];
   if (!type || rest.includes('\0')) return null;
   const file = normalize(join(root, rest));

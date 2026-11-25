@@ -204,6 +204,9 @@ describe('RemoteHost', () => {
     t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.host.setFocus('c1', 'chat-a');
     t.host.setFocus('ghost', 'chat-a');
+    // 接続のセッションに許したプロファイル（知らない接続なら空）
+    expect(t.host.profileIdsOf('c1')).toEqual(['default']);
+    expect(t.host.profileIdsOf('ghost')).toEqual([]);
     t.posted.length = 0;
     const batch = (sessionId: string) => ({ sessionId, fromSeq: 0, events: [], live: true });
     t.host.emit('default', IpcChannel.ChatEvents, batch('chat-a'));

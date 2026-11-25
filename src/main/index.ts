@@ -1018,7 +1018,7 @@ function registerIpc(): void {
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
   // 遠隔の接続には、その端末に許したプロファイルだけを見せる（ほかのプロファイルの名前・通知の有無も出さない）
-  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id, e.kind === 'remote' ? (remoteRegistrations?.get(e.registrationId)?.profileIds ?? []) : undefined));
+  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id, e.kind === 'remote' ? remoteHost.profileIdsOf(e.clientId) : undefined));
   handle(IpcChannel.ProfilesSwitch, (_e, id: string) => showProfile(String(id)));
   handle(IpcChannel.ProfilesAdd, (_e, input: NewProfile) => addProfile(input));
   handle(IpcChannel.ProfilesUpdate, (_e, id: string, patch: { name?: string; color?: string }) => {

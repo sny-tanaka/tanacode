@@ -213,6 +213,12 @@ export class RemoteHost {
     }
   }
 
+  // その接続のセッションに許したプロファイル（握手の返事と同じもの。知らない接続なら空）
+  profileIdsOf(clientId: string): string[] {
+    const client = this.clients.get(clientId);
+    return client ? [...(this.sessions.get(client.sessionId)?.profileIds ?? [])] : [];
+  }
+
   // その接続（スマホの画面）が開いているセッションを覚える（Mac の画面の「開いているセッション」には触らない）
   setFocus(clientId: string, sessionId: string | null): void {
     const client = this.clients.get(clientId);

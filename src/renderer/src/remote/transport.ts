@@ -1,4 +1,4 @@
-import type { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc';
+import { IpcChannel, type IpcEvent, type IpcInvoke, type IpcSend } from '@shared/ipc';
 import type { ApiTransport } from '@shared/api-bindings';
 import { REMOTE_CHANNELS } from '@shared/remote-channels';
 import { REMOTE_EVENTS } from '@shared/remote-events';
@@ -13,6 +13,11 @@ import { signWithBinding, toBase64 } from './binding';
 
 // 人の操作の印を付ける長さ（最後に押した・打ったときから）
 export const ACTIVE_MS = 3000;
+// つながる前にためておく頼みの数と古さの上限（長く切れていたあとに、古い操作を走らせない）
+export const QUEUE_MAX = 100;
+export const QUEUE_MS = 30 * 1000;
+// つなぎ直したときに送り直すもの（遠隔サーバーが接続ごとに覚えるもの。最後の 1 つ）
+const RESEND_ON_READY = new Set<string>([IpcChannel.SessionsFocus]);
 // つなぎ直すまでの間（失敗が続くと伸ばす）
 const RETRY_MS = [500, 1000, 2000, 5000, 10000];
 
@@ -26,6 +31,8 @@ export type RemoteTransportOptions = {
   onSignedOut: () => void;
   // つながっているか（画面に出す）
   onConnection?: (connected: boolean) => void;
+  // 一度切れてから、つなぎ直した（切れていた間の知らせは届いていないので、画面は読み直す）
+  onReconnected?: () => void;
   fetch?: typeof fetch;
   WebSocket?: typeof WebSocket;
   now?: () => number;
@@ -54,7 +61,9 @@ export class RemoteTransport {
   private lastInput = -Infinity;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
-  private readonly queue: string[] = [];
+  private readonly queue: { id: number | null; text: string; at: number }[] = [];
+  private readonly resend = new Map<string, unknown[]>();
+  private everReady = false;
   private readyWaiters: ((ready: RemoteReady) => void)[] = [];
   private readonly fetchImpl: typeof fetch;
   private readonly Socket: typeof WebSocket;
@@ -109,7 +118,8 @@ export class RemoteTransport {
       kind === 'invoke'
         ? new Promise<unknown>((resolve, reject) => this.pending.set(id, { resolve, reject }))
         : Promise.resolve(undefined);
-    this.write(text);
+    if (RESEND_ON_READY.has(channel)) this.resend.set(channel, args);
+    this.write(text, id);
     return result;
   }
 
@@ -134,10 +144,18 @@ export class RemoteTransport {
     this.write(JSON.stringify({ type: 'subscribe', channels }));
   }
 
-  // つながっていれば送り、つながっていなければ、つながるまでためる
-  private write(text: string): void {
-    if (this.ready && this.socket) this.socket.send(text);
-    else this.queue.push(text);
+  // つながっていれば送り、つながっていなければ、つながるまでためる（数に上限を置き、古いものから断る）
+  private write(text: string, id: number | null = null): void {
+    if (this.ready && this.socket) return this.socket.send(text);
+    this.queue.push({ id, text, at: this.now() });
+    while (this.queue.length > QUEUE_MAX) this.drop(this.queue.shift()!);
+  }
+
+  // ためていた頼みを送らずに捨てる（返事を待っていれば断る）
+  private drop(entry: { id: number | null }): void {
+    if (entry.id === null) return;
+    this.pending.get(entry.id)?.reject(new Error('disconnected'));
+    this.pending.delete(entry.id);
   }
 
   private async ticket(): Promise<string | 'signed-out' | null> {
@@ -180,9 +198,10 @@ export class RemoteTransport {
       const wasReady = this.ready;
       this.ready = false;
       if (wasReady) this.options.onConnection?.(false);
-      // 返事を待っていた頼みは、つなぎ直しても返らないので断る
+      // 返事を待っていた頼みは、つなぎ直しても返らないので断る。ためていた頼みも、断ったものを送らないよう捨てる
       for (const waiter of this.pending.values()) waiter.reject(new Error('disconnected'));
       this.pending.clear();
+      this.queue.splice(0);
       this.later();
     };
   }
@@ -205,9 +224,17 @@ export class RemoteTransport {
       this.ready = true;
       this.retry = 0;
       this.options.onConnection?.(true);
-      // つなぎ直したら、多い知らせを頼み直してから、ためていたものを送る
+      // つなぎ直したら、多い知らせと、接続ごとに覚えるもの（開いているセッション）を送り直してから、ためていたものを送る（古すぎるものは断る）
       if ([...this.listeners.keys()].some((c) => REMOTE_EVENTS[c as keyof typeof REMOTE_EVENTS] === 'subscribe')) this.sendSubscriptions();
-      for (const queued of this.queue.splice(0)) this.socket?.send(queued);
+      for (const [channel, args] of this.resend) this.socket?.send(JSON.stringify({ id: this.nextId++, kind: 'send', profileId: this.profileId, channel, args: args.map(encode), active: false }));
+      const now = this.now();
+      for (const queued of this.queue.splice(0)) {
+        if (now - queued.at > QUEUE_MS) this.drop(queued);
+        else this.socket?.send(queued.text);
+      }
+      const reconnected = this.everReady;
+      this.everReady = true;
+      if (reconnected) this.options.onReconnected?.();
       const ready: RemoteReady = { profileIds: Array.isArray(message.profileIds) ? (message.profileIds as string[]) : [], language: message.language === 'en' ? 'en' : 'ja' };
       for (const waiter of this.readyWaiters.splice(0)) waiter(ready);
       return;

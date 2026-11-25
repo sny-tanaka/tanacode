@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import { ACTIVE_MS, RemoteTransport } from '../../src/renderer/src/remote/transport';
+import { ACTIVE_MS, QUEUE_MAX, QUEUE_MS, RemoteTransport } from '../../src/renderer/src/remote/transport';
 
 // スマホの画面の WebSocket の運び役（src/renderer/src/remote/transport.ts）。WebSocket と fetch は作り物、束縛の鍵の署名は差し替える
 
@@ -44,8 +44,9 @@ function setup(status: { begin?: number; ticket?: number } = {}) {
   });
   const signedOut = vi.fn();
   const connection = vi.fn();
-  const transport = new RemoteTransport({ onSignedOut: signedOut, onConnection: connection, fetch: fetch as never, WebSocket: FakeSocket as never, now: () => clock.now });
-  return { transport, calls, signedOut, connection, clock, socket: () => FakeSocket.all.at(-1)! };
+  const reconnected = vi.fn();
+  const transport = new RemoteTransport({ onSignedOut: signedOut, onConnection: connection, onReconnected: reconnected, fetch: fetch as never, WebSocket: FakeSocket as never, now: () => clock.now });
+  return { transport, calls, signedOut, connection, reconnected, clock, socket: () => FakeSocket.all.at(-1)! };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -148,6 +149,52 @@ describe('RemoteTransport', () => {
     expect(t.socket().sent[1]).toEqual({ type: 'subscribe', channels: [IpcChannel.ShellData] });
     // 前の接続の閉じる知らせが遅れて来ても、今の接続は切らない
     first.onclose?.();
+    t.transport.stop();
+  });
+
+  it('つなぎ直したら、開いているセッションを送り直し、つなぎ直したことを知らせる（最初の接続では知らせない）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t = setup();
+    void t.transport.start();
+    t.transport.useProfile('p1');
+    const api = t.transport.api(() => '', () => 'ja');
+    await vi.waitFor(() => expect(t.socket().sent).toHaveLength(1));
+    t.socket().reply({ type: 'ready', profileIds: ['p1'], language: 'ja' });
+    expect(t.reconnected).not.toHaveBeenCalled();
+    api.send(IpcChannel.SessionsFocus, 'chat-a');
+    t.socket().close();
+    await vi.advanceTimersByTimeAsync(600);
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(2));
+    await vi.waitFor(() => expect(t.socket().sent).toHaveLength(1));
+    t.socket().reply({ type: 'ready', profileIds: ['p1'], language: 'ja' });
+    expect(t.socket().sent[1]).toMatchObject({ kind: 'send', channel: IpcChannel.SessionsFocus, args: ['chat-a'], profileId: 'p1', active: false });
+    expect(t.reconnected).toHaveBeenCalledTimes(1);
+    t.transport.stop();
+  });
+
+  it('つながる前にためた頼みは、握手の前に切れたら断って捨てる（あとで送らない）。数と古さに上限を置く', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t = setup();
+    void t.transport.start();
+    const api = t.transport.api(() => '', () => 'ja');
+    const early = api.invoke(IpcChannel.SessionsList);
+    await vi.waitFor(() => expect(t.socket().sent).toHaveLength(1));
+    t.socket().close();
+    await expect(early).rejects.toThrow('disconnected');
+    await vi.advanceTimersByTimeAsync(600);
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(2));
+    // 上限を超えた古いものから断る
+    const many = Array.from({ length: QUEUE_MAX + 1 }, () => api.invoke(IpcChannel.SessionsList));
+    for (const p of many) p.catch(() => {});
+    await expect(many[0]).rejects.toThrow('disconnected');
+    // つながったときに古すぎるものは送らずに断る
+    t.clock.now += QUEUE_MS + 1;
+    const fresh = api.invoke(IpcChannel.SessionsList);
+    fresh.catch(() => {});
+    await vi.waitFor(() => expect(t.socket().sent).toHaveLength(1));
+    t.socket().reply({ type: 'ready', profileIds: ['p1'], language: 'ja' });
+    await expect(many[1]).rejects.toThrow('disconnected');
+    expect(t.socket().sent.slice(1)).toEqual([expect.objectContaining({ channel: IpcChannel.SessionsList, id: QUEUE_MAX + 3 })]);
     t.transport.stop();
   });
 

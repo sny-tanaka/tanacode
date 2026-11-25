@@ -5,6 +5,7 @@ import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
 import type { SessionState } from '@shared/session-tools';
 import type { UnknownEvent, UnknownProblem } from '@shared/unknown-event';
 import { useSessionValues } from '../sessionValues';
+import { isRemoteMode } from '../remote/mode';
 
 export type ToolStatus = 'running' | 'done' | 'error';
 
@@ -673,12 +674,18 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
   useEffect(
     () =>
       window.tanacode.sessions.onChat((batch) => {
-        // 途中から受け取ったセッションは取りこぼしがあるので、スナップショットで埋める
-        if (!peek(batch.sessionId) && batch.fromSeq > 0) load(batch.sessionId);
+        // 途中から受け取ったセッションと、間の飛んだ知らせ（スマホの画面で、開いていなかった間・切れていた間）は、取りこぼしがあるので、スナップショットで埋める
+        const have = peek(batch.sessionId);
+        if (have ? batch.fromSeq > have.nextSeq : batch.fromSeq > 0) load(batch.sessionId);
         else change(batch.sessionId, (prev) => withBatch(prev, batch));
       }),
     [load, peek, change],
   );
+
+  // スマホの画面では、開いていないセッションの知らせが届かないので、開いたときに読み直す（新しいものが無ければ、手元のまま）
+  useEffect(() => {
+    if (selectedId && isRemoteMode()) load(selectedId);
+  }, [selectedId, load]);
 
   const reset = useCallback((sessionId: string) => change(sessionId, () => undefined), [change]);
 

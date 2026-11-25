@@ -11,6 +11,7 @@ mkdirSync(join(root, 'assets'));
 writeFileSync(join(root, 'remote.html'), '<html>remote</html>');
 writeFileSync(join(root, 'assets', 'remote-abc.js'), 'console.log(1)');
 writeFileSync(join(root, 'notes.txt'), 'secret');
+writeFileSync(join(root, 'index.html'), '<html>mac</html>');
 writeFileSync(join(root, '..', 'tanacode-app-outside.js'), 'outside');
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
@@ -31,7 +32,7 @@ describe('appFile', () => {
   });
 
   it('置き場所の外・決めていない拡張子・無いファイル・壊れた %・NUL は配らない', async () => {
-    for (const path of ['/app/../tanacode-app-outside.js', '/app/%2e%2e/tanacode-app-outside.js', '/app/notes.txt', '/app/assets/none.js', '/app/%E0.js', '/app/a%00.js']) {
+    for (const path of ['/app/../tanacode-app-outside.js', '/app/%2e%2e/tanacode-app-outside.js', '/app/notes.txt', '/app/index.html', '/app/remote.html/../index.html', '/app/assets/none.js', '/app/%E0.js', '/app/a%00.js']) {
       expect(await appFile(root, path), path).toBeNull();
     }
   });
