@@ -8970,3 +8970,245 @@ body.resizing-rows webview {
   color: var(--blue);
   font-size: 11px;
 }
+
+/* スマホの配置（Issue #464。スマホの画面で、幅が狭いときだけ。App が .app.mobile を付ける）。
+   上の帯（.mobile-bar）・セッションの引き出し・下のタブ（.mobile-tabs）。列は作り替えず、今のタブの列だけを画面いっぱいに出す */
+.app.mobile {
+  height: var(--app-height, 100dvh);
+  padding-top: env(safe-area-inset-top);
+}
+.app.mobile .resizer,
+.app.mobile .statusbar {
+  display: none;
+}
+.app.mobile .main {
+  position: relative;
+  display: block;
+}
+.app.mobile .main > .sidebar,
+.app.mobile .main > .claude,
+.app.mobile .main > .explorer,
+.app.mobile .main > .center {
+  display: none;
+  width: 100% !important;
+  height: 100%;
+  border: none;
+}
+.app.mobile[data-mobile-tab='chat'] .main > .claude {
+  display: flex;
+}
+.app.mobile[data-mobile-tab='panel'] .main > .explorer {
+  display: flex;
+  flex-direction: column;
+}
+.app.mobile[data-mobile-tab='editor'] .main > .center,
+.app.mobile[data-mobile-tab='terminal'] .main > .center {
+  display: flex;
+}
+/* エディタのタブではターミナルを出さず、ターミナルのタブではターミナルだけを画面いっぱいに出す */
+.app.mobile[data-mobile-tab='editor'] .center > .terminal-panel {
+  display: none;
+}
+.app.mobile[data-mobile-tab='terminal'] .center > :not(.terminal-panel) {
+  display: none !important;
+}
+.app.mobile[data-mobile-tab='terminal'] .center > .terminal-panel {
+  flex: 1;
+  height: auto !important;
+}
+/* パネルのタブ: 切り替えのアイコンを上に横 1 列で並べる */
+.app.mobile .explorer .activity-bar {
+  width: auto;
+  flex-direction: row;
+  overflow-x: auto;
+  padding: 4px 6px;
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.app.mobile .explorer .activity-bar button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app.mobile .explorer .side-panel {
+  flex: 1;
+  min-height: 0;
+}
+/* セッションの引き出し（左から重ねて出す） */
+.app.mobile[data-session-drawer='open'] .main > .sidebar {
+  display: flex;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 85% !important;
+  z-index: 40;
+  box-shadow: 8px 0 24px rgb(0 0 0 / 45%);
+}
+.mobile-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgb(0 0 0 / 45%);
+}
+
+/* 上の帯 */
+.mobile-bar {
+  flex: none;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-bar-menu {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+}
+.mobile-bar-burger,
+.mobile-bar-burger::before,
+.mobile-bar-burger::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-primary);
+}
+.mobile-bar-burger {
+  position: relative;
+}
+.mobile-bar-burger::before,
+.mobile-bar-burger::after {
+  content: '';
+  position: absolute;
+  left: 0;
+}
+.mobile-bar-burger::before {
+  top: -6px;
+}
+.mobile-bar-burger::after {
+  top: 6px;
+}
+.mobile-bar-badge {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: var(--text-on-fill);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+.mobile-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mobile-bar-connection {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.mobile-bar-connection.on {
+  background: var(--ok);
+}
+
+/* 下のタブ（キーボードが出ている間は隠す） */
+.mobile-tabs {
+  flex: none;
+  display: flex;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-tabs button {
+  flex: 1;
+  min-height: 48px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.mobile-tabs button.on {
+  color: var(--send-fg);
+  box-shadow: inset 0 2px 0 var(--send-fg);
+}
+/* 隠すのは、チャットの入力欄とターミナルの 1 行の入力欄で書いている間だけ（xterm は見えない入力欄にフォーカスを置くので、含めるとタブから出られない） */
+.app.mobile:has(.chat-input-wrap textarea:focus, .mobile-keys-line input:focus) .mobile-tabs {
+  display: none;
+}
+/* ほかのセッションの答え待ち（チャットのタブで、下のタブの上に出す） */
+.mobile-waiting {
+  flex: none;
+  min-height: 40px;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+/* ターミナルの補助キーと 1 行の入力欄 */
+.mobile-keys {
+  flex: none;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-keys-row {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  overflow-x: auto;
+}
+.mobile-keys-row button {
+  flex: none;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: 13px var(--font-mono);
+}
+.mobile-keys-row button.on {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.mobile-keys-line {
+  display: flex;
+  gap: 6px;
+  padding: 6px 6px 0;
+}
+.mobile-keys-line input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-heading);
+  font: 14px var(--font-mono);
+}
+/* スマホのターミナルは Mac の桁数のまま描くので、横にスクロールして見る */
+.app.mobile .terminal-host {
+  overflow-x: auto;
+}

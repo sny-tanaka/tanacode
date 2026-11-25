@@ -2611,6 +2611,27 @@
       }
     }
   },
+  "mobile": {
+    "sessions": "セッション一覧",
+    "untitled": "名前の無いセッション",
+    "noSession": "セッションを選んでください",
+    "connected": "Mac とつながっています",
+    "reconnecting": "Mac につなぎ直しています",
+    "waiting": "ほかの {count} 件が答えを待っています",
+    "tab": {
+      "chat": "チャット",
+      "panel": "パネル",
+      "editor": "エディタ",
+      "terminal": "ターミナル"
+    },
+    "keys": {
+      "label": "補助キー",
+      "ctrl": "Ctrl",
+      "line": "1 行で入力",
+      "send": "送る",
+      "linePlaceholder": "コマンドを入力"
+    }
+  },
   "remoteLogin": {
     "title": "遠隔操作",
     "installTitle": "ホーム画面に追加してください",

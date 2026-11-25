@@ -36,3 +36,21 @@ export function takeDrafts(): Record<string, Draft> {
     return {};
   }
 }
+
+// Mac とつながっているか（スマホの画面の上の帯に出す）。運び役が変わるたびに知らせる
+let connected = true;
+const connectionListeners = new Set<(on: boolean) => void>();
+
+export function setRemoteConnected(on: boolean): void {
+  connected = on;
+  for (const listener of connectionListeners) listener(on);
+}
+
+export function remoteConnected(): boolean {
+  return connected;
+}
+
+export function onRemoteConnected(listener: (on: boolean) => void): () => void {
+  connectionListeners.add(listener);
+  return () => connectionListeners.delete(listener);
+}

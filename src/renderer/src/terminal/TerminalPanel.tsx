@@ -14,11 +14,26 @@ import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { useRunInTerminal } from './runInTerminal';
 import { xtermOptions } from './xterm';
+import { isRemoteMode } from '../remote/mode';
+import { MobileKeys } from './MobileKeys';
 
 // task: アプリが動かしたコマンドのタブ（worktree の npm install・yarn install など。失敗した・入力を待っているように見える・人が見ると言ったときだけ
 // main が出す）。終わってもタブは残し、exitCode に終了コードを入れる
 type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
 type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
+
+// Ctrl を押したまま打った文字にする（a〜z と @ [ \\ ] ^ _ だけ。ほかはそのまま）
+export function withCtrl(data: string): string {
+  if (data.length !== 1) return data;
+  const code = data.toUpperCase().charCodeAt(0);
+  return code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : data;
+}
+
+// 画面の大きさに合わせて桁数を変える。スマホの画面では変えない（pty の大きさは Mac の画面のもの。合わせると Mac の画面が崩れるので、
+// Mac の桁数のまま描き、横にスクロールして見る。Issue #464）
+const fitLocal = (x: Xterm) => {
+  if (!isRemoteMode()) x.fit.fit();
+};
 
 const HEIGHT_KEY = 'tanacode.terminalHeight';
 const DEFAULT_HEIGHT = 280;
@@ -62,6 +77,23 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
   const pending = useRef(new Map<string, string[]>());
   const [shells, setShells] = useState<Record<string, ShellTab[]>>({});
   const [active, setActive] = useState<Record<string, string>>({});
+  // スマホの補助キーの Ctrl（押したら、次に打った 1 文字を Ctrl を押したまま打ったものにする）。xterm の onData からも読むので ref にも写す
+  const [ctrlOn, setCtrlOnState] = useState(false);
+  const ctrlArmed = useRef(false);
+  const setCtrlOn = useCallback((on: boolean) => {
+    ctrlArmed.current = on;
+    setCtrlOnState(on);
+  }, []);
+  const typed = useCallback(
+    (data: string) => {
+      if (!ctrlArmed.current) return data;
+      setCtrlOn(false);
+      return withCtrl(data);
+    },
+    [setCtrlOn],
+  );
+  const typedRef = useRef(typed);
+  typedRef.current = typed;
   const [hasSelection, setHasSelection] = useState(false);
   // 高さは、どのプロファイルの画面でも同じにする（sharedPrefs）
   const [height, setHeight] = useState(loadHeight);
@@ -135,8 +167,11 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     (id: string, x: Xterm = makeXterm()): Xterm => {
       const { term } = x;
       xterms.current.set(id, x);
-      term.onData((data) => window.tanacode.shell.write(id, data));
-      term.onResize(({ cols, rows }) => window.tanacode.shell.resize(id, cols, rows));
+      term.onData((data) => window.tanacode.shell.write(id, typedRef.current(data)));
+      // スマホの画面からは、pty の大きさを変えない（Mac の画面が崩れないように）
+      term.onResize(({ cols, rows }) => {
+        if (!isRemoteMode()) window.tanacode.shell.resize(id, cols, rows);
+      });
       term.onSelectionChange(() => setHasSelection(term.hasSelection()));
       for (const data of pending.current.get(id) ?? []) term.write(data);
       pending.current.delete(id);
@@ -197,7 +232,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
       setActive((prev) => ({ ...prev, [owner]: id }));
     });
     const observer = new ResizeObserver(() => {
-      for (const x of xterms.current.values()) if (!x.element.hidden) x.fit.fit();
+      for (const x of xterms.current.values()) if (!x.element.hidden) fitLocal(x);
     });
     observer.observe(hostRef.current!);
     // 画面を読み込み直したとき（⌘R）、main で動き続けているターミナルを引き継ぐ。xterm を前と同じ大きさにして、今の画面を書き、
@@ -269,7 +304,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     for (const x of xterms.current.values()) x.element.hidden = true;
     const x = makeXterm();
     x.element.hidden = false;
-    x.fit.fit();
+    fitLocal(x);
     const { term } = x;
     const discard = () => {
       term.dispose();
@@ -387,7 +422,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
       setHasSelection(false);
       return;
     }
-    x.fit.fit();
+    fitLocal(x);
     if (focusRequested.current || (inTerminal && shownId.current !== activeId)) x.term.focus();
     focusRequested.current = false;
     shownId.current = activeId;
@@ -513,6 +548,7 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
         )}
         <div className="terminal-host" ref={hostRef} />
       </div>
+      {isRemoteMode() && activeId && <MobileKeys write={(data) => window.tanacode.shell.write(activeId, typed(data))} ctrl={ctrlOn} onCtrl={setCtrlOn} />}
     </div>
   );
 });
