@@ -664,16 +664,25 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
     [peek, update],
   );
 
-  // 読んでいる途中のセッション（返るまで、スナップショットを重ねて読まない。スマホの通信量を増やさない）
-  const loading = useRef(new Set<string>());
+  // 読んでいる途中のセッション（返るまで、スナップショットを重ねて読まない。スマホの通信量を増やさない）。
+  // 途中で頼まれたら（again）、返ったあとに 1 回だけ読み直す（途中で捨てた・進んだ分を取りこぼさない）
+  const loading = useRef(new Map<string, { again: boolean }>());
   const load = useCallback(
     (sessionId: string) => {
-      if (loading.current.has(sessionId)) return;
-      loading.current.add(sessionId);
+      const inFlight = loading.current.get(sessionId);
+      if (inFlight) {
+        inFlight.again = true;
+        return;
+      }
+      const entry = { again: false };
+      loading.current.set(sessionId, entry);
       void window.tanacode.sessions
         .snapshot(sessionId)
         .then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)))
-        .finally(() => loading.current.delete(sessionId));
+        .finally(() => {
+          loading.current.delete(sessionId);
+          if (entry.again) load(sessionId);
+        });
     },
     [change],
   );

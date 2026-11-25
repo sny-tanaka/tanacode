@@ -363,6 +363,30 @@ describe('main からの配信（useSessionChats）', () => {
     expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);
   });
 
+  it('読んでいる途中に頼まれた読み直しは捨てず、返ったあとに 1 回だけ読む（途中で捨てた・進んだ分を取りこぼさない）', async () => {
+    let release: (() => void) | null = null;
+    const replies: number[] = [];
+    api = mockApi({
+      'sessions.snapshot': () =>
+        new Promise((resolve) => {
+          const n = replies.length;
+          replies.push(n);
+          release = () => resolve({ sessionId: 's1', fromSeq: 0, events: n === 0 ? [{ type: 'user', id: 'u1', text: '一' }] : [{ type: 'user', id: 'u1', text: '一' }, { type: 'user', id: 'u2', text: '二' }] });
+        }),
+    });
+    api.install();
+    const { result } = renderHook(() => useSessionChats('s1', null));
+    act(() => result.current.load('s1'));
+    act(() => result.current.load('s1'));
+    act(() => result.current.load('s1'));
+    expect(replies).toEqual([0]);
+    await act(async () => release!());
+    expect(replies).toEqual([0, 1]);
+    await act(async () => release!());
+    expect(replies).toEqual([0, 1]);
+    expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);
+  });
+
   it('スマホの画面では、開いたセッションを毎回読み直す（Mac の画面では読み直さない）', async () => {
     const mac = renderHook(() => useSessionChats('s1', null));
     expect(api.argsOf('sessions.snapshot')).toEqual([]);
