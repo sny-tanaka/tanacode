@@ -179,12 +179,21 @@ export const ClaudePane = memo(function ClaudePane({
   const mobile = useMobileLayout();
   const [tools, setTools] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
-  // 外を押したら閉じる（中と「…」のボタンは除く。「…」は自分で開け閉めする）。セッションを替えたら閉じる
+  // 外を押したら閉じる（中と「…」のボタンは除く。「…」は自分で開け閉めする）。閉じるだけにして、押した先のボタンは押さない
+  // （スマホのメニューの決まり）。セッションを替えたら閉じる
   useEffect(() => {
     if (!tools) return;
     const close = (e: PointerEvent) => {
       const target = e.target as Element;
-      if (!toolsRef.current?.contains(target) && !target.closest?.('.claude-header-tools-toggle')) setTools(false);
+      if (toolsRef.current?.contains(target) || target.closest?.('.claude-header-tools-toggle')) return;
+      setTools(false);
+      const swallow = (click: MouseEvent) => {
+        click.preventDefault();
+        click.stopPropagation();
+      };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      // 押した先がずれて click が来なかったときに、次の押下まで残さない
+      window.setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 600);
     };
     document.addEventListener('pointerdown', close, true);
     return () => document.removeEventListener('pointerdown', close, true);

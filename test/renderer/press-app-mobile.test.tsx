@@ -145,8 +145,12 @@ describe('スマホの画面の配置（App）', () => {
     // 中を押しても閉じない。外（チャットの所）を押すと閉じる
     fireEvent.pointerDown(header.querySelector('.claude-header-tools')!);
     expect(header.querySelector('.claude-header-tools')).not.toBeNull();
-    fireEvent.pointerDown(document.querySelector('.chat-input-wrap')!);
+    // 外を押したら閉じるだけで、押した先（下のタブ）は押さない
+    const tab = screen.getByRole('tab', { name: 'パネル' });
+    fireEvent.pointerDown(tab);
     expect(header.querySelector('.claude-header-tools')).toBeNull();
+    fireEvent.click(tab);
+    expect(app().dataset.mobileTab).toBe('chat');
     fireEvent.click(more());
     fireEvent.click(more());
     expect(header.querySelector('.claude-header-tools')).toBeNull();
