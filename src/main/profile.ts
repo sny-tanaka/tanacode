@@ -147,6 +147,7 @@ export class Profile {
       {
         onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
         onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
+        onResized: (id, cols, rows) => send(IpcChannel.ShellResized, { id, cols, rows }),
         onOpened: (owner, id, name, task, replay) => send(IpcChannel.ShellOpened, { owner, id, name, task, ...(replay ? { replay } : {}) }),
       },
       claudeDir,
@@ -253,6 +254,7 @@ export class Profile {
         },
         onChat: (batch) => send(IpcChannel.ChatEvents, batch),
         onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
+        onPtyResized: (sessionId, cols, rows) => send(IpcChannel.PtyResized, { sessionId, cols, rows }),
         onTurnCompleted: (session, notice) => {
           const message = this.turnMessage(session.id, notice);
           if (message) notify(session.id, session.title, message);

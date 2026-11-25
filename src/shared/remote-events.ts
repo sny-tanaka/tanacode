@@ -41,6 +41,9 @@ export const REMOTE_EVENTS: { readonly [C in keyof IpcEvent]: RemoteEventUse } =
   // ターミナルの出力。スマホがそのターミナルを見ている間だけ
   [IpcChannel.PtyData]: 'subscribe',
   [IpcChannel.ShellData]: 'subscribe',
+  // ターミナルの大きさ。スマホがそのターミナルを見ている間だけ（出力と同じ）
+  [IpcChannel.PtyResized]: 'subscribe',
+  [IpcChannel.ShellResized]: 'subscribe',
   [IpcChannel.ShellExit]: 'send',
   [IpcChannel.ShellOpened]: 'send',
   [IpcChannel.FilesChanged]: 'send',

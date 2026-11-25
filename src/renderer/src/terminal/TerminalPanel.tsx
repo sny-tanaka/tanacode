@@ -15,19 +15,12 @@ import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedP
 import { useRunInTerminal } from './runInTerminal';
 import { xtermOptions } from './xterm';
 import { isRemoteMode } from '../remote/mode';
-import { MobileKeys } from './MobileKeys';
+import { MobileKeys, useCtrlKey } from './MobileKeys';
 
 // task: アプリが動かしたコマンドのタブ（worktree の npm install・yarn install など。失敗した・入力を待っているように見える・人が見ると言ったときだけ
 // main が出す）。終わってもタブは残し、exitCode に終了コードを入れる
 type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
 type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
-
-// Ctrl を押したまま打った文字にする（a〜z と @ [ \\ ] ^ _ だけ。ほかはそのまま）
-export function withCtrl(data: string): string {
-  if (data.length !== 1) return data;
-  const code = data.toUpperCase().charCodeAt(0);
-  return code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : data;
-}
 
 // 画面の大きさに合わせて桁数を変える。スマホの画面では変えない（pty の大きさは Mac の画面のもの。合わせると Mac の画面が崩れるので、
 // Mac の桁数のまま描き、横にスクロールして見る。Issue #464）
@@ -61,6 +54,9 @@ type Props = {
   // null・省略は、まだ分からない（一覧を読む前）ので片付けない
   liveOwners?: readonly string[] | null;
   open: boolean;
+  // 画面に見えている（スマホの配置で、ほかのタブを見ている間は false）。スマホの画面は、見えている間だけ出力を受け取る（通信量を増やさない）。
+  // 省略は true
+  visible?: boolean;
   // パネルを開く（チャットのコードブロックの「実行」など、閉じている間にコマンドを実行するとき）
   onOpen: () => void;
   onClose: () => void;
@@ -69,7 +65,7 @@ type Props = {
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
 // App は応答中に何度も描き直すので、props が変わったときだけ描き直す
-export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, onOpen, onClose }: Props) {
+export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, visible = true, onOpen, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
@@ -77,21 +73,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
   const pending = useRef(new Map<string, string[]>());
   const [shells, setShells] = useState<Record<string, ShellTab[]>>({});
   const [active, setActive] = useState<Record<string, string>>({});
-  // スマホの補助キーの Ctrl（押したら、次に打った 1 文字を Ctrl を押したまま打ったものにする）。xterm の onData からも読むので ref にも写す
-  const [ctrlOn, setCtrlOnState] = useState(false);
-  const ctrlArmed = useRef(false);
-  const setCtrlOn = useCallback((on: boolean) => {
-    ctrlArmed.current = on;
-    setCtrlOnState(on);
-  }, []);
-  const typed = useCallback(
-    (data: string) => {
-      if (!ctrlArmed.current) return data;
-      setCtrlOn(false);
-      return withCtrl(data);
-    },
-    [setCtrlOn],
-  );
+  // スマホの補助キーの Ctrl
+  const { ctrl: ctrlOn, setCtrl: setCtrlOn, typed } = useCtrlKey();
   const typedRef = useRef(typed);
   typedRef.current = typed;
   const [hasSelection, setHasSelection] = useState(false);
@@ -189,12 +172,41 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     [],
   );
 
+  // 出力を受け取る。Mac の画面はいつも。スマホの画面は、パネルが見えている間だけ受け取り（通信量を増やさない）、見え始めたときに
+  // 今の画面と大きさを読み直す（見ていない間の出力と、Mac の画面が変えた大きさに合わせる）。見ている間は、Mac の画面が変えた大きさにも合わせる
+  const streaming = !isRemoteMode() || (open && visible);
   useEffect(() => {
+    if (!streaming) return;
     const offData = window.tanacode.shell.onData(({ id, data }) => {
       const x = xterms.current.get(id);
       if (x) x.term.write(data);
       else pending.current.set(id, [...(pending.current.get(id) ?? []), data]);
     });
+    if (!isRemoteMode()) return offData;
+    const offResized = window.tanacode.shell.onResized(({ id, cols, rows }) => xterms.current.get(id)?.term.resize(cols, rows));
+    // 頼んだあとに届いた出力は写しのあとに続くので、写しが届いたら、それまでに書いたものを消して写しを書く
+    let alive = true;
+    window.tanacode.shell
+      .attach()
+      .then((list) => {
+        if (!alive) return;
+        for (const s of list ?? []) {
+          const x = xterms.current.get(s.id);
+          if (!x) continue;
+          x.term.reset();
+          x.term.resize(s.cols, s.rows);
+          x.term.write(s.screen);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      offData();
+      offResized();
+    };
+  }, [streaming]);
+
+  useEffect(() => {
     // シェルが終わったら（exit など）タブを閉じる。アプリが開いたコマンドのタブは、出力を見られるよう残す
     const offExit = window.tanacode.shell.onExit(({ id, exitCode }) => {
       if (taskIds.current.has(id)) {
@@ -290,7 +302,6 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
       .then(restore, () => restore([]));
     return () => {
       alive = false;
-      offData();
       offExit();
       offOpened();
       observer.disconnect();

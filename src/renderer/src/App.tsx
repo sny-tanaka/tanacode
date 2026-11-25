@@ -1424,6 +1424,7 @@ export function App() {
             waiting={folderWaitLabel}
             liveOwners={sessions ? liveSessionIds : null}
             open={terminalOpen}
+            visible={!mobile || mobileTab === 'terminal'}
             onOpen={showShell}
             onClose={closeShell}
           />

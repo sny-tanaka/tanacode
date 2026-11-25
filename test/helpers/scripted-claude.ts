@@ -359,6 +359,7 @@ export class ScriptedApp {
   readonly usages: UsageReport[] = [];
   // 画面に流した Claude Code の画面の出力（ターミナルモード）
   readonly ptyData: { id: string; data: string }[] = [];
+  readonly ptyResized: [string, number, number][] = [];
   // 答えを待っている質問の知らせ（onQuestion）を、届いた順に
   readonly questionLog: { id: string; question: PendingQuestion | null }[] = [];
   // 答えを待っている許可の確認の知らせ（onPermission）を、届いた順に
@@ -405,6 +406,7 @@ export class ScriptedApp {
           this.chat.set(batch.sessionId, [...(this.chat.get(batch.sessionId) ?? []), ...batch.events]);
         },
         onPtyData: (id, data) => this.ptyData.push({ id, data }),
+        onPtyResized: (id, cols, rows) => this.ptyResized.push([id, cols, rows]),
         onTurnCompleted: (session, notice) => {
           this.turnsCompleted.push(session);
           this.turnNotices.push(notice);

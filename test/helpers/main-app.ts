@@ -453,6 +453,7 @@ const SessionManager = fakeClass('SessionManager', {
   progress: echo('manager.progress'),
   pendingQuestion: echo('manager.pendingQuestion'),
   replyQuestion: echo('manager.replyQuestion'),
+  ptySnapshot: echo('manager.ptySnapshot'),
   pendingPermission: echo('manager.pendingPermission'),
   replyPermission: echo('manager.replyPermission'),
   workflows: echo('manager.workflows'),

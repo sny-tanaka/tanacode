@@ -132,12 +132,15 @@ export const IpcChannel = {
   PtyResize: 'pty:resize',
   PtyResetSize: 'pty:reset-size',
   PtyData: 'pty:data',
+  PtySnapshot: 'pty:snapshot',
+  PtyResized: 'pty:resized',
   ShellCreate: 'shell:create',
   ShellAttach: 'shell:attach',
   ShellWrite: 'shell:write',
   ShellResize: 'shell:resize',
   ShellKill: 'shell:kill',
   ShellData: 'shell:data',
+  ShellResized: 'shell:resized',
   ShellExit: 'shell:exit',
   ShellOpened: 'shell:opened',
   ShellReveal: 'shell:reveal',
@@ -584,9 +587,15 @@ export type SessionElicitation = { sessionId: string; elicitation: PendingElicit
 export type ChatBatch = { sessionId: string; fromSeq: number; events: ChatEvent[]; live: boolean; partial?: PartialBlock[] };
 export type SessionSnapshot = { sessionId: string; fromSeq: number; events: ChatEvent[]; partial?: PartialBlock[] };
 export type PtyData = { sessionId: string; data: string };
+// ターミナルモードの TUI の pty の大きさが変わった（Mac の画面が変えた。スマホの画面は、Mac の大きさのまま描くので、これに合わせる）
+export type PtyResized = { sessionId: string; cols: number; rows: number };
+// ターミナルモードの TUI の今の画面（screen は、cols・rows の大きさの xterm に書くと今の画面になる文字列）
+export type PtySnapshot = { cols: number; rows: number; screen: string };
 // ユーザーが開いたシェル（統合ターミナル）
 export type ShellData = { id: string; data: string };
 export type ShellExit = { id: string; exitCode: number };
+// シェルの pty の大きさが変わった（Mac の画面が変えた。PtyResized と同じ）
+export type ShellResized = { id: string; cols: number; rows: number };
 // アプリが開いたターミナル。owner: セッションの id / task: コマンドのタブ（worktree の npm install など。終わってもタブを残す）。
 // false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）。
 // replay: 画面に出さずに動かしていたコマンドを、あとからタブに出したとき（失敗した・入力を待っているように見える・人が「ターミナルで見る」を
@@ -959,6 +968,9 @@ export type TanacodeApi = {
     // 既定の大きさに戻す（ターミナルモードの Claude Code の画面を隠したとき）
     resetSize(sessionId: string): void;
     onData(listener: (payload: PtyData) => void): () => void;
+    // 今の画面と大きさ（スマホの画面が、Mac の大きさのまま描くときに読む）。ターミナルモードで動いていなければ null
+    snapshot(sessionId: string): Promise<PtySnapshot | null>;
+    onResized(listener: (payload: PtyResized) => void): () => void;
   };
   shell: {
     // セッションのフォルダでログインシェルを開く
@@ -969,6 +981,7 @@ export type TanacodeApi = {
     resize(id: string, cols: number, rows: number): void;
     kill(id: string): void;
     onData(listener: (payload: ShellData) => void): () => void;
+    onResized(listener: (payload: ShellResized) => void): () => void;
     onExit(listener: (payload: ShellExit) => void): () => void;
     // アプリがターミナルを開いた（コマンドのタブは、終わってもタブを残す。task でないものは、Claude が打つために開いたシェル）
     onOpened(listener: (payload: ShellOpened) => void): () => void;
@@ -1261,6 +1274,7 @@ export type IpcInvoke = {
   [IpcChannel.TasksStop]: Api['tasks']['stop'];
   [IpcChannel.ShellCreate]: Api['shell']['create'];
   [IpcChannel.ShellAttach]: Api['shell']['attach'];
+  [IpcChannel.PtySnapshot]: Api['pty']['snapshot'];
   [IpcChannel.FolderPick]: Api['folders']['pick'];
   [IpcChannel.FolderInfo]: Api['folders']['info'];
   [IpcChannel.FolderParentInstructions]: Api['folders']['parentInstructions'];
@@ -1373,7 +1387,9 @@ export type IpcEvent = {
   [IpcChannel.KnowledgeChanged]: Payload<Api['knowledge']['onChanged']>;
   [IpcChannel.TasksBashChanged]: Payload<Api['tasks']['onBashChanged']>;
   [IpcChannel.PtyData]: Payload<Api['pty']['onData']>;
+  [IpcChannel.PtyResized]: Payload<Api['pty']['onResized']>;
   [IpcChannel.ShellData]: Payload<Api['shell']['onData']>;
+  [IpcChannel.ShellResized]: Payload<Api['shell']['onResized']>;
   [IpcChannel.ShellExit]: Payload<Api['shell']['onExit']>;
   [IpcChannel.ShellOpened]: Payload<Api['shell']['onOpened']>;
   [IpcChannel.FilesChanged]: Payload<Api['workspace']['onFilesChanged']>;

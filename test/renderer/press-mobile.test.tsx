@@ -6,8 +6,7 @@ import { MobileBar } from '../../src/renderer/src/mobile/MobileBar';
 import { MobileTabs, MobileWaiting } from '../../src/renderer/src/mobile/MobileTabs';
 import { useMobileLayout } from '../../src/renderer/src/mobile/useMobileLayout';
 import { setRemoteConnected, setRemoteMode } from '../../src/renderer/src/remote/mode';
-import { MobileKeys } from '../../src/renderer/src/terminal/MobileKeys';
-import { withCtrl } from '../../src/renderer/src/terminal/TerminalPanel';
+import { MobileKeys, withCtrl } from '../../src/renderer/src/terminal/MobileKeys';
 import './dom';
 
 // スマホの画面の配置（上の帯・下のタブ・答え待ちの帯・ターミナルの補助キー）を押して、効いたことを確かめる

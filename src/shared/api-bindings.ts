@@ -212,6 +212,8 @@ export function createApi({ invoke, send, subscribe, pathForFile, language }: Ap
       resize: (sessionId, cols, rows) => send(IpcChannel.PtyResize, sessionId, cols, rows),
       resetSize: (sessionId) => send(IpcChannel.PtyResetSize, sessionId),
       onData: (listener) => subscribe(IpcChannel.PtyData, listener),
+      snapshot: (sessionId) => invoke(IpcChannel.PtySnapshot, sessionId),
+      onResized: (listener) => subscribe(IpcChannel.PtyResized, listener),
     },
     shell: {
       create: (sessionId, cols, rows) => invoke(IpcChannel.ShellCreate, sessionId, cols, rows),
@@ -220,6 +222,7 @@ export function createApi({ invoke, send, subscribe, pathForFile, language }: Ap
       resize: (id, cols, rows) => send(IpcChannel.ShellResize, id, cols, rows),
       kill: (id) => send(IpcChannel.ShellKill, id),
       onData: (listener) => subscribe(IpcChannel.ShellData, listener),
+      onResized: (listener) => subscribe(IpcChannel.ShellResized, listener),
       onExit: (listener) => subscribe(IpcChannel.ShellExit, listener),
       onOpened: (listener) => subscribe(IpcChannel.ShellOpened, listener),
       reveal: (sessionId) => send(IpcChannel.ShellReveal, sessionId),

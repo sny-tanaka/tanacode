@@ -9218,6 +9218,14 @@ body.resizing-rows webview {
 .app.mobile .terminal-host {
   overflow-x: auto;
 }
+/* ターミナルモードの Claude の画面も、スマホの画面では Mac の桁数のまま描く（幅が狭くなくても同じ） */
+.claude-screen.remote {
+  overflow: auto;
+}
+.claude-screen.remote .terminal-instance {
+  position: static;
+  margin: 6px 0 0 8px;
+}
 /* チャットの見出し: セッションの名前は上の帯に出すので、スマホの配置では出さない（ボタンの並びを狭い幅に収める） */
 .app.mobile .claude-header .claude-title {
   display: none;

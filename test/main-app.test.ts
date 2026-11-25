@@ -395,6 +395,7 @@ describe('部品から画面への知らせ', () => {
     ['onSessionsChanged', [[{ id: 's1' }]], IpcChannel.SessionsChanged, [{ id: 's1' }]],
     ['onChat', [{ sessionId: 's1', events: [] }], IpcChannel.ChatEvents, { sessionId: 's1', events: [] }],
     ['onPtyData', ['s1', 'ターミナルの出力'], IpcChannel.PtyData, { sessionId: 's1', data: 'ターミナルの出力' }],
+    ['onPtyResized', ['s1', 132, 43], IpcChannel.PtyResized, { sessionId: 's1', cols: 132, rows: 43 }],
     ['onProgress', ['s1', { phase: 'thinking' }], IpcChannel.SessionsProgress, { sessionId: 's1', activity: { phase: 'thinking' } }],
     ['onWorkflows', ['s1', [{ id: 'w' }]], IpcChannel.WorkflowsChanged, { sessionId: 's1', runs: [{ id: 'w' }] }],
     ['onSubagents', ['s1', [{ id: 'a' }]], IpcChannel.SubagentsChanged, { sessionId: 's1', runs: [{ id: 'a' }] }],
@@ -432,6 +433,7 @@ describe('部品から画面への知らせ', () => {
     const shells = optionsOf('ShellTerminals');
     shells.onData('sh1', 'ls');
     shells.onExit('sh1', 0);
+    shells.onResized('sh1', 100, 30);
     shells.onOpened('s1', 'task-2', 'npm install', true);
     shells.onOpened('s1', 'shell-3', 'zsh', false);
     expect(sentToRenderer()).toEqual([
@@ -448,6 +450,7 @@ describe('部品から画面への知らせ', () => {
       [IpcChannel.SystemStats, { cpu: 1 }],
       [IpcChannel.ShellData, { id: 'sh1', data: 'ls' }],
       [IpcChannel.ShellExit, { id: 'sh1', exitCode: 0 }],
+      [IpcChannel.ShellResized, { id: 'sh1', cols: 100, rows: 30 }],
       [IpcChannel.ShellOpened, { owner: 's1', id: 'task-2', name: 'npm install', task: true }],
       [IpcChannel.ShellOpened, { owner: 's1', id: 'shell-3', name: 'zsh', task: false }],
     ]);

@@ -239,6 +239,7 @@ describe('そのまま渡す受け口', () => {
     ],
     [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.create', 's1', cwdOf('s1'), 120, 40)],
     [IpcChannel.ShellAttach, [], call('shells.attach')],
+    [IpcChannel.PtySnapshot, ['s1'], call('manager.ptySnapshot', 's1')],
     [IpcChannel.TranslateRun, [['こんにちは', 'Hello']], call('translator.translate', ['こんにちは', 'Hello'])],
   ];
 

@@ -14,6 +14,7 @@ let shells: ShellTerminals;
 let data: Map<string, string>;
 let exits: Map<string, number>;
 let opened: { owner: string; id: string; name: string; task: boolean; replay?: ShellReplay }[];
+let resized: [string, number, number][];
 const oldShell = process.env.SHELL;
 const oldClaudeCode = process.env.CLAUDECODE;
 
@@ -22,11 +23,12 @@ beforeEach(() => {
   process.env.SHELL = '/bin/sh';
   // 知らせは、テストごとに別の控えに書く。前のテストで止めたシェルが終わった知らせは、次のテストが始まってから届くことがあり、
   // id（shell-1 など）も同じなので、同じ控えに書くと、次のテストのシェルが終わったように見えてしまう
-  const mine = { data: new Map<string, string>(), exits: new Map<string, number>(), opened: [] as typeof opened };
-  ({ data, exits, opened } = mine);
+  const mine = { data: new Map<string, string>(), exits: new Map<string, number>(), opened: [] as typeof opened, resized: [] as typeof resized };
+  ({ data, exits, opened, resized } = mine);
   shells = new ShellTerminals({
     onData: (id, chunk) => mine.data.set(id, (mine.data.get(id) ?? '') + chunk),
     onExit: (id, code) => mine.exits.set(id, code),
+    onResized: (id, cols, rows) => mine.resized.push([id, cols, rows]),
     onOpened: (owner, id, name, task, replay) => mine.opened.push({ owner, id, name, task, ...(replay ? { replay } : {}) }),
   });
 });
@@ -87,10 +89,12 @@ describe('ShellTerminals', () => {
     await waitFor('出力', () => (data.get(id) ?? '').includes(`[${dir}] [tanacode] [none]`));
   });
 
-  it('resize: 大きさを変える。0 の大きさは無視する（パネルを畳んだとき）', async () => {
+  it('resize: 大きさを変える。0 の大きさは無視する（パネルを畳んだとき）。変わったときだけ知らせる（スマホの画面が合わせる）', async () => {
     const { id } = shells.create('session-1', dir, 80, 24);
     shells.resize(id, 0, 0);
     shells.resize(id, 100, 30);
+    shells.resize(id, 100, 30);
+    expect(resized).toEqual([[id, 100, 30]]);
     await sleep(100);
     shells.write(id, 'stty size\r');
     await waitFor('大きさ', () => (data.get(id) ?? '').includes('30 100'));

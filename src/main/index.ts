@@ -1083,6 +1083,7 @@ function registerIpc(): void {
   listen(IpcChannel.PtyWrite, (e, id: string, data: string) => P(e).manager.write(id, data));
   listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));
   listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
+  handle(IpcChannel.PtySnapshot, (e, id: string) => P(e).manager.ptySnapshot(id));
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
     P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
   );
