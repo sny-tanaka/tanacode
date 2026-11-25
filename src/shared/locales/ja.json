@@ -15,7 +15,20 @@
       "folderNotFound": "フォルダが見つかりません: {path}",
       "folderCannotOpen": "フォルダを開けません: {path}",
       "ptyHostUnreachable": "pty ホストに繋がりません: {path}",
-      "notFromApp": "アプリの画面からの呼び出しではありません"
+      "notFromApp": "アプリの画面からの呼び出しではありません",
+      "remoteUnknownChannel": "遠隔の接続から、知らない頼みが届きました: {channel}",
+      "remoteNotAvailable": "この操作は、遠隔の接続からはできません: {channel}",
+      "remoteBadArguments": "遠隔の接続から届いた頼みの形が違います（{channel}）: {reason}",
+      "remoteArg": {
+        "notArray": "引数が配列ではありません",
+        "tooMany": "引数が多すぎます（{count} 個。{max} 個まで）",
+        "missing": "{index} つ目の引数がありません",
+        "wrongType": "{index} つ目の引数の形が違います（{shape} ではない）",
+        "tooDeep": "{index} つ目の引数の入れ子が深すぎます",
+        "tooManyEntries": "{index} つ目の引数の要素が多すぎます",
+        "forbiddenKey": "{index} つ目の引数に、使えないキー（{key}）があります",
+        "notPlain": "{index} つ目の引数が、ふつうのオブジェクトではありません"
+      }
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",

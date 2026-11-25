@@ -4,7 +4,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
+import { DEFAULT_PROFILE_ID } from '@shared/profile';
 import { defaultPrompt } from '@shared/prompts';
+import { REMOTE_CHANNELS, type RemoteChannel } from '@shared/remote-channels';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
@@ -16,7 +18,9 @@ import {
   FakeWebContents,
   githubModule,
   invoke,
+  invokeRemote,
   invokeWith,
+  remoteChannels,
   mainWindow,
   manager,
   sendFromRenderer,
@@ -242,6 +246,21 @@ describe('そのまま渡す受け口', () => {
     await expect(invoke(channel, ...args)).resolves.toEqual(expected);
   });
 
+  // 遠隔の接続（スマホ）から呼んでも、Mac の画面からと同じ相手に同じ引数で渡り、同じ返事が返る（扱いが same のもの）
+  const isSame = (channel: string) => REMOTE_CHANNELS[channel as RemoteChannel].use === 'same';
+  it.each(cases.filter(([channel]) => isSame(channel)))('遠隔の接続から %s を呼んでも、Mac の画面からと同じ', async (channel, args, expected) => {
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, channel, ...args)).resolves.toEqual(expected);
+  });
+
+  it('遠隔の接続のプロファイルが開いていなければ、受け口が断る', async () => {
+    await expect(invokeRemote('not-opened', IpcChannel.SessionsRename, 's1', '名前')).rejects.toThrow();
+    expect(the('SessionManager').rename.mock.calls).toEqual([]);
+  });
+
+  it('どの受け口も、遠隔の接続から呼べる一覧（IpcDispatcher）にも登録される', () => {
+    expect(remoteChannels().sort()).toEqual([...state.handlers.keys(), ...state.listeners.keys()].sort());
+  });
+
   it('質問のカードの返事は、形を確かめてから渡す（形の違う返事は渡さずに false）', async () => {
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案', ほか: 1 } })).resolves.toEqual(
       call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' } }),
@@ -289,6 +308,11 @@ describe('そのまま渡す受け口', () => {
 
   it.each(listens)('知らせ %s（%j）は、%s の %s に引数をそのまま渡す', (channel, args, name, method, expected) => {
     sendFromRenderer(channel, ...args);
+    expect(the(name)[method].mock.calls).toEqual([expected]);
+  });
+
+  it.each(listens.filter(([channel]) => isSame(channel)))('遠隔の接続からの知らせ %s（%j）も、%s の %s に引数をそのまま渡す', async (channel, args, name, method, expected) => {
+    await invokeRemote(DEFAULT_PROFILE_ID, channel, ...args);
     expect(the(name)[method].mock.calls).toEqual([expected]);
   });
 });
