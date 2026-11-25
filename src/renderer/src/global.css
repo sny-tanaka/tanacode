@@ -9256,11 +9256,6 @@ body.resizing-rows webview {
   display: none;
 }
 /* 見出しのスイッチとボタンは「…」の中（ClaudePane）。見出しの下に、右に寄せて重ねて出す */
-.claude-header-tools-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-}
 .claude-header-tools {
   position: absolute;
   top: calc(100% + 4px);

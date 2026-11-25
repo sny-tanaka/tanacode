@@ -137,7 +137,10 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(screen.getByRole('button', { name: '作業を書き出す…' }));
     expect(header.querySelector('.claude-header-tools')).toBeNull();
     fireEvent.click(more());
-    fireEvent.click(document.querySelector('.claude-header-tools-backdrop')!);
+    // 中を押しても閉じない。外（チャットの所）を押すと閉じる
+    fireEvent.pointerDown(header.querySelector('.claude-header-tools')!);
+    expect(header.querySelector('.claude-header-tools')).not.toBeNull();
+    fireEvent.pointerDown(document.querySelector('.chat-input-wrap')!);
     expect(header.querySelector('.claude-header-tools')).toBeNull();
     fireEvent.click(more());
     fireEvent.click(more());

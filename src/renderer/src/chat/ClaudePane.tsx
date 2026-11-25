@@ -178,6 +178,18 @@ export const ClaudePane = memo(function ClaudePane({
   // スマホの配置では、見出しのスイッチとボタンを「…」の中にまとめる（狭い幅に全部は並ばない。Issue #464）
   const mobile = useMobileLayout();
   const [tools, setTools] = useState(false);
+  const toolsRef = useRef<HTMLDivElement>(null);
+  // 外を押したら閉じる（中と「…」のボタンは除く。「…」は自分で開け閉めする）。セッションを替えたら閉じる
+  useEffect(() => {
+    if (!tools) return;
+    const close = (e: PointerEvent) => {
+      const target = e.target as Element;
+      if (!toolsRef.current?.contains(target) && !target.closest?.('.claude-header-tools-toggle')) setTools(false);
+    };
+    document.addEventListener('pointerdown', close, true);
+    return () => document.removeEventListener('pointerdown', close, true);
+  }, [tools]);
+  useEffect(() => setTools(false), [session.id]);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
   // スマホの画面では、つなぎ直して読み込み直すときに、打ちかけの文を控えて戻す（remote/mode.ts）
@@ -838,12 +850,12 @@ export const ClaudePane = memo(function ClaudePane({
               aria-haspopup="true"
               aria-expanded={tools}
               pressed={tools}
+              className="claude-header-tools-toggle"
               onClick={() => setTools(!tools)}
             />
             {tools && (
               <>
-                <div className="claude-header-tools-backdrop" onClick={() => setTools(false)} />
-                <div className="claude-header-tools" role="group" aria-label={t('chat.pane.more')}>
+                <div className="claude-header-tools" ref={toolsRef} role="group" aria-label={t('chat.pane.more')}>
                   {!session.archived && (
                     <div className="claude-header-tool">
                       <span>Remote Control</span>
