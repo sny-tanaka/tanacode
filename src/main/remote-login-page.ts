@@ -191,6 +191,7 @@ label { display: block; margin: 8px 0; }
 label span { display: block; font-size: 13px; opacity: 0.7; }
 input { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; }
 button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid #8886; background: #8881; color: inherit; }
+button:disabled { opacity: 0.4; }
 #add-to-home { padding: 10px 12px; border-radius: 10px; background: #f2b70522; }
 #status { margin-top: 20px; white-space: pre-wrap; }
 `;
