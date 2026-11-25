@@ -2653,6 +2653,11 @@
     "status": "Status",
     "loadFailed": "Could not read the remote access settings: {error}",
     "saveFailed": "Could not save the remote access settings: {error}",
+    "banner": {
+      "active": "Remote access active ({names})",
+      "disconnect": "Disconnect",
+      "disconnectTip": "Disconnects every phone. To reconnect, log in again with Face ID on the phone."
+    },
     "devices": {
       "title": "Registered Devices",
       "empty": "No devices are registered yet.",

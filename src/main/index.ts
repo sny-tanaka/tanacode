@@ -24,7 +24,7 @@ import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
 import { publicOriginOf } from '@shared/remote-protocol';
-import { isRemotePort, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
+import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -239,7 +239,10 @@ const remoteHost = new RemoteHost({
   call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
   // 待ち受けの様子・つながっている数を、メニューバーの様子の文に出し直す（どちらも、起動して設定を読んだあとにしか届かない）
   onStatus: () => buildMenu(),
-  onConnections: () => buildMenu(),
+  onConnections: () => {
+    buildMenu();
+    send(IpcChannel.RemoteConnectionsChanged, remoteConnections());
+  },
   log: (message) => console.error(message),
   auth: (request) => {
     if (!remoteAuth) throw new Error('remote access is not ready');
@@ -292,6 +295,13 @@ function remoteDevicesState(): RemoteDevicesState {
     problem: registrations ? registrations.problem() : 'unavailable',
     profiles: [...opened.keys()].map((id) => ({ id, name: registry.get(id)?.name ?? id })),
   };
+}
+
+// 遠隔でつながっている端末（登録ごとにまとめる。Mac の上の帯に出す）
+function remoteConnections(): RemoteConnection[] {
+  const counts = new Map<string, number>();
+  for (const id of remoteHost.connectedRegistrations()) counts.set(id, (counts.get(id) ?? 0) + 1);
+  return [...counts].map(([registrationId, count]) => ({ registrationId, name: remoteRegistrations?.get(registrationId)?.name ?? '', count }));
 }
 
 // 設定のダイアログに出すもの
@@ -1186,6 +1196,15 @@ function registerIpc(): void {
       send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
     }
     return remoteDevicesState();
+  });
+  handle(IpcChannel.RemoteConnectionsGet, (e) => {
+    P(e);
+    return remoteConnections();
+  });
+  handle(IpcChannel.RemoteDisconnectAll, (e) => {
+    P(e);
+    remoteHost.removeAllSessions();
+    return remoteConnections();
   });
   handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
     P(e);

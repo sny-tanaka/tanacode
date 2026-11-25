@@ -1484,6 +1484,18 @@ describe('メニュー', () => {
     expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-add', session: expect.objectContaining({ registrationId, profileIds: ['default'] }) }));
     expect(state.notifications.at(-1)?.options.body).toBe('遠隔操作でログインがありました: iPhone');
 
+    // 券は、束縛の鍵の署名を確かめて main が出し、その券の接続だけを受ける。つながっている端末は上の帯に出し、「切断」で全部を切る
+    const added = child.posted.find((m) => (m as { type: string }).type === 'session-add') as { session: { sessionId: string } };
+    const sessionId = added.session.sessionId;
+    const ticketChallenge = authOf({ op: 'challenge', purpose: 'ticket' }).value!;
+    const granted = authOf({ op: 'ticket', sessionId, challengeId: ticketChallenge.challengeId, bindingSignature: binding.sign(String(ticketChallenge.challenge)) });
+    expect(granted.ok).toBe(true);
+    child.emit('message', { type: 'connected', clientId: 'c1', sessionId, ticket: granted.value!.ticket });
+    await expect(invoke(IpcChannel.RemoteConnectionsGet)).resolves.toEqual([{ registrationId, name: 'iPhone', count: 1 }]);
+    expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteConnectionsChanged, [{ registrationId, name: 'iPhone', count: 1 }]]);
+    await expect(invoke(IpcChannel.RemoteDisconnectAll)).resolves.toEqual([]);
+    expect(child.posted).toContainEqual({ type: 'session-remove', sessionId });
+
     await invoke(IpcChannel.RemoteDeviceRemove, registrationId);
     await invoke(IpcChannel.RemoteDeviceRemove, 'nope');
     await invoke(IpcChannel.RemoteDeviceRemove, 3);

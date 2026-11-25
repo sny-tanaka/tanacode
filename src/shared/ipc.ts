@@ -28,7 +28,7 @@ import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
 import type { McpEnabled, ToolPermission } from './tool-permissions';
 import type { McpToolGroup } from './mcp-tools';
-import type { RemoteDevicesState, RemoteSettingsInput, RemoteSettingsState } from './remote-settings';
+import type { RemoteConnection, RemoteDevicesState, RemoteSettingsInput, RemoteSettingsState } from './remote-settings';
 import type { SessionMcp } from './mcp-status';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
@@ -216,6 +216,10 @@ export const IpcChannel = {
   RemoteDeviceRemove: 'remote:device-remove',
   RemoteDevicesReset: 'remote:devices-reset',
   RemoteDevicesChanged: 'remote:devices-changed',
+  // 遠隔でつながっている端末（Mac の上の帯）。一覧を読む・全部を切る（セッションも捨てる）/ 一覧が変わった
+  RemoteConnectionsGet: 'remote:connections-get',
+  RemoteDisconnectAll: 'remote:disconnect-all',
+  RemoteConnectionsChanged: 'remote:connections-changed',
   ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
@@ -844,6 +848,10 @@ export type TanacodeApi = {
     // 読めなくなった（壊れた・古いものに戻された）登録の一覧を消して、空から始め直す
     resetDevices(): Promise<RemoteDevicesState>;
     onDevicesChanged(listener: (state: RemoteDevicesState) => void): () => void;
+    // 遠隔でつながっている端末（Mac の上の帯に出す）/ 全部を切る（セッションも捨てるので、つなぎ直すにはログインし直す）/ 一覧が変わった
+    connections(): Promise<RemoteConnection[]>;
+    disconnectAll(): Promise<RemoteConnection[]>;
+    onConnectionsChanged(listener: (connections: RemoteConnection[]) => void): () => void;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
@@ -1225,6 +1233,8 @@ export type IpcInvoke = {
   [IpcChannel.RemotePairingReject]: Api['remote']['rejectPairing'];
   [IpcChannel.RemoteDeviceRemove]: Api['remote']['removeDevice'];
   [IpcChannel.RemoteDevicesReset]: Api['remote']['resetDevices'];
+  [IpcChannel.RemoteConnectionsGet]: Api['remote']['connections'];
+  [IpcChannel.RemoteDisconnectAll]: Api['remote']['disconnectAll'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
@@ -1384,6 +1394,7 @@ export type IpcEvent = {
   [IpcChannel.McpSettingsOpen]: undefined;
   [IpcChannel.RemoteSettingsOpen]: undefined;
   [IpcChannel.RemoteDevicesChanged]: Payload<Api['remote']['onDevicesChanged']>;
+  [IpcChannel.RemoteConnectionsChanged]: Payload<Api['remote']['onConnectionsChanged']>;
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;

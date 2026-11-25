@@ -153,6 +153,9 @@ const api: TanacodeApi = {
     removeDevice: (id) => invoke(IpcChannel.RemoteDeviceRemove, id),
     resetDevices: () => invoke(IpcChannel.RemoteDevicesReset),
     onDevicesChanged: (listener) => subscribe(IpcChannel.RemoteDevicesChanged, listener),
+    connections: () => invoke(IpcChannel.RemoteConnectionsGet),
+    disconnectAll: () => invoke(IpcChannel.RemoteDisconnectAll),
+    onConnectionsChanged: (listener) => subscribe(IpcChannel.RemoteConnectionsChanged, listener),
   },
   shortcuts: {
     onRun: (listener) => subscribe(IpcChannel.ShortcutRun, listener),

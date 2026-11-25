@@ -126,6 +126,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.RemotePairingReject]: mac(['string'], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteDeviceRemove]: mac(['string'], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteDevicesReset]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
+  [IpcChannel.RemoteConnectionsGet]: mac([], 'Mac の上の帯の「遠隔操作中」（スマホから自分を見張る口にしない）'),
+  [IpcChannel.RemoteDisconnectAll]: mac([], 'Mac の上の帯の「切断」（Mac の前の人が止めるためのもの）'),
   [IpcChannel.ClaudeVersionGet]: same([]),
   [IpcChannel.ClaudeVerifiedGet]: same([]),
   [IpcChannel.AppUpdateGet]: same([]),

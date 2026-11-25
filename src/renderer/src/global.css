@@ -292,6 +292,30 @@ input[type='checkbox'] {
   align-items: center;
   -webkit-app-region: no-drag;
 }
+/* 遠隔操作中の印（上の帯。スマホなどがつながっている間だけ出す。人の対応が要る色で、目の端でも気づけるように） */
+.remote-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 10px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--warn);
+  border-radius: 7px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+.remote-banner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.remote-banner .ghost-button {
+  color: var(--text-primary);
+}
 
 .main {
   flex: 1;

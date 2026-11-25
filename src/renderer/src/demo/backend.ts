@@ -522,6 +522,9 @@ export class DemoBackend {
         removeDevice: () => ok({ devices: [], pairing: null, problem: null, profiles: [] }),
         resetDevices: () => ok({ devices: [], pairing: null, problem: null, profiles: [] }),
         onDevicesChanged: () => () => {},
+        connections: () => ok([]),
+        disconnectAll: () => ok([]),
+        onConnectionsChanged: () => () => {},
       },
       shortcuts: {
         onRun: () => () => {},

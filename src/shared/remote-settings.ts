@@ -33,6 +33,9 @@ export type RemoteSettingsInput = { port: number; publicUrl: string };
 // 登録した端末（Mac のダイアログに出すもの。鍵は出さない）。profileIds: 許したプロファイル
 export type RemoteDevice = { id: string; name: string; createdAt: number; lastUsedAt: number | null; profileIds: string[] };
 
+// 遠隔でつながっている端末（Mac の上の帯に出す）。count: その端末の接続の数
+export type RemoteConnection = { registrationId: string; name: string; count: number };
+
 // 承認のときに選べるプロファイル（今開いているもの）
 export type RemoteProfileChoice = { id: string; name: string };
 

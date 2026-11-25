@@ -2573,6 +2573,11 @@
     "status": "いまの様子",
     "loadFailed": "遠隔操作の設定を読めませんでした: {error}",
     "saveFailed": "遠隔操作の設定を保存できませんでした: {error}",
+    "banner": {
+      "active": "遠隔操作中（{names}）",
+      "disconnect": "切断",
+      "disconnectTip": "スマホの接続を全部切ります。つなぎ直すには、スマホで Face ID のログインからやり直します。"
+    },
     "devices": {
       "title": "登録した端末",
       "empty": "まだ登録した端末はありません。",
