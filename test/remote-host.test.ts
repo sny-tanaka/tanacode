@@ -148,6 +148,26 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1', 'c2'], channel: IpcChannel.ClaudeVersionChanged, payload: null }]);
   });
 
+  it('アプリ全体の知らせも、Mac だけのものは送らない。接続が無ければ何も送らない', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.posted.length = 0;
+    t.host.emitAll(IpcChannel.ClaudeVersionChanged, null as never);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.host.emitAll(IpcChannel.AppUpdateChecked, undefined);
+    expect(t.posted).toEqual([]);
+  });
+
+  it('遠隔サーバーが待ち受けをやめたら（closed）、接続の控えを消す', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'closed' });
+    expect(t.host.connectionCount()).toBe(0);
+  });
+
   it('セッションを消すと、その接続の控えを消し、遠隔サーバーにも知らせる', () => {
     const t = setup();
     t.host.addSession(session());

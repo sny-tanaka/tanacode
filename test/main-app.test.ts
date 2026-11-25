@@ -1415,6 +1415,16 @@ describe('メニュー', () => {
     expect(menuItem('remoteEnabled')).toMatchObject({ checked: false, enabled: false });
   });
 
+  it('「遠隔操作を使う」: 保存できなかったら、チェックを元に戻し、待ち受けは変えない', async () => {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    mkdirSync(join(state.userData, 'settings.json.tmp'));
+    const item = menuItem('remoteEnabled');
+    item.checked = true;
+    item.click?.(item);
+    expect(item.checked).toBe(false);
+    expect(state.utilityProcesses).toEqual([]);
+  });
+
   it('「移動」: ショートカットを区切りごとに並べ、キーを右に出す。押したら、見ているプロファイルの画面に知らせる', async () => {
     await boot();
     const go = state.menu!.find((i) => i.id === 'go')!;

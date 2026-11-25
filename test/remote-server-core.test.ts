@@ -214,6 +214,38 @@ describe('WebSocket の口', () => {
     expect(await expired.closed).toBe(4002);
   });
 
+  it('JSON でない伝文は、切る（4003）', async () => {
+    const { port } = await start();
+    const client = await connect(port);
+    client.ws.send('{not json');
+    expect(await client.closed).toBe(4003);
+  });
+
+  it('送りきれずにたまった量が上限を超えた接続は、切る（回線の遅い相手）', async () => {
+    const { port, posted, core } = await start();
+    const client = await connect(port);
+    const connected = posted.find((m) => m.type === 'connected');
+    const clientId = connected?.type === 'connected' ? connected.clientId : '';
+    // 相手が読まないようにして、大きな知らせを送り続ける
+    (client.ws as unknown as { _socket: { pause(): void } })._socket.pause();
+    const payload = 'x'.repeat(1024 * 1024);
+    for (let i = 0; i < 64; i++) core.handle({ type: 'event', clientIds: [clientId], channel: 'chat:events', payload, profileId: 'default' });
+    await waitFor(() => posted.find((m) => m.type === 'disconnected'), 5000);
+  });
+
+  it('期限の切れた券とセッションを、見回りで消す', async () => {
+    const { port, posted, core, clock } = await start();
+    const value = await ticket(port);
+    clock.now += IDLE_MS + 1;
+    (core as unknown as { expire(): void }).expire();
+    expect(posted).toContainEqual({ type: 'session-expired', sessionId: 's1' });
+    clock.now -= IDLE_MS + 1;
+    core.handle({ type: 'session-add', session: session() });
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: value }));
+    expect(await client.closed).toBe(4002);
+  });
+
   it('形の違う伝文・バイナリは、切る（4003）', async () => {
     const { port } = await start();
     const client = await connect(port);
