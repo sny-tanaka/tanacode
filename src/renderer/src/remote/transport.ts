@@ -92,6 +92,18 @@ export class RemoteTransport {
     this.profileId = profileId;
   }
 
+  // 返事を待っている頼みが無くなるまで待つ（長くても timeout まで。読み込み直す前に、送った頼みを取りこぼさない）
+  idle(timeout = 5000): Promise<void> {
+    return new Promise((resolve) => {
+      const started = this.now();
+      const check = () => {
+        if (this.pending.size === 0 || this.now() - started >= timeout) resolve();
+        else setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+
   stop(): void {
     this.stopped = true;
     this.socket?.close();

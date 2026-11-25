@@ -356,6 +356,8 @@ describe('main からの配信（useSessionChats）', () => {
     const { result } = renderHook(() => useSessionChats('s1', null));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 5, events: [{ type: 'user', id: 'u6', text: '六' }], live: true }));
+    // 返るまでは、間の飛んだ配信が続いても重ねて読まない
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 6, events: [{ type: 'user', id: 'u7', text: '七' }], live: true }));
     expect(api.argsOf('sessions.snapshot')).toEqual([['s1']]);
     await act(async () => {});
     expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);

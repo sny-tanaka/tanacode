@@ -664,9 +664,16 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
     [peek, update],
   );
 
+  // 読んでいる途中のセッション（返るまで、スナップショットを重ねて読まない。スマホの通信量を増やさない）
+  const loading = useRef(new Set<string>());
   const load = useCallback(
     (sessionId: string) => {
-      void window.tanacode.sessions.snapshot(sessionId).then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)));
+      if (loading.current.has(sessionId)) return;
+      loading.current.add(sessionId);
+      void window.tanacode.sessions
+        .snapshot(sessionId)
+        .then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)))
+        .finally(() => loading.current.delete(sessionId));
     },
     [change],
   );

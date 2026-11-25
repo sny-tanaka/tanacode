@@ -6,7 +6,7 @@ import { setLanguage } from '@shared/i18n';
 import { App } from '../App';
 import { syncSharedPrefs } from '../sharedPrefs';
 import { guardLinks } from './links';
-import { setRemoteMode } from './mode';
+import { BEFORE_RELOAD, setRemoteMode } from './mode';
 import { RemoteTransport } from './transport';
 import '../global.css';
 
@@ -19,8 +19,13 @@ const PROFILE_KEY = 'tanacode.remote.profile';
 const transport = new RemoteTransport({
   // セッションが切れた・束縛の鍵が無いときは、ログインの画面へ戻す
   onSignedOut: () => location.replace('/'),
-  // 切れていた間の知らせ（セッションの一覧・質問・許可の確認など）は届いていないので、画面を読み込み直す（assets はキャッシュ済みで軽い）
-  onReconnected: () => location.reload(),
+  // 切れていた間の知らせ（セッションの一覧・質問・許可の確認など）は届いていないので、画面を読み込み直す（assets はキャッシュ済みで軽い）。
+  // 返事を待っている頼みが返ってから、打ちかけの文を控えて読み込み直す
+  onReconnected: () =>
+    void transport.idle().then(() => {
+      window.dispatchEvent(new Event(BEFORE_RELOAD));
+      location.reload();
+    }),
 });
 setRemoteMode(true);
 // ふつうのブラウザには、Mac の画面の main の守り（外のページは外のブラウザで・画面は移らせない）が無いので、ここで補う

@@ -29,6 +29,9 @@ describe('appFile', () => {
 
   it('assets/ のファイルは、名前に中身の印が付くので長くキャッシュさせる', async () => {
     expect(await appFile(root, '/app/assets/remote-abc.js')).toMatchObject({ type: 'text/javascript; charset=utf-8', immutable: true });
+    // .. をたどったあとのパスで見る（assets を通って入口に戻っても、入口はキャッシュさせない）
+    expect(await appFile(root, '/app/assets/../remote.html')).toMatchObject({ immutable: false });
+    expect(await appFile(root, '/app/assets/../index.html')).toBeNull();
   });
 
   it('置き場所の外・決めていない拡張子・無いファイル・壊れた %・NUL は配らない', async () => {

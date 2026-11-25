@@ -198,6 +198,33 @@ describe('RemoteTransport', () => {
     t.transport.stop();
   });
 
+  it('返事を待っている頼みが無くなるまで待つ（長くても決めた時間まで）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t = setup();
+    void t.transport.start();
+    const api = t.transport.api(() => '', () => 'ja');
+    await vi.waitFor(() => expect(t.socket().sent).toHaveLength(1));
+    t.socket().reply({ type: 'ready', profileIds: ['p1'], language: 'ja' });
+    await t.transport.idle();
+    const listed = api.invoke(IpcChannel.SessionsList);
+    let done = false;
+    void t.transport.idle().then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(done).toBe(false);
+    t.socket().reply({ id: 1, ok: true, value: [] });
+    await listed;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(done).toBe(true);
+    // 返らなければ、決めた時間で待つのをやめる
+    void api.invoke(IpcChannel.SessionsList).catch(() => {});
+    let gaveUp = false;
+    void t.transport.idle(300).then(() => (gaveUp = true));
+    t.clock.now += 300;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(gaveUp).toBe(true);
+    t.transport.stop();
+  });
+
   it('券を取れなければ、間をあけてやり直す。セッションが切れた（401）・束縛の鍵が無いときは、ログインの画面へ戻す', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const failing = setup({ ticket: 500 });

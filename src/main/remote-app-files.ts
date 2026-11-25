@@ -29,14 +29,14 @@ export async function appFile(root: string, path: string): Promise<AppFile | nul
     return null;
   }
   if (rest === '' || rest === '/') rest = '/remote.html';
-  // 配るのは、スマホの入口と、その assets だけ（Mac の画面の入口などは出さない）
-  if (rest !== '/remote.html' && !rest.startsWith('/assets/')) return null;
   const type = TYPES[extname(rest).toLowerCase()];
   if (!type || rest.includes('\0')) return null;
   const file = normalize(join(root, rest));
-  if (!file.startsWith(normalize(root) + sep)) return null;
+  // 配るのは、スマホの入口と、その assets だけ（.. をたどったあとのパスで見る。Mac の画面の入口などは出さない）
+  const base = normalize(root) + sep;
+  if (file !== base + 'remote.html' && !file.startsWith(base + 'assets' + sep)) return null;
   try {
-    return { type, body: await readFile(file), immutable: rest.startsWith('/assets/') };
+    return { type, body: await readFile(file), immutable: file.startsWith(base + 'assets' + sep) };
   } catch {
     return null;
   }

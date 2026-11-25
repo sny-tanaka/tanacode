@@ -6,6 +6,7 @@ import type { SessionSummary } from '@shared/ipc';
 import type { PendingQuestion } from '@shared/questions';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
+import { BEFORE_RELOAD, saveDrafts, setRemoteMode, takeDrafts } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -150,5 +151,42 @@ describe('セッションを切り替えたときの、前のセッションの�
     fireEvent.change(field(), { target: { value: 'A 案を少し変えて' } });
     view.rerender(<ClaudePane {...props({ session: S2, question: asking })} />);
     expect(field().value).toBe('');
+  });
+});
+
+describe('スマホの画面で読み込み直すときの下書き', () => {
+  afterEach(() => {
+    setRemoteMode(false);
+    sessionStorage.clear();
+    cleanup();
+  });
+
+  it('読み込み直す前に、打ちかけの文とほかのセッションの下書きを控え、描き直したら戻す（Mac の画面では控えない）', () => {
+    const api = mockApi();
+    api.install();
+    setRemoteMode(true);
+    const view = render(<ClaudePane {...props()} />);
+    const box = () => screen.getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.change(box(), { target: { value: 's1 の下書き' } });
+    view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    fireEvent.change(box(), { target: { value: '打ちかけ' } });
+    window.dispatchEvent(new Event(BEFORE_RELOAD));
+    view.unmount();
+    render(<ClaudePane {...props({ session: S2 })} />);
+    expect(box().value).toBe('打ちかけ');
+    // 取り出したら消す
+    expect(takeDrafts()).toEqual({});
+  });
+
+  it('控えが無い・壊れている・Mac の画面なら、何も戻さない', () => {
+    const api = mockApi();
+    api.install();
+    sessionStorage.setItem('tanacode.remote.drafts', '[1]');
+    expect(takeDrafts()).toEqual({});
+    sessionStorage.setItem('tanacode.remote.drafts', '{broken');
+    expect(takeDrafts()).toEqual({});
+    saveDrafts({ s1: { text: '残る', attachments: [], pastes: [] } });
+    render(<ClaudePane {...props()} />);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
   });
 });
