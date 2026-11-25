@@ -185,15 +185,16 @@ function profileOf(contents: WebContents): Profile {
   return p;
 }
 
-// 画面に渡すプロファイルの様子（id のプロファイルの画面から見たもの）
-function profilesState(id: string): ProfilesState {
-  return { profiles: registry.list().filter((p) => opened.has(p.id)), current: id, othersAttention: othersAttention(id) };
+// 画面に渡すプロファイルの様子（id のプロファイルの画面から見たもの）。among: 見せてよいプロファイル（遠隔の接続には、許したものだけ）
+function profilesState(id: string, among?: string[]): ProfilesState {
+  const visible = (profileId: string) => opened.has(profileId) && (!among || among.includes(profileId));
+  return { profiles: registry.list().filter((p) => visible(p.id)), current: id, othersAttention: othersAttention(id, among) };
 }
 
-// id 以外のプロファイルに、見てほしいもの（確認待ち・新しい応答）があるか
-function othersAttention(id: string): boolean {
+// id 以外のプロファイル（among があれば、そのうちのもの）に、見てほしいもの（確認待ち・新しい応答）があるか
+function othersAttention(id: string, among?: string[]): boolean {
   for (const [other, p] of opened) {
-    if (other === id || !p.manager) continue;
+    if (other === id || !p.manager || (among && !among.includes(other))) continue;
     if (p.manager.list().some((s) => !s.archived && (s.attention !== null || s.unread))) return true;
   }
   return false;
@@ -1016,7 +1017,8 @@ function registerIpc(): void {
   handle(IpcChannel.AppUpdateCheck, () => appUpdates.refresh());
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
-  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id));
+  // 遠隔の接続には、その端末に許したプロファイルだけを見せる（ほかのプロファイルの名前・通知の有無も出さない）
+  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id, e.kind === 'remote' ? (remoteRegistrations?.get(e.registrationId)?.profileIds ?? []) : undefined));
   handle(IpcChannel.ProfilesSwitch, (_e, id: string) => showProfile(String(id)));
   handle(IpcChannel.ProfilesAdd, (_e, input: NewProfile) => addProfile(input));
   handle(IpcChannel.ProfilesUpdate, (_e, id: string, patch: { name?: string; color?: string }) => {

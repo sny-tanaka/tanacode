@@ -96,7 +96,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.UsageGet]: same([]),
   [IpcChannel.UsageRefresh]: same([]),
   [IpcChannel.AccountGet]: same([]),
-  [IpcChannel.ProfilesGet]: replace([], '開いている全プロファイルを返す（許したプロファイルだけに絞るまで）'),
+  // 遠隔の接続には、その端末に許したプロファイルだけを返す
+  [IpcChannel.ProfilesGet]: same([]),
   [IpcChannel.ProfilesSwitch]: replace(['string'], 'Mac のウインドウに出すプロファイルを切り替える（遠隔の接続のプロファイルは接続で決まる）'),
   [IpcChannel.ProfilesAdd]: replace(['object'], 'プロファイルを足す（許したプロファイルの扱いを決めるまで）'),
   [IpcChannel.ProfilesUpdate]: replace(['string', 'object'], '呼び出し元のプロファイルを見ずに、渡された id のプロファイルを変える（許したプロファイルだけに絞るまで）'),
