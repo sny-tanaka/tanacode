@@ -37,7 +37,7 @@ export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const MAX_TICKETS_PER_SESSION = 4;
 // 断った接続を、相手が閉じるのを待たずに切るまで
 const REFUSE_GRACE_MS = 1000;
-// ログインに続けて失敗したら、そのパスキーを待たせる（この回数から。待つ時間は 1 分から倍にしていき、15 分まで）。
+// ログインに続けて失敗したら、そのパスキーを待たせる（この回数から。待つ時間は 1 分から倍にしていき、15 分まで。最後の失敗から 15 分たったら数え直す）。
 // 待ち受け全体では数えない（転送の後ろでは相手を見分けられず、認証の前の誰かが本人の分まで使い切れるため）
 export const LOGIN_FAILURES_BEFORE_WAIT = 5;
 const LOGIN_WAIT_MS = 60 * 1000;
@@ -103,7 +103,7 @@ export class RemoteServerCore {
   private readonly ceremonyKey = randomBytes(32);
   private readonly usedLogins = new Map<string, number>();
   // パスキーごとの、続けて失敗した回数と、次に受ける時刻
-  private readonly loginFailures = new Map<string, { count: number; until: number }>();
+  private readonly loginFailures = new Map<string, { count: number; at: number; until: number }>();
 
   constructor(
     private readonly post: (message: ServerMessage) => void,
@@ -208,7 +208,6 @@ export class RemoteServerCore {
     this.clients.clear();
     this.tickets.clear();
     this.registrationsInFlight.clear();
-    this.usedLogins.clear();
     this.wss?.close();
     this.server?.close();
     this.server?.closeAllConnections();
@@ -445,9 +444,10 @@ export class RemoteServerCore {
   }
 
   private loginFailed(credentialId: string, now: number): void {
-    const count = (this.loginFailures.get(credentialId)?.count ?? 0) + 1;
+    const last = this.loginFailures.get(credentialId);
+    const count = (last && now - last.at < LOGIN_WAIT_MAX_MS ? last.count : 0) + 1;
     const wait = count < LOGIN_FAILURES_BEFORE_WAIT ? 0 : Math.min(LOGIN_WAIT_MAX_MS, LOGIN_WAIT_MS * 2 ** (count - LOGIN_FAILURES_BEFORE_WAIT));
-    this.loginFailures.set(credentialId, { count, until: now + wait });
+    this.loginFailures.set(credentialId, { count, at: now, until: now + wait });
   }
 
   private reply(res: ServerResponse, status: number, body: unknown): void {

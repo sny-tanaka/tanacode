@@ -52,7 +52,8 @@ async function world() {
     log: () => {},
     auth: (r) => auth.handle(r),
   });
-  core = new RemoteServerCore((message) => toHost(message));
+  const clock = { skew: 0 };
+  core = new RemoteServerCore((message) => toHost(message), () => Date.now() + clock.skew);
   auth = new RemoteAuth({
     registrations,
     addSession: (session) => host.addSession(session),
@@ -64,7 +65,7 @@ async function world() {
   await vi.waitFor(() => expect(host.current().state).toBe('listening'));
   const status = host.current();
   const port = status.state === 'listening' ? status.port : 0;
-  const w = { dir, registrations, auth, host, core, port, notices, seq: () => seq };
+  const w = { dir, registrations, auth, host, core, port, notices, clock, seq: () => seq };
   current = w;
   return w;
 }
@@ -273,6 +274,19 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     // 束縛の鍵の違う失敗が続いたら、そのパスキーは待たせる
     for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
     expect((await login(w, passkey, binding)).status).toBe(429);
+  });
+
+  it('ログインの失敗の数は、最後の失敗から 15 分たったら数え直す', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT - 1; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
+    w.clock.skew = 15 * 60 * 1000;
+    // 数え直したので、1 回失敗しても待たせない
+    expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
+    expect((await login(w, passkey, binding)).status).toBe(200);
   });
 
   it('欠けた本文の頼みは、どの口でも 400', async () => {

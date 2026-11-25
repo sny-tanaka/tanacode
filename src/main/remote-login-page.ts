@@ -129,9 +129,27 @@ const SCRIPT = String.raw`(() => {
     }
   }
 
+  // 承認の結果を読みそこねた（画面を消した・通信が切れた）ときは、鍵が pending に残る。先にそれで試し、通ったら binding に移す。
+  // 通らなければ pending を捨てて、binding で試す
   async function login() {
+    const pending = await store('readonly', (s) => s.get('pending'));
     const key = await bindingKey();
-    if (!key) return status(M.noKey);
+    if (!pending && !key) return status(M.noKey);
+    if (pending) {
+      try {
+        await loginWith(pending);
+        await adoptBindingKey(pending);
+        return status(M.loggedIn);
+      } catch (error) {
+        await store('readwrite', (s) => s.delete('pending'));
+        if (!key) throw error;
+      }
+    }
+    await loginWith(key);
+    status(M.loggedIn);
+  }
+
+  async function loginWith(key) {
     const begun = await post('/api/login/begin', {});
     const o = begun.options;
     const cred = await navigator.credentials.get({ publicKey: { ...o, challenge: fromB64u(o.challenge), allowCredentials: [] } });
@@ -141,7 +159,6 @@ const SCRIPT = String.raw`(() => {
       response: { clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature), userHandle: r.userHandle ? b64u(r.userHandle) : undefined },
     };
     await post('/api/login/finish', { response, challengeId: begun.challengeId, bindingSignature: await sign(key, begun.bindingChallenge) });
-    status(M.loggedIn);
   }
 
   const run = (fn) => () => fn().catch(() => status(M.failed));
