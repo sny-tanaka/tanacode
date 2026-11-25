@@ -837,7 +837,8 @@ export type TanacodeApi = {
     devices(): Promise<RemoteDevicesState>;
     startPairing(): Promise<RemoteDevicesState>;
     cancelPairing(): Promise<RemoteDevicesState>;
-    approvePairing(requestId: string, number: string): Promise<boolean>;
+    // profileIds: この端末に許すプロファイル（今開いているものから選ぶ。1 つも無ければ承認しない）
+    approvePairing(requestId: string, number: string, profileIds: string[]): Promise<boolean>;
     rejectPairing(requestId: string): Promise<RemoteDevicesState>;
     removeDevice(id: string): Promise<RemoteDevicesState>;
     // 読めなくなった（壊れた・古いものに戻された）登録の一覧を消して、空から始め直す

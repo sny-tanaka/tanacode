@@ -2672,6 +2672,9 @@
       "approve": "Approve",
       "reject": "Reject",
       "wrongNumber": "The number does not match, so this registration was rejected. Start again from Add Device.",
+      "profiles": "Allowed profiles: {names}",
+      "allowProfiles": "Allowed profiles:",
+      "allowProfilesHint": "Only sessions in the chosen profiles can be operated from the phone. If they have Claude use Bash, they can still read files of other profiles.",
       "reset": "Remove all registrations and start over",
       "confirmReset": "Remove all registered devices and start over with an empty list?\nYou will need to register your phone again.",
       "problem": {

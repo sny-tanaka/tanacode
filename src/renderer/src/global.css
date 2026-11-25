@@ -3090,10 +3090,37 @@ button.session-ref:hover {
 }
 .remote-pairing-request {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-.remote-pairing-request input {
+/* 承認のときに選ぶ、許すプロファイル（頼みの行の下に、行をまたいで出す） */
+.remote-pairing-profiles {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  color: var(--text-primary);
+}
+.remote-pairing-profiles legend {
+  float: left;
+  margin-right: 4px;
+  padding: 0;
+  color: var(--text-secondary);
+}
+.remote-pairing-profiles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-pairing-profiles .remote-field-hint {
+  flex-basis: 100%;
+}
+.remote-pairing-request > input {
   width: 11em;
   padding: 6px 8px;
   border: 1px solid var(--border-strong);

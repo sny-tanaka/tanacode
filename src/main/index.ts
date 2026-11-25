@@ -286,10 +286,11 @@ function remoteDevicesState(): RemoteDevicesState {
   const pairing = remoteAuth?.pairingState() ?? null;
   const publicOrigin = publicOriginOf(settings.remote().publicUrl);
   return {
-    devices: (registrations?.all() ?? []).map(({ id, name, createdAt, lastUsedAt }) => ({ id, name, createdAt, lastUsedAt })),
+    devices: (registrations?.all() ?? []).map(({ id, name, createdAt, lastUsedAt, profileIds }) => ({ id, name, createdAt, lastUsedAt, profileIds })),
     pairing: pairing && publicOrigin ? { ...pairing, url: `${publicOrigin}/#pair=${pairing.code}` } : null,
     // 登録の一覧をまだ作っていない（起動の途中）ときは、使えないものとして出す。読めたら null
     problem: registrations ? registrations.problem() : 'unavailable',
+    profiles: [...opened.keys()].map((id) => ({ id, name: registry.get(id)?.name ?? id })),
   };
 }
 
@@ -1162,11 +1163,13 @@ function registerIpc(): void {
     remoteAuth?.cancelPairing();
     return remoteDevicesState();
   });
-  handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown) => {
+  handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown, profileIds: unknown) => {
     P(e);
-    if (typeof requestId !== 'string' || typeof number !== 'string' || !remoteAuth) return false;
-    // 許すプロファイルは、今は開いている全プロファイル（登録のときに絞るのは、あとで足す）
-    return remoteAuth.approve(requestId, number, [...opened.keys()]);
+    if (typeof requestId !== 'string' || typeof number !== 'string' || !Array.isArray(profileIds) || !remoteAuth) return false;
+    // 許すのは、選んだもののうち、今開いているプロファイルだけ（あとから開いたものは、自動では入れない）。1 つも無ければ承認しない
+    const allowed = [...opened.keys()].filter((id) => profileIds.includes(id));
+    if (allowed.length === 0) return false;
+    return remoteAuth.approve(requestId, number, allowed);
   });
   handle(IpcChannel.RemotePairingReject, (e, requestId: unknown) => {
     P(e);

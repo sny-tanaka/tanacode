@@ -12,6 +12,8 @@ export function RemoteDevices() {
   const [state, setState] = useState<RemoteDevicesState | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [numbers, setNumbers] = useState<Record<string, string>>({});
+  // 承認待ちの頼みごとに選んだ、許すプロファイル（選んでいなければ、今開いている全部）
+  const [chosen, setChosen] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -49,10 +51,18 @@ export function RemoteDevices() {
     }
   };
 
+  const profilesOf = (requestId: string) => chosen[requestId] ?? (state?.profiles ?? []).map((p) => p.id);
+  const toggleProfile = (requestId: string, profileId: string) =>
+    setChosen((current) => {
+      const list = current[requestId] ?? (state?.profiles ?? []).map((p) => p.id);
+      return { ...current, [requestId]: list.includes(profileId) ? list.filter((id) => id !== profileId) : [...list, profileId] };
+    });
+  const profileNames = (ids: string[]) => ids.map((id) => state?.profiles.find((p) => p.id === id)?.name ?? id).join('・');
+
   const approve = async (requestId: string) => {
     setError(null);
     try {
-      if (!(await window.tanacode.remote.approvePairing(requestId, numbers[requestId] ?? ''))) setError(t('remote.devices.wrongNumber'));
+      if (!(await window.tanacode.remote.approvePairing(requestId, numbers[requestId] ?? '', profilesOf(requestId)))) setError(t('remote.devices.wrongNumber'));
       setState(await window.tanacode.remote.devices());
     } catch (e) {
       setError(errorMessage(e));
@@ -91,6 +101,7 @@ export function RemoteDevices() {
                 <span className="remote-field-hint">
                   {t('remote.devices.dates', { created: date(device.createdAt), used: device.lastUsedAt === null ? t('remote.devices.never') : date(device.lastUsedAt) })}
                 </span>
+                <span className="remote-field-hint">{t('remote.devices.profiles', { names: profileNames(device.profileIds) })}</span>
               </div>
               <IconButton
                 size="sm"
@@ -130,9 +141,23 @@ export function RemoteDevices() {
               <button className="ghost-button" onClick={() => void run(() => window.tanacode.remote.rejectPairing(request.requestId))}>
                 {t('remote.devices.reject')}
               </button>
-              <button className="send-button" disabled={(numbers[request.requestId] ?? '').trim().length !== 6} onClick={() => void approve(request.requestId)}>
+              <button
+                className="send-button"
+                disabled={(numbers[request.requestId] ?? '').trim().length !== 6 || profilesOf(request.requestId).length === 0}
+                onClick={() => void approve(request.requestId)}
+              >
                 {t('remote.devices.approve')}
               </button>
+              <fieldset className="remote-pairing-profiles">
+                <legend>{t('remote.devices.allowProfiles')}</legend>
+                {state.profiles.map((profile) => (
+                  <label key={profile.id}>
+                    <input type="checkbox" checked={profilesOf(request.requestId).includes(profile.id)} onChange={() => toggleProfile(request.requestId, profile.id)} />
+                    {profile.name}
+                  </label>
+                ))}
+                <span className="remote-field-hint">{t('remote.devices.allowProfilesHint')}</span>
+              </fieldset>
             </div>
           ))}
           <button className="ghost-button" onClick={() => void run(() => window.tanacode.remote.cancelPairing())}>

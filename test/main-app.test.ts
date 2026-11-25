@@ -1448,7 +1448,7 @@ describe('メニュー', () => {
   it('遠隔操作の端末: 待ち受けていなければ、登録を受け付けない', async () => {
     await boot();
     await expect(invoke(IpcChannel.RemotePairingStart)).rejects.toThrow('遠隔操作が待ち受けていません');
-    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null });
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null, profiles: [{ id: 'default', name: expect.any(String) }] });
   });
 
   it('遠隔操作の端末: 登録を受け付け、スマホに出た数字で承認すると一覧に載り、パスキーを遠隔サーバーに渡す。ログインで Mac に知らせ、取り消せる', async () => {
@@ -1467,8 +1467,11 @@ describe('メニュー', () => {
       bindingSignature: binding.sign(String(begun.bindingChallenge)),
       name: 'iPhone',
     }).value!;
-    await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2)).resolves.toBe(false);
-    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number)).resolves.toBe(true);
+    await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2, [])).resolves.toBe(false);
+    // 許すプロファイルが無い・今開いていないものだけなら、承認しない
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, 'default')).resolves.toBe(false);
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['nope'])).resolves.toBe(false);
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['default', 'nope'])).resolves.toBe(true);
     const devices = (await invoke(IpcChannel.RemoteDevicesGet)) as { devices: { id: string; name: string }[] };
     expect(devices.devices).toMatchObject([{ name: 'iPhone', lastUsedAt: null }]);
     expect(child.posted).toContainEqual({ type: 'credentials', credentials: [expect.objectContaining({ credentialId: 'Y3JlZA', publicKey: 'cHVi' })] });
