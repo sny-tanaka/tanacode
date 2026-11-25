@@ -1470,7 +1470,8 @@ describe('メニュー', () => {
     await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2, [])).resolves.toBe(false);
     // 許すプロファイルが無い・今開いていないものだけなら、承認しない
     await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, 'default')).resolves.toBe(false);
-    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['nope'])).resolves.toBe(false);
+    // 今開いているプロファイルが 1 つも選ばれていなければ、理由を添えて断る（頼みは残す）
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['nope'])).rejects.toThrow('許すプロファイルが 1 つもありません');
     await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['default', 'nope'])).resolves.toBe(true);
     const devices = (await invoke(IpcChannel.RemoteDevicesGet)) as { devices: { id: string; name: string }[] };
     expect(devices.devices).toMatchObject([{ name: 'iPhone', lastUsedAt: null }]);

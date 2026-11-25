@@ -75,6 +75,17 @@ describe('RemoteSettingsDialog', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it('公開する URL のポートだけを変えても、登録した端末があれば確かめる（origin が変わると、ログインに使う鍵の保存先が変わる）', async () => {
+    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [] }], pairing: null, problem: null, profiles: [] };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const onClose = await open(stateOf('https://mac.example.ts.net'), undefined, devices);
+    fireEvent.change(input(0), { target: { value: 'https://mac.example.ts.net:8443' } });
+    fireEvent.click(button('保存'));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(confirm.mock.calls[0][0]).toContain('ホスト名かポートを変えると');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('ホスト名を変えても、登録した端末が無ければ聞かない', async () => {
     const confirm = vi.spyOn(window, 'confirm');
     const onClose = await open(stateOf('https://mac.example.ts.net'));

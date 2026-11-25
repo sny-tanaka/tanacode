@@ -1177,9 +1177,10 @@ function registerIpc(): void {
   handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown, profileIds: unknown) => {
     P(e);
     if (typeof requestId !== 'string' || typeof number !== 'string' || !Array.isArray(profileIds) || !remoteAuth) return false;
-    // 許すのは、選んだもののうち、今開いているプロファイルだけ（あとから開いたものは、自動では入れない）。1 つも無ければ承認しない
+    // 許すのは、選んだもののうち、今開いているプロファイルだけ（あとから開いたものは、自動では入れない）。
+    // 1 つも無ければ承認しない（頼みは断らずに残す。false は数字が違うときだけにする）
     const allowed = [...opened.keys()].filter((id) => profileIds.includes(id));
-    if (allowed.length === 0) return false;
+    if (allowed.length === 0) throw new Error(t('main.error.remoteNoProfiles'));
     return remoteAuth.approve(requestId, number, allowed);
   });
   handle(IpcChannel.RemotePairingReject, (e, requestId: unknown) => {

@@ -66,6 +66,16 @@ describe('RemoteDevices', () => {
     expect(api.argsOf('remote.approvePairing')).toEqual([['q1', '123456', ['default', 'work']]]);
   });
 
+  it('承認が理由つきで断られたら（選んだプロファイルが閉じられた）、その理由を出す', async () => {
+    await open(pairing([{ requestId: 'q1', name: 'iPhone' }]), {
+      'remote.approvePairing': () => Promise.reject(new Error("Error invoking remote method 'remote:pairing-approve': Error: 許すプロファイルが 1 つもありません。")),
+    });
+    fireEvent.change(screen.getByLabelText('スマホに出た数字'), { target: { value: '123456' } });
+    fireEvent.click(button('承認する'));
+    expect(await screen.findByText(/許すプロファイルが 1 つもありません/)).toBeTruthy();
+    expect(screen.queryByText(/数字が違います/)).toBeNull();
+  });
+
   it('許すプロファイルを選んで承認する。1 つも選ばなければ承認できない。一覧には許したプロファイルを出す', async () => {
     await open({ ...pairing([{ requestId: 'q1', name: 'iPhone' }]), devices: [device] }, { 'remote.approvePairing': () => Promise.resolve(true) });
     expect(screen.getByText('許したプロファイル: 個人・gone')).toBeTruthy();

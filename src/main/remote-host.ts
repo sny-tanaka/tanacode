@@ -115,9 +115,13 @@ export class RemoteHost {
     return [...this.clients.values()].map((client) => this.sessions.get(client.sessionId)?.registrationId).filter((id): id is string => Boolean(id));
   }
 
-  // 全部のセッションを捨てる（接続は切れ、つなぎ直すにはログインし直す。Mac の上の帯の「切断」）
+  // 全部のセッションを捨てる（接続は切れ、つなぎ直すにはログインし直す。Mac の上の帯の「切断」）。数の知らせは 1 回にまとめる
   removeAllSessions(): void {
-    for (const sessionId of [...this.sessions.keys()]) this.removeSession(sessionId);
+    const ids = [...this.sessions.keys()];
+    this.sessions.clear();
+    this.tickets.clear();
+    this.setClients(() => this.clients.clear());
+    for (const sessionId of ids) this.child?.post({ type: 'session-remove', sessionId });
   }
 
   // 生きているセッションの登録（無い・切れていれば null）
