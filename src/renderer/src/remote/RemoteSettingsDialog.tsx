@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
 import type { RemoteSettingsState, RemoteStatus } from '@shared/remote-settings';
 import { errorMessage } from '../errorMessage';
+import { RemoteDevices } from './RemoteDevices';
 
 // 待ち受けの様子の文（メニューバーと同じ）
 export function remoteStatusText(status: RemoteStatus, connections: number): string {
@@ -104,6 +105,7 @@ export function RemoteSettingsDialog({ onClose }: { onClose: () => void }) {
               <span className="remote-field-label">{t('remote.status')}</span>
               <span>{remoteStatusText(state.status, state.connections)}</span>
             </div>
+            <RemoteDevices />
           </div>
         )}
         {error && <div className="browser-hosts-error">{error}</div>}

@@ -2999,9 +2999,14 @@ button.session-ref:hover {
 /* 遠隔操作の設定（公開する URL・待ち受けるポート・いまの様子） */
 .remote-dialog {
   width: min(560px, 92vw);
+  max-height: calc(100vh - 120px);
   outline: none;
 }
+/* 端末の登録の受付まで出すと高くなるので、本文だけをスクロールする（下の保存・取り消しを隠さない） */
 .remote-dialog-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -3032,6 +3037,70 @@ button.session-ref:hover {
 }
 .remote-field input:focus {
   border-color: var(--border-focus);
+}
+.remote-devices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+}
+.remote-device-list {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.remote-device {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.remote-device-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.remote-device-name {
+  color: var(--text-primary);
+}
+.remote-pairing {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.remote-pairing-code {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.remote-pairing-code img {
+  border-radius: 6px;
+  background: #fff;
+}
+.remote-pairing-digits {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.15em;
+  color: var(--text-primary);
+}
+.remote-pairing-request {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-pairing-request input {
+  width: 11em;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
 }
 /* Claude に送る文（左に文の種類、右にその文の欄） */
 .prompts-dialog {

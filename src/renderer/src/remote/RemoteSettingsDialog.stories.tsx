@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { t } from '@shared/i18n';
-import type { RemoteSettingsInput, RemoteSettingsState, RemoteStatus } from '@shared/remote-settings';
+import type { RemoteDevicesState, RemoteSettingsInput, RemoteSettingsState, RemoteStatus } from '@shared/remote-settings';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { RemoteSettingsDialog } from './RemoteSettingsDialog';
 
@@ -9,10 +9,59 @@ import { RemoteSettingsDialog } from './RemoteSettingsDialog';
 
 const noop = () => {};
 
-function registry(initial: RemoteSettingsState, fail?: 'save') {
+const noDevices: RemoteDevicesState = { devices: [], pairing: null, problem: null };
+
+// スマホに出たことにする確認の数字（ストーリーで承認するときは、これを打つ）
+const DEMO_NUMBER = '123456';
+
+// 端末の登録の受付を、main の代わりに動かす。「端末を追加」から 2 秒でスマホ（iPhone）の頼みが届いたことにし、
+// DEMO_NUMBER を打って承認すると一覧に載る。違う数字・断る・取り消す・やり直すも、Mac の main と同じに返す
+function devicesOf(initial: RemoteDevicesState) {
+  let devices = initial;
+  let listener: ((state: RemoteDevicesState) => void) | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const change = (next: RemoteDevicesState) => {
+    devices = next;
+    listener?.(devices);
+    return Promise.resolve(devices);
+  };
+  const withoutPending = (requestId: string) =>
+    devices.pairing ? { ...devices, pairing: { ...devices.pairing, pending: devices.pairing.pending.filter((p) => p.requestId !== requestId) } } : devices;
+  return {
+    'remote.devices': () => Promise.resolve(devices),
+    'remote.onDevicesChanged': (next: unknown) => {
+      listener = next as (state: RemoteDevicesState) => void;
+      return () => (listener = null);
+    },
+    'remote.startPairing': () => {
+      if (timer) clearTimeout(timer);
+      const code = String(Math.floor(Math.random() * 100_000_000)).padStart(8, '0');
+      timer = setTimeout(() => {
+        if (devices.pairing?.code === code) void change({ ...devices, pairing: { ...devices.pairing, pending: [{ requestId: `q-${code}`, name: 'iPhone' }] } });
+      }, 2000);
+      return change({ ...devices, pairing: { code, url: `https://mac.example.ts.net/#pair=${code}`, until: Date.now() + 10 * 60 * 1000, pending: [] } });
+    },
+    'remote.cancelPairing': () => change({ ...devices, pairing: null }),
+    'remote.rejectPairing': (requestId: unknown) => change(withoutPending(String(requestId))),
+    'remote.approvePairing': (requestId: unknown, number: unknown) => {
+      const request = devices.pairing?.pending.find((p) => p.requestId === requestId);
+      if (!request || String(number).trim() !== DEMO_NUMBER) {
+        void change(withoutPending(String(requestId)));
+        return Promise.resolve(false);
+      }
+      void change({ ...devices, pairing: null, devices: [...devices.devices, { id: `d-${Date.now()}`, name: request.name, createdAt: Date.now(), lastUsedAt: null }] });
+      return Promise.resolve(true);
+    },
+    'remote.removeDevice': (id: unknown) => change({ ...devices, devices: devices.devices.filter((d) => d.id !== id) }),
+    'remote.resetDevices': () => change({ ...devices, devices: [], problem: null }),
+  };
+}
+
+function registry(initial: RemoteSettingsState, fail?: 'save', devices: RemoteDevicesState = noDevices) {
   let state = initial;
   mockApi({
     'remote.settings': () => Promise.resolve(state),
+    ...devicesOf(devices),
     'remote.setSettings': (input) => {
       if (fail === 'save') return Promise.reject(new Error(`Error invoking remote method 'remote:settings-set': Error: ${t('main.error.remotePublicUrl')}`));
       state = { ...state, settings: { ...state.settings, ...(input as RemoteSettingsInput) } };
@@ -65,4 +114,35 @@ export const 保存できない: Story = {
     await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
     await canvas.findByText((text) => text.includes(t('main.error.remotePublicUrl')));
   },
+};
+
+const listeningState = stateOf('https://mac.example.ts.net', { state: 'listening', port: 47413 }, 1);
+const day = (offset: number) => Date.UTC(2026, 10, 20 + offset, 3, 0);
+
+// 登録した端末が 2 つある
+export const 登録した端末あり: Story = {
+  beforeEach: () =>
+    registry(listeningState, undefined, {
+      devices: [
+        { id: 'd1', name: 'iPhone', createdAt: day(0), lastUsedAt: day(5) },
+        { id: 'd2', name: 'iPad', createdAt: day(1), lastUsedAt: null },
+      ],
+      pairing: null,
+      problem: null,
+    }),
+};
+
+// 端末の登録を受け付けていて、スマホからの頼みが承認を待っている（スマホに出た数字を打って承認する）
+export const 端末を追加中: Story = {
+  beforeEach: () =>
+    registry(listeningState, undefined, {
+      devices: [],
+      pairing: { code: '48203917', url: 'https://mac.example.ts.net/#pair=48203917', until: Date.now() + 9 * 60 * 1000, pending: [{ requestId: 'q1', name: 'iPhone' }] },
+      problem: null,
+    }),
+};
+
+// 登録した端末の一覧が、前のものに戻されていた（遠隔操作は止めている）
+export const 一覧が戻されていた: Story = {
+  beforeEach: () => registry(stateOf('https://mac.example.ts.net', { state: 'off' }), undefined, { devices: [], pairing: null, problem: 'rolled-back' }),
 };

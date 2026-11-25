@@ -14,7 +14,7 @@ describe('remote-server.ts', () => {
     (process as { parentPort?: unknown }).parentPort = parent;
     vi.resetModules();
     await import('../src/main/remote-server');
-    parent.emit('message', { data: { type: 'listen', config: { port: 0, publicOrigin: 'https://mac.example.ts.net' } } });
+    parent.emit('message', { data: { type: 'listen', config: { port: 0, publicOrigin: 'https://mac.example.ts.net', language: 'ja' } } });
     await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'listening' })));
     parent.emit('message', { data: { type: 'close' } });
     await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith({ type: 'closed' }));

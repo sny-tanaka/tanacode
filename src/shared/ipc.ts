@@ -28,7 +28,7 @@ import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
 import type { McpEnabled, ToolPermission } from './tool-permissions';
 import type { McpToolGroup } from './mcp-tools';
-import type { RemoteSettingsInput, RemoteSettingsState } from './remote-settings';
+import type { RemoteDevicesState, RemoteSettingsInput, RemoteSettingsState } from './remote-settings';
 import type { SessionMcp } from './mcp-status';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
@@ -207,6 +207,15 @@ export const IpcChannel = {
   RemoteSettingsGet: 'remote:settings-get',
   RemoteSettingsSet: 'remote:settings-set',
   RemoteSettingsOpen: 'remote:settings-open',
+  // 遠隔操作で登録した端末（同じダイアログ）。一覧を読む・登録を受け付ける・やめる・確認の数字で承認する・断る・取り消す・読めない一覧を消してやり直す / 一覧と受付が変わった
+  RemoteDevicesGet: 'remote:devices-get',
+  RemotePairingStart: 'remote:pairing-start',
+  RemotePairingCancel: 'remote:pairing-cancel',
+  RemotePairingApprove: 'remote:pairing-approve',
+  RemotePairingReject: 'remote:pairing-reject',
+  RemoteDeviceRemove: 'remote:device-remove',
+  RemoteDevicesReset: 'remote:devices-reset',
+  RemoteDevicesChanged: 'remote:devices-changed',
   ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
@@ -824,6 +833,16 @@ export type TanacodeApi = {
     settings(): Promise<RemoteSettingsState>;
     setSettings(input: RemoteSettingsInput): Promise<RemoteSettingsState>;
     onOpen(listener: () => void): () => void;
+    // 登録した端末。startPairing: 登録の受付を始める（待ち受けていなければ失敗する）/ approvePairing: スマホに出た確認の数字で承認する（違えば false）
+    devices(): Promise<RemoteDevicesState>;
+    startPairing(): Promise<RemoteDevicesState>;
+    cancelPairing(): Promise<RemoteDevicesState>;
+    approvePairing(requestId: string, number: string): Promise<boolean>;
+    rejectPairing(requestId: string): Promise<RemoteDevicesState>;
+    removeDevice(id: string): Promise<RemoteDevicesState>;
+    // 読めなくなった（壊れた・古いものに戻された）登録の一覧を消して、空から始め直す
+    resetDevices(): Promise<RemoteDevicesState>;
+    onDevicesChanged(listener: (state: RemoteDevicesState) => void): () => void;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
@@ -1198,6 +1217,13 @@ export type IpcInvoke = {
   [IpcChannel.ParentAskRulesSet]: Api['mcpSettings']['setParentAskRules'];
   [IpcChannel.RemoteSettingsGet]: Api['remote']['settings'];
   [IpcChannel.RemoteSettingsSet]: Api['remote']['setSettings'];
+  [IpcChannel.RemoteDevicesGet]: Api['remote']['devices'];
+  [IpcChannel.RemotePairingStart]: Api['remote']['startPairing'];
+  [IpcChannel.RemotePairingCancel]: Api['remote']['cancelPairing'];
+  [IpcChannel.RemotePairingApprove]: Api['remote']['approvePairing'];
+  [IpcChannel.RemotePairingReject]: Api['remote']['rejectPairing'];
+  [IpcChannel.RemoteDeviceRemove]: Api['remote']['removeDevice'];
+  [IpcChannel.RemoteDevicesReset]: Api['remote']['resetDevices'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
@@ -1356,6 +1382,7 @@ export type IpcEvent = {
   [IpcChannel.PromptsOpen]: undefined;
   [IpcChannel.McpSettingsOpen]: undefined;
   [IpcChannel.RemoteSettingsOpen]: undefined;
+  [IpcChannel.RemoteDevicesChanged]: Payload<Api['remote']['onDevicesChanged']>;
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;

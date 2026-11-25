@@ -31,7 +31,8 @@
       },
       "remotePort": "ポートは 1024〜65535 の数で決めてください",
       "remotePublicUrl": "公開する URL は、https で始まり、パスの無いもの（例: https://mac.example.ts.net）にしてください",
-      "remoteProfileNotAllowed": "この接続には許していないプロファイルです"
+      "remoteProfileNotAllowed": "この接続には許していないプロファイルです",
+      "remoteNotListening": "遠隔操作が待ち受けていません。メニューバーの「遠隔操作を使う」をオンにしてから、端末を追加してください"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",
@@ -376,6 +377,11 @@
     "toolPermissions": {
       "syncFailedTitle": "MCP の設定の確認の選択を、Claude Code に効かせられませんでした",
       "syncFailed": "印のファイルを書けませんでした（{error}）。既定から変えた確認の選択が効かず、毎回確認にしたツールが確認なしで動くことがあります。「tanacode → MCP の設定…」で選び直すか、tanacode を起動し直してください。"
+    },
+    "notice": {
+      "remoteLogin": "遠隔操作でログインがありました: {name}",
+      "remoteUnnamed": "名前の無い端末",
+      "remotePairingHijack": "端末の登録を取りやめました。同じ登録のコードが 2 回使われたためです。もう一度「端末を追加」から始めてください。"
     }
   },
   "commands": {
@@ -2566,6 +2572,62 @@
     "portHint": "転送の先にするポート（127.0.0.1 のこのポート）。使われていたら、待ち受けずに止まります。",
     "status": "いまの様子",
     "loadFailed": "遠隔操作の設定を読めませんでした: {error}",
-    "saveFailed": "遠隔操作の設定を保存できませんでした: {error}"
+    "saveFailed": "遠隔操作の設定を保存できませんでした: {error}",
+    "devices": {
+      "title": "登録した端末",
+      "empty": "まだ登録した端末はありません。",
+      "dates": "登録 {created} ・ 最後に使った {used}",
+      "never": "まだ使っていない",
+      "remove": "取り消す",
+      "removeTip": "この端末の登録を取り消す（つながっていれば、すぐに切る）",
+      "confirmRemove": "「{name}」の登録を取り消しますか？",
+      "add": "端末を追加",
+      "cancel": "登録の受付をやめる",
+      "qr": "スマホで読む QR",
+      "codeLabel": "登録のコード",
+      "until": "残り {seconds} 秒",
+      "pairingHint": "スマホで QR を読み、ホーム画面に置いてから開いて登録します。スマホに出た 6 桁の数字を、ここに打って承認します。",
+      "request": "「{name}」が登録を待っています",
+      "number": "スマホに出た数字",
+      "approve": "承認する",
+      "reject": "断る",
+      "wrongNumber": "数字が違います。この登録は断りました。もう一度「端末を追加」から始めてください。",
+      "reset": "登録を全部消して、やり直す",
+      "confirmReset": "登録した端末を全部消して、空の一覧から始め直しますか？\nスマホは、もう一度登録し直します。",
+      "problem": {
+        "unreadable": "登録した端末の一覧を読めないため、遠隔操作は止めています。",
+        "rolled-back": "登録した端末の一覧が、前のものに戻されていたため、遠隔操作は止めています。"
+      }
+    }
+  },
+  "remoteLogin": {
+    "title": "遠隔操作",
+    "installTitle": "ホーム画面に追加してください",
+    "installLead": "登録とログインは、ホーム画面に置いた tanacode から行います。ログインに使う鍵を、ホーム画面のアプリの側に置くためです。",
+    "installStep1": "画面の下の共有ボタン（四角から上向きの矢印）を押します",
+    "installStep2": "「ホーム画面に追加」を選びます",
+    "installStep3": "ホーム画面の tanacode のアイコンから開き直します",
+    "pairTitle": "この端末を登録する",
+    "pairLead": "Mac の「遠隔操作の設定」で「端末を追加」を押すと、登録のコードが出ます。",
+    "code": "登録のコード（8 桁）",
+    "name": "この端末の名前",
+    "namePlaceholder": "例: 私用の iPhone",
+    "pair": "登録する",
+    "pairing": "Face ID で確かめています…",
+    "numberTitle": "Mac にこの数字を打ってください",
+    "numberLead": "Mac の「遠隔操作の設定」に出た登録の頼みに、この数字を打って承認します。",
+    "waiting": "承認を待っています…",
+    "approved": "登録しました。ログインできます。",
+    "rejected": "登録できませんでした。Mac でもう一度「端末を追加」から始めてください。",
+    "loginTitle": "ログイン",
+    "loginLead": "Face ID で本人確認をして、この Mac の tanacode につなぎます。",
+    "login": "ログインする",
+    "loggingIn": "Face ID で確かめています…",
+    "loggedIn": "ログインしました",
+    "loggedInLead": "この Mac の tanacode につながりました。",
+    "repair": "この端末を登録し直す",
+    "backToLogin": "ログインに戻る",
+    "noKey": "この端末は登録されていません。先に登録してください。",
+    "failed": "できませんでした。時間をおいて、もう一度試してください。"
   }
 }
