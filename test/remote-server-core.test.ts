@@ -114,7 +114,7 @@ describe('HTTP の口', () => {
       ['/login.js', 'text/javascript'],
       ['/login.css', 'text/css'],
       ['/manifest.webmanifest', 'application/manifest+json'],
-      ['/icon.svg', 'image/svg+xml'],
+      ['/icon.png', 'image/png'],
     ]) {
       const res = await send(port, 'GET', path, { host: HOST });
       expect(res.headers['content-type'], path).toContain(type);

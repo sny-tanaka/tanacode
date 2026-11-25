@@ -1,4 +1,5 @@
 import { t } from '@shared/i18n';
+import { REMOTE_ICON_PNG } from './remote-login-icon';
 
 // 認証の前に遠隔サーバーが配る画面（Issue #464）。端末の登録とログインだけを行う、小さなページ。
 // - スクリプト・スタイル・アイコンは別のファイルで配る（CSP の script-src 'self'。インラインのスクリプトは動かさない）
@@ -6,22 +7,35 @@ import { t } from '@shared/i18n';
 // - 束縛の鍵（取り出せない P-256 の鍵）は、ホーム画面に置いた PWA の IndexedDB に置く（Safari と PWA は保存先が別。登録は PWA で行う）
 // - 登録のコードは、URL のフラグメント（#pair=<コード>）で受けるか、打ってもらう。クエリには入れない（履歴・記録に残さない）
 
-export type Page = { type: string; body: string };
+export type Page = { type: string; body: string | Buffer };
 
 const MESSAGE_KEYS = [
   'title',
-  'addToHome',
+  'installTitle',
+  'installLead',
+  'installStep1',
+  'installStep2',
+  'installStep3',
   'pairTitle',
+  'pairLead',
   'code',
   'name',
+  'namePlaceholder',
   'pair',
   'pairing',
-  'number',
+  'numberTitle',
+  'numberLead',
+  'waiting',
   'approved',
   'rejected',
   'loginTitle',
+  'loginLead',
   'login',
+  'loggingIn',
   'loggedIn',
+  'loggedInLead',
+  'repair',
+  'backToLogin',
   'noKey',
   'failed',
 ] as const;
@@ -36,27 +50,51 @@ function html(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#111111">
 <meta name="referrer" content="no-referrer">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.png">
 <link rel="stylesheet" href="/login.css">
 <title>tanacode</title>
 </head>
 <body>
 <main>
-  <h1 id="title"></h1>
-  <p id="add-to-home" hidden></p>
-  <section>
+  <header class="brand">
+    <img src="/icon.png" alt="" width="44" height="44">
+    <div><div class="brand-name">tanacode</div><div class="brand-sub" id="title"></div></div>
+  </header>
+  <section class="card" data-step="install" hidden>
+    <h2 id="install-title"></h2>
+    <p class="lead" id="install-lead"></p>
+    <ol class="steps"><li id="install-1"></li><li id="install-2"></li><li id="install-3"></li></ol>
+  </section>
+  <section class="card" data-step="login" hidden>
     <h2 id="login-title"></h2>
-    <button id="login"></button>
+    <p class="lead" id="login-lead"></p>
+    <button class="primary" id="login"></button>
   </section>
-  <section>
+  <section class="card" data-step="pair" hidden>
     <h2 id="pair-title"></h2>
-    <label><span id="code-label"></span><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8"></label>
+    <p class="lead" id="pair-lead"></p>
+    <label><span id="code-label"></span><input id="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="8"></label>
     <label><span id="name-label"></span><input id="name" maxlength="40"></label>
-    <button id="pair"></button>
+    <button class="primary" id="pair"></button>
   </section>
-  <p id="status" role="status"></p>
+  <section class="card" data-step="number" hidden>
+    <h2 id="number-title"></h2>
+    <div class="number" id="number"></div>
+    <p class="lead" id="number-lead"></p>
+    <p class="waiting"><span class="dot"></span><span id="waiting"></span></p>
+  </section>
+  <section class="card" data-step="done" hidden>
+    <h2 class="done-title" id="logged-in"></h2>
+    <p class="lead" id="logged-in-lead"></p>
+  </section>
+  <p class="notice" id="notice" hidden></p>
+  <p class="error" id="error" role="alert" hidden></p>
+  <p class="status" id="status" role="status"></p>
+  <div class="links"><button class="link" id="to-pair" hidden></button><button class="link" id="to-login" hidden></button></div>
 </main>
 <script type="application/json" id="messages">${escapeJson(messages)}</script>
 <script src="/login.js"></script>
@@ -71,6 +109,17 @@ const SCRIPT = String.raw`(() => {
   const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
   const status = (text) => { $('status').textContent = text; };
+  // 知らせ（うまくいったこと）と誤り。どちらも、次の操作で消す
+  const notice = (text) => { $('notice').textContent = text; $('notice').hidden = !text; };
+  const error = (text) => { $('error').textContent = text; $('error').hidden = !text; };
+  let hasKey = false;
+  // 出す段を 1 つだけにする（install: ホーム画面に追加 / pair: 登録 / number: 確認の数字 / login: ログイン / done: ログインした）
+  function show(step) {
+    for (const section of document.querySelectorAll('[data-step]')) section.hidden = section.dataset.step !== step;
+    $('to-pair').hidden = step !== 'login';
+    $('to-login').hidden = !(step === 'pair' && hasKey);
+    status('');
+  }
 
   async function post(path, body) {
     const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin' });
@@ -107,6 +156,7 @@ const SCRIPT = String.raw`(() => {
 
   async function pair() {
     status(M.pairing);
+    $('pair').disabled = true;
     const begun = await post('/api/pair/begin', { code: $('code').value.trim() });
     const o = begun.options;
     const cred = await navigator.credentials.create({ publicKey: { ...o, challenge: fromB64u(o.challenge), user: { ...o.user, id: fromB64u(o.user.id) }, excludeCredentials: [] } });
@@ -117,15 +167,21 @@ const SCRIPT = String.raw`(() => {
       response: { clientDataJSON: b64u(r.clientDataJSON), attestationObject: b64u(r.attestationObject), transports: r.getTransports ? r.getTransports() : [] },
     };
     const finished = await post('/api/pair/finish', { pairingId: begun.pairingId, response, bindingJwk: key.jwk, bindingSignature: await sign(key, begun.bindingChallenge), name: $('name').value.trim() });
-    status(M.number.replace('{number}', finished.number));
+    $('number').textContent = finished.number;
+    show('number');
     for (;;) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const { state } = await post('/api/pair/status', { requestId: finished.requestId });
       if (state === 'approved') {
         await adoptBindingKey(key);
-        return status(M.approved);
+        hasKey = true;
+        notice(M.approved);
+        return show('login');
       }
-      if (state === 'rejected') return status(M.rejected);
+      if (state === 'rejected') {
+        error(M.rejected);
+        return show('pair');
+      }
     }
   }
 
@@ -134,20 +190,22 @@ const SCRIPT = String.raw`(() => {
   async function login() {
     const pending = await store('readonly', (s) => s.get('pending'));
     const key = await bindingKey();
-    if (!pending && !key) return status(M.noKey);
+    if (!pending && !key) return error(M.noKey);
+    status(M.loggingIn);
+    $('login').disabled = true;
     if (pending) {
       try {
         await loginWith(pending);
         await adoptBindingKey(pending);
-        return status(M.loggedIn);
-      } catch (error) {
-        if (error.message !== '400') throw error;
+        return show('done');
+      } catch (failure) {
+        if (failure.message !== '400') throw failure;
         await store('readwrite', (s) => s.delete('pending'));
-        if (!key) throw error;
+        if (!key) throw failure;
       }
     }
     await loginWith(key);
-    status(M.loggedIn);
+    show('done');
   }
 
   async function loginWith(key) {
@@ -162,44 +220,109 @@ const SCRIPT = String.raw`(() => {
     await post('/api/login/finish', { response, challengeId: begun.challengeId, bindingSignature: await sign(key, begun.bindingChallenge) });
   }
 
-  const run = (fn) => () => fn().catch(() => status(M.failed));
-  $('title').textContent = M.title;
-  $('add-to-home').textContent = M.addToHome;
-  $('add-to-home').hidden = standalone;
+  // 失敗したら誤りを出し、ボタンを押せるように戻す
+  const run = (fn) => () => {
+    notice('');
+    error('');
+    return fn().catch(() => {
+      status('');
+      error(M.failed);
+    }).finally(() => {
+      $('login').disabled = $('pair').disabled = blocked;
+    });
+  };
+  const text = { title: 'title', 'install-title': 'installTitle', 'install-lead': 'installLead', 'install-1': 'installStep1', 'install-2': 'installStep2', 'install-3': 'installStep3',
+    'login-title': 'loginTitle', 'login-lead': 'loginLead', login: 'login', 'pair-title': 'pairTitle', 'pair-lead': 'pairLead', 'code-label': 'code', 'name-label': 'name', pair: 'pair',
+    'number-title': 'numberTitle', 'number-lead': 'numberLead', waiting: 'waiting', 'logged-in': 'loggedIn', 'logged-in-lead': 'loggedInLead', 'to-pair': 'repair', 'to-login': 'backToLogin' };
+  for (const [id, key] of Object.entries(text)) $(id).textContent = M[key];
+  $('name').placeholder = M.namePlaceholder;
   // iPhone・iPad の Safari のままでは、登録もログインもさせない（束縛の鍵が Safari の側にでき、ホーム画面の PWA から使えないため）
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  $('login').disabled = $('pair').disabled = ios && !standalone;
-  $('login-title').textContent = M.loginTitle;
-  $('login').textContent = M.login;
-  $('pair-title').textContent = M.pairTitle;
-  $('code-label').textContent = M.code;
-  $('name-label').textContent = M.name;
-  $('pair').textContent = M.pair;
+  const blocked = ios && !standalone;
+  $('login').disabled = $('pair').disabled = blocked;
   const fragment = new URLSearchParams(location.hash.slice(1)).get('pair');
   if (fragment) $('code').value = fragment;
   $('login').addEventListener('click', run(login));
   $('pair').addEventListener('click', run(pair));
+  $('to-pair').addEventListener('click', () => { notice(''); error(''); show('pair'); });
+  $('to-login').addEventListener('click', () => { notice(''); error(''); show('login'); });
+  // 最初の段: Safari ならホーム画面に追加 / QR から開いたら登録 / 鍵があればログイン / 無ければ登録
+  if (blocked) show('install');
+  else
+    Promise.all([bindingKey(), store('readonly', (s) => s.get('pending'))])
+      .then(([key, pending]) => {
+        hasKey = Boolean(key || pending);
+        show(hasKey && !fragment ? 'login' : 'pair');
+      })
+      .catch(() => show('pair'));
 })();
 `;
 
-const STYLE = `:root { color-scheme: light dark; }
-body { margin: 0; font: 16px/1.6 -apple-system, "Hiragino Sans", sans-serif; padding: max(20px, env(safe-area-inset-top)) 20px 40px; }
-main { max-width: 480px; margin: 0 auto; }
-h1 { font-size: 22px; }
-h2 { font-size: 17px; margin: 24px 0 8px; }
-label { display: block; margin: 8px 0; }
-label span { display: block; font-size: 13px; opacity: 0.7; }
-input { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; }
-button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid #8886; background: #8881; color: inherit; }
-button:disabled { opacity: 0.4; }
-#add-to-home { padding: 10px 12px; border-radius: 10px; background: #f2b70522; }
-#status { margin-top: 20px; white-space: pre-wrap; }
+// 色と部品は、アプリの画面（src/renderer/src/global.css）の決まりに揃える（暗いテーマだけ）
+const STYLE = `:root {
+  color-scheme: dark;
+  --bg-chrome: #111111; --bg-panel: #151515; --bg-surface: #262625; --bg-input: #20201f;
+  --border-subtle: #232323; --border-strong: #333332; --border-focus: #4c445e;
+  --text-heading: #f0efec; --text-primary: #c7c6c3; --text-secondary: #898781; --text-tertiary: #6e6c66;
+  --blue: #6d9ccf; --ok: #5fb98a; --ok-tint: #1f2a23; --danger: #d98a82; --danger-tint: #2a2222;
+  --send-bg: #2c2830; --send-bg-hover: #342f3a; --send-fg: #c5b9e6; --send-border: #4c445e;
+  --grad: linear-gradient(90deg, #d4835c, #9083cf 55%, #6d9ccf);
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg-chrome); }
+body { margin: 0; color: var(--text-primary); font: 15px/1.6 var(--font-ui); -webkit-text-size-adjust: 100%;
+  padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
+main { max-width: 440px; margin: 0 auto; }
+[hidden] { display: none !important; }
+.brand { display: flex; align-items: center; gap: 12px; margin: 8px 2px 22px; }
+.brand img { border-radius: 10px; }
+.brand-name { color: var(--text-heading); font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+.brand-sub { color: var(--text-secondary); font-size: 13px; }
+.card { position: relative; background: var(--bg-panel); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 20px 18px 18px; overflow: hidden; }
+.card::before { content: ''; position: absolute; inset: 0 0 auto; height: 2px; background: var(--grad); opacity: 0.8; }
+h2 { margin: 0 0 6px; color: var(--text-heading); font-size: 17px; font-weight: 600; }
+.lead { margin: 0 0 16px; color: var(--text-secondary); font-size: 14px; }
+label { display: block; margin: 0 0 14px; }
+label span { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 13px; }
+input { width: 100%; padding: 11px 12px; font: inherit; color: var(--text-heading); background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 10px; outline: none; }
+input:focus { border-color: var(--border-focus); }
+input::placeholder { color: var(--text-tertiary); }
+.code-input { font: 22px/1.3 var(--font-mono); letter-spacing: 0.3em; text-align: center; }
+button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.primary { display: block; width: 100%; min-height: 48px; margin-top: 4px; padding: 12px 16px; color: var(--send-fg); background: var(--send-bg); border: 1px solid var(--send-border); border-radius: 12px; font-size: 16px; font-weight: 600; }
+.primary:active:not(:disabled) { background: var(--send-bg-hover); }
+.primary:disabled { color: var(--text-tertiary); background: var(--bg-surface); border-color: var(--border-strong); cursor: default; }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.steps li { position: relative; min-height: 28px; margin: 0 0 12px; padding-left: 40px; color: var(--text-primary); counter-increment: step; }
+.steps li::before { content: counter(step); position: absolute; left: 0; top: -1px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--send-fg); background: var(--send-bg); border: 1px solid var(--send-border); font-size: 13px; font-weight: 600; }
+.number { margin: 14px 0 16px; padding: 16px 8px; color: var(--text-heading); background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 12px;
+  font: 600 40px/1.2 var(--font-mono); letter-spacing: 0.22em; text-align: center; }
+.waiting { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-secondary); font-size: 14px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.done-title::before { content: '✓'; margin-right: 8px; color: var(--ok); }
+.notice, .error { margin: 14px 0 0; padding: 11px 13px; border-radius: 10px; font-size: 14px; }
+.notice { color: var(--ok); background: var(--ok-tint); }
+.error { color: var(--danger); background: var(--danger-tint); }
+.status { min-height: 1.6em; margin: 12px 2px 0; color: var(--text-secondary); font-size: 14px; }
+.status:empty { display: none; }
+.links { margin-top: 18px; text-align: center; }
+.link { padding: 8px; color: var(--text-secondary); background: none; border: none; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
 `;
 
-const MANIFEST = JSON.stringify({ name: 'tanacode', short_name: 'tanacode', display: 'standalone', background_color: '#121211', theme_color: '#121211', icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }] });
+const MANIFEST = JSON.stringify({
+  name: 'tanacode',
+  short_name: 'tanacode',
+  display: 'standalone',
+  background_color: '#111111',
+  theme_color: '#111111',
+  icons: [{ src: '/icon.png', sizes: '180x180', type: 'image/png' }],
+});
 
-const ICON =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#121211"/><path d="M20 22l12 10-12 10M34 44h12" fill="none" stroke="#e8e6e1" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON = Buffer.from(REMOTE_ICON_PNG, 'base64');
 
 // パスに当たる画面のファイル（無ければ null）
 export function loginPage(path: string): Page | null {
@@ -212,8 +335,8 @@ export function loginPage(path: string): Page | null {
       return { type: 'text/css; charset=utf-8', body: STYLE };
     case '/manifest.webmanifest':
       return { type: 'application/manifest+json', body: MANIFEST };
-    case '/icon.svg':
-      return { type: 'image/svg+xml', body: ICON };
+    case '/icon.png':
+      return { type: 'image/png', body: ICON };
     default:
       return null;
   }
