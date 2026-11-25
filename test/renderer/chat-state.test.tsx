@@ -7,6 +7,7 @@ import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, UN
 import { groupTools } from '../../src/renderer/src/chat/toolGroups';
 import { applyOptions } from '../../src/renderer/src/export/exportContent';
 import { mockApi } from './mock-api';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
 // 状態の移り変わり・再試行の表示・中断されたツール・巻き戻し・順番待ち・hooks のまとめ・ToDo と、
@@ -349,6 +350,57 @@ describe('main からの配信（useSessionChats）', () => {
     act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [{ type: 'user', id: 'u2', text: '二' }], live: true }));
     expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);
     expect(api.argsOf('sessions.snapshot')).toEqual([]);
+  });
+
+  it('持っているセッションでも、間の飛んだ配信（スマホで、開いていなかった間・切れていた間）は、スナップショットで埋める', async () => {
+    const { result } = renderHook(() => useSessionChats('s1', null));
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 5, events: [{ type: 'user', id: 'u6', text: '六' }], live: true }));
+    // 返るまでは、間の飛んだ配信が続いても重ねて読まない
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 6, events: [{ type: 'user', id: 'u7', text: '七' }], live: true }));
+    expect(api.argsOf('sessions.snapshot')).toEqual([['s1']]);
+    await act(async () => {});
+    expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);
+  });
+
+  it('読んでいる途中に頼まれた読み直しは捨てず、返ったあとに 1 回だけ読む（途中で捨てた・進んだ分を取りこぼさない）', async () => {
+    let release: (() => void) | null = null;
+    const replies: number[] = [];
+    api = mockApi({
+      'sessions.snapshot': () =>
+        new Promise((resolve) => {
+          const n = replies.length;
+          replies.push(n);
+          release = () => resolve({ sessionId: 's1', fromSeq: 0, events: n === 0 ? [{ type: 'user', id: 'u1', text: '一' }] : [{ type: 'user', id: 'u1', text: '一' }, { type: 'user', id: 'u2', text: '二' }] });
+        }),
+    });
+    api.install();
+    const { result } = renderHook(() => useSessionChats('s1', null));
+    act(() => result.current.load('s1'));
+    act(() => result.current.load('s1'));
+    act(() => result.current.load('s1'));
+    expect(replies).toEqual([0]);
+    await act(async () => release!());
+    expect(replies).toEqual([0, 1]);
+    await act(async () => release!());
+    expect(replies).toEqual([0, 1]);
+    expect(result.current.chatOf('s1').items.map((i) => i.id)).toEqual(['u1', 'u2']);
+  });
+
+  it('スマホの画面では、開いたセッションを毎回読み直す（Mac の画面では読み直さない）', async () => {
+    const mac = renderHook(() => useSessionChats('s1', null));
+    expect(api.argsOf('sessions.snapshot')).toEqual([]);
+    mac.unmount();
+    setRemoteMode(true);
+    try {
+      const { rerender } = renderHook(({ id }) => useSessionChats(id, null), { initialProps: { id: 's1' as string | null } });
+      rerender({ id: 's2' });
+      rerender({ id: null });
+      await act(async () => {});
+      expect(api.argsOf('sessions.snapshot')).toEqual([['s1'], ['s2']]);
+    } finally {
+      setRemoteMode(false);
+    }
   });
 
   it('書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信でも置き換え、通し番号は進めない', () => {

@@ -53,6 +53,7 @@ import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sess
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
 import { keyList } from '../layout/keyRow';
 import { focusChat } from '../layout/shortcuts';
+import { BEFORE_RELOAD, isRemoteMode, saveDrafts, takeDrafts } from '../remote/mode';
 
 // チャットの一覧のツールのカードを、キーで動かす（layout/keyRow.ts。Tab で入るのは、新しい方の端のカード）
 const chatKeys = keyList('last');
@@ -175,6 +176,23 @@ export const ClaudePane = memo(function ClaudePane({
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
+  // スマホの画面では、つなぎ直して読み込み直すときに、打ちかけの文を控えて戻す（remote/mode.ts）
+  const latestDraft = useRef({ id: session.id, draft: { text: input, attachments, pastes } });
+  latestDraft.current = { id: session.id, draft: { text: input, attachments, pastes } };
+  useEffect(() => {
+    if (!isRemoteMode()) return;
+    const restored = takeDrafts();
+    for (const [id, draft] of Object.entries(restored)) drafts.current.set(id, draft);
+    const mine = restored[latestDraft.current.id];
+    if (mine) {
+      setInput(mine.text ?? '');
+      setAttachments(Array.isArray(mine.attachments) ? mine.attachments : []);
+      setPastes(Array.isArray(mine.pastes) ? mine.pastes : []);
+    }
+    const save = () => saveDrafts({ ...Object.fromEntries(drafts.current), [latestDraft.current.id]: latestDraft.current.draft });
+    window.addEventListener(BEFORE_RELOAD, save);
+    return () => window.removeEventListener(BEFORE_RELOAD, save);
+  }, []);
   const listRef = useRef<HTMLDivElement>(null);
   // 開いているツール・hooks のまとまり（自動では開かない）
   const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(new Set());

@@ -185,15 +185,16 @@ function profileOf(contents: WebContents): Profile {
   return p;
 }
 
-// 画面に渡すプロファイルの様子（id のプロファイルの画面から見たもの）
-function profilesState(id: string): ProfilesState {
-  return { profiles: registry.list().filter((p) => opened.has(p.id)), current: id, othersAttention: othersAttention(id) };
+// 画面に渡すプロファイルの様子（id のプロファイルの画面から見たもの）。among: 見せてよいプロファイル（遠隔の接続には、許したものだけ）
+function profilesState(id: string, among?: string[]): ProfilesState {
+  const visible = (profileId: string) => opened.has(profileId) && (!among || among.includes(profileId));
+  return { profiles: registry.list().filter((p) => visible(p.id)), current: id, othersAttention: othersAttention(id, among) };
 }
 
-// id 以外のプロファイルに、見てほしいもの（確認待ち・新しい応答）があるか
-function othersAttention(id: string): boolean {
+// id 以外のプロファイル（among があれば、そのうちのもの）に、見てほしいもの（確認待ち・新しい応答）があるか
+function othersAttention(id: string, among?: string[]): boolean {
   for (const [other, p] of opened) {
-    if (other === id || !p.manager) continue;
+    if (other === id || !p.manager || (among && !among.includes(other))) continue;
     if (p.manager.list().some((s) => !s.archived && (s.attention !== null || s.unread))) return true;
   }
   return false;
@@ -1016,7 +1017,8 @@ function registerIpc(): void {
   handle(IpcChannel.AppUpdateCheck, () => appUpdates.refresh());
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
-  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id));
+  // 遠隔の接続には、その端末に許したプロファイルだけを見せる（ほかのプロファイルの名前・通知の有無も出さない）
+  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id, e.kind === 'remote' ? remoteHost.profileIdsOf(e.clientId) : undefined));
   handle(IpcChannel.ProfilesSwitch, (_e, id: string) => showProfile(String(id)));
   handle(IpcChannel.ProfilesAdd, (_e, input: NewProfile) => addProfile(input));
   handle(IpcChannel.ProfilesUpdate, (_e, id: string, patch: { name?: string; color?: string }) => {
@@ -1071,14 +1073,21 @@ function registerIpc(): void {
   handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
   handle(IpcChannel.TasksAgentLog, (e, id: string, ref: AgentLogRef) => P(e).manager.agentLog(id, ref));
   handle(IpcChannel.TasksStop, (e, id: string, ref: TaskRef) => P(e).manager.stopTask(id, ref));
-  listen(IpcChannel.SessionsFocus, (e, id: string | null) => P(e).manager.focus(id));
+  // スマホの画面は、その接続が開いているセッションとして覚え（チャットの知らせを絞る）、新しい応答の印だけを外す
+  listen(IpcChannel.SessionsFocus, (e, id: string | null) => {
+    if (e.kind === 'remote') {
+      remoteHost.setFocus(e.clientId, typeof id === 'string' ? id : null);
+      P(e).manager.markRead(typeof id === 'string' ? id : null);
+    } else P(e).manager.focus(id);
+  });
   listen(IpcChannel.PtyWrite, (e, id: string, data: string) => P(e).manager.write(id, data));
   listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));
   listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
     P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
   );
-  handle(IpcChannel.ShellAttach, (e) => P(e).shells.attach());
+  // スマホの画面は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
+  handle(IpcChannel.ShellAttach, (e) => (e.kind === 'remote' ? P(e).shells.snapshot() : P(e).shells.attach()));
   listen(IpcChannel.ShellWrite, (e, id: string, data: string) => P(e).shells.write(id, data));
   listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
   listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));

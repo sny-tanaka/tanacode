@@ -1,4 +1,4 @@
-import type { IpcEvent } from '@shared/ipc';
+import { IpcChannel, type IpcEvent } from '@shared/ipc';
 import { REMOTE_EVENTS } from '@shared/remote-events';
 import { createHash, randomBytes } from 'node:crypto';
 import { parseServerMessage, REMOTE_IDLE_MS, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
@@ -36,7 +36,8 @@ export type RemoteHostDeps = {
   auth: (request: AuthRequest) => AuthReplies[keyof AuthReplies];
 };
 
-type Client = { sessionId: string; subscriptions: Set<string> };
+// focus: その接続（スマホの画面）が開いているセッション（チャットの知らせは、これの分だけ送る。通信量を増やさない）
+type Client = { sessionId: string; subscriptions: Set<string>; focus: string | null };
 
 export class RemoteHost {
   private child: ServerProcess | null = null;
@@ -192,6 +193,8 @@ export class RemoteHost {
     for (const [clientId, client] of this.clients) {
       if (!this.sessions.get(client.sessionId)?.profileIds.includes(profileId)) continue;
       if (use === 'subscribe' && !client.subscriptions.has(channel)) continue;
+      // チャットの知らせは、その接続が開いているセッションの分だけ（ほかのセッションは、開いたときに頼んで読み直す）
+      if (channel === IpcChannel.ChatEvents && (payload as IpcEvent[typeof IpcChannel.ChatEvents]).sessionId !== client.focus) continue;
       clientIds.push(clientId);
     }
     if (clientIds.length > 0) this.child.post({ type: 'event', clientIds, channel, payload, profileId });
@@ -208,6 +211,18 @@ export class RemoteHost {
     } catch (error) {
       this.deps.log(`遠隔の接続に知らせを送れませんでした（${channel}）: ${String(error)}`);
     }
+  }
+
+  // その接続のセッションに許したプロファイル（握手の返事と同じもの。知らない接続なら空）
+  profileIdsOf(clientId: string): string[] {
+    const client = this.clients.get(clientId);
+    return client ? [...(this.sessions.get(client.sessionId)?.profileIds ?? [])] : [];
+  }
+
+  // その接続（スマホの画面）が開いているセッションを覚える（Mac の画面の「開いているセッション」には触らない）
+  setFocus(clientId: string, sessionId: string | null): void {
+    const client = this.clients.get(clientId);
+    if (client) client.focus = sessionId;
   }
 
   // つながっている接続の数（Mac の上の帯に出す）
@@ -261,7 +276,7 @@ export class RemoteHost {
           child.post({ type: 'disconnect', clientId: message.clientId });
           return;
         }
-        this.setClients(() => this.clients.set(message.clientId, { sessionId: message.sessionId, subscriptions: new Set() }));
+        this.setClients(() => this.clients.set(message.clientId, { sessionId: message.sessionId, subscriptions: new Set(), focus: null }));
         break;
       }
       case 'disconnected':

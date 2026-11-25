@@ -7,7 +7,7 @@ import type { Language } from './i18n';
 
 // 待ち受けの設定。port: 127.0.0.1 で待ち受けるポート / publicOrigin: スマホが開く URL の origin（例: https://mac.example.ts.net）。
 // Host と Origin は、これと完全に一致しなければ断る
-// language: 認証の前の画面（ログイン・登録）の言語（Mac の tanacode の画面の言語にそろえる）
+// language: 遠隔の画面（ログイン・登録と、ログインしたあとの画面）の言語（Mac の tanacode の画面の言語にそろえる。握手の返事でも渡す）
 export type RemoteListenConfig = { port: number; publicOrigin: string; language: Language };
 
 // 遠隔の接続のセッション（③ で、本人確認を通ったときに main が作る）。tokenHash: Cookie の秘密の SHA-256（hex。秘密そのものは渡さない）/

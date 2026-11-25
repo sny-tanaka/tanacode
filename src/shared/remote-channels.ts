@@ -96,7 +96,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.UsageGet]: same([]),
   [IpcChannel.UsageRefresh]: same([]),
   [IpcChannel.AccountGet]: same([]),
-  [IpcChannel.ProfilesGet]: replace([], '開いている全プロファイルを返す（許したプロファイルだけに絞るまで）'),
+  // 遠隔の接続には、その端末に許したプロファイルだけを返す
+  [IpcChannel.ProfilesGet]: same([]),
   [IpcChannel.ProfilesSwitch]: replace(['string'], 'Mac のウインドウに出すプロファイルを切り替える（遠隔の接続のプロファイルは接続で決まる）'),
   [IpcChannel.ProfilesAdd]: replace(['object'], 'プロファイルを足す（許したプロファイルの扱いを決めるまで）'),
   [IpcChannel.ProfilesUpdate]: replace(['string', 'object'], '呼び出し元のプロファイルを見ずに、渡された id のプロファイルを変える（許したプロファイルだけに絞るまで）'),
@@ -153,7 +154,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.TasksAgentLog]: same(['string', 'object']),
   [IpcChannel.TasksStop]: same(['string', 'object']),
   [IpcChannel.ShellCreate]: same(['string', 'number', 'number']),
-  [IpcChannel.ShellAttach]: replace([], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 遠隔の接続は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
+  [IpcChannel.ShellAttach]: same([]),
   [IpcChannel.FolderPick]: replace([], 'フォルダを選ぶ Mac のダイアログ（スマホ向けのフォルダの一覧に置き換える）'),
   [IpcChannel.FolderInfo]: same(['string']),
   [IpcChannel.FolderParentInstructions]: same(['string', 'boolean?']),
@@ -204,7 +206,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.BrowserLoginsGet]: same([]),
   [IpcChannel.BrowserRemembersGet]: same([]),
   [IpcChannel.BrowserPopupsGet]: same([]),
-  [IpcChannel.SessionsFocus]: replace(['nullable-string'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 遠隔の接続は、その接続が開いているセッションとして覚える（Mac の画面の分は変えない）
+  [IpcChannel.SessionsFocus]: same(['nullable-string']),
   [IpcChannel.SessionsInterrupt]: same(['string']),
   [IpcChannel.SessionsDismissSuggestion]: same(['string']),
   [IpcChannel.SessionsExportReveal]: mac(['string'], 'Finder で表示する'),

@@ -77,7 +77,8 @@ export default defineConfig({
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     define: { __APP_VERSION__: JSON.stringify(version) },
-    build: { sourcemap, rolldownOptions: { output } },
+    // 入口は 2 つ。Mac の画面（index.html）と、遠隔サーバーが /app/ で配るスマホの画面（remote.html。Issue #464）
+    build: { sourcemap, rolldownOptions: { output, input: { index: resolve('src/renderer/index.html'), remote: resolve('src/renderer/remote.html') } } },
     plugins: [
       virtualChunkSourcemap,
       react(),

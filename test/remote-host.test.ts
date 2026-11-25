@@ -196,6 +196,28 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.SessionsChanged, payload: [], profileId: 'default' }]);
   });
 
+  it('チャットの知らせは、その接続が開いているセッションの分だけ送る。知らない接続の開いているセッションは覚えない', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.host.setFocus('c1', 'chat-a');
+    t.host.setFocus('ghost', 'chat-a');
+    // 接続のセッションに許したプロファイル（知らない接続なら空）
+    expect(t.host.profileIdsOf('c1')).toEqual(['default']);
+    expect(t.host.profileIdsOf('ghost')).toEqual([]);
+    t.posted.length = 0;
+    const batch = (sessionId: string) => ({ sessionId, fromSeq: 0, events: [], live: true });
+    t.host.emit('default', IpcChannel.ChatEvents, batch('chat-a'));
+    t.host.emit('default', IpcChannel.ChatEvents, batch('chat-b'));
+    expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.ChatEvents, payload: batch('chat-a'), profileId: 'default' }]);
+    // どれも開いていなければ、送らない
+    t.host.setFocus('c1', null);
+    t.host.emit('default', IpcChannel.ChatEvents, batch('chat-a'));
+    expect(t.posted).toHaveLength(1);
+  });
+
   it('多い知らせ（subscribe）は、頼んだ接続にだけ送る。subscribe でないチャンネルは頼めない', () => {
     const t = setup();
     t.host.addSession(session());

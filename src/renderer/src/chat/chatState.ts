@@ -5,6 +5,7 @@ import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
 import type { SessionState } from '@shared/session-tools';
 import type { UnknownEvent, UnknownProblem } from '@shared/unknown-event';
 import { useSessionValues } from '../sessionValues';
+import { isRemoteMode } from '../remote/mode';
 
 export type ToolStatus = 'running' | 'done' | 'error';
 
@@ -663,9 +664,25 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
     [peek, update],
   );
 
+  // 読んでいる途中のセッション（返るまで、スナップショットを重ねて読まない。スマホの通信量を増やさない）。
+  // 途中で頼まれたら（again）、返ったあとに 1 回だけ読み直す（途中で捨てた・進んだ分を取りこぼさない）
+  const loading = useRef(new Map<string, { again: boolean }>());
   const load = useCallback(
     (sessionId: string) => {
-      void window.tanacode.sessions.snapshot(sessionId).then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)));
+      const inFlight = loading.current.get(sessionId);
+      if (inFlight) {
+        inFlight.again = true;
+        return;
+      }
+      const entry = { again: false };
+      loading.current.set(sessionId, entry);
+      void window.tanacode.sessions
+        .snapshot(sessionId)
+        .then((snapshot) => change(sessionId, (prev) => withSnapshot(prev, snapshot)))
+        .finally(() => {
+          loading.current.delete(sessionId);
+          if (entry.again) load(sessionId);
+        });
     },
     [change],
   );
@@ -673,12 +690,18 @@ export function useSessionChats(selectedId: string | null, listed: ReadonlySet<s
   useEffect(
     () =>
       window.tanacode.sessions.onChat((batch) => {
-        // 途中から受け取ったセッションは取りこぼしがあるので、スナップショットで埋める
-        if (!peek(batch.sessionId) && batch.fromSeq > 0) load(batch.sessionId);
+        // 途中から受け取ったセッションと、間の飛んだ知らせ（スマホの画面で、開いていなかった間・切れていた間）は、取りこぼしがあるので、スナップショットで埋める
+        const have = peek(batch.sessionId);
+        if (have ? batch.fromSeq > have.nextSeq : batch.fromSeq > 0) load(batch.sessionId);
         else change(batch.sessionId, (prev) => withBatch(prev, batch));
       }),
     [load, peek, change],
   );
+
+  // スマホの画面では、開いていないセッションの知らせが届かないので、開いたときに読み直す（新しいものが無ければ、手元のまま）
+  useEffect(() => {
+    if (selectedId && isRemoteMode()) load(selectedId);
+  }, [selectedId, load]);
 
   const reset = useCallback((sessionId: string) => change(sessionId, () => undefined), [change]);
 

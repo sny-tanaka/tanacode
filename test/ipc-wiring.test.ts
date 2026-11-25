@@ -20,7 +20,7 @@ const code = (path: string) =>
   readFileSync(path, 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
-const preload = code('src/preload/index.ts');
+const preload = code('src/shared/api-bindings.ts');
 const main = readdirSync('src/main')
   .filter((f) => f.endsWith('.ts'))
   .map((f) => code(join('src/main', f)))

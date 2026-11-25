@@ -6,6 +6,7 @@ import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthe
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { setLanguage } from '@shared/i18n';
 import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
+import { appFile } from './remote-app-files';
 import { loginPage } from './remote-login-page';
 import { REMOTE_IDLE_MS, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
@@ -76,6 +77,10 @@ export function encodeForClient(value: unknown): string {
 // 認証の前の画面の CSP（スクリプト・スタイル・アイコンは同じ origin のファイルだけ。外へはつながない）
 const LOGIN_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
+// ログインしたあとの画面（/app/）の CSP。Mac の画面（src/renderer/index.html の meta）と同じものに、自分の WebSocket へのつなぎを足す
+const appCsp = (origin: string) =>
+  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src blob:; connect-src 'self' ${origin.replace(/^http/, 'ws')}; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
+
 // どの応答にも付けるヘッダー
 const BASE_HEADERS = {
   'cache-control': 'no-store',
@@ -108,6 +113,8 @@ export class RemoteServerCore {
   constructor(
     private readonly post: (message: ServerMessage) => void,
     private readonly now: () => number = Date.now,
+    // ログインしたあとの画面のファイルの置き場所（ビルドした out/renderer。無ければ /app/ は 404）
+    private readonly appRoot: string | null = null,
   ) {}
 
   // main から届いた伝文（形は main が作るので信じる）
@@ -278,6 +285,11 @@ export class RemoteServerCore {
       res.end(page.body);
       return;
     }
+    // ログインしたあとの画面（スマホ用にビルドした App）。セッションの Cookie が要る（無ければ、入口はログインの画面へ戻す）
+    if (isGet && (path === '/app' || path.startsWith('/app/'))) {
+      void this.appRoute(req, res, path);
+      return;
+    }
     if (req.method === 'POST' && path.startsWith('/api/pair/') || req.method === 'POST' && path.startsWith('/api/login/')) {
       void this.authRoute(req, res, path);
       return;
@@ -288,6 +300,27 @@ export class RemoteServerCore {
       return;
     }
     this.reply(res, 404, { error: 'not found' });
+  }
+
+  private async appRoute(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const isPage = path === '/app' || path === '/app/' || path.endsWith('.html');
+    if (!this.sessionOf(req)) {
+      if (isPage) {
+        res.writeHead(302, { ...BASE_HEADERS, location: '/' });
+        res.end();
+        return;
+      }
+      return this.reply(res, 401, { error: 'unauthorized' });
+    }
+    const file = this.appRoot ? await appFile(this.appRoot, path) : null;
+    if (!file || !this.config) return this.reply(res, 404, { error: 'not found' });
+    res.writeHead(200, {
+      ...BASE_HEADERS,
+      'cache-control': file.immutable ? 'private, max-age=31536000, immutable' : 'no-store',
+      'content-security-policy': appCsp(this.config.publicOrigin),
+      'content-type': file.type,
+    });
+    res.end(req.method === 'HEAD' ? undefined : file.body);
   }
 
   // 券の口。券は main が出し、ここでも控える（握手のときに、両方で確かめる）
@@ -536,7 +569,8 @@ export class RemoteServerCore {
     const client: Client = { id: randomBytes(16).toString('base64url'), sessionId, socket: ws, calls: [], closing: false };
     this.clients.set(client.id, client);
     this.post({ type: 'connected', clientId: client.id, sessionId, ticket });
-    ws.send(encodeForClient({ type: 'ready' }));
+    // 握手の返事に、このセッションに許したプロファイルと画面の言語を添える（スマホの画面は、最初の頼みの前にプロファイルを決める）
+    ws.send(encodeForClient({ type: 'ready', profileIds: session.profileIds, language: this.config?.language ?? 'ja' }));
     return client;
   }
 

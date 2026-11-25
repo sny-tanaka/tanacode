@@ -298,6 +298,11 @@ describe('ShellTerminals', () => {
     expect(opened).toHaveLength(1);
     expect([...exits.keys()]).toEqual([]);
 
+    // 写しを取るだけ（スマホの画面）では、知らせを止めたままにする（Mac の画面が引き継ぐまで）
+    expect(shells.snapshot().map((s) => s.id)).toContain(shell.id);
+    await typeAndWait(shell.id, 'echo still-$((4+1))\r');
+    expect(data.get(shell.id)).toBe(forwarded);
+
     const list = shells.attach();
     const yarnId = list.find((s) => s.name === 'yarn')?.id;
     expect(list.map((s) => [s.owner, s.id, s.name, s.title, s.task, s.exitCode, s.cols, s.rows])).toEqual([

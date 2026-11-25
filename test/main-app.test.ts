@@ -1493,6 +1493,18 @@ describe('メニュー', () => {
     expect(granted.ok).toBe(true);
     child.emit('message', { type: 'connected', clientId: 'c1', sessionId, ticket: granted.value!.ticket });
     await expect(invoke(IpcChannel.RemoteConnectionsGet)).resolves.toEqual([{ registrationId, name: 'iPhone', count: 1 }]);
+    // 遠隔の接続が開いたセッションは、その接続の分として覚える（Mac の画面の分は変えない）。ターミナルは今の画面を読むだけ
+    child.emit('message', { type: 'call', id: 48, clientId: 'c1', profileId: 'default', kind: 'send', channel: IpcChannel.SessionsFocus, args: ['chat-a'], active: true });
+    child.emit('message', { type: 'call', id: 49, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: IpcChannel.ShellAttach, args: [], active: false });
+    await vi.waitFor(() => expect(child.posted).toContainEqual(expect.objectContaining({ type: 'result', id: 49 })));
+    const attached = child.posted.find((m) => (m as { type: string; id?: number }).type === 'result' && (m as { id: number }).id === 49) as { ok: boolean; value: unknown };
+    expect(attached).toMatchObject({ ok: true, value: { call: 'shells.snapshot' } });
+    // 遠隔の接続は、プロファイルを読める（許したものだけ）
+    child.emit('message', { type: 'call', id: 50, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: IpcChannel.ProfilesGet, args: [], active: false });
+    await vi.waitFor(() => expect(child.posted).toContainEqual(expect.objectContaining({ type: 'result', id: 50, ok: true })));
+    const profiles = child.posted.find((m) => (m as { type: string; id?: number }).type === 'result' && (m as { id: number }).id === 50) as { value: { profiles: { id: string }[]; current: string } };
+    expect(profiles.value.profiles.map((p) => p.id)).toEqual(['default']);
+    expect(profiles.value.current).toBe('default');
     expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteConnectionsChanged, [{ registrationId, name: 'iPhone', count: 1 }]]);
     await expect(invoke(IpcChannel.RemoteDisconnectAll)).resolves.toEqual([]);
     // ログインに続けて失敗した知らせは、端末の名前で Mac に通知する

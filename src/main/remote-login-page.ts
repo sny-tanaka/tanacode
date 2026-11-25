@@ -197,7 +197,7 @@ const SCRIPT = String.raw`(() => {
       try {
         await loginWith(pending);
         await adoptBindingKey(pending);
-        return show('done');
+        return done();
       } catch (failure) {
         if (failure.message !== '400') throw failure;
         await store('readwrite', (s) => s.delete('pending'));
@@ -205,7 +205,13 @@ const SCRIPT = String.raw`(() => {
       }
     }
     await loginWith(key);
+    done();
+  }
+
+  // ログインした。少し見せてから、ログインしたあとの画面へ移る
+  function done() {
     show('done');
+    setTimeout(() => location.replace('/app/'), 700);
   }
 
   async function loginWith(key) {
@@ -326,6 +332,9 @@ button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparen
 const MANIFEST = JSON.stringify({
   name: 'tanacode',
   short_name: 'tanacode',
+  // ホーム画面から開いたら、まずログインしたあとの画面へ（セッションが切れていれば、遠隔サーバーがここへ戻す）
+  start_url: '/app/',
+  scope: '/',
   display: 'standalone',
   background_color: '#111111',
   theme_color: '#111111',
