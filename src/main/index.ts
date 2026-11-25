@@ -267,6 +267,8 @@ function startRemoteAuth(): void {
       send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
     },
     notify: (event) => remoteNotice(event.kind === 'login' ? t('main.notice.remoteLogin', { name: event.name || t('main.notice.remoteUnnamed') }) : t('main.notice.remotePairingHijack')),
+    sessionRegistration: (sessionId) => remoteHost.sessionRegistration(sessionId),
+    grantTicket: (sessionId) => remoteHost.grantTicket(sessionId),
   });
   remoteHost.setCredentials(registrations.credentials());
 }

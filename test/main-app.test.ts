@@ -1475,7 +1475,7 @@ describe('メニュー', () => {
     expect(existsSync(join(state.userData, 'remote-registrations.bin'))).toBe(true);
     expect(savedSettings()).toMatchObject({ remoteRegistrationsSeq: 1 });
 
-    const challenge = authOf({ op: 'challenge' }).value!;
+    const challenge = authOf({ op: 'challenge', purpose: 'login' }).value!;
     const registrationId = devices.devices[0].id;
     expect(authOf({ op: 'login', registrationId, counter: 0, challengeId: challenge.challengeId, bindingSignature: binding.sign(String(challenge.challenge)) }).ok).toBe(true);
     expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-add', session: expect.objectContaining({ registrationId, profileIds: ['default'] }) }));

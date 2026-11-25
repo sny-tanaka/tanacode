@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import type { HostMessage, RemoteSession } from '@shared/remote-protocol';
+import { REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteSession } from '@shared/remote-protocol';
 import { RemoteHost, type ServerProcess } from '../src/main/remote-host';
 
 // main の側の、遠隔サーバーの持ち手（src/main/remote-host.ts）。遠隔サーバーを作り物にして、伝文を送り合う
@@ -67,10 +67,49 @@ describe('RemoteHost', () => {
     expect(t.posted.length).toBe(before + 1);
   });
 
+  it('main が出していない・別のセッションの・使い回した・期限の切れた券の接続は、切らせる', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    t.host.addSession(session());
+    t.host.addSession(session({ sessionId: 's2', registrationId: 'r2' }));
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: 'forged' });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c1' });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: t.host.grantTicket('s2') });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c2' });
+    const ticket = t.host.grantTicket('s1');
+    t.toHost({ type: 'connected', clientId: 'c3', sessionId: 's1', ticket });
+    expect(t.host.connectionCount()).toBe(1);
+    t.toHost({ type: 'connected', clientId: 'c4', sessionId: 's1', ticket });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c4' });
+    const late = t.host.grantTicket('s1');
+    clock.now += REMOTE_TICKET_MS;
+    t.toHost({ type: 'connected', clientId: 'c5', sessionId: 's1', ticket: late });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c5' });
+    expect(t.host.connectionCount()).toBe(1);
+  });
+
+  it('1 つのセッションの券は 4 つまで（古いものから捨てる）。セッションを消すと、その券も捨てる', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    t.host.addSession(session());
+    const first = t.host.grantTicket('s1');
+    for (let i = 0; i < REMOTE_TICKETS_PER_SESSION; i++) t.host.grantTicket('s1');
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: first });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c1' });
+    const kept = t.host.grantTicket('s1');
+    t.host.removeSession('s1');
+    t.host.addSession(session());
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: kept });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c2' });
+    // 生きているセッションの登録だけを返す
+    expect(t.host.sessionRegistration('s1')).toBe('r1');
+    expect(t.host.sessionRegistration('nope')).toBeNull();
+  });
+
   it('知らないセッションの接続は、切らせる', () => {
     const t = setup();
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 'unknown' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 'unknown', ticket: t.host.grantTicket('unknown') });
     expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c1' });
     expect(t.host.connectionCount()).toBe(0);
   });
@@ -79,7 +118,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'call', id: 3, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: IpcChannel.SessionsList, args: [] });
     await flush();
     expect(t.call).toHaveBeenCalledWith({ kind: 'remote', profileId: 'default', clientId: 'c1', registrationId: 'r1' }, IpcChannel.SessionsList, []);
@@ -90,7 +129,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'call', id: 4, clientId: 'c1', profileId: 'other', kind: 'invoke', channel: IpcChannel.SessionsList, args: [] });
     await flush();
     expect(t.call).not.toHaveBeenCalled();
@@ -103,7 +142,7 @@ describe('RemoteHost', () => {
     });
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'call', id: 5, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: 'x', args: [] });
     t.toHost({ type: 'call', id: 6, clientId: 'c1', profileId: 'default', kind: 'send', channel: 'x', args: [] });
     await flush();
@@ -124,8 +163,8 @@ describe('RemoteHost', () => {
     t.host.addSession(session());
     t.host.addSession(session({ sessionId: 's2', profileIds: ['work'] }));
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
-    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2', ticket: t.host.grantTicket('s2') });
     t.posted.length = 0;
     t.host.emit('default', IpcChannel.SessionsChanged, []);
     t.host.emit('default', IpcChannel.McpSettingsOpen, undefined);
@@ -136,7 +175,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.posted.length = 0;
     t.host.emit('default', IpcChannel.PtyData, { sessionId: 'a', data: 'x' });
     expect(t.posted).toEqual([]);
@@ -151,8 +190,8 @@ describe('RemoteHost', () => {
     t.host.addSession(session());
     t.host.addSession(session({ sessionId: 's2', profileIds: ['work', 'default'] }));
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
-    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2', ticket: t.host.grantTicket('s2') });
     t.posted.length = 0;
     t.host.emitAll(IpcChannel.ClaudeVersionChanged, null as never);
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1', 'c2'], channel: IpcChannel.ClaudeVersionChanged, payload: null }]);
@@ -164,7 +203,7 @@ describe('RemoteHost', () => {
     t.host.start(CONFIG);
     t.posted.length = 0;
     t.host.emitAll(IpcChannel.ClaudeVersionChanged, null as never);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.host.emitAll(IpcChannel.AppUpdateChecked, undefined);
     expect(t.posted).toEqual([]);
   });
@@ -173,7 +212,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'closed' });
     expect(t.host.connectionCount()).toBe(0);
   });
@@ -182,8 +221,8 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
-    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'subscribe', clientId: 'c2', channels: [IpcChannel.SystemStats] });
     t.toHost({ type: 'subscribe', clientId: 'ghost', channels: [IpcChannel.SystemStats] });
     t.posted.length = 0;
@@ -198,8 +237,8 @@ describe('RemoteHost', () => {
     t.host.addSession(session());
     t.host.addSession(session({ sessionId: 's2' }));
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
-    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2', ticket: t.host.grantTicket('s2') });
     t.host.removeSession('s1');
     expect(t.host.connectionCount()).toBe(1);
   });
@@ -227,7 +266,7 @@ describe('RemoteHost', () => {
     });
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'call', id: 9, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: 'x', args: [] });
     await flush();
     expect(t.posted.at(-1)).toEqual({ type: 'result', id: 9, clientId: 'c1', ok: false, error: 'だめ' });
@@ -237,7 +276,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.start(CONFIG);
     t.posted.length = 0;
-    t.toHost({ type: 'auth', id: 1, request: { op: 'challenge' } });
+    t.toHost({ type: 'auth', id: 1, request: { op: 'challenge', purpose: 'login' } });
     t.toHost({ type: 'auth', id: 2, request: { op: 'pair-begin', code: '12345678' } });
     t.toHost({ type: 'auth', id: 3, request: { op: 'nope' } });
     expect(t.posted).toEqual([
@@ -266,7 +305,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.host.removeSession('s1');
     expect(t.host.connectionCount()).toBe(0);
     expect(t.posted.at(-1)).toEqual({ type: 'session-remove', sessionId: 's1' });
@@ -276,7 +315,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.exit(1);
     expect(t.host.current()).toMatchObject({ state: 'failed' });
     expect(t.host.connectionCount()).toBe(0);
@@ -302,7 +341,7 @@ describe('RemoteHost', () => {
     t.host.addSession(session());
     t.host.addSession(session({ sessionId: 's2', lastActive: clock.now - 31 * 60 * 1000 }));
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'call', id: 1, clientId: 'c1', profileId: 'default', kind: 'send', channel: 'x', args: [] });
     await flush();
     clock.now += 5 * 60 * 1000;
@@ -318,7 +357,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'session-expired', sessionId: 's1' });
     expect(t.host.connectionCount()).toBe(0);
     t.posted.length = 0;
@@ -330,7 +369,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     clock.now += 31 * 60 * 1000;
     t.toHost({ type: 'call', id: 1, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: 'x', args: [] });
     await flush();
@@ -344,8 +383,8 @@ describe('RemoteHost', () => {
     t.host.addSession(session());
     t.host.addSession(session({ sessionId: 's2', profileIds: ['work'] }));
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's2' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's2', ticket: t.host.grantTicket('s2') });
     expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c1' });
     t.host.emit('work', IpcChannel.SessionsChanged, []);
     expect(t.posted.filter((m) => m.type === 'event')).toEqual([]);
@@ -355,7 +394,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.toHost({ type: 'disconnected', clientId: 'c1' });
     expect(t.connections).toEqual([1, 0]);
   });
@@ -364,7 +403,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
     t.child.post = () => {
       throw new Error('closed');
     };

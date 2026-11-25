@@ -16,7 +16,7 @@ function setup() {
     touch: vi.fn(),
   };
   const sessions: unknown[] = [];
-  const deps = { registrations: registrations as never, addSession: (s: unknown) => sessions.push(s), onPairingChange: vi.fn(), onRegistrationsChange: vi.fn(), notify: vi.fn(), now: () => clock.now };
+  const deps = { registrations: registrations as never, addSession: (s: unknown) => sessions.push(s), onPairingChange: vi.fn(), onRegistrationsChange: vi.fn(), notify: vi.fn(), now: () => clock.now, sessionRegistration: vi.fn((_id: string): string | null => null), grantTicket: vi.fn(() => 'granted') };
   return { auth: new RemoteAuth(deps), clock, list, sessions, deps };
 }
 
@@ -80,16 +80,16 @@ describe('RemoteAuth', () => {
     const t = setup();
     const binding = new SoftBindingKey();
     t.list.push({ id: 'r1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: ['default'], passkey: { credentialId: 'c', publicKey: 'p', counter: 0 }, bindingJwk: binding.jwk });
-    const first = t.auth.handle({ op: 'challenge' }) as { challengeId: string; challenge: string };
+    const first = t.auth.handle({ op: 'challenge', purpose: 'login' }) as { challengeId: string; challenge: string };
     const login = (c: { challengeId: string; challenge: string }) => t.auth.handle({ op: 'login', registrationId: 'r1', counter: 0, challengeId: c.challengeId, bindingSignature: binding.sign(c.challenge) });
     const result = login(first) as { token: string };
     expect(t.sessions).toEqual([expect.objectContaining({ registrationId: 'r1', profileIds: ['default'], tokenHash: createHash('sha256').update(result.token).digest('hex') })]);
     expect(() => login(first)).toThrow();
-    const late = t.auth.handle({ op: 'challenge' }) as { challengeId: string; challenge: string };
+    const late = t.auth.handle({ op: 'challenge', purpose: 'login' }) as { challengeId: string; challenge: string };
     t.clock.now += CHALLENGE_MS;
     expect(() => login(late)).toThrow();
     // 知らない登録
-    const another = t.auth.handle({ op: 'challenge' }) as { challengeId: string; challenge: string };
+    const another = t.auth.handle({ op: 'challenge', purpose: 'login' }) as { challengeId: string; challenge: string };
     expect(() => t.auth.handle({ op: 'login', registrationId: 'nope', counter: 0, challengeId: another.challengeId, bindingSignature: binding.sign(another.challenge) })).toThrow();
   });
 
@@ -97,8 +97,8 @@ describe('RemoteAuth', () => {
     const t = setup();
     const binding = new SoftBindingKey();
     t.list.push({ id: 'r1', name: '', createdAt: 0, lastUsedAt: null, profileIds: [], passkey: { credentialId: 'c', publicKey: 'p', counter: 0 }, bindingJwk: binding.jwk });
-    const first = t.auth.handle({ op: 'challenge' }) as { challengeId: string; challenge: string };
-    for (let i = 0; i < 200; i++) t.auth.handle({ op: 'challenge' });
+    const first = t.auth.handle({ op: 'challenge', purpose: 'login' }) as { challengeId: string; challenge: string };
+    for (let i = 0; i < 200; i++) t.auth.handle({ op: 'challenge', purpose: 'login' });
     const login = (challengeId: string, signed = challengeId) => t.auth.handle({ op: 'login', registrationId: 'r1', counter: 0, challengeId, bindingSignature: binding.sign(signed) });
     const [until, nonce, mac] = first.challenge.split('.');
     expect(() => login(`${until}.${nonce}.${mac.slice(1)}A`)).toThrow('unknown challenge');
@@ -110,7 +110,7 @@ describe('RemoteAuth', () => {
     expect(t.deps.onRegistrationsChange).toHaveBeenCalled();
     // 使い終えたものは、期限が過ぎて控えを捨てたあとも、期限切れで受けない
     t.clock.now += CHALLENGE_MS;
-    t.auth.handle({ op: 'challenge' });
+    t.auth.handle({ op: 'challenge', purpose: 'login' });
     expect(() => login(first.challengeId)).toThrow('unknown challenge');
   });
 
@@ -140,6 +140,30 @@ describe('RemoteAuth', () => {
     expect(t.auth.approve(failing.requestId, failing.number, [])).toBe(true);
   });
 
+  it('券: 生きているセッションの登録の束縛の鍵で、券用の乱数に署名してあれば出す。用途の違う乱数・知らないセッション・違う鍵・使い回しは断る', () => {
+    const t = setup();
+    const binding = new SoftBindingKey();
+    t.list.push({ id: 'r1', name: '', createdAt: 0, lastUsedAt: null, profileIds: [], passkey: { credentialId: 'c', publicKey: 'p', counter: 0 }, bindingJwk: binding.jwk });
+    t.deps.sessionRegistration.mockImplementation((id: string) => (id === 's1' ? 'r1' : null));
+    const ticketOf = (purpose: 'login' | 'ticket', sessionId = 's1', key = binding) => {
+      const c = t.auth.handle({ op: 'challenge', purpose }) as { challengeId: string; challenge: string };
+      return () => t.auth.handle({ op: 'ticket', sessionId, challengeId: c.challengeId, bindingSignature: key.sign(c.challenge) });
+    };
+    expect(ticketOf('login')).toThrow('unknown challenge');
+    expect(ticketOf('ticket', 's2')).toThrow('unknown session');
+    expect(ticketOf('ticket', 's1', new SoftBindingKey())).toThrow('bad binding signature');
+    const once = ticketOf('ticket');
+    expect(once()).toEqual({ ticket: 'granted' });
+    expect(t.deps.grantTicket).toHaveBeenCalledWith('s1');
+    expect(once).toThrow('unknown challenge');
+    // 券用の乱数は、ログインに使えない
+    const c = t.auth.handle({ op: 'challenge', purpose: 'ticket' }) as { challengeId: string; challenge: string };
+    expect(() => t.auth.handle({ op: 'login', registrationId: 'r1', counter: 0, challengeId: c.challengeId, bindingSignature: binding.sign(c.challenge) })).toThrow('unknown challenge');
+    // 登録が消えていれば断る
+    t.deps.sessionRegistration.mockImplementation(() => 'gone');
+    expect(ticketOf('ticket')).toThrow('unknown session');
+  });
+
   it('束縛の鍵の形・署名が壊れていれば false', () => {
     const binding = new SoftBindingKey();
     expect(verifyBinding(binding.jwk, 'x', binding.sign('x'))).toBe(true);
@@ -154,7 +178,7 @@ describe('parseAuthRequest・deviceNameOf', () => {
     [{ op: 'pair-begin', code: '12345678' }],
     [{ op: 'pair-finish', pairingId: 'p', credential: { id: 'aA', publicKey: 'cA', counter: 0 }, bindingJwk: jwk, bindingSignature: 'cw', name: 'iPhone' }],
     [{ op: 'pair-status', requestId: 'r' }],
-    [{ op: 'challenge' }],
+    [{ op: 'challenge', purpose: 'login' }],
     [{ op: 'login', registrationId: 'r', counter: 1, challengeId: 'c', bindingSignature: 'cw' }],
   ])('形の合う頼み: %j', (request) => {
     expect(parseAuthRequest(request)).toEqual(request);

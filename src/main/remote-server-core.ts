@@ -7,7 +7,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { setLanguage } from '@shared/i18n';
 import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
 import { loginPage } from './remote-login-page';
-import { REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
+import { REMOTE_IDLE_MS, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
 // 遠隔サーバーの中身（Issue #464）。utilityProcess（remote-server.ts）が、main との伝文の口につないで動かす。
 // 127.0.0.1 だけで待ち受け、前に置いた転送（tailscale serve など）から届く頼みを受ける。決めたこと:
@@ -22,7 +22,7 @@ export const SESSION_COOKIE = '__Host-tanacode-remote';
 // 使わない時間でセッションを切るまで（人の操作の頼みで延ばす）
 export const IDLE_MS = REMOTE_IDLE_MS;
 // 券の期限
-export const TICKET_MS = 30 * 1000;
+export const TICKET_MS = REMOTE_TICKET_MS;
 // 接続してから、券の伝文が届くまで待つ時間
 export const HELLO_MS = 5 * 1000;
 // 1 つの伝文の大きさの上限（画像の添付を送れる大きさ）
@@ -34,7 +34,7 @@ export const MAX_CALLS_PER_10S = 200;
 // 送りきれずにたまった量の上限。超えたら、その接続を切る（回線の遅い相手に、知らせがたまり続けないように）
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 // 1 つのセッションが同時に持てる券の数（古いものから捨てる）
-export const MAX_TICKETS_PER_SESSION = 4;
+export const MAX_TICKETS_PER_SESSION = REMOTE_TICKETS_PER_SESSION;
 // 断った接続を、相手が閉じるのを待たずに切るまで
 const REFUSE_GRACE_MS = 1000;
 // ログインに続けて失敗したら、そのパスキーを待たせる（この回数から。待つ時間は 1 分から倍にしていき、15 分まで。最後の失敗から 15 分たったら数え直す）。
@@ -282,18 +282,33 @@ export class RemoteServerCore {
       void this.authRoute(req, res, path);
       return;
     }
-    // WebSocket の券。セッションの Cookie が要る（③ で、束縛の鍵の署名も求める）
-    if (req.method === 'POST' && path === '/api/ticket') {
-      const session = this.sessionOf(req);
-      if (!session) return this.reply(res, 401, { error: 'unauthorized' });
-      const ticket = randomBytes(32).toString('base64url');
-      // 券の数に上限を置く（古いものから捨てる）
+    // WebSocket の券。セッションの Cookie と、main が作った乱数への束縛の鍵の署名が要る（begin で乱数を受け、署名して送る）
+    if (req.method === 'POST' && (path === '/api/ticket/begin' || path === '/api/ticket')) {
+      void this.ticketRoute(req, res, path);
+      return;
+    }
+    this.reply(res, 404, { error: 'not found' });
+  }
+
+  // 券の口。券は main が出し、ここでも控える（握手のときに、両方で確かめる）
+  private async ticketRoute(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const session = this.sessionOf(req);
+    if (!session) return this.reply(res, 401, { error: 'unauthorized' });
+    try {
+      if (path === '/api/ticket/begin') {
+        const begun = await this.auth({ op: 'challenge', purpose: 'ticket' });
+        return this.reply(res, 200, { challengeId: begun.challengeId, bindingChallenge: begun.challenge });
+      }
+      const body = await this.readJson(req);
+      if (!body) return this.reply(res, 400, { error: 'bad request' });
+      const { ticket } = await this.auth({ op: 'ticket', sessionId: session.sessionId, challengeId: String(body.challengeId ?? ''), bindingSignature: String(body.bindingSignature ?? '') });
       const mine = [...this.tickets].filter(([, entry]) => entry.sessionId === session.sessionId);
       for (const [old] of mine.slice(0, Math.max(0, mine.length - MAX_TICKETS_PER_SESSION + 1))) this.tickets.delete(old);
       this.tickets.set(ticket, { sessionId: session.sessionId, until: this.now() + TICKET_MS });
       return this.reply(res, 200, { ticket });
+    } catch {
+      return this.reply(res, 400, { error: 'bad request' });
     }
-    this.reply(res, 404, { error: 'not found' });
   }
 
   // main に本人確認を頼む（返事が無ければ、待ちきれずに断る）
@@ -379,7 +394,7 @@ export class RemoteServerCore {
           return this.reply(res, 200, await this.auth({ op: 'pair-status', requestId: String(body.requestId ?? '') }));
         case '/api/login/begin': {
           const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: [], challenge: this.loginChallenge(now + CEREMONY_MS) });
-          const binding = await this.auth({ op: 'challenge' });
+          const binding = await this.auth({ op: 'challenge', purpose: 'login' });
           return this.reply(res, 200, { options, challengeId: binding.challengeId, bindingChallenge: binding.challenge });
         }
         case '/api/login/finish': {
@@ -513,7 +528,7 @@ export class RemoteServerCore {
     if (this.clients.size >= MAX_CLIENTS) return null;
     const client: Client = { id: randomBytes(16).toString('base64url'), sessionId, socket: ws, calls: [], closing: false };
     this.clients.set(client.id, client);
-    this.post({ type: 'connected', clientId: client.id, sessionId });
+    this.post({ type: 'connected', clientId: client.id, sessionId, ticket });
     ws.send(encodeForClient({ type: 'ready' }));
     return client;
   }
