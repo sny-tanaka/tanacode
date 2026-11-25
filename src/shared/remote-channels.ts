@@ -154,7 +154,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.TasksAgentLog]: same(['string', 'object']),
   [IpcChannel.TasksStop]: same(['string', 'object']),
   [IpcChannel.ShellCreate]: same(['string', 'number', 'number']),
-  [IpcChannel.ShellAttach]: replace([], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 遠隔の接続は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
+  [IpcChannel.ShellAttach]: same([]),
   [IpcChannel.FolderPick]: replace([], 'フォルダを選ぶ Mac のダイアログ（スマホ向けのフォルダの一覧に置き換える）'),
   [IpcChannel.FolderInfo]: same(['string']),
   [IpcChannel.FolderParentInstructions]: same(['string', 'boolean?']),
@@ -205,7 +206,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.BrowserLoginsGet]: same([]),
   [IpcChannel.BrowserRemembersGet]: same([]),
   [IpcChannel.BrowserPopupsGet]: same([]),
-  [IpcChannel.SessionsFocus]: replace(['nullable-string'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 遠隔の接続は、その接続が開いているセッションとして覚える（Mac の画面の分は変えない）
+  [IpcChannel.SessionsFocus]: same(['nullable-string']),
   [IpcChannel.SessionsInterrupt]: same(['string']),
   [IpcChannel.SessionsDismissSuggestion]: same(['string']),
   [IpcChannel.SessionsExportReveal]: mac(['string'], 'Finder で表示する'),

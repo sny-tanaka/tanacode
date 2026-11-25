@@ -597,6 +597,7 @@ const modules: Record<string, Record<string, unknown>> = {
       killAll: () => undefined,
       run: echo('shells.run'),
       attach: echo('shells.attach'),
+      snapshot: () => [],
       detach: () => undefined,
     }),
   },

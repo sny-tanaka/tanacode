@@ -1039,6 +1039,11 @@ export class SessionManager {
 
   focus(id: string | null): void {
     this.focusedId = id;
+    this.markRead(id);
+  }
+
+  // 新しい応答の印を外す（スマホの画面で開いたとき。Mac の画面の「開いているセッション」は変えない）
+  markRead(id: string | null): void {
     const rt = id ? this.runtimes.get(id) : undefined;
     if (rt?.unread) {
       rt.unread = false;

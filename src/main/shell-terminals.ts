@@ -205,6 +205,11 @@ export class ShellTerminals {
   // 文字列は、控えの画面と、まだ書き終えていない出力をつないだもの（返したあとに出たものだけを、知らせで送る）
   attach(): ShellSnapshot[] {
     this.detached = false;
+    return this.snapshot();
+  }
+
+  // 今のターミナルを開いた順に、画面を描き直すための文字列と一緒に返す（知らせるかどうかの印は変えない。スマホの画面が読むとき）
+  snapshot(): ShellSnapshot[] {
     const snapshots: ShellSnapshot[] = [];
     for (const [id, s] of [...this.shells]) {
       // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）。
