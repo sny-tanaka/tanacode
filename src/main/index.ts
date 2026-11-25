@@ -1085,7 +1085,7 @@ function registerIpc(): void {
   listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
   handle(IpcChannel.PtySnapshot, (e, id: string) => P(e).manager.ptySnapshot(id));
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
-    P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
+    P(e).shells.createShared(id, P(e).cwdOf(id), cols, rows),
   );
   // スマホの画面は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
   handle(IpcChannel.ShellAttach, (e) => (e.kind === 'remote' ? P(e).shells.snapshot() : P(e).shells.attach()));

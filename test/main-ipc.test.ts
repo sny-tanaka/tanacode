@@ -237,7 +237,7 @@ describe('そのまま渡す受け口', () => {
       [{ claudeSessionId: 'c1', cwd: '/work/cafe', title: '外の会話', updatedAt: 1 }],
       call('manager.importSession', 'c1', '/work/cafe', '外の会話'),
     ],
-    [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.create', 's1', cwdOf('s1'), 120, 40)],
+    [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.createShared', 's1', cwdOf('s1'), 120, 40)],
     [IpcChannel.ShellAttach, [], call('shells.attach')],
     [IpcChannel.PtySnapshot, ['s1'], call('manager.ptySnapshot', 's1')],
     [IpcChannel.TranslateRun, [['こんにちは', 'Hello']], call('translator.translate', ['こんにちは', 'Hello'])],
@@ -517,7 +517,7 @@ describe('フォルダ（新規セッションの画面）', () => {
     // 開いたフォルダの ID で、エクスプローラー・ソース管理・ターミナルが、そのフォルダを使う
     await expect(invoke(IpcChannel.WorkspaceInfo, ids[0])).resolves.toEqual(callIn(picked, 'workspace.info'));
     await expect(invoke(IpcChannel.GitState, ids[1])).resolves.toEqual(callIn(session, 'scm.state'));
-    await expect(invoke(IpcChannel.ShellCreate, ids[2], 80, 24)).resolves.toEqual(call('shells.create', ids[2], worktreeRoot, 80, 24));
+    await expect(invoke(IpcChannel.ShellCreate, ids[2], 80, 24)).resolves.toEqual(call('shells.createShared', ids[2], worktreeRoot, 80, 24));
   });
 
   it('知っているフォルダでも、フォルダでなくなっていたら開かない', async () => {

@@ -592,6 +592,7 @@ const modules: Record<string, Record<string, unknown>> = {
   'shell-terminals': {
     ShellTerminals: fakeClass('ShellTerminals', {
       create: echo('shells.create'),
+      createShared: echo('shells.createShared'),
       write: echo('shells.write'),
       resize: echo('shells.resize'),
       kill: echo('shells.kill'),
