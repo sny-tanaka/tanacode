@@ -8,6 +8,7 @@ import type { ReviewComment } from '../review/LineComments';
 import { sessionName } from '../sessions/sessionLinks';
 import { PastedChips } from './PastedChips';
 import { SchedulePicker } from './SchedulePicker';
+import { isRemoteMode } from '../remote/mode';
 
 const MAX_SUGGESTIONS = 40;
 // @ の候補に、ファイルより先に出すセッションの数
@@ -321,8 +322,8 @@ export function ChatInput({
       if (file.type.startsWith('image/')) {
         paths.push(await window.tanacode.attachments.save(file.name || 'image.png', new Uint8Array(await file.arrayBuffer())));
       } else {
-        // 画像以外はパスをそのまま入れる（Claude が必要なら読む）
-        const path = window.tanacode.pathForFile(file);
+        // 画像以外はパスをそのまま入れる（Claude が必要なら読む）。スマホの画面のファイルは Mac の上に無いので、Mac に送って保存した先のパスを入れる
+        const path = window.tanacode.pathForFile(file) || (isRemoteMode() ? await window.tanacode.attachments.save(file.name || 'file', new Uint8Array(await file.arrayBuffer())) : '');
         if (path) texts.push(path);
       }
     }

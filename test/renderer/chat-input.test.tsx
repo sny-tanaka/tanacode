@@ -4,6 +4,7 @@ import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
 import { ChatInput, listCompletionFiles, submitToClaude, type CompletionSource } from '../../src/renderer/src/chat/ChatInput';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 import { deferred } from './press-checklist-fixtures';
@@ -437,6 +438,35 @@ describe('読んでいる・保存している間に変わったら、古い結�
     await act(async () => saving.resolve('/tmp/attachments/0123abcd-shot.png'));
     expect(onAttachmentsChange).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('添付: スマホの画面では、画像以外のファイルも Mac に送って保存し、保存した先のパスを入れる（スマホのファイルは Mac の上に無い）', async () => {
+    api = mockApi({ 'attachments.save': (name: never) => Promise.resolve(`/tmp/attachments/0123abcd-${name as string}`), pathForFile: () => '' });
+    api.install();
+    setRemoteMode(true);
+    try {
+      render(<Harness owner="s1" />);
+      await act(async () => {
+        fireEvent.drop(document.querySelector('.chat-input')!, { dataTransfer: { files: [new File(['x'], 'notes.txt')], types: ['Files'] } });
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(box().value).toBe('/tmp/attachments/0123abcd-notes.txt '));
+      expect(api.argsOf('attachments.save').map((args) => args[0])).toEqual(['notes.txt']);
+    } finally {
+      setRemoteMode(false);
+    }
+  });
+
+  it('添付: Mac の画面で Mac の上のパスが分からないファイルは、入れない', async () => {
+    api = mockApi({ 'attachments.save': () => Promise.resolve('/tmp/x'), pathForFile: () => '' });
+    api.install();
+    render(<Harness owner="s1" />);
+    await act(async () => {
+      fireEvent.drop(document.querySelector('.chat-input')!, { dataTransfer: { files: [new File(['x'], 'notes.txt')], types: ['Files'] } });
+      await Promise.resolve();
+    });
+    expect(box().value).toBe('');
+    expect(api.argsOf('attachments.save')).toEqual([]);
   });
 
   it('添付: 保存している間に打った文字や、続けて足した画像を消さない', async () => {
