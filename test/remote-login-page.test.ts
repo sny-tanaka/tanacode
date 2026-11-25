@@ -64,7 +64,7 @@ function fakeServer(routes: Record<string, (body: Record<string, unknown>) => un
       const value = await routes[path](body);
       return { ok: true, json: async () => value };
     } catch {
-      return { ok: false, json: async () => ({}) };
+      return { ok: false, status: 400, json: async () => ({}) };
     }
   });
   return { fetch, calls };
@@ -193,6 +193,14 @@ describe('認証の前の画面のスクリプト', () => {
     document.getElementById('login')!.click();
     await waitFor(() => expect(only.idb.data.has('pending')).toBe(false));
     await waitFor(() => expect(only.status()).toBe(JSON.parse(document.getElementById('messages')!.textContent!).failed));
+
+    // Face ID を取りやめた・通信が切れた（遠隔サーバーが断ったのではない）ときは、pending を残す
+    const cancelled = await load(loginRoutes(), { keys: { pending, binding: current } });
+    Object.defineProperty(navigator, 'credentials', { value: { get: async () => { throw new Error('NotAllowedError'); } }, configurable: true });
+    document.getElementById('login')!.click();
+    await waitFor(() => expect(cancelled.status()).toBe(JSON.parse(document.getElementById('messages')!.textContent!).failed));
+    expect(cancelled.idb.data.get('pending')).toBe(pending);
+    expect(cancelled.idb.data.get('binding')).toBe(current);
 
     const none = await load(loginRoutes());
     document.getElementById('login')!.click();

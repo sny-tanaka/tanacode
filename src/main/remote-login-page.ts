@@ -130,7 +130,7 @@ const SCRIPT = String.raw`(() => {
   }
 
   // 承認の結果を読みそこねた（画面を消した・通信が切れた）ときは、鍵が pending に残る。先にそれで試し、通ったら binding に移す。
-  // 通らなければ pending を捨てて、binding で試す
+  // 遠隔サーバーが断った（400）ときだけ pending を捨てて、binding で試す（Face ID の取りやめ・通信の切れ・待たされているときは残す）
   async function login() {
     const pending = await store('readonly', (s) => s.get('pending'));
     const key = await bindingKey();
@@ -141,6 +141,7 @@ const SCRIPT = String.raw`(() => {
         await adoptBindingKey(pending);
         return status(M.loggedIn);
       } catch (error) {
+        if (error.message !== '400') throw error;
         await store('readwrite', (s) => s.delete('pending'));
         if (!key) throw error;
       }
