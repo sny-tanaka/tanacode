@@ -445,6 +445,23 @@ describe('WebSocket の口', () => {
     await waitFor(() => posted.find((m) => m.type === 'disconnected'));
   });
 
+  it('使わない時間は、人の操作の印（active: true）のある頼みでだけ数え直す。印は main にも渡す', async () => {
+    const { port, clock, posted } = await start();
+    const client = await connect(port);
+    clock.now += IDLE_MS - 1000;
+    client.ws.send(JSON.stringify({ id: 1, kind: 'send', profileId: 'default', channel: 'a', args: [], active: true }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 1));
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'call', id: 1, active: true }));
+    clock.now += IDLE_MS - 1000;
+    // 印の無い頼み（画面を開いただけの読み取り）は通すが、延ばさない
+    client.ws.send(JSON.stringify({ id: 2, kind: 'send', profileId: 'default', channel: 'a', args: [], active: 'yes' }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 2));
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'call', id: 2, active: false }));
+    clock.now += 2000;
+    client.ws.send(JSON.stringify({ id: 3, kind: 'send', profileId: 'default', channel: 'a', args: [], active: true }));
+    expect(await client.closed).toBe(4001);
+  });
+
   it('使わない時間が 30 分を超えたら、次の頼みで切る（4001）', async () => {
     const { port, clock } = await start();
     const client = await connect(port);

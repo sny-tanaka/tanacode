@@ -533,7 +533,7 @@ export class RemoteServerCore {
     return client;
   }
 
-  // 接続からの伝文。{ id, kind, profileId, channel, args } の頼みと、{ type: 'subscribe', channels } だけを受ける
+  // 接続からの伝文。{ id, kind, profileId, channel, args, active? } の頼みと、{ type: 'subscribe', channels } だけを受ける
   private clientMessage(client: Client, message: unknown): void {
     const refuse = (code: number) => this.refuse(client.socket, code, client);
     // 頼みも subscribe も、頻度の上限に数える
@@ -553,9 +553,10 @@ export class RemoteServerCore {
     if (typeof m.id !== 'number' || (m.kind !== 'invoke' && m.kind !== 'send') || typeof m.channel !== 'string' || typeof m.profileId !== 'string' || !Array.isArray(m.args)) {
       return refuse(4003);
     }
-    // 人の操作の頼みで、使わない時間を数え直す（main も、届いた頼みで控え直す）
-    session.lastActive = now;
+    // 人の操作の頼み（active）でだけ、使わない時間を数え直す（main も、同じ頼みで控え直す）
+    const active = m.active === true;
+    if (active) session.lastActive = now;
     // Uint8Array（{ "$bytes": "<base64>" }）は、main が引数の形（bytes）の位置でだけ戻す
-    this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: m.args });
+    this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: m.args, active });
   }
 }

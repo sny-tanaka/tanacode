@@ -284,8 +284,8 @@ export class RemoteHost {
       reply({ ok: false, error: t('main.error.remoteProfileNotAllowed') });
       return;
     }
-    // 人の操作の頼みで、使わない時間を数え直す（待ち受けを始め直したときに、この時刻を渡す）
-    session.lastActive = this.now();
+    // 人の操作の頼み（active）でだけ、使わない時間を数え直す（待ち受けを始め直したときに、この時刻を渡す）
+    if (message.active) session.lastActive = this.now();
     const caller: RemoteCaller = { kind: 'remote', profileId: message.profileId, clientId: message.clientId, registrationId: session.registrationId };
     try {
       reply({ ok: true, value: await this.deps.call(caller, message.channel, message.args) });

@@ -342,9 +342,12 @@ describe('RemoteHost', () => {
     t.host.addSession(session({ sessionId: 's2', lastActive: clock.now - 31 * 60 * 1000 }));
     t.host.start(CONFIG);
     t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
-    t.toHost({ type: 'call', id: 1, clientId: 'c1', profileId: 'default', kind: 'send', channel: 'x', args: [] });
+    t.toHost({ type: 'call', id: 1, clientId: 'c1', profileId: 'default', kind: 'send', channel: 'x', args: [], active: true });
     await flush();
     clock.now += 5 * 60 * 1000;
+    // 人の操作の印の無い頼み（画面を開いただけの読み取り）では、延ばさない
+    t.toHost({ type: 'call', id: 2, clientId: 'c1', profileId: 'default', kind: 'send', channel: 'x', args: [], active: false });
+    await flush();
     t.posted.length = 0;
     t.host.start(CONFIG);
     expect(t.host.connectionCount()).toBe(0);

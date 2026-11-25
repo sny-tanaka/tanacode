@@ -9,7 +9,8 @@ describe('parseServerMessage（遠隔サーバーから届いた伝文の形）'
     [{ type: 'closed' }],
     [{ type: 'connected', clientId: 'c', sessionId: 's', ticket: 't' }],
     [{ type: 'disconnected', clientId: 'c' }],
-    [{ type: 'call', id: 1, clientId: 'c', profileId: 'default', kind: 'invoke', channel: 'sessions:list', args: [] }],
+    [{ type: 'call', id: 1, clientId: 'c', profileId: 'default', kind: 'invoke', channel: 'sessions:list', args: [], active: true }],
+    [{ type: 'call', id: 1, clientId: 'c', profileId: 'default', kind: 'send', channel: 'sessions:list', args: [], active: false }],
     [{ type: 'subscribe', clientId: 'c', channels: ['pty:data'] }],
     [{ type: 'session-expired', sessionId: 's' }],
   ])('形の合う伝文は、そのまま使う: %j', (message) => {
