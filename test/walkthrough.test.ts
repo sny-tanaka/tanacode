@@ -193,6 +193,30 @@ describe('MCP のツール', () => {
     expect(text(await pending)).toContain('did not confirm');
   });
 
+  it('show_code: 画面が複数あれば、そのセッションを見ている画面の返事だけを使う（見ていないスマホの「見ていない」が先に届いても）', async () => {
+    let last: Walkthrough | null = null;
+    const control = new WalkthroughControl({
+      cwdOf: () => cwd,
+      enabled: () => true,
+      onChange: (_id, w) => {
+        last = w;
+      },
+      comment: noPullRequests,
+      shownTimeoutMs: 500,
+    });
+    control.viewing(ME, true, 'mac');
+    control.viewing('another-session', false, 'phone');
+    const pending = control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    const w = await vi.waitFor(() => {
+      if (!last) throw new Error('まだ画面に送っていない');
+      return last as Walkthrough;
+    });
+    control.shown(ME, w.id, w.seq, 'unseen', 'phone');
+    control.shown(ME, w.id, w.seq, 'moved', 'mac');
+    expect(text(await pending)).not.toContain('did not');
+    expect(text(await pending)).not.toContain('another session');
+  });
+
   it('start_walkthrough: 人が別のセッションを見ているときは、開いたとは返さない', async () => {
     const r = await setup(true, noPullRequests, () => 'unseen').control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step()] });
     expect(text(r)).toContain('Prepared 1/2 "税率を読む" (src/tax.ts:3-5). The user is viewing another session in tanacode, so it opens when the user comes back to this session.');

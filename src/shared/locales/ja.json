@@ -1013,6 +1013,8 @@
       "suggestTag": "suggest",
       "remove": "外す",
       "image": "画像 {name}",
+      "tooLarge": "{name} は大きすぎて、スマホから送れません（{size}MB まで）",
+      "attach": "写真やファイルを添付",
       "schedule": "時刻を指定して送信",
       "scheduleTip": "時刻を指定して送信（予約）",
       "interrupt": "中断",

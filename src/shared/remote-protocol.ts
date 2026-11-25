@@ -5,6 +5,11 @@ import type { Language } from './i18n';
 // main は遠隔サーバーを信じきらない。遠隔サーバーから届いた伝文は、どれも parseServerMessage で形を確かめてから使い、
 // 呼び出し元（Caller）は、伝文の中のプロファイルではなく、main が持つ接続の控えから組み立てる
 
+// 1 つの伝文の大きさの上限（遠隔サーバーの WebSocket。画像の添付を送れる大きさ）
+export const REMOTE_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+// スマホから送る添付の大きさの上限。伝文ではバイト列を base64 にする（4/3 倍になる）ので、伝文の上限に収まる大きさ
+export const REMOTE_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
 // 待ち受けの設定。port: 127.0.0.1 で待ち受けるポート / publicOrigin: スマホが開く URL の origin（例: https://mac.example.ts.net）。
 // Host と Origin は、これと完全に一致しなければ断る
 // language: 遠隔の画面（ログイン・登録と、ログインしたあとの画面）の言語（Mac の tanacode の画面の言語にそろえる。握手の返事でも渡す）

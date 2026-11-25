@@ -149,9 +149,9 @@ function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void 
 
 // プロファイル id の画面と、そのプロファイルを許した遠隔の接続への知らせ
 function sendTo(id: string): Send {
-  return (channel, payload) => {
-    deliver(id, channel, payload);
-    remoteHost.emit(id, channel, payload);
+  return (channel, payload, except) => {
+    if (except !== 'mac') deliver(id, channel, payload);
+    remoteHost.emit(id, channel, payload, except);
   };
 }
 
@@ -926,7 +926,9 @@ function registerIpc(): void {
   handle(IpcChannel.WalkthroughGet, (e) => P(e).walkthroughControl?.list() ?? []);
   handle(IpcChannel.WalkthroughGo, (e, id: string, index: unknown) => P(e).walkthroughControl?.go(String(id), Number(index)));
   handle(IpcChannel.WalkthroughClose, (e, id: string) => P(e).walkthroughControl?.close(String(id)));
-  listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) => P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown));
+  listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) =>
+    P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown, e.kind === 'remote' ? e.clientId : 'mac'),
+  );
   // 見ている所・開いているファイルは、画面ごと（Mac の画面と、スマホの接続ごと）に持つ
   listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) =>
     P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true, e.kind === 'remote' ? e.clientId : 'mac'),
@@ -1093,8 +1095,9 @@ function registerIpc(): void {
   listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));
   listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
   handle(IpcChannel.PtySnapshot, (e, id: string) => P(e).manager.ptySnapshot(id));
+  // 開いた知らせは、開いた画面には送らない（返事で受け取る）
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
-    P(e).shells.createShared(id, P(e).cwdOf(id), cols, rows),
+    P(e).shells.createShared(id, P(e).cwdOf(id), cols, rows, e.kind === 'remote' ? e.clientId : 'mac'),
   );
   // スマホの画面は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
   handle(IpcChannel.ShellAttach, (e) => (e.kind === 'remote' ? P(e).shells.snapshot() : P(e).shells.attach()));

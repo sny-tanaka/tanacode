@@ -45,7 +45,8 @@ import { UsageMonitor } from './usage-monitor';
 import { OpenFileWatchers } from './open-file-watcher';
 import { WorkspaceWatchers } from './workspace-watcher';
 
-export type Send = <C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]) => void;
+// except: 送らない画面（その画面が頼んだことの知らせを、ほかの画面にだけ送るとき）。'mac' は Mac の画面、ほかは遠隔の接続の id
+export type Send = <C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C], except?: string) => void;
 // 通知（タイトルはアプリの名前、サブタイトルはセッション名）。clickChannel: クリックで画面に送る知らせ（既定はそのセッションを選ぶ）
 export type Notify = (
   profile: Profile,
@@ -148,7 +149,7 @@ export class Profile {
         onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
         onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
         onResized: (id, cols, rows) => send(IpcChannel.ShellResized, { id, cols, rows }),
-        onOpened: (owner, id, name, task, replay) => send(IpcChannel.ShellOpened, { owner, id, name, task, ...(replay ? { replay } : {}) }),
+        onOpened: (owner, id, name, task, replay, except) => send(IpcChannel.ShellOpened, { owner, id, name, task, ...(replay ? { replay } : {}) }, except),
       },
       claudeDir,
     );

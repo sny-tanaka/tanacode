@@ -1,7 +1,8 @@
 // スマホの画面のリンクの守り（Issue #464）。Mac の画面では、main の setWindowOpenHandler と will-navigate が
 // 「http(s) だけ・外のブラウザで・画面は移らせない」を守っている。ふつうのブラウザには無いので、ここで補う。
 // - window.open は、http(s) だけを、新しいタブに、開いた先から元の画面を触れない形（noopener・noreferrer）で開く
-// - 押したリンク（a）は、画面が拾わなかったものも含めて、画面そのものは移らせない（外の http(s) は新しいタブに開く）
+// - 押したリンク（a）は、画面が拾わなかったものも含めて、画面そのものは移らせない（外の http(s) は新しいタブに開く）。
+//   画面が作ったファイルのダウンロード（download の付いた blob: のリンク）だけは通す
 
 const external = (href: string, base: string): string | null => {
   try {
@@ -29,6 +30,8 @@ export function guardLinks(win: Window): void {
     if (!anchor) return;
     const href = anchor.getAttribute('href') ?? anchor.getAttribute('xlink:href');
     if (!href || href.startsWith('#')) return;
+    // 画面が作ったファイルのダウンロード（書き出しなど。remote/download.ts）は、そのまま通す（画面は移らない）
+    if (anchor.hasAttribute('download') && href.startsWith('blob:')) return;
     const handled = event.defaultPrevented;
     event.preventDefault();
     if (!handled) openSafely(href);

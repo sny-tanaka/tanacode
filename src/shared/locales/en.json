@@ -1050,6 +1050,8 @@
       "suggestTag": "suggest",
       "remove": "Remove",
       "image": "Image: {name}",
+      "tooLarge": "{name} is too large to send from the phone (up to {size} MB)",
+      "attach": "Attach photos or files",
       "schedule": "Schedule message",
       "scheduleTip": "Schedule message (send at a set time)",
       "interrupt": "Interrupt",

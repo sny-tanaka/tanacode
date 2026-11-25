@@ -8,7 +8,7 @@ import { setLanguage } from '@shared/i18n';
 import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
 import { appFile } from './remote-app-files';
 import { loginPage } from './remote-login-page';
-import { REMOTE_IDLE_MS, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
+import { REMOTE_IDLE_MS, REMOTE_MAX_MESSAGE_BYTES, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
 // 遠隔サーバーの中身（Issue #464）。utilityProcess（remote-server.ts）が、main との伝文の口につないで動かす。
 // 127.0.0.1 だけで待ち受け、前に置いた転送（tailscale serve など）から届く頼みを受ける。決めたこと:
@@ -27,7 +27,7 @@ export const TICKET_MS = REMOTE_TICKET_MS;
 // 接続してから、券の伝文が届くまで待つ時間
 export const HELLO_MS = 5 * 1000;
 // 1 つの伝文の大きさの上限（画像の添付を送れる大きさ）
-export const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+export const MAX_MESSAGE_BYTES = REMOTE_MAX_MESSAGE_BYTES;
 // 同時の接続の数の上限
 export const MAX_CLIENTS = 8;
 // 1 つの接続が 10 秒に送れる頼みの数の上限。超えたら切る

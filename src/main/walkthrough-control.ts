@@ -91,8 +91,12 @@ export class WalkthroughControl {
   }
 
   // Claude が示した場所を、画面がどう扱ったか。待っているもの（同じウォークスルーの同じ seq）にだけ渡す
-  shown(sessionId: string, walkthroughId: string, seq: number, shown: unknown): void {
+  // 画面が複数（Mac とスマホ）あれば、そのセッションを見ている画面の返事だけを使う（見ていない画面の「見ていない」が先に届いても、
+  // 見ている画面の返事を待つ）。どの画面も見ていなければ、先に届いたものを使う。source: 返事をした画面（'mac' か接続の id）
+  shown(sessionId: string, walkthroughId: string, seq: number, shown: unknown, source = 'mac'): void {
     if (typeof shown !== 'string' || !SHOWN.has(shown)) return;
+    const viewers = [...this.views].filter(([, view]) => view.sessionId === sessionId).map(([id]) => id);
+    if (viewers.length > 0 && !viewers.includes(source)) return;
     this.waiting.get(waitKey(sessionId, walkthroughId, seq))?.(shown as WalkthroughShown);
   }
 

@@ -536,6 +536,7 @@ const modules: Record<string, Record<string, unknown>> = {
       discard: () => undefined,
       viewing: () => undefined,
       keep: () => undefined,
+      shown: () => undefined,
       handle: echo('walkthrough.handle'),
     }),
   },
