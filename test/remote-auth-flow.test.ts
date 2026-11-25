@@ -157,7 +157,7 @@ describe('遠隔操作の登録とログイン（通し）', () => {
       ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', ticket: ticket.body.ticket })));
       ws.on('message', (data) => resolve(JSON.parse(data.toString())));
     });
-    expect(first).toEqual({ type: 'ready' });
+    expect(first).toEqual({ type: 'ready', profileIds: ['default'], language: 'ja' });
     expect(w.host.connectionCount()).toBe(1);
     ws.close();
   });

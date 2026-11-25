@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, request, type IncomingHttpHeaders } from 'node:http';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { RemoteSession, ServerMessage } from '@shared/remote-protocol';
@@ -28,7 +31,7 @@ afterEach(() => {
   current = null;
 });
 
-async function start(): Promise<Started> {
+async function start(appRoot: string | null = null): Promise<Started> {
   const posted: ServerMessage[] = [];
   const clock = { now: Date.now() };
   // main の代わりに、本人確認の頼みに答える（券の乱数と券。refuse なら断る）
@@ -43,7 +46,7 @@ async function start(): Promise<Started> {
       if (request.op === 'ticket' && request.bindingSignature === 'signed') return core.handle({ type: 'auth-result', id, ok: true, value: { ticket: randomBytes(16).toString('base64url') } });
       core.handle({ type: 'auth-result', id, ok: false, error: 'bad' });
     });
-  }, () => clock.now);
+  }, () => clock.now, appRoot);
   core.handle({ type: 'session-add', session: session() });
   core.handle({ type: 'listen', config: { port: 0, publicOrigin: ORIGIN, language: 'ja' } });
   const port = await waitFor(() => {
@@ -174,6 +177,38 @@ describe('HTTP の口', () => {
     expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: 'https://other.example.ts.net', cookie })).status).toBeNull();
   });
 
+  it('ログインしたあとの画面（/app/）は、セッションの Cookie があるときだけ配る（無ければ入口はログインの画面へ、ほかは 401）。置き場所が無ければ 404', async () => {
+    const { port } = await start();
+    const page = await send(port, 'GET', '/app/', { host: HOST });
+    expect(page.status).toBe(302);
+    expect(page.headers.location).toBe('/');
+    expect((await send(port, 'GET', '/app/assets/remote.js', { host: HOST })).status).toBe(401);
+    // テストの遠隔サーバーには、画面のファイルの置き場所が無い
+    expect((await send(port, 'GET', '/app/', { host: HOST, cookie })).status).toBe(404);
+  });
+
+  it('置き場所があれば、入口はキャッシュさせずに、assets は長くキャッシュさせて配る。CSP は自分の WebSocket だけにつなぐ。HEAD は中身を返さない', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tanacode-app-core-'));
+    mkdirSync(join(root, 'assets'));
+    writeFileSync(join(root, 'remote.html'), '<html>app</html>');
+    writeFileSync(join(root, 'assets', 'a.js'), 'x');
+    try {
+      const { port } = await start(root);
+      const page = await send(port, 'GET', '/app/', { host: HOST, cookie });
+      expect(page.status).toBe(200);
+      expect(page.body).toBe('<html>app</html>');
+      expect(page.headers['cache-control']).toBe('no-store');
+      expect(page.headers['content-security-policy']).toContain(`connect-src 'self' ${ORIGIN.replace('https', 'wss')}`);
+      expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+      const asset = await send(port, 'GET', '/app/assets/a.js', { host: HOST, cookie });
+      expect(asset.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+      expect((await send(port, 'HEAD', '/app/assets/a.js', { host: HOST, cookie })).body).toBe('');
+      expect((await send(port, 'GET', '/app/assets/none.js', { host: HOST, cookie })).status).toBe(404);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('券は、main が束縛の鍵の署名を確かめて出したときだけ渡す（断られた・本文が無い・壊れているなら 400）', async () => {
     const { port, main, posted } = await start();
     expect((await ticketFor(port)).status).toBe(200);
@@ -219,7 +254,7 @@ describe('WebSocket の口', () => {
   it('券の伝文でつながると、main に connected を知らせ、頼みを渡し、返事と知らせを送る', async () => {
     const { port, posted, core } = await start();
     const client = await connect(port);
-    expect(client.messages[0]).toEqual({ type: 'ready' });
+    expect(client.messages[0]).toEqual({ type: 'ready', profileIds: ['default'], language: 'ja' });
     const connected = posted.find((m) => m.type === 'connected');
     expect(connected).toMatchObject({ type: 'connected', sessionId: 's1' });
     const clientId = connected?.type === 'connected' ? connected.clientId : '';
