@@ -155,10 +155,15 @@ describe('セッションを切り替えたときの、前のセッションの�
 });
 
 describe('スマホの画面で読み込み直すときの下書き', () => {
+  // スマホの画面の部品は、幅で配置を決める（jsdom には matchMedia が無い。ここでは広い幅）
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  });
   afterEach(() => {
     setRemoteMode(false);
     sessionStorage.clear();
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it('読み込み直す前に、打ちかけの文とほかのセッションの下書きを控え、描き直したら戻す（Mac の画面では控えない）', () => {

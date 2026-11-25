@@ -1102,7 +1102,7 @@ export function App() {
           scheduled={scheduled}
           checklistUnread={checklistUnread}
         />
-        {mobile && sessionDrawer && <div className="mobile-backdrop" onClick={() => setSessionDrawer(false)} />}
+        {mobile && <div className="mobile-backdrop" onClick={() => setSessionDrawer(false)} />}
         {resizer('sessions')}
         {composing && (
           <NewSessionPane

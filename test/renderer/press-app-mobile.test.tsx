@@ -119,6 +119,31 @@ describe('スマホの画面の配置（App）', () => {
     expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('米の話');
   });
 
+  it('チャットの見出しのスイッチとボタンは「…」の中にまとめ、押したら閉じる。外を押しても閉じる', async () => {
+    render(<App />);
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
+    fireEvent.click(screen.getAllByText('パンの話')[0]);
+    await flush();
+    const header = document.querySelector('.claude-header') as HTMLElement;
+    expect(header.querySelector('.claude-header-tools')).toBeNull();
+    const more = () => header.querySelector('button[aria-label="その他の操作"]') as HTMLButtonElement;
+    fireEvent.click(more());
+    expect(more().getAttribute('aria-expanded')).toBe('true');
+    const tools = header.querySelector('.claude-header-tools') as HTMLElement;
+    expect([...tools.querySelectorAll('.claude-header-tool')].map((row) => row.textContent?.trim())).toEqual(
+      expect.arrayContaining(['Remote Control', '離席モード', '作業を書き出す…']),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '作業を書き出す…' }));
+    expect(header.querySelector('.claude-header-tools')).toBeNull();
+    fireEvent.click(more());
+    fireEvent.click(document.querySelector('.claude-header-tools-backdrop')!);
+    expect(header.querySelector('.claude-header-tools')).toBeNull();
+    fireEvent.click(more());
+    fireEvent.click(more());
+    expect(header.querySelector('.claude-header-tools')).toBeNull();
+  });
+
   it('ほかのセッションの答え待ちは、上の帯に数を出し、チャットのタブの帯を押すとそのセッションへ移る', async () => {
     render(<App />);
     await flush();

@@ -9033,20 +9033,45 @@ body.resizing-rows webview {
   flex: 1;
   min-height: 0;
 }
-/* セッションの引き出し（左から重ねて出す） */
-.app.mobile[data-session-drawer='open'] .main > .sidebar {
+/* セッションの引き出し（左から重ねて、スライドで出し入れする）。閉じている間も置いておき、画面の外へずらして隠す
+   （閉じ終わったら visibility で隠し、押せず・読み上げにも出ないようにする） */
+.app.mobile .main > .sidebar {
   display: flex;
   position: absolute;
   inset: 0 auto 0 0;
   width: 85% !important;
   z-index: 40;
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform 0.25s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0.25s;
+}
+.app.mobile[data-session-drawer='open'] .main > .sidebar {
+  transform: none;
+  visibility: visible;
   box-shadow: 8px 0 24px rgb(0 0 0 / 45%);
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .mobile-backdrop {
   position: absolute;
   inset: 0;
   z-index: 30;
   background: rgb(0 0 0 / 45%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.app.mobile[data-session-drawer='open'] .mobile-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app.mobile .main > .sidebar,
+  .app.mobile[data-session-drawer='open'] .main > .sidebar,
+  .mobile-backdrop {
+    transition: none;
+  }
 }
 
 /* 上の帯 */
@@ -9230,6 +9255,78 @@ body.resizing-rows webview {
 .app.mobile .claude-header .claude-title {
   display: none;
 }
-.app.mobile .claude-header {
-  overflow-x: auto;
+/* 見出しのスイッチとボタンは「…」の中（ClaudePane）。見出しの下に、右に寄せて重ねて出す */
+.claude-header-tools-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+.claude-header-tools {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 51;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  animation: claude-header-tools-in 0.16s ease-out;
+  transform-origin: top right;
+}
+@keyframes claude-header-tools-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+.claude-header-tool {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+button.claude-header-tool {
+  justify-content: flex-start;
+}
+button.claude-header-tool:active {
+  background: var(--bg-hover);
+}
+button.claude-header-tool:disabled {
+  color: var(--text-tertiary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .claude-header-tools {
+    animation: none;
+  }
+}
+/* 入力欄の下の切り替え（設定ファイル・モデル・エフォート・モード）は、折り返さずに 1 行で幅を分け合う。押すと iOS の選ぶ画面が出る。
+   モデルの一覧の読み直しは、めったに使わないので出さない */
+.app.mobile .chat-options {
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.app.mobile .chat-options select,
+.app.mobile .chat-options select.settings-file-select {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  min-height: 32px;
+  text-overflow: ellipsis;
+}
+.app.mobile .chat-options .model-refresh {
+  display: none;
 }
