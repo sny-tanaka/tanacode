@@ -25,6 +25,15 @@ describe('RemoteBanner', () => {
     expect(screen.getByText('遠隔操作中（iPad）')).toBeTruthy();
   });
 
+  it('返事が無い（undefined）ときも、何も出さない', async () => {
+    const api = mockApi({ 'remote.connections': () => Promise.resolve(undefined) });
+    api.install();
+    const { container } = render(<RemoteBanner />);
+    await act(async () => {});
+    act(() => api.emit('remote.onConnectionsChanged', undefined));
+    expect(container.innerHTML).toBe('');
+  });
+
   it('一覧を読めなければ、何も出さない', async () => {
     const api = mockApi({ 'remote.connections': () => Promise.reject(new Error('no')) });
     api.install();

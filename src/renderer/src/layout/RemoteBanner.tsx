@@ -9,11 +9,12 @@ export function RemoteBanner() {
 
   useEffect(() => {
     let alive = true;
+    // 返事が無いとき（遠隔操作を出していない起動・画面の作り物）は、つながっていないものとして扱う
     void window.tanacode.remote.connections().then(
-      (loaded) => alive && setConnections(loaded),
+      (loaded) => alive && setConnections(loaded ?? []),
       () => {},
     );
-    const off = window.tanacode.remote.onConnectionsChanged((next) => setConnections(next));
+    const off = window.tanacode.remote.onConnectionsChanged((next) => setConnections(next ?? []));
     return () => {
       alive = false;
       off();
