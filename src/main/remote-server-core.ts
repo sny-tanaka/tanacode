@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import type { HostMessage, RemoteListenConfig, RemoteSession, ServerMessage } from '@shared/remote-protocol';
+import { REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
 // 遠隔サーバーの中身（Issue #464）。utilityProcess（remote-server.ts）が、main との伝文の口につないで動かす。
 // 127.0.0.1 だけで待ち受け、前に置いた転送（tailscale serve など）から届く頼みを受ける。決めたこと:
@@ -15,7 +15,7 @@ import type { HostMessage, RemoteListenConfig, RemoteSession, ServerMessage } fr
 
 export const SESSION_COOKIE = '__Host-tanacode-remote';
 // 使わない時間でセッションを切るまで（人の操作の頼みで延ばす）
-export const IDLE_MS = 30 * 60 * 1000;
+export const IDLE_MS = REMOTE_IDLE_MS;
 // 券の期限
 export const TICKET_MS = 30 * 1000;
 // 接続してから、券の伝文が届くまで待つ時間
@@ -112,9 +112,11 @@ export class RemoteServerCore {
         }
         break;
       }
-      case 'disconnect':
-        this.clients.get(message.clientId)?.socket.close(1000);
+      case 'disconnect': {
+        const client = this.clients.get(message.clientId);
+        if (client) this.refuse(client.socket, 1000, client);
         break;
+      }
     }
   }
 
@@ -217,7 +219,7 @@ export class RemoteServerCore {
   private dropSession(sessionId: string): void {
     this.sessions.delete(sessionId);
     for (const [ticket, entry] of this.tickets) if (entry.sessionId === sessionId) this.tickets.delete(ticket);
-    for (const client of this.clients.values()) if (client.sessionId === sessionId) client.socket.close(4001);
+    for (const client of this.clients.values()) if (client.sessionId === sessionId) this.refuse(client.socket, 4001, client);
   }
 
   private request(req: IncomingMessage, res: ServerResponse): void {

@@ -1,6 +1,6 @@
 import type { IpcEvent } from '@shared/ipc';
 import { REMOTE_EVENTS } from '@shared/remote-events';
-import { parseServerMessage, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
+import { parseServerMessage, REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 import { t } from '@shared/i18n';
 import type { RemoteStatus } from '@shared/remote-settings';
 import type { RemoteCaller } from './remote-dispatch';
@@ -31,9 +31,6 @@ export type RemoteHostDeps = {
 };
 
 type Client = { sessionId: string; subscriptions: Set<string> };
-
-// 使わない時間でセッションを捨てるまで（遠隔サーバーと同じ。main でも確かめる）
-export const HOST_IDLE_MS = 30 * 60 * 1000;
 
 export class RemoteHost {
   private child: ServerProcess | null = null;
@@ -102,7 +99,7 @@ export class RemoteHost {
   // セッションが期限・使わない時間の内か。切れていれば捨てる（遠隔サーバーを信じきらない）
   private alive(session: RemoteSession): boolean {
     const now = this.now();
-    if (now < session.expiresAt && now - session.lastActive < HOST_IDLE_MS) return true;
+    if (now < session.expiresAt && now - session.lastActive < REMOTE_IDLE_MS) return true;
     this.forget(session.sessionId);
     this.child?.post({ type: 'session-remove', sessionId: session.sessionId });
     return false;

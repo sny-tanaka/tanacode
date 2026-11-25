@@ -40,6 +40,9 @@ export type ServerMessage =
   | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[] }
   | { type: 'subscribe'; clientId: string; channels: string[] };
 
+// 使わない時間でセッションを捨てるまで（人の操作の頼みで延ばす）。遠隔サーバーと main の両方が、この長さで確かめる
+export const REMOTE_IDLE_MS = 30 * 60 * 1000;
+
 // 接続の id・セッションの id・チャンネルの名前の上限（ふつうはずっと短い）
 const MAX_ID = 128;
 const MAX_CHANNELS = 64;
