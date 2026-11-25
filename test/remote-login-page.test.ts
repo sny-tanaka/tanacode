@@ -148,7 +148,7 @@ afterEach(() => {
 });
 
 describe('認証の前の画面のスクリプト', () => {
-  it('最初の段: 鍵が無ければ登録、鍵があればログイン、QR から開いたら（#pair=）鍵があっても登録。登録し直す・ログインに戻るで切り替える', async () => {
+  it('最初の段: 鍵が無ければ登録、鍵があればログイン（QR の URL #pair= のままでもログイン。コードは入れておく）。登録し直す・ログインに戻るで切り替える', async () => {
     const none = await load({});
     await waitFor(() => expect(none.step()).toBe('pair'));
     expect(none.$('to-login').hidden).toBe(true);
@@ -163,8 +163,12 @@ describe('認証の前の画面のスクリプト', () => {
     expect(registered.step()).toBe('login');
 
     const scanned = await load({}, { keys: { pending: current }, hash: '#pair=12345678' });
-    await waitFor(() => expect(scanned.step()).toBe('pair'));
+    await waitFor(() => expect(scanned.step()).toBe('login'));
+    scanned.$('to-pair').click();
     expect((scanned.$('code') as HTMLInputElement).value).toBe('12345678');
+    const fresh = await load({}, { hash: '#pair=87654321' });
+    await waitFor(() => expect(fresh.step()).toBe('pair'));
+    expect((fresh.$('code') as HTMLInputElement).value).toBe('87654321');
     expect((scanned.$('name') as HTMLInputElement).placeholder).toBe(M().namePlaceholder);
   });
 
@@ -196,6 +200,20 @@ describe('認証の前の画面のスクリプト', () => {
     await waitFor(() => expect(step()).toBe('pair'));
     expect(error()).toBe(M().rejected);
     expect(idb.data.get('binding')).toBe(current);
+  });
+
+  it('確認の数字の段で失敗したら（受付の期限切れ・承認の結果が消えた）、最初の段に戻して誤りを出す。処理の間はリンクも押せない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // 承認の結果が消えた: 鍵は pending に残るので、ログインの段に戻す
+    const gone = await load(pairRoutes([]));
+    gone.$('pair').click();
+    expect((gone.$('to-pair') as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(gone.step()).toBe('number'));
+    await vi.advanceTimersByTimeAsync(2000);
+    await waitFor(() => expect(gone.step()).toBe('login'));
+    await waitFor(() => expect(gone.error()).toBe(M().failed));
+    expect(gone.idb.data.has('pending')).toBe(true);
+    await waitFor(() => expect((gone.$('to-pair') as HTMLButtonElement).disabled).toBe(false));
   });
 
   it('承認を読みそこねて pending に残った鍵は、ログインで先に試し、通ったら binding に移す', async () => {
@@ -235,7 +253,7 @@ describe('認証の前の画面のスクリプト', () => {
     only.$('login').click();
     await waitFor(() => expect(only.error()).toBe(M().failed));
     expect(only.idb.data.has('pending')).toBe(false);
-    expect((only.$('login') as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() => expect((only.$('login') as HTMLButtonElement).disabled).toBe(false));
     expect(only.status()).toBe('');
 
     // Face ID を取りやめた・通信が切れた（遠隔サーバーが断ったのではない）ときは、pending を残す

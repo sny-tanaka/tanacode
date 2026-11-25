@@ -113,8 +113,10 @@ const SCRIPT = String.raw`(() => {
   const notice = (text) => { $('notice').textContent = text; $('notice').hidden = !text; };
   const error = (text) => { $('error').textContent = text; $('error').hidden = !text; };
   let hasKey = false;
+  let current = '';
   // 出す段を 1 つだけにする（install: ホーム画面に追加 / pair: 登録 / number: 確認の数字 / login: ログイン / done: ログインした）
   function show(step) {
+    current = step;
     for (const section of document.querySelectorAll('[data-step]')) section.hidden = section.dataset.step !== step;
     $('to-pair').hidden = step !== 'login';
     $('to-login').hidden = !(step === 'pair' && hasKey);
@@ -156,7 +158,6 @@ const SCRIPT = String.raw`(() => {
 
   async function pair() {
     status(M.pairing);
-    $('pair').disabled = true;
     const begun = await post('/api/pair/begin', { code: $('code').value.trim() });
     const o = begun.options;
     const cred = await navigator.credentials.create({ publicKey: { ...o, challenge: fromB64u(o.challenge), user: { ...o.user, id: fromB64u(o.user.id) }, excludeCredentials: [] } });
@@ -192,7 +193,6 @@ const SCRIPT = String.raw`(() => {
     const key = await bindingKey();
     if (!pending && !key) return error(M.noKey);
     status(M.loggingIn);
-    $('login').disabled = true;
     if (pending) {
       try {
         await loginWith(pending);
@@ -220,16 +220,31 @@ const SCRIPT = String.raw`(() => {
     await post('/api/login/finish', { response, challengeId: begun.challengeId, bindingSignature: await sign(key, begun.bindingChallenge) });
   }
 
-  // 失敗したら誤りを出し、ボタンを押せるように戻す
+  // 鍵（binding か pending）があればログインの段、無ければ登録の段を出す
+  const showStart = () =>
+    Promise.all([bindingKey(), store('readonly', (s) => s.get('pending'))])
+      .then(([key, pending]) => {
+        hasKey = Boolean(key || pending);
+        show(hasKey ? 'login' : 'pair');
+      })
+      .catch(() => show('pair'));
+  // 処理の間は、ボタンも下のリンクも押せなくする。失敗したら誤りを出し、押せるように戻す。
+  // 確認の数字の段で失敗した（受付の期限切れ・承認の結果が消えた）ときは、行き止まりにしないよう、最初の段に戻す
+  const setBusy = (busy) => {
+    $('login').disabled = $('pair').disabled = busy || blocked;
+    $('to-pair').disabled = $('to-login').disabled = busy;
+  };
   const run = (fn) => () => {
     notice('');
     error('');
-    return fn().catch(() => {
-      status('');
-      error(M.failed);
-    }).finally(() => {
-      $('login').disabled = $('pair').disabled = blocked;
-    });
+    setBusy(true);
+    return fn()
+      .catch(async () => {
+        status('');
+        if (current === 'number') await showStart();
+        error(M.failed);
+      })
+      .finally(() => setBusy(false));
   };
   const text = { title: 'title', 'install-title': 'installTitle', 'install-lead': 'installLead', 'install-1': 'installStep1', 'install-2': 'installStep2', 'install-3': 'installStep3',
     'login-title': 'loginTitle', 'login-lead': 'loginLead', login: 'login', 'pair-title': 'pairTitle', 'pair-lead': 'pairLead', 'code-label': 'code', 'name-label': 'name', pair: 'pair',
@@ -246,15 +261,10 @@ const SCRIPT = String.raw`(() => {
   $('pair').addEventListener('click', run(pair));
   $('to-pair').addEventListener('click', () => { notice(''); error(''); show('pair'); });
   $('to-login').addEventListener('click', () => { notice(''); error(''); show('login'); });
-  // 最初の段: Safari ならホーム画面に追加 / QR から開いたら登録 / 鍵があればログイン / 無ければ登録
+  // 最初の段: Safari ならホーム画面に追加 / 鍵があればログイン / 無ければ登録。
+  // QR の URL（#pair=）のままホーム画面に置くと、開くたびにフラグメントが付くので、フラグメントでは決めない（コードは入れておく）
   if (blocked) show('install');
-  else
-    Promise.all([bindingKey(), store('readonly', (s) => s.get('pending'))])
-      .then(([key, pending]) => {
-        hasKey = Boolean(key || pending);
-        show(hasKey && !fragment ? 'login' : 'pair');
-      })
-      .catch(() => show('pair'));
+  else showStart();
 })();
 `;
 
