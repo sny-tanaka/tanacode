@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, safeStorage, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
@@ -20,9 +20,11 @@ import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { IpcDispatcher, type Caller } from './remote-dispatch';
+import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
+import { RemoteRegistrations } from './remote-registrations';
 import { publicOriginOf } from '@shared/remote-protocol';
-import { isRemotePort, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
+import { isRemotePort, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -239,7 +241,55 @@ const remoteHost = new RemoteHost({
   onStatus: () => buildMenu(),
   onConnections: () => buildMenu(),
   log: (message) => console.error(message),
+  auth: (request) => {
+    if (!remoteAuth) throw new Error('remote access is not ready');
+    return remoteAuth.handle(request);
+  },
 });
+
+// 遠隔操作で登録した端末の一覧と、本人確認のうち main が持つもの（起動して設定を読んだあとに作る。startRemoteAuth）
+let remoteRegistrations: RemoteRegistrations | null = null;
+let remoteAuth: RemoteAuth | null = null;
+
+function startRemoteAuth(): void {
+  remoteRegistrations = new RemoteRegistrations(
+    join(app.getPath('userData'), 'remote-registrations.bin'),
+    { available: () => safeStorage.isEncryptionAvailable(), encrypt: (text) => safeStorage.encryptString(text), decrypt: (data) => safeStorage.decryptString(data) },
+    { get: () => settings.remoteRegistrationsSeq(), set: (seq) => settings.setRemoteRegistrationsSeq(seq) },
+  );
+  const registrations = remoteRegistrations;
+  remoteAuth = new RemoteAuth({
+    registrations,
+    addSession: (session) => remoteHost.addSession(session),
+    onPairingChange: () => send(IpcChannel.RemoteDevicesChanged, remoteDevicesState()),
+    onRegistrationsChange: () => {
+      remoteHost.setCredentials(registrations.credentials());
+      send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
+    },
+    notify: (event) => remoteNotice(event.kind === 'login' ? t('main.notice.remoteLogin', { name: event.name || t('main.notice.remoteUnnamed') }) : t('main.notice.remotePairingHijack')),
+  });
+  remoteHost.setCredentials(registrations.credentials());
+}
+
+// 遠隔操作のことを Mac に知らせる（通知を切っていても出す。知らない接続に気づけるように）
+function remoteNotice(body: string): void {
+  console.error(`[remote] ${body}`);
+  if (!Notification.isSupported()) return;
+  new Notification({ title: 'tanacode', body, sound: 'Glass' }).show();
+}
+
+// 登録した端末と、登録の受付（Mac のダイアログに出すもの）
+function remoteDevicesState(): RemoteDevicesState {
+  const registrations = remoteRegistrations;
+  const pairing = remoteAuth?.pairingState() ?? null;
+  const publicOrigin = publicOriginOf(settings.remote().publicUrl);
+  return {
+    devices: (registrations?.all() ?? []).map(({ id, name, createdAt, lastUsedAt }) => ({ id, name, createdAt, lastUsedAt })),
+    pairing: pairing && publicOrigin ? { ...pairing, url: `${publicOrigin}/#pair=${pairing.code}` } : null,
+    // 登録の一覧をまだ作っていない（起動の途中）ときは、使えないものとして出す。読めたら null
+    problem: registrations ? registrations.problem() : 'unavailable',
+  };
+}
 
 // 設定のダイアログに出すもの
 function remoteState(): RemoteSettingsState {
@@ -298,8 +348,12 @@ function applyRemote(): void {
   if (!remoteAccessAvailable()) return remoteHost.stop();
   const remote = settings.remote();
   const publicOrigin = publicOriginOf(remote.publicUrl);
-  if (remote.enabled && publicOrigin) remoteHost.start({ port: remote.port, publicOrigin });
-  else remoteHost.stop();
+  // 登録の一覧を読めない（暗号化が使えない・古いファイルに戻された）ときは、待ち受けない（失敗したら閉じる）
+  if (remote.enabled && publicOrigin && remoteRegistrations && !remoteRegistrations.problem()) remoteHost.start({ port: remote.port, publicOrigin, language: language() });
+  else {
+    remoteHost.stop();
+    remoteAuth?.cancelPairing();
+  }
 }
 
 // 画面からの呼び出しと知らせは、どれもここで受け口を登録する。ipcMain からは、アプリの画面のメインフレームから来たものだけを受ける。
@@ -1090,6 +1144,43 @@ function registerIpc(): void {
     P(e);
     return setRemoteSettings(input);
   });
+  handle(IpcChannel.RemoteDevicesGet, (e) => {
+    P(e);
+    return remoteDevicesState();
+  });
+  handle(IpcChannel.RemotePairingStart, (e) => {
+    P(e);
+    // 待ち受けていなければ、受け付けても誰も届かない
+    if (remoteHost.current().state !== 'listening' || !remoteAuth) throw new Error(t('main.error.remoteNotListening'));
+    remoteAuth.startPairing();
+    return remoteDevicesState();
+  });
+  handle(IpcChannel.RemotePairingCancel, (e) => {
+    P(e);
+    remoteAuth?.cancelPairing();
+    return remoteDevicesState();
+  });
+  handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown) => {
+    P(e);
+    if (typeof requestId !== 'string' || typeof number !== 'string' || !remoteAuth) return false;
+    // 許すプロファイルは、今は開いている全プロファイル（登録のときに絞るのは、あとで足す）
+    return remoteAuth.approve(requestId, number, [...opened.keys()]);
+  });
+  handle(IpcChannel.RemotePairingReject, (e, requestId: unknown) => {
+    P(e);
+    if (typeof requestId === 'string') remoteAuth?.reject(requestId);
+    return remoteDevicesState();
+  });
+  handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
+    P(e);
+    if (typeof id === 'string' && remoteRegistrations?.remove(id)) {
+      // 取り消した登録のセッションと接続を、すぐに切る
+      remoteHost.removeRegistration(id);
+      remoteHost.setCredentials(remoteRegistrations.credentials());
+      send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
+    }
+    return remoteDevicesState();
+  });
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
@@ -1779,6 +1870,7 @@ app.whenReady().then(async () => {
     }
   }
   // 遠隔操作（既定はオフ）。プロファイルを開いたあと（遠隔の接続は、開いたプロファイルにだけ届く）
+  startRemoteAuth();
   applyRemote();
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く

@@ -514,6 +514,13 @@ export class DemoBackend {
         settings: () => ok({ settings: { enabled: false, port: 47413, publicUrl: '' }, status: { state: 'off' }, connections: 0 }),
         setSettings: (input) => ok({ settings: { enabled: false, ...input }, status: { state: 'off' }, connections: 0 }),
         onOpen: () => () => {},
+        devices: () => ok({ devices: [], pairing: null, problem: null }),
+        startPairing: () => ok({ devices: [], pairing: null, problem: null }),
+        cancelPairing: () => ok({ devices: [], pairing: null, problem: null }),
+        approvePairing: () => ok(false),
+        rejectPairing: () => ok({ devices: [], pairing: null, problem: null }),
+        removeDevice: () => ok({ devices: [], pairing: null, problem: null }),
+        onDevicesChanged: () => () => {},
       },
       shortcuts: {
         onRun: () => () => {},

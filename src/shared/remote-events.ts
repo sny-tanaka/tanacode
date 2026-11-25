@@ -63,6 +63,7 @@ export const REMOTE_EVENTS: { readonly [C in keyof IpcEvent]: RemoteEventUse } =
   [IpcChannel.PromptsOpen]: 'mac',
   [IpcChannel.McpSettingsOpen]: 'mac',
   [IpcChannel.RemoteSettingsOpen]: 'mac',
+  [IpcChannel.RemoteDevicesChanged]: 'mac',
   [IpcChannel.ShortcutRun]: 'mac',
   [IpcChannel.BrowserAsk]: 'send',
   [IpcChannel.BrowserLogin]: 'send',

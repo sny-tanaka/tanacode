@@ -33,7 +33,7 @@ async function start(): Promise<Started> {
   const clock = { now: Date.now() };
   const core = new RemoteServerCore((message) => posted.push(message), () => clock.now);
   core.handle({ type: 'session-add', session: session() });
-  core.handle({ type: 'listen', config: { port: 0, publicOrigin: ORIGIN } });
+  core.handle({ type: 'listen', config: { port: 0, publicOrigin: ORIGIN, language: 'ja' } });
   const port = await waitFor(() => {
     const listening = posted.find((m) => m.type === 'listening');
     return listening?.type === 'listening' ? listening.port : undefined;
@@ -103,6 +103,41 @@ describe('HTTP の口', () => {
     expect(res.body).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
+  it('認証の前の画面（ログイン・登録のページと、そのスクリプト・スタイル・マニフェスト・アイコン）を、外へつながない CSP で配る', async () => {
+    const { port } = await start();
+    const page = await send(port, 'GET', '/', { host: HOST });
+    expect(page.body).toContain('<script src="/login.js"></script>');
+    expect(page.body).toContain('ログイン');
+    expect(page.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(page.headers['content-security-policy']).toContain("connect-src 'self'");
+    for (const [path, type] of [
+      ['/login.js', 'text/javascript'],
+      ['/login.css', 'text/css'],
+      ['/manifest.webmanifest', 'application/manifest+json'],
+      ['/icon.svg', 'image/svg+xml'],
+    ]) {
+      const res = await send(port, 'GET', path, { host: HOST });
+      expect(res.headers['content-type'], path).toContain(type);
+    }
+  });
+
+  it('本人確認の口は、本文が JSON でない・大きすぎる・知らない口なら断る', async () => {
+    const { port } = await start();
+    const body = (text: string, path = '/api/pair/begin') =>
+      new Promise<number | null>((resolve) => {
+        const req = request({ host: '127.0.0.1', port, method: 'POST', path, headers: { host: HOST, origin: ORIGIN, 'content-type': 'application/json' } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode ?? null));
+        });
+        req.on('error', () => resolve(null));
+        req.end(text);
+      });
+    expect(await body('{nope')).toBe(400);
+    expect(await body('[]')).toBe(400);
+    expect(await body(JSON.stringify({ code: 'x'.repeat(70 * 1024) }))).toBe(400);
+    expect(await body('{}', '/api/login/nope')).toBe(404);
+  });
+
   it.each([
     ['Host が違う（DNS rebinding）', { host: 'evil.example.com' }],
     ['Host にポートが付いている', { host: `${HOST}:443` }],
@@ -136,7 +171,7 @@ describe('HTTP の口', () => {
     const port = typeof address === 'object' && address ? address.port : 0;
     const posted: ServerMessage[] = [];
     const core = new RemoteServerCore((message) => posted.push(message));
-    core.handle({ type: 'listen', config: { port, publicOrigin: ORIGIN } });
+    core.handle({ type: 'listen', config: { port, publicOrigin: ORIGIN, language: 'ja' } });
     const failed = await waitFor(() => posted.find((m) => m.type === 'listen-failed'));
     expect(failed).toMatchObject({ type: 'listen-failed', reason: 'in-use' });
     expect(posted.some((m) => m.type === 'listening')).toBe(false);

@@ -31,7 +31,8 @@
       },
       "remotePort": "Choose a port number from 1024 to 65535",
       "remotePublicUrl": "The public URL must start with https and have no path (for example, https://mac.example.ts.net)",
-      "remoteProfileNotAllowed": "This profile is not allowed for this connection"
+      "remoteProfileNotAllowed": "This profile is not allowed for this connection",
+      "remoteNotListening": "Remote access is not listening. Turn on Use Remote Access in the menu bar, then add a device"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
@@ -381,6 +382,11 @@
     "toolPermissions": {
       "syncFailedTitle": "tanacode could not apply the confirmation choices in MCP Settings to Claude Code",
       "syncFailed": "tanacode could not write its marker files ({error}). The confirmation choices you changed from the defaults may not take effect, and tools set to Ask Every Time may run without asking. Choose them again in “tanacode > MCP Settings…”, or restart tanacode."
+    },
+    "notice": {
+      "remoteLogin": "A remote access login: {name}",
+      "remoteUnnamed": "Unnamed device",
+      "remotePairingHijack": "Device registration was cancelled because the same registration code was used twice. Start again from Add Device."
     }
   },
   "commands": {
@@ -2646,6 +2652,47 @@
     "portHint": "The port the forwarder sends to (this port on 127.0.0.1). If it is in use, tanacode stops instead of listening.",
     "status": "Status",
     "loadFailed": "Could not read the remote access settings: {error}",
-    "saveFailed": "Could not save the remote access settings: {error}"
+    "saveFailed": "Could not save the remote access settings: {error}",
+    "devices": {
+      "title": "Registered Devices",
+      "empty": "No devices are registered yet.",
+      "dates": "Registered {created} · Last used {used}",
+      "never": "never",
+      "remove": "Remove",
+      "removeTip": "Remove this device (disconnects it now if connected)",
+      "confirmRemove": "Remove “{name}”?",
+      "add": "Add Device",
+      "cancel": "Stop Accepting Registration",
+      "qr": "QR code to scan with your phone",
+      "codeLabel": "Registration code",
+      "until": "{seconds} seconds left",
+      "pairingHint": "Scan the QR code with your phone, add it to the Home Screen, and register from there. Enter the 6-digit number shown on the phone here to approve.",
+      "request": "“{name}” is waiting for approval",
+      "number": "Number on the phone",
+      "approve": "Approve",
+      "reject": "Reject",
+      "wrongNumber": "The number does not match, so this registration was rejected. Start again from Add Device.",
+      "problem": {
+        "unreadable": "Remote access is stopped because the list of registered devices cannot be read.",
+        "rolled-back": "Remote access is stopped because the list of registered devices was replaced with an older one."
+      }
+    }
+  },
+  "remoteLogin": {
+    "title": "tanacode Remote Access",
+    "addToHome": "Register and log in from the icon on your Home Screen. Use “Add to Home Screen” in the Share menu, then open it from the Home Screen.",
+    "pairTitle": "Register This Device",
+    "code": "Registration code shown on the Mac (8 digits)",
+    "name": "Name of this device",
+    "pair": "Register",
+    "pairing": "Registering…",
+    "number": "Enter this number in Remote Access Settings on the Mac: {number}",
+    "approved": "Registered. You can log in now.",
+    "rejected": "Could not register. Start again from “Add Device” on the Mac.",
+    "loginTitle": "Log In",
+    "login": "Log In",
+    "loggedIn": "Logged in.",
+    "noKey": "This device is not registered. Register it first.",
+    "failed": "Something went wrong. Wait a moment and try again."
   }
 }

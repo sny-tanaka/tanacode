@@ -5,7 +5,7 @@ import { RemoteHost, type ServerProcess } from '../src/main/remote-host';
 
 // main の側の、遠隔サーバーの持ち手（src/main/remote-host.ts）。遠隔サーバーを作り物にして、伝文を送り合う
 
-const CONFIG = { port: 47413, publicOrigin: 'https://mac.example.ts.net' };
+const CONFIG = { port: 47413, publicOrigin: 'https://mac.example.ts.net', language: 'ja' as const };
 const clock = { now: 1_000_000_000 };
 const session = (over: Partial<RemoteSession> = {}): RemoteSession => ({ sessionId: 's1', tokenHash: 'ab', registrationId: 'r1', profileIds: ['default'], expiresAt: clock.now + 60 * 60 * 1000, lastActive: clock.now, ...over });
 
@@ -23,8 +23,12 @@ function setup(call: (...args: unknown[]) => Promise<unknown> = async () => 'ok'
   const log = vi.fn();
   const callSpy = vi.fn(call);
   const connections: number[] = [];
-  const host = new RemoteHost({ spawn: () => child, call: callSpy, onStatus: (status) => statuses.push(status), onConnections: (count) => connections.push(count), log }, () => clock.now);
-  return { host, child, posted, statuses, connections, log, call: callSpy, toHost: (m: unknown) => toHost(m), exit: (code: number) => exit(code) };
+  const auth = vi.fn((request: { op: string }) => {
+    if (request.op === 'pair-begin') throw new Error('wrong code');
+    return { challengeId: 'c', challenge: 'x' };
+  });
+  const host = new RemoteHost({ spawn: () => child, call: callSpy, onStatus: (status) => statuses.push(status), onConnections: (count) => connections.push(count), log, auth: auth as never }, () => clock.now);
+  return { host, child, posted, statuses, connections, log, auth, call: callSpy, toHost: (m: unknown) => toHost(m), exit: (code: number) => exit(code) };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -34,7 +38,7 @@ describe('RemoteHost', () => {
     const t = setup();
     t.host.addSession(session());
     t.host.start(CONFIG);
-    expect(t.posted).toEqual([{ type: 'session-add', session: session() }, { type: 'listen', config: CONFIG }]);
+    expect(t.posted).toEqual([{ type: 'session-add', session: session() }, { type: 'credentials', credentials: [] }, { type: 'listen', config: CONFIG }]);
     t.toHost({ type: 'listening', port: 47413 });
     expect(t.host.current()).toEqual({ state: 'listening', port: 47413 });
   });
@@ -223,6 +227,33 @@ describe('RemoteHost', () => {
     expect(t.posted.at(-1)).toEqual({ type: 'result', id: 9, clientId: 'c1', ok: false, error: 'だめ' });
   });
 
+  it('本人確認の頼みは auth に渡し、返事を返す。投げたら理由を返す', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    t.posted.length = 0;
+    t.toHost({ type: 'auth', id: 1, request: { op: 'challenge' } });
+    t.toHost({ type: 'auth', id: 2, request: { op: 'pair-begin', code: '12345678' } });
+    t.toHost({ type: 'auth', id: 3, request: { op: 'nope' } });
+    expect(t.posted).toEqual([
+      { type: 'auth-result', id: 1, ok: true, value: { challengeId: 'c', challenge: 'x' } },
+      { type: 'auth-result', id: 2, ok: false, error: 'wrong code' },
+    ]);
+  });
+
+  it('パスキーの一覧を、遠隔サーバーに送り直す。取り消した登録のセッションは消す', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.addSession(session({ sessionId: 's2', registrationId: 'r2' }));
+    t.host.start(CONFIG);
+    t.posted.length = 0;
+    t.host.setCredentials([{ registrationId: 'r1', credentialId: 'c', publicKey: 'p', counter: 0 }]);
+    t.host.removeRegistration('r1');
+    expect(t.posted).toEqual([
+      { type: 'credentials', credentials: [{ registrationId: 'r1', credentialId: 'c', publicKey: 'p', counter: 0 }] },
+      { type: 'session-remove', sessionId: 's1' },
+    ]);
+  });
+
   it('セッションを消すと、その接続の控えを消し、遠隔サーバーにも知らせる', () => {
     const t = setup();
     t.host.addSession(session());
@@ -255,7 +286,7 @@ describe('RemoteHost', () => {
     expect(t.host.current()).toEqual({ state: 'off' });
     t.posted.length = 0;
     t.host.start(CONFIG);
-    expect(t.posted).toEqual([{ type: 'listen', config: CONFIG }]);
+    expect(t.posted).toEqual([{ type: 'credentials', credentials: [] }, { type: 'listen', config: CONFIG }]);
   });
 
   it('始め直すと、接続の控えを消し、期限の切れたセッションは送らない。送るセッションは、最後の操作の時刻のまま', async () => {
@@ -270,9 +301,9 @@ describe('RemoteHost', () => {
     t.posted.length = 0;
     t.host.start(CONFIG);
     expect(t.host.connectionCount()).toBe(0);
-    expect(t.posted).toHaveLength(2);
+    expect(t.posted).toHaveLength(3);
     expect(t.posted[0]).toMatchObject({ type: 'session-add', session: { sessionId: 's1', lastActive: clock.now - 5 * 60 * 1000 } });
-    expect(t.posted[1]).toEqual({ type: 'listen', config: CONFIG });
+    expect(t.posted[2]).toEqual({ type: 'listen', config: CONFIG });
   });
 
   it('遠隔サーバーが期限でセッションを捨てたら、main も控えから消す', () => {
@@ -284,7 +315,7 @@ describe('RemoteHost', () => {
     expect(t.host.connectionCount()).toBe(0);
     t.posted.length = 0;
     t.host.start(CONFIG);
-    expect(t.posted).toEqual([{ type: 'listen', config: CONFIG }]);
+    expect(t.posted).toEqual([{ type: 'credentials', credentials: [] }, { type: 'listen', config: CONFIG }]);
   });
 
   it('main でも、使わない時間と期限を確かめる（遠隔サーバーを信じきらない）', async () => {

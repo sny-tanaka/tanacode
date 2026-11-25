@@ -2,6 +2,7 @@ import type { IpcEvent } from '@shared/ipc';
 import { REMOTE_EVENTS } from '@shared/remote-events';
 import { parseServerMessage, REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 import { t } from '@shared/i18n';
+import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
 import type { RemoteStatus } from '@shared/remote-settings';
 import type { RemoteCaller } from './remote-dispatch';
 
@@ -28,6 +29,8 @@ export type RemoteHostDeps = {
   onConnections: (count: number) => void;
   // 断ったこと・届いた形の違う伝文など。秘密や頼みの中身は渡さない
   log: (message: string) => void;
+  // 本人確認の頼み（RemoteAuth.handle）。断るときは投げる
+  auth: (request: AuthRequest) => AuthReplies[keyof AuthReplies];
 };
 
 type Client = { sessionId: string; subscriptions: Set<string> };
@@ -38,6 +41,7 @@ export class RemoteHost {
   private readonly sessions = new Map<string, RemoteSession>();
   private readonly clients = new Map<string, Client>();
   private status: RemoteStatus = { state: 'off' };
+  private credentials: RemoteCredential[] = [];
 
   constructor(
     private readonly deps: RemoteHostDeps,
@@ -59,6 +63,7 @@ export class RemoteHost {
     for (const session of [...this.sessions.values()]) {
       if (this.alive(session)) this.child.post({ type: 'session-add', session });
     }
+    this.child.post({ type: 'credentials', credentials: this.credentials });
     this.child.post({ type: 'listen', config });
   }
 
@@ -77,7 +82,18 @@ export class RemoteHost {
     this.setStatus({ state: 'off' });
   }
 
-  // 本人確認を通ったセッションを足す・消す（③）。消したセッションの接続は切れる
+  // 登録したパスキーの公開の部分を、遠隔サーバーに渡す（登録・取り消しのたびに、全部を送り直す）
+  setCredentials(credentials: RemoteCredential[]): void {
+    this.credentials = credentials.map((c) => ({ ...c }));
+    this.child?.post({ type: 'credentials', credentials: this.credentials });
+  }
+
+  // 取り消した登録のセッションを、すべて消す（その接続は切れる）
+  removeRegistration(registrationId: string): void {
+    for (const session of [...this.sessions.values()]) if (session.registrationId === registrationId) this.removeSession(session.sessionId);
+  }
+
+  // 本人確認を通ったセッションを足す・消す。消したセッションの接続は切れる
   addSession(session: RemoteSession): void {
     this.sessions.set(session.sessionId, session);
     this.child?.post({ type: 'session-add', session });
@@ -213,6 +229,9 @@ export class RemoteHost {
       case 'call':
         void this.call(child, message);
         break;
+      case 'auth':
+        this.authenticate(child, message);
+        break;
     }
   }
 
@@ -238,6 +257,14 @@ export class RemoteHost {
       reply({ ok: true, value: await this.deps.call(caller, message.channel, message.args) });
     } catch (error) {
       reply({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private authenticate(child: ServerProcess, message: Extract<ServerMessage, { type: 'auth' }>): void {
+    try {
+      child.post({ type: 'auth-result', id: message.id, ok: true, value: this.deps.auth(message.request) });
+    } catch (error) {
+      child.post({ type: 'auth-result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 

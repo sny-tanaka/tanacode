@@ -2,7 +2,11 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import { setLanguage } from '@shared/i18n';
+import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
+import { loginPage } from './remote-login-page';
 import { REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
 // 遠隔サーバーの中身（Issue #464）。utilityProcess（remote-server.ts）が、main との伝文の口につないで動かす。
@@ -33,6 +37,14 @@ export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const MAX_TICKETS_PER_SESSION = 4;
 // 断った接続を、相手が閉じるのを待たずに切るまで
 const REFUSE_GRACE_MS = 1000;
+// 本人確認の口（登録・ログイン）の頼みの数の上限（1 分あたり。待ち受け全体で数える）
+export const MAX_AUTH_PER_MINUTE = 60;
+// 本人確認の口が受ける本文の大きさの上限
+const MAX_AUTH_BODY = 64 * 1024;
+// main が本人確認の頼みに答えるまで待つ時間
+const AUTH_TIMEOUT_MS = 10 * 1000;
+// パスキーの登録・ログインを始めてから終えるまでの期限
+const CEREMONY_MS = 5 * 60 * 1000;
 
 type Client = { id: string; sessionId: string; socket: WebSocket; calls: number[]; closing: boolean };
 type Ticket = { sessionId: string; until: number };
@@ -58,8 +70,8 @@ export function encodeForClient(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) => (v instanceof Uint8Array ? { $bytes: Buffer.from(v).toString('base64') } : v));
 }
 
-// 認証の前に見せる画面（③・④ で、ログインの画面に置き換える）。バージョンなどは出さない
-const PLACEHOLDER_HTML = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>tanacode</title>';
+// 認証の前の画面の CSP（スクリプト・スタイル・アイコンは同じ origin のファイルだけ。外へはつながない）
+const LOGIN_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 // どの応答にも付けるヘッダー
 const BASE_HEADERS = {
@@ -77,6 +89,14 @@ export class RemoteServerCore {
   private readonly tickets = new Map<string, Ticket>();
   private readonly clients = new Map<string, Client>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
+  private credentials: RemoteCredential[] = [];
+  // main に頼んだ本人確認の返事を待っているもの
+  private readonly authWaits = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private nextAuthId = 1;
+  // パスキーの登録・ログインの途中のもの（WebAuthn の challenge は遠隔サーバーが作って確かめる）
+  private readonly registrationsInFlight = new Map<string, { challenge: string; until: number }>();
+  private readonly loginsInFlight = new Map<string, { challenge: string; until: number }>();
+  private authCalls: number[] = [];
 
   constructor(
     private readonly post: (message: ServerMessage) => void,
@@ -113,6 +133,18 @@ export class RemoteServerCore {
         }
         break;
       }
+      case 'credentials':
+        this.credentials = message.credentials.map((c) => ({ ...c }));
+        break;
+      case 'auth-result': {
+        const wait = this.authWaits.get(message.id);
+        if (!wait) return;
+        this.authWaits.delete(message.id);
+        clearTimeout(wait.timer);
+        if (message.ok) wait.resolve(message.value);
+        else wait.reject(new Error(message.error));
+        break;
+      }
       case 'disconnect': {
         const client = this.clients.get(message.clientId);
         if (client) this.refuse(client.socket, 1000, client);
@@ -142,6 +174,7 @@ export class RemoteServerCore {
   private listen(config: RemoteListenConfig): void {
     this.close(false);
     this.config = config;
+    setLanguage(config.language);
     const server = createServer((req, res) => this.request(req, res));
     // 認証の前に届く面なので、接続の数と、頼みを受けきるまでの時間にも上限を置く
     server.maxConnections = 32;
@@ -167,6 +200,8 @@ export class RemoteServerCore {
     for (const client of this.clients.values()) client.socket.terminate();
     this.clients.clear();
     this.tickets.clear();
+    this.registrationsInFlight.clear();
+    this.loginsInFlight.clear();
     this.wss?.close();
     this.server?.close();
     this.server?.closeAllConnections();
@@ -230,9 +265,15 @@ export class RemoteServerCore {
       return;
     }
     const path = String(req.url).split('?')[0];
-    if (isGet && path === '/') {
-      res.writeHead(200, { ...BASE_HEADERS, 'content-type': 'text/html; charset=utf-8' });
-      res.end(PLACEHOLDER_HTML);
+    // 認証の前の画面（登録・ログインだけ）。バージョンなどは出さない
+    const page = isGet ? loginPage(path) : null;
+    if (page) {
+      res.writeHead(200, { ...BASE_HEADERS, 'content-security-policy': LOGIN_CSP, 'content-type': page.type });
+      res.end(page.body);
+      return;
+    }
+    if (req.method === 'POST' && path.startsWith('/api/pair/') || req.method === 'POST' && path.startsWith('/api/login/')) {
+      void this.authRoute(req, res, path);
       return;
     }
     // WebSocket の券。セッションの Cookie が要る（③ で、束縛の鍵の署名も求める）
@@ -247,6 +288,130 @@ export class RemoteServerCore {
       return this.reply(res, 200, { ticket });
     }
     this.reply(res, 404, { error: 'not found' });
+  }
+
+  // main に本人確認を頼む（返事が無ければ、待ちきれずに断る）
+  private auth<K extends keyof AuthReplies>(request: AuthRequest & { op: K }): Promise<AuthReplies[K]> {
+    const id = this.nextAuthId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.authWaits.delete(id);
+        reject(new Error('no answer'));
+      }, AUTH_TIMEOUT_MS);
+      timer.unref();
+      this.authWaits.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+      this.post({ type: 'auth', id, request });
+    });
+  }
+
+  private async readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > MAX_AUTH_BODY) return null;
+      chunks.push(chunk);
+    }
+    try {
+      const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+      return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 登録・ログインの口。どれも JSON を受けて JSON を返す。断るときは 400（理由は出さない。どこで断ったかを相手に教えない）
+  private async authRoute(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const now = this.now();
+    this.authCalls = this.authCalls.filter((at) => now - at < 60 * 1000);
+    this.authCalls.push(now);
+    if (this.authCalls.length > MAX_AUTH_PER_MINUTE) return this.reply(res, 429, { error: 'too many requests' });
+    const body = await this.readJson(req);
+    if (!body || !this.config) return this.reply(res, 400, { error: 'bad request' });
+    const origin = this.config.publicOrigin;
+    const rpID = new URL(origin).hostname;
+    for (const map of [this.registrationsInFlight, this.loginsInFlight]) for (const [key, entry] of map) if (entry.until <= now) map.delete(key);
+    try {
+      switch (path) {
+        case '/api/pair/begin': {
+          const begun = await this.auth({ op: 'pair-begin', code: String(body.code ?? '') });
+          const options = await generateRegistrationOptions({
+            rpName: 'tanacode',
+            rpID,
+            userName: 'tanacode',
+            userID: Buffer.from(begun.userId, 'base64url'),
+            attestationType: 'none',
+            authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+            supportedAlgorithmIDs: [-7],
+          });
+          this.registrationsInFlight.set(begun.pairingId, { challenge: options.challenge, until: now + CEREMONY_MS });
+          return this.reply(res, 200, { pairingId: begun.pairingId, options, bindingChallenge: begun.bindingChallenge });
+        }
+        case '/api/pair/finish': {
+          const pairingId = String(body.pairingId ?? '');
+          const inFlight = this.registrationsInFlight.get(pairingId);
+          this.registrationsInFlight.delete(pairingId);
+          if (!inFlight) throw new Error('no registration in flight');
+          const verified = await verifyRegistrationResponse({
+            response: body.response as Parameters<typeof verifyRegistrationResponse>[0]['response'],
+            expectedChallenge: inFlight.challenge,
+            expectedOrigin: origin,
+            expectedRPID: rpID,
+            requireUserVerification: true,
+          });
+          if (!verified.verified) throw new Error('not verified');
+          const { credential } = verified.registrationInfo;
+          const finished = await this.auth({
+            op: 'pair-finish',
+            pairingId,
+            credential: { id: credential.id, publicKey: Buffer.from(credential.publicKey).toString('base64url'), counter: credential.counter },
+            bindingJwk: body.bindingJwk as never,
+            bindingSignature: String(body.bindingSignature ?? ''),
+            name: String(body.name ?? ''),
+          });
+          return this.reply(res, 200, finished);
+        }
+        case '/api/pair/status':
+          return this.reply(res, 200, await this.auth({ op: 'pair-status', requestId: String(body.requestId ?? '') }));
+        case '/api/login/begin': {
+          const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: [] });
+          const loginId = randomBytes(16).toString('base64url');
+          this.loginsInFlight.set(loginId, { challenge: options.challenge, until: now + CEREMONY_MS });
+          const binding = await this.auth({ op: 'challenge' });
+          return this.reply(res, 200, { loginId, options, challengeId: binding.challengeId, bindingChallenge: binding.challenge });
+        }
+        case '/api/login/finish': {
+          const loginId = String(body.loginId ?? '');
+          const inFlight = this.loginsInFlight.get(loginId);
+          this.loginsInFlight.delete(loginId);
+          const response = body.response as Parameters<typeof verifyAuthenticationResponse>[0]['response'];
+          const credential = this.credentials.find((c) => c.credentialId === response?.id);
+          if (!inFlight || !credential) throw new Error('unknown login');
+          const verified = await verifyAuthenticationResponse({
+            response,
+            expectedChallenge: inFlight.challenge,
+            expectedOrigin: origin,
+            expectedRPID: rpID,
+            credential: { id: credential.credentialId, publicKey: new Uint8Array(Buffer.from(credential.publicKey, 'base64url')), counter: credential.counter },
+            requireUserVerification: true,
+          });
+          if (!verified.verified) throw new Error('not verified');
+          const login = await this.auth({
+            op: 'login',
+            registrationId: credential.registrationId,
+            counter: verified.authenticationInfo.newCounter,
+            challengeId: String(body.challengeId ?? ''),
+            bindingSignature: String(body.bindingSignature ?? ''),
+          });
+          res.setHeader('set-cookie', `${SESSION_COOKIE}=${login.token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${login.maxAgeSeconds}`);
+          return this.reply(res, 200, { ok: true });
+        }
+        default:
+          return this.reply(res, 404, { error: 'not found' });
+      }
+    } catch {
+      return this.reply(res, 400, { error: 'bad request' });
+    }
   }
 
   private reply(res: ServerResponse, status: number, body: unknown): void {

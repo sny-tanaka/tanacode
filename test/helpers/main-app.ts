@@ -200,6 +200,7 @@ export type MenuItem = {
 
 function freshState() {
   return {
+    safeStorageAvailable: true,
     utilityProcesses: [] as (Emitter & { modulePath: string; posted: unknown[]; killed: boolean })[],
     root: '',
     userData: '',
@@ -359,6 +360,12 @@ export const electronModule = {
     sendActionToFirstResponder: (action: string) => state.firstResponderActions.push(action),
   },
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
+  // 遠隔操作で登録した端末の一覧の暗号化（Keychain の鍵の代わりに、前後を入れ替えるだけ）。state.safeStorageAvailable で、使えない Mac にできる
+  safeStorage: {
+    isEncryptionAvailable: () => state.safeStorageAvailable,
+    encryptString: (text: string) => Buffer.from(text).reverse(),
+    decryptString: (data: Buffer) => Buffer.from(data).reverse().toString(),
+  },
   // 遠隔サーバー（remote-server.js）の起動。作った子のプロセスを state.utilityProcesses に控える（送った伝文・止めたか）
   utilityProcess: {
     fork: (modulePath: string, args: string[], options: unknown) => {

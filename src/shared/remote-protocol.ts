@@ -1,10 +1,14 @@
+import { parseAuthRequest, type AuthReplies, type AuthRequest, type RemoteCredential } from './remote-auth';
+import type { Language } from './i18n';
+
 // main と遠隔サーバー（utilityProcess。src/main/remote-server.ts）の間の伝文（Issue #464）。
 // main は遠隔サーバーを信じきらない。遠隔サーバーから届いた伝文は、どれも parseServerMessage で形を確かめてから使い、
 // 呼び出し元（Caller）は、伝文の中のプロファイルではなく、main が持つ接続の控えから組み立てる
 
 // 待ち受けの設定。port: 127.0.0.1 で待ち受けるポート / publicOrigin: スマホが開く URL の origin（例: https://mac.example.ts.net）。
 // Host と Origin は、これと完全に一致しなければ断る
-export type RemoteListenConfig = { port: number; publicOrigin: string };
+// language: 認証の前の画面（ログイン・登録）の言語（Mac の tanacode の画面の言語にそろえる）
+export type RemoteListenConfig = { port: number; publicOrigin: string; language: Language };
 
 // 遠隔の接続のセッション（③ で、本人確認を通ったときに main が作る）。tokenHash: Cookie の秘密の SHA-256（hex。秘密そのものは渡さない）/
 // registrationId: どの登録から入ったか / profileIds: その登録に許したプロファイル / expiresAt: 長くても使える期限（エポックのミリ秒）。
@@ -22,7 +26,12 @@ export type HostMessage =
   | { type: 'result'; id: number; clientId: string; ok: false; error: string }
   // profileId: どのプロファイルの知らせか（アプリ全体の知らせには無い）
   | { type: 'event'; clientIds: string[]; channel: string; payload: unknown; profileId?: string }
-  | { type: 'disconnect'; clientId: string };
+  | { type: 'disconnect'; clientId: string }
+  // 登録したパスキーの公開の部分（登録・取り消しのたびに、全部を送り直す）
+  | { type: 'credentials'; credentials: RemoteCredential[] }
+  // 本人確認の頼みの返事
+  | { type: 'auth-result'; id: number; ok: true; value: AuthReplies[keyof AuthReplies] }
+  | { type: 'auth-result'; id: number; ok: false; error: string };
 
 // 遠隔サーバー → main
 // listening: 待ち受けを始めた / listen-failed: 始められなかった（in-use: ポートが使われている）/ closed: 待ち受けをやめた /
@@ -38,7 +47,9 @@ export type ServerMessage =
   // 使わない時間・期限でセッションを捨てた（main も控えから消す）
   | { type: 'session-expired'; sessionId: string }
   | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[] }
-  | { type: 'subscribe'; clientId: string; channels: string[] };
+  | { type: 'subscribe'; clientId: string; channels: string[] }
+  // 本人確認の頼み（remote-auth.ts）。main は auth-result で返す
+  | { type: 'auth'; id: number; request: AuthRequest };
 
 // 使わない時間でセッションを捨てるまで（人の操作の頼みで延ばす）。遠隔サーバーと main の両方が、この長さで確かめる
 export const REMOTE_IDLE_MS = 30 * 60 * 1000;
@@ -77,6 +88,10 @@ export function parseServerMessage(value: unknown): ServerMessage | null {
       return isId(value.clientId) && Array.isArray(value.channels) && value.channels.length <= MAX_CHANNELS && value.channels.every(isId)
         ? { type: 'subscribe', clientId: value.clientId, channels: value.channels as string[] }
         : null;
+    case 'auth': {
+      const request = parseAuthRequest(value.request);
+      return isSeq(value.id) && request ? { type: 'auth', id: value.id, request } : null;
+    }
     default:
       return null;
   }

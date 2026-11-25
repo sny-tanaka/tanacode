@@ -8,6 +8,7 @@ import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
 import { formatScheduleTime } from '@shared/scheduled';
+import { SoftBindingKey } from './helpers/soft-authenticator';
 import {
   allOf,
   argsOf,
@@ -1371,7 +1372,10 @@ describe('メニュー', () => {
     await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     const [child] = state.utilityProcesses;
     expect(child.modulePath).toMatch(/remote-server\.js$/);
-    expect(child.posted).toEqual([{ type: 'listen', config: { port: 50123, publicOrigin: 'https://mac.example.ts.net' } }]);
+    expect(child.posted).toEqual([
+      { type: 'credentials', credentials: [] },
+      { type: 'listen', config: { port: 50123, publicOrigin: 'https://mac.example.ts.net', language: 'ja' } },
+    ]);
     child.emit('message', { type: 'listening', port: 50123 });
     expect(menuItem('remoteStatus').label).toBe('127.0.0.1:50123 で待ち受けています（つながっているもの 0）');
     expect(menuItem('remoteEnabled')).toMatchObject({ checked: true, enabled: true });
@@ -1407,7 +1411,7 @@ describe('メニュー', () => {
     await expect(invoke(IpcChannel.RemoteSettingsSet, null)).rejects.toThrow('ポートは');
     await invoke(IpcChannel.RemoteSettingsSet, { port: 50124, publicUrl: ' https://other.example.ts.net ' });
     expect(savedSettings()).toMatchObject({ remote: { enabled: true, port: 50124, publicUrl: 'https://other.example.ts.net' } });
-    expect(child.posted.at(-1)).toEqual({ type: 'listen', config: { port: 50124, publicOrigin: 'https://other.example.ts.net' } });
+    expect(child.posted.at(-1)).toEqual({ type: 'listen', config: { port: 50124, publicOrigin: 'https://other.example.ts.net', language: 'ja' } });
     // 公開する URL を消したら、待ち受けもやめる
     await invoke(IpcChannel.RemoteSettingsSet, { port: 50124, publicUrl: '' });
     expect(savedSettings()).toMatchObject({ remote: { enabled: false, port: 50124, publicUrl: '' } });
@@ -1423,6 +1427,84 @@ describe('メニュー', () => {
     item.click?.(item);
     expect(item.checked).toBe(false);
     expect(state.utilityProcesses).toEqual([]);
+  });
+
+  // 遠隔操作の端末の登録とログイン（main の側）。遠隔サーバーの作り物に、本人確認の頼みを届けさせる
+  async function listening() {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    const [child] = state.utilityProcesses;
+    child.emit('message', { type: 'listening', port: 50123 });
+    let id = 0;
+    // 本人確認の頼みを届け、返事を返す
+    const authOf = (request: unknown) => {
+      id += 1;
+      child.emit('message', { type: 'auth', id, request });
+      const reply = [...child.posted].reverse().find((m) => (m as { type: string; id?: number }).type === 'auth-result' && (m as { id: number }).id === id) as { ok: boolean; value?: Record<string, unknown>; error?: string };
+      return reply;
+    };
+    return { child, authOf };
+  }
+
+  it('遠隔操作の端末: 待ち受けていなければ、登録を受け付けない', async () => {
+    await boot();
+    await expect(invoke(IpcChannel.RemotePairingStart)).rejects.toThrow('遠隔操作が待ち受けていません');
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null });
+  });
+
+  it('遠隔操作の端末: 登録を受け付け、スマホに出た数字で承認すると一覧に載り、パスキーを遠隔サーバーに渡す。ログインで Mac に知らせ、取り消せる', async () => {
+    const { child, authOf } = await listening();
+    const started = (await invoke(IpcChannel.RemotePairingStart)) as { pairing: { code: string; url: string } };
+    expect(started.pairing.url).toBe(`https://mac.example.ts.net/#pair=${started.pairing.code}`);
+    expect(mainWindow().webContents.sent.some(([channel]) => channel === IpcChannel.RemoteDevicesChanged)).toBe(true);
+
+    const binding = new SoftBindingKey();
+    const begun = authOf({ op: 'pair-begin', code: started.pairing.code }).value!;
+    const finished = authOf({
+      op: 'pair-finish',
+      pairingId: begun.pairingId,
+      credential: { id: 'Y3JlZA', publicKey: 'cHVi', counter: 0 },
+      bindingJwk: binding.jwk,
+      bindingSignature: binding.sign(String(begun.bindingChallenge)),
+      name: 'iPhone',
+    }).value!;
+    await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2)).resolves.toBe(false);
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number)).resolves.toBe(true);
+    const devices = (await invoke(IpcChannel.RemoteDevicesGet)) as { devices: { id: string; name: string }[] };
+    expect(devices.devices).toMatchObject([{ name: 'iPhone', lastUsedAt: null }]);
+    expect(child.posted).toContainEqual({ type: 'credentials', credentials: [expect.objectContaining({ credentialId: 'Y3JlZA', publicKey: 'cHVi' })] });
+    expect(existsSync(join(state.userData, 'remote-registrations.bin'))).toBe(true);
+    expect(savedSettings()).toMatchObject({ remoteRegistrationsSeq: 1 });
+
+    const challenge = authOf({ op: 'challenge' }).value!;
+    const registrationId = devices.devices[0].id;
+    expect(authOf({ op: 'login', registrationId, counter: 0, challengeId: challenge.challengeId, bindingSignature: binding.sign(String(challenge.challenge)) }).ok).toBe(true);
+    expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-add', session: expect.objectContaining({ registrationId, profileIds: ['default'] }) }));
+    expect(state.notifications.at(-1)?.options.body).toBe('遠隔操作でログインがありました: iPhone');
+
+    await invoke(IpcChannel.RemoteDeviceRemove, registrationId);
+    await invoke(IpcChannel.RemoteDeviceRemove, 'nope');
+    await invoke(IpcChannel.RemoteDeviceRemove, 3);
+    expect(((await invoke(IpcChannel.RemoteDevicesGet)) as { devices: unknown[] }).devices).toEqual([]);
+    expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-remove' }));
+    expect(child.posted.at(-1)).toEqual({ type: 'credentials', credentials: [] });
+  });
+
+  it('遠隔操作の端末: 断る・受付をやめる。正しいコードが 2 回来たら、受付を捨てて Mac に知らせる', async () => {
+    const { authOf } = await listening();
+    const { pairing } = (await invoke(IpcChannel.RemotePairingStart)) as { pairing: { code: string } };
+    await invoke(IpcChannel.RemotePairingReject, 'nope');
+    await invoke(IpcChannel.RemotePairingReject, 1);
+    expect(authOf({ op: 'pair-begin', code: pairing.code }).ok).toBe(true);
+    expect(authOf({ op: 'pair-begin', code: pairing.code })).toMatchObject({ ok: false });
+    expect(state.notifications.at(-1)?.options.body).toContain('端末の登録を取りやめました');
+    await invoke(IpcChannel.RemotePairingStart);
+    await expect(invoke(IpcChannel.RemotePairingCancel)).resolves.toMatchObject({ pairing: null });
+  });
+
+  it('遠隔操作の端末: 暗号化が使えない Mac では、待ち受けない', async () => {
+    await boot({ ...remoteAccess, before: (s) => (s.safeStorageAvailable = false), settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    expect(state.utilityProcesses).toEqual([]);
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toMatchObject({ problem: 'unavailable' });
   });
 
   it('「移動」: ショートカットを区切りごとに並べ、キーを右に出す。押したら、見ているプロファイルの画面に知らせる', async () => {
