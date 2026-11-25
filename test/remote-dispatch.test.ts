@@ -57,6 +57,11 @@ describe('checkArgs（遠隔から届いた引数の形）', () => {
     expect(checkArgs(['bytes'], [{ $bytes: '***' }])).toBe(t('main.error.remoteArg.wrongType', { index: 1, shape: 'bytes' }));
   });
 
+  it('オブジェクトのキーが多すぎても断る', () => {
+    const many = Object.fromEntries(Array.from({ length: 10001 }, (_, i) => [`k${i}`, i]));
+    expect(checkArgs(['object'], [many])).toBe(t('main.error.remoteArg.tooManyEntries', { index: 1 }));
+  });
+
   it('ふつうのオブジェクトでないもの（Date など）を断る', () => {
     expect(checkArgs(['object'], [new Date()])).toBe(t('main.error.remoteArg.notPlain', { index: 1 }));
   });

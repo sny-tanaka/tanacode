@@ -237,6 +237,9 @@ describe('WebSocket の口', () => {
     const { port, posted, core, clock } = await start();
     const value = await ticket(port);
     clock.now += IDLE_MS + 1;
+    // 見回りの時点で期限内の券は残す
+    core.handle({ type: 'session-add', session: session({ sessionId: 's9', lastActive: clock.now, tokenHash: createHash('sha256').update('nine').digest('hex') }) });
+    await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=nine` });
     (core as unknown as { expire(): void }).expire();
     expect(posted).toContainEqual({ type: 'session-expired', sessionId: 's1' });
     clock.now -= IDLE_MS + 1;
@@ -244,6 +247,109 @@ describe('WebSocket の口', () => {
     const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
     client.ws.send(JSON.stringify({ type: 'hello', ticket: value }));
     expect(await client.closed).toBe(4002);
+  });
+
+  it('main の返事・知らせ・切断が、知らない接続あてなら何もしない。断りの返事は ok: false で届く', async () => {
+    const { port, posted, core } = await start();
+    const client = await connect(port);
+    const connected = posted.find((m) => m.type === 'connected');
+    const clientId = connected?.type === 'connected' ? connected.clientId : '';
+    core.handle({ type: 'result', id: 1, clientId: 'ghost', ok: true, value: 1 });
+    core.handle({ type: 'event', clientIds: ['ghost'], channel: 'x', payload: 1 });
+    core.handle({ type: 'disconnect', clientId: 'ghost' });
+    core.handle({ type: 'result', id: 2, clientId, ok: false, error: 'だめ' });
+    await waitFor(() => (client.messages.length >= 2 ? true : undefined));
+    expect(client.messages.slice(1)).toEqual([{ id: 2, ok: false, error: 'だめ' }]);
+    client.ws.close();
+  });
+
+  it('Cookie は名前で選ぶ（ほかの Cookie・= の無いものは飛ばす）。長すぎる秘密は見ない', async () => {
+    const { port } = await start();
+    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `other=1; broken; ${cookie}` })).status).toBe(200);
+    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=${'x'.repeat(300)}` })).status).toBe(401);
+  });
+
+  it('セッションを消すと、そのセッションの券と接続だけを捨てる（ほかのセッションは残す）', async () => {
+    const { port, core } = await start();
+    core.handle({ type: 'session-add', session: session({ sessionId: 's2', tokenHash: createHash('sha256').update('other').digest('hex') }) });
+    const otherTicket = (JSON.parse((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=other` })).body) as { ticket: string }).ticket;
+    const mine = await connect(port);
+    await ticket(port);
+    core.handle({ type: 'session-remove', sessionId: 's2' });
+    const other = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    other.ws.send(JSON.stringify({ type: 'hello', ticket: otherTicket }));
+    expect(await other.closed).toBe(4002);
+    mine.ws.send(JSON.stringify({ id: 1, kind: 'send', profileId: 'default', channel: 'a', args: [] }));
+    await waitFor(() => current!.posted.find((m) => m.type === 'call'));
+    mine.ws.close();
+  });
+
+  it.each([
+    ['オブジェクトでない', '"hello"'],
+    ['券が文字列でない', JSON.stringify({ type: 'hello', ticket: 1 })],
+    ['hello でない', JSON.stringify({ type: 'other', ticket: 'x' })],
+  ])('券の伝文の形が違えば切る（%s）', async (_name, text) => {
+    const { port } = await start();
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    client.ws.send(text);
+    expect(await client.closed).toBe(4002);
+  });
+
+  it('券を取ったあとにセッションが消えたら、券の伝文でつながらない', async () => {
+    const { port, core } = await start();
+    const value = await ticket(port);
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    core.handle({ type: 'session-remove', sessionId: 's1' });
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: value }));
+    expect(await client.closed).not.toBe(1000);
+  });
+
+  it('つながっている数が上限なら、つながらない。握手の途中のものも、券の伝文で数え直して断る', async () => {
+    const { port } = await start();
+    const clients = [];
+    for (let i = 0; i < 7; i++) clients.push(await connect(port));
+    const [a, b] = [await ticket(port), await ticket(port)];
+    const first = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    const second = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    first.ws.send(JSON.stringify({ type: 'hello', ticket: a }));
+    await waitFor(() => (first.messages.length > 0 ? true : undefined));
+    second.ws.send(JSON.stringify({ type: 'hello', ticket: b }));
+    expect(await second.closed).toBe(4002);
+    expect((await open(port, { host: HOST, origin: ORIGIN, cookie })).opened).toBe(false);
+    for (const c of [...clients, first]) c.ws.close();
+  });
+
+  it('券を取ったあとにセッションの期限が切れたら、券の伝文でつながらない', async () => {
+    const { port, core, clock } = await start();
+    core.handle({ type: 'session-add', session: session({ expiresAt: clock.now + 10 * 1000 }) });
+    const value = await ticket(port);
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    clock.now += 20 * 1000;
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: value }));
+    expect(await client.closed).toBe(4002);
+  });
+
+  it('長さの違うハッシュのセッションは、比べずに飛ばす', async () => {
+    const { port, core } = await start();
+    core.handle({ type: 'session-add', session: session({ sessionId: 's0', tokenHash: 'ab' }) });
+    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie })).status).toBe(200);
+  });
+
+  it.each([
+    ['配列', '[]'],
+    ['subscribe のチャンネルが配列でない', JSON.stringify({ type: 'subscribe', channels: 'x' })],
+  ])('つながったあとの伝文の形が違えば切る（%s）', async (_name, text) => {
+    const { port } = await start();
+    const client = await connect(port);
+    client.ws.send(text);
+    expect(await client.closed).toBe(4003);
+  });
+
+  it('バイナリの伝文は切る（4003）', async () => {
+    const { port } = await start();
+    const client = await connect(port);
+    client.ws.send(Buffer.from([1, 2, 3]));
+    expect(await client.closed).toBe(4003);
   });
 
   it('形の違う伝文・バイナリは、切る（4003）', async () => {

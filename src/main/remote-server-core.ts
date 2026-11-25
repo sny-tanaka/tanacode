@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
@@ -153,8 +154,7 @@ export class RemoteServerCore {
       this.close(false);
     });
     server.listen(config.port, '127.0.0.1', () => {
-      const address = server.address();
-      this.post({ type: 'listening', port: typeof address === 'object' && address ? address.port : config.port });
+      this.post({ type: 'listening', port: (server.address() as AddressInfo).port });
     });
     this.server = server;
     this.wss = wss;
@@ -229,7 +229,7 @@ export class RemoteServerCore {
       req.socket.destroy();
       return;
     }
-    const path = (req.url ?? '/').split('?')[0];
+    const path = String(req.url).split('?')[0];
     if (isGet && path === '/') {
       res.writeHead(200, { ...BASE_HEADERS, 'content-type': 'text/html; charset=utf-8' });
       res.end(PLACEHOLDER_HTML);
@@ -255,7 +255,7 @@ export class RemoteServerCore {
   }
 
   private upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const path = (req.url ?? '/').split('?')[0];
+    const path = String(req.url).split('?')[0];
     const session = path === '/ws' && this.trusted(req, true) ? this.sessionOf(req) : null;
     if (!session || !this.wss || this.clients.size >= MAX_CLIENTS) {
       socket.destroy();

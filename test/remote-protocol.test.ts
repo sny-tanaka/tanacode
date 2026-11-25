@@ -11,6 +11,7 @@ describe('parseServerMessage（遠隔サーバーから届いた伝文の形）'
     [{ type: 'disconnected', clientId: 'c' }],
     [{ type: 'call', id: 1, clientId: 'c', profileId: 'default', kind: 'invoke', channel: 'sessions:list', args: [] }],
     [{ type: 'subscribe', clientId: 'c', channels: ['pty:data'] }],
+    [{ type: 'session-expired', sessionId: 's' }],
   ])('形の合う伝文は、そのまま使う: %j', (message) => {
     expect(parseServerMessage(message)).toEqual(message);
   });
@@ -27,6 +28,8 @@ describe('parseServerMessage（遠隔サーバーから届いた伝文の形）'
     [{ type: 'call', id: 1.5, clientId: 'c', profileId: 'p', kind: 'invoke', channel: 'a', args: [] }],
     [{ type: 'call', id: 1, clientId: 'c', profileId: 'p', kind: 'other', channel: 'a', args: [] }],
     [{ type: 'call', id: 1, clientId: 'c', profileId: 'p', kind: 'invoke', channel: 'a', args: {} }],
+    [{ type: 'disconnected', clientId: '' }],
+    [{ type: 'session-expired', sessionId: 1 }],
     [{ type: 'subscribe', clientId: 'c', channels: [1] }],
   ])('形の違う伝文は null: %j', (message) => {
     expect(parseServerMessage(message)).toBeNull();

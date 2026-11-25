@@ -168,6 +168,61 @@ describe('RemoteHost', () => {
     expect(t.host.connectionCount()).toBe(0);
   });
 
+  it('アプリ全体の多い知らせ（subscribe）は、頼んだ接続にだけ送る', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1' });
+    t.toHost({ type: 'subscribe', clientId: 'c2', channels: [IpcChannel.SystemStats] });
+    t.toHost({ type: 'subscribe', clientId: 'ghost', channels: [IpcChannel.SystemStats] });
+    t.posted.length = 0;
+    t.host.emitAll(IpcChannel.SystemStats, null as never);
+    t.toHost({ type: 'subscribe', clientId: 'c2', channels: [] });
+    t.host.emitAll(IpcChannel.SystemStats, null as never);
+    expect(t.posted).toEqual([{ type: 'event', clientIds: ['c2'], channel: IpcChannel.SystemStats, payload: null }]);
+  });
+
+  it('セッションを消しても、ほかのセッションの接続は残す', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.addSession(session({ sessionId: 's2' }));
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2' });
+    t.host.removeSession('s1');
+    expect(t.host.connectionCount()).toBe(1);
+  });
+
+  it('止めたあとの古い遠隔サーバーからの伝文と終わりは、受けない', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    t.host.stop();
+    t.toHost({ type: 'listening', port: 1 });
+    t.exit(1);
+    expect(t.host.current()).toEqual({ state: 'off' });
+  });
+
+  it('始める前にポートが使われていると知らされたら、ポートは 0 にする', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    (t.host as unknown as { config: null }).config = null;
+    t.toHost({ type: 'listen-failed', reason: 'in-use', message: 'x' });
+    expect(t.host.current()).toEqual({ state: 'in-use', port: 0 });
+  });
+
+  it('受け口が Error でないものを投げても、文字にして返す', async () => {
+    const t = setup(async () => {
+      throw 'だめ';
+    });
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1' });
+    t.toHost({ type: 'call', id: 9, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: 'x', args: [] });
+    await flush();
+    expect(t.posted.at(-1)).toEqual({ type: 'result', id: 9, clientId: 'c1', ok: false, error: 'だめ' });
+  });
+
   it('セッションを消すと、その接続の控えを消し、遠隔サーバーにも知らせる', () => {
     const t = setup();
     t.host.addSession(session());
