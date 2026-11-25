@@ -1072,7 +1072,7 @@ export function App() {
     <div className={`app${mobile ? ' mobile' : ''}`} data-mobile-tab={mobile ? mobileTab : undefined} data-session-drawer={mobile && sessionDrawer ? 'open' : undefined}>
       <TooltipLayer />
       {mobile ? (
-        <MobileBar session={selected ?? null} waiting={waitingOthers.length} onOpenSessions={() => setSessionDrawer(true)} />
+        <MobileBar session={selected ?? null} waiting={waitingOthers.length} drawerOpen={sessionDrawer} onToggleSessions={() => setSessionDrawer((open) => !open)} />
       ) : (
         <TitleBar notifications={notifications} onNotificationsChange={setNotifications} update={appUpdate} />
       )}

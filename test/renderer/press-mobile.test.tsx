@@ -21,9 +21,9 @@ afterEach(() => {
 const session = { id: 's1', title: 'README を直す' } as SessionSummary;
 
 describe('MobileBar', () => {
-  it('セッションの名前と、ほかの答え待ちの数を出す。ボタンで引き出しを開く。つながっていないときはそう出す', () => {
+  it('セッションの名前と、ほかの答え待ちの数を出す。ボタンで引き出しを開け閉めする。つながっていないときはそう出す', () => {
     const open = vi.fn();
-    const view = render(<MobileBar session={session} waiting={2} onOpenSessions={open} />);
+    const view = render(<MobileBar session={session} waiting={2} drawerOpen={false} onToggleSessions={open} />);
     expect(screen.getByText('README を直す')).toBeTruthy();
     expect(screen.getByText('2')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
@@ -31,10 +31,10 @@ describe('MobileBar', () => {
     expect(screen.getByRole('status').getAttribute('aria-label')).toBe('Mac とつながっています');
     act(() => setRemoteConnected(false));
     expect(screen.getByRole('status').getAttribute('aria-label')).toBe('Mac につなぎ直しています');
-    view.rerender(<MobileBar session={{ ...session, title: '' }} waiting={0} onOpenSessions={open} />);
+    view.rerender(<MobileBar session={{ ...session, title: '' }} waiting={0} drawerOpen={false} onToggleSessions={open} />);
     expect(screen.getByText('名前の無いセッション')).toBeTruthy();
     expect(screen.queryByText('0')).toBeNull();
-    view.rerender(<MobileBar session={null} waiting={0} onOpenSessions={open} />);
+    view.rerender(<MobileBar session={null} waiting={0} drawerOpen={false} onToggleSessions={open} />);
     expect(screen.getByText('セッションを選んでください')).toBeTruthy();
   });
 });

@@ -112,6 +112,11 @@ describe('スマホの画面の配置（App）', () => {
     expect(app().dataset.sessionDrawer).toBe('open');
     fireEvent.click(document.querySelector('.mobile-backdrop')!);
     expect(app().dataset.sessionDrawer).toBeUndefined();
+    // ボタンを押すたびに開け閉めする
+    fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
+    expect(screen.getByRole('button', { name: 'セッション一覧' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
+    expect(app().dataset.sessionDrawer).toBeUndefined();
     fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
     fireEvent.click(screen.getAllByText('米の話')[0]);
     await flush();
