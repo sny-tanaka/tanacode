@@ -98,7 +98,16 @@ describe('RemoteHost', () => {
     t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: first });
     expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c1' });
     const kept = t.host.grantTicket('s1');
+    // 期限の切れた券は、次に出すときに捨てる。ほかのセッションの券は、セッションを消しても残す
+    const old = t.host.grantTicket('s1');
+    clock.now += REMOTE_TICKET_MS;
+    t.host.addSession(session({ sessionId: 's2', registrationId: 'r2' }));
+    const other = t.host.grantTicket('s2');
+    t.toHost({ type: 'connected', clientId: 'c9', sessionId: 's1', ticket: old });
+    expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c9' });
     t.host.removeSession('s1');
+    t.toHost({ type: 'connected', clientId: 'c8', sessionId: 's2', ticket: other });
+    expect(t.host.connectionCount()).toBe(1);
     t.host.addSession(session());
     t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: kept });
     expect(t.posted.at(-1)).toEqual({ type: 'disconnect', clientId: 'c2' });

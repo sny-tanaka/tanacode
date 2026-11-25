@@ -179,7 +179,9 @@ describe('parseAuthRequest・deviceNameOf', () => {
     [{ op: 'pair-finish', pairingId: 'p', credential: { id: 'aA', publicKey: 'cA', counter: 0 }, bindingJwk: jwk, bindingSignature: 'cw', name: 'iPhone' }],
     [{ op: 'pair-status', requestId: 'r' }],
     [{ op: 'challenge', purpose: 'login' }],
+    [{ op: 'challenge', purpose: 'ticket' }],
     [{ op: 'login', registrationId: 'r', counter: 1, challengeId: 'c', bindingSignature: 'cw' }],
+    [{ op: 'ticket', sessionId: 's', challengeId: 'c', bindingSignature: 'cw' }],
   ])('形の合う頼み: %j', (request) => {
     expect(parseAuthRequest(request)).toEqual(request);
   });
@@ -195,6 +197,11 @@ describe('parseAuthRequest・deviceNameOf', () => {
     [{ op: 'pair-finish', pairingId: 'p', credential: { id: 'aA', publicKey: 'cA', counter: 0 }, bindingJwk: jwk, bindingSignature: 'cw', name: 'x'.repeat(65) }],
     [{ op: 'pair-status', requestId: 1 }],
     [{ op: 'login', registrationId: 'r', counter: -1, challengeId: 'c', bindingSignature: 'cw' }],
+    [{ op: 'challenge' }],
+    [{ op: 'challenge', purpose: 'other' }],
+    [{ op: 'ticket', sessionId: '', challengeId: 'c', bindingSignature: 'cw' }],
+    [{ op: 'ticket', sessionId: 's', challengeId: 'c', bindingSignature: 'c+w' }],
+    [{ op: 'pair-finish', pairingId: 'p', credential: { id: 'aA', publicKey: 'cA', counter: 0 }, bindingJwk: null, bindingSignature: 'cw', name: '' }],
   ])('形の違う頼みは null: %j', (request) => {
     expect(parseAuthRequest(request)).toBeNull();
   });
