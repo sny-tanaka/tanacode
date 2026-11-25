@@ -2691,6 +2691,28 @@
       }
     }
   },
+  "mobile": {
+    "sessions": "Sessions",
+    "untitled": "Untitled session",
+    "noSession": "Choose a session",
+    "connected": "Connected to the Mac",
+    "reconnecting": "Reconnecting to the Mac",
+    "waiting": "{count} other sessions are waiting for an answer",
+    "tab": {
+      "chat": "Chat",
+      "panel": "Panel",
+      "editor": "Editor",
+      "browser": "Browser",
+      "terminal": "Terminal"
+    },
+    "keys": {
+      "label": "Extra keys",
+      "ctrl": "Ctrl",
+      "line": "Type a line",
+      "send": "Send",
+      "linePlaceholder": "Type a command"
+    }
+  },
   "remoteLogin": {
     "title": "Remote access",
     "installTitle": "Add this page to your Home Screen",

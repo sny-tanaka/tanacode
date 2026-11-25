@@ -99,6 +99,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('FolderIcon', 'フォルダ'),
       item('FileIcon', 'ファイル'),
       item('GlobeIcon', 'ブラウザ'),
+      item('ChatIcon', 'チャット（スマホの画面の下のタブ）'),
       item('TerminalIcon', 'ターミナル（下のパネル）'),
       item('MonitorIcon', 'Claude の画面'),
       item('FlowIcon', 'ワークフローの概要'),

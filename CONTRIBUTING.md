@@ -1925,6 +1925,11 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - リンクの守り（`src/renderer/src/remote/links.ts`）: Mac の画面の main の守り（外のページは外のブラウザで・画面は移らせない）が無いので、`window.open` は http(s) だけを `noopener,noreferrer` で新しいタブに開き、押したリンクで画面そのものは移らせません。
   - 握手の返事（`ready`）に、そのセッションに許したプロファイルと画面の言語を添えます。画面は、覚えておいたプロファイル（無ければ最初のもの）で始め、`ProfilesGet` は遠隔の接続には、そのセッションに許したプロファイル（握手の返事と同じもの）だけを返します。
   - 遠隔の接続ごとに持つもの: `SessionsFocus` は、その接続が開いているセッションとして `RemoteHost` が覚え、新しい応答の印だけを外します（Mac の画面の分は変えない）。チャットの知らせ（`ChatEvents`）は、遠隔の接続には、その接続が開いているセッションの分だけ送ります（通信量を増やさない。セッションの一覧・状態・質問・許可の確認・新しい応答の印は、全部のセッションの分が届く）。スマホの画面では、開いたセッションを毎回読み直し、間の飛んだ知らせはスナップショットで埋めます（`chatState.ts`。`remote/mode.ts` の印で、Mac の画面では読み直さない）。`ShellAttach` は、遠隔の接続には今の画面の写し（`ShellTerminals.snapshot`）だけを返します。`test/main-ipc.test.ts` の `REMOTE_OWN` に、遠隔で動きを変えたチャンネルを挙げています。
+  - スマホの配置（`src/renderer/src/mobile/`。スマホの画面で幅が 760px 以下のときだけ。Mac の画面は窓を狭くしても変えない）。`App` が `.app.mobile` と `data-mobile-tab` を付け、列は作り替えずに、今のタブの列だけを CSS で画面いっぱいに出します（`global.css` の末尾）。
+    - 上の帯（`MobileBar`）: セッションの引き出しを開くボタン（ほかのセッションの答え待ちの数）・セッションの名前・Mac とつながっているか（`remote/mode.ts` の `setRemoteConnected`）。引き出しはセッション一覧（`.sidebar`）を左から重ねて出したもので、選んだら閉じます。
+    - 下のタブ（`MobileTabs`）: チャット・パネル（3 列目の 7 つ）・エディタ（4 列目）・ターミナル。パネルからファイルや差分を開いたらエディタへ移ります。チャットとターミナルの 1 行の入力欄で書いている間は隠します（xterm の見えない入力欄では隠さない）。チャットのタブには、ほかのセッションの答え待ちの帯（`MobileWaiting`）を出します。
+    - ターミナル: 補助キーの列と 1 行の入力欄（`src/renderer/src/terminal/MobileKeys.tsx`）。スマホからは pty の桁数を変えません（`fitLocal`。Mac の画面が崩れないよう、Mac の桁数のまま横にスクロールして見る）。
+    - キーボードが出ている間は、見えている高さ（visualViewport）に画面を合わせます（`--app-height`）。見た目は Storybook の「遠隔操作/スマホの画面」で、アプリ内ブラウザを 393×852 にして見ます。
   - まだのもの（④b・④c）: 狭い幅の配置、`WatchOpenFiles`・`WalkthroughViewing` の接続ごとの扱い、Mac のダイアログを使うものの置き換え、`<webview>`・`pathForFile`、Service Worker と `integrity`（最初の読み込みは 10MB ほど）。
   - テストは、本物の HTTP で登録とログインを通しで動かす `test/remote-auth-flow.test.ts`（パスキーは、作り物の認証器 `test/helpers/soft-authenticator.ts`）と、`test/remote-auth.test.ts`・`test/remote-registrations.test.ts`。認証の前の画面のスクリプトは、jsdom と作り物の IndexedDB・パスキー・遠隔サーバーで動かします（`test/remote-login-page.test.ts`。スクリプトは文字列なので、型チェックでは確かめられないため）。
 

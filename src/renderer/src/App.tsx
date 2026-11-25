@@ -78,6 +78,9 @@ import { useWalkthroughs } from './walkthrough/useWalkthroughs';
 import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
+import { MobileBar } from './mobile/MobileBar';
+import { MobileTabs, MobileWaiting, type MobileTab } from './mobile/MobileTabs';
+import { useMobileLayout } from './mobile/useMobileLayout';
 
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
@@ -1026,6 +1029,55 @@ export function App() {
   });
 
   const activeFile = editor.files.find((f) => f.path === editor.activePath);
+
+  // スマホの配置（Issue #464。スマホの画面で、幅が狭いときだけ）。上の帯のボタンでセッションの引き出しを開き、下のタブで選んだセッションの中を切り替える
+  const mobile = useMobileLayout();
+  const [mobileTab, setMobileTab] = useState<MobileTab>('chat');
+  const [sessionDrawer, setSessionDrawer] = useState(false);
+  // ほかのセッションの答え待ち（質問・許可の確認・ブラウザでの頼み）。アーカイブしたものは数えない
+  const waitingOthers = (sessions ?? []).filter((s) => s.attention !== null && !s.archived && s.id !== selectedId);
+  const selectFromDrawer = useCallback(
+    (id: string) => {
+      select(id);
+      setSessionDrawer(false);
+    },
+    [select],
+  );
+  const composeFromDrawer = useCallback(() => {
+    startComposing();
+    setSessionDrawer(false);
+    setMobileTab('chat');
+  }, [startComposing]);
+  // ターミナルのタブを開いたら、ターミナルも開く
+  useEffect(() => {
+    if (mobile && mobileTab === 'terminal') showShell();
+  }, [mobile, mobileTab, showShell]);
+  // ブラウザのタブを選んだら、真ん中の列にブラウザを出す。エディタのタブを選んだら、ブラウザを閉じてエディタを出す
+  const changeMobileTab = useCallback(
+    (tab: MobileTab) => {
+      setMobileTab(tab);
+      if (tab === 'browser') showPreview();
+      else if (tab === 'editor') setDiffView((view) => (view?.source === 'preview' ? null : view));
+    },
+    [showPreview],
+  );
+  // パネルからファイルや差分を開いたら、エディタのタブへ移る。ブラウザを開いたら（パネル・エディタのタブを見ている間に、Claude が開いたときも）、
+  // ブラウザのタブへ移る。ブラウザのタブで、ブラウザを閉じたらエディタのタブへ移る
+  const openedInCenter = `${diffView?.source ?? ''}:${editor.activePath ?? ''}`;
+  const lastOpened = useRef(openedInCenter);
+  useEffect(() => {
+    if (lastOpened.current === openedInCenter) return;
+    lastOpened.current = openedInCenter;
+    if (!mobile) return;
+    // ブラウザを閉じた（ブラウザの ×）・ほかのものを開いたら、エディタのタブへ
+    if (mobileTab === 'browser') {
+      if (diffView?.source !== 'preview') setMobileTab('editor');
+      return;
+    }
+    if (mobileTab !== 'panel' && mobileTab !== 'editor') return;
+    if (diffView?.source === 'preview') setMobileTab('browser');
+    else if (mobileTab === 'panel' && (diffView || editor.activePath)) setMobileTab('editor');
+  }, [mobile, mobileTab, openedInCenter, diffView, editor.activePath]);
   const language = activeFile?.content.kind === 'text' ? languageLabel(languageFor(activeFile.path)) : null;
   // worktree のフォルダができるのを待っている間、フォルダを読むパネル（エクスプローラー・ソース管理・検索）の代わりに出す
   const folderWaitNote = folderWaitLabel ? (
@@ -1035,9 +1087,13 @@ export function App() {
   ) : null;
 
   return (
-    <div className="app">
+    <div className={`app${mobile ? ' mobile' : ''}`} data-mobile-tab={mobile ? mobileTab : undefined} data-session-drawer={mobile && sessionDrawer ? 'open' : undefined}>
       <TooltipLayer />
-      <TitleBar notifications={notifications} onNotificationsChange={setNotifications} update={appUpdate} />
+      {mobile ? (
+        <MobileBar session={selected ?? null} waiting={waitingOthers.length} drawerOpen={sessionDrawer} onToggleSessions={() => setSessionDrawer((open) => !open)} />
+      ) : (
+        <TitleBar notifications={notifications} onNotificationsChange={setNotifications} update={appUpdate} />
+      )}
       <div
         className="main"
         ref={columns.mainRef}
@@ -1053,8 +1109,8 @@ export function App() {
           sessions={sessions ?? []}
           selectedId={selectedId}
           statusOf={statusOf}
-          onSelect={select}
-          onCreate={startComposing}
+          onSelect={mobile ? selectFromDrawer : select}
+          onCreate={mobile ? composeFromDrawer : startComposing}
           onImport={openImport}
           onRename={renameSession}
           onRemove={removeSession}
@@ -1064,6 +1120,7 @@ export function App() {
           scheduled={scheduled}
           checklistUnread={checklistUnread}
         />
+        {mobile && <div className="mobile-backdrop" onClick={() => setSessionDrawer(false)} />}
         {resizer('sessions')}
         {composing && (
           <NewSessionPane
@@ -1385,11 +1442,14 @@ export function App() {
             waiting={folderWaitLabel}
             liveOwners={sessions ? liveSessionIds : null}
             open={terminalOpen}
+            visible={!mobile || mobileTab === 'terminal'}
             onOpen={showShell}
             onClose={closeShell}
           />
         </div>
       </div>
+      {mobile && mobileTab === 'chat' && <MobileWaiting count={waitingOthers.length} onShow={() => select(waitingOthers[0].id)} />}
+      {mobile && <MobileTabs tab={mobileTab} onChange={changeMobileTab} />}
       <StatusBar
         status={statusBarStatus(chat.status, selected)}
         exitCode={chat.exitCode}

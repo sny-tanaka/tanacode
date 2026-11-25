@@ -378,6 +378,13 @@ export const CodeIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// チャット: 左下に尾の付いた吹き出し（スマホの画面の下のタブ）
+export const ChatIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M5.5 4.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 3.5v-3.5a2.5 2.5 0 0 1-2.5-2.5V7a2.5 2.5 0 0 1 2.5-2.5" />
+  </Svg>
+);
+
 // 翻訳: 左上に「文」、右下に「A」
 export const TranslateIcon: IconComponent = (p) => (
   <Svg {...p}>

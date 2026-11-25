@@ -34,6 +34,7 @@ import type {
   ChatBatch,
   ExportSource,
   NewSessionOptions,
+  PtySnapshot,
   RewindChoice,
   RewindOutcome,
   RewindPreview,
@@ -416,6 +417,8 @@ type Listeners = {
   onSessionsChanged: (sessions: SessionSummary[]) => void;
   onChat: (batch: ChatBatch) => void;
   onPtyData: (sessionId: string, data: string) => void;
+  // ターミナルモードの TUI の pty の大きさが変わった（スマホの画面が、Mac の大きさのまま描くために受ける）
+  onPtyResized?: (sessionId: string, cols: number, rows: number) => void;
   onTurnCompleted: (session: SessionSummary, notice: TurnNotice) => void;
   // ターンが終わった（通知を出さないときも、onTurnCompleted より先に）。limit: プランの利用枠に当たって止まったなら、その知らせ。
   // null は、止まらずにモデルが応答した（作業が進んだ）。どちらでもないターン（応答の前に中断した・モデルを呼ばなかった）では呼ばない
@@ -2421,10 +2424,12 @@ export class SessionManager {
   resize(id: string, cols: number, rows: number): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
+    const changed = rt.size.cols !== cols || rt.size.rows !== rows;
     rt.size = { cols, rows };
     const process = rt.process;
     if (!process) return;
     process.resize(cols, rows);
+    if (changed) this.listeners.onPtyResized?.(id, cols, rows);
     // 引き継いだ TUI の画面は、前のアプリが描いたもので、今の画面には届いていない（画面の用意より前に送った）。最初に画面を出したとき、
     // 常駐のホストが持つ今の画面を取り直して流す（時間に頼らずに描き直す）
     if (rt.redrawFromHost && rt.terminal) {
@@ -2432,6 +2437,17 @@ export class SessionManager {
       rt.redrawFromHost = null;
       void this.redrawFromHost(id, rt, process, ptyId);
     }
+  }
+
+  // ターミナルモードの TUI の今の画面と大きさ（スマホの画面が、Mac の大きさのまま描くために読む。Issue #464）。
+  // ホストは pty の出力を自分の画面に書き終えてから送るので、写しには、それまでに送った出力がいつも入っている。動いていなければ null
+  async ptySnapshot(id: string): Promise<PtySnapshot | null> {
+    const rt = this.runtimes.get(id);
+    if (!rt?.terminal || !rt.process) return null;
+    const hosted = await this.host.list().catch(() => [] as HostedInfo[]);
+    // 切り替えの途中で、止めている前の TUI も残っていることがあるので、動いているもののうち最後に起動したものを使う
+    const info = hosted.filter((h) => h.kind === 'pty' && h.tag === id && h.exitCode === null).pop();
+    return info?.kind === 'pty' ? { cols: info.cols, rows: info.rows, screen: info.screen } : null;
   }
 
   // ホストは pty の出力を自分の画面に書き終えてから送るので、一覧（list）の画面の控えには、それまでに送った出力がいつも入っている。

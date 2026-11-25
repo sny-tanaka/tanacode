@@ -6,7 +6,7 @@ import { setLanguage } from '@shared/i18n';
 import { App } from '../App';
 import { syncSharedPrefs } from '../sharedPrefs';
 import { guardLinks } from './links';
-import { BEFORE_RELOAD, setRemoteMode } from './mode';
+import { BEFORE_RELOAD, setRemoteConnected, setRemoteMode } from './mode';
 import { RemoteTransport } from './transport';
 import '../global.css';
 
@@ -19,6 +19,8 @@ const PROFILE_KEY = 'tanacode.remote.profile';
 const transport = new RemoteTransport({
   // セッションが切れた・束縛の鍵が無いときは、ログインの画面へ戻す
   onSignedOut: () => location.replace('/'),
+  // 上の帯に、Mac とつながっているかを出す
+  onConnection: setRemoteConnected,
   // 切れていた間の知らせ（セッションの一覧・質問・許可の確認など）は届いていないので、画面を読み込み直す（assets はキャッシュ済みで軽い）。
   // 返事を待っている頼みが返ってから、打ちかけの文を控えて読み込み直す
   onReconnected: () =>

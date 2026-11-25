@@ -8970,3 +8970,365 @@ body.resizing-rows webview {
   color: var(--blue);
   font-size: 11px;
 }
+
+/* スマホの配置（Issue #464。スマホの画面で、幅が狭いときだけ。App が .app.mobile を付ける）。
+   上の帯（.mobile-bar）・セッションの引き出し・下のタブ（.mobile-tabs）。列は作り替えず、今のタブの列だけを画面いっぱいに出す */
+.app.mobile {
+  height: var(--app-height, 100dvh);
+  padding-top: env(safe-area-inset-top);
+}
+.app.mobile .resizer,
+.app.mobile .statusbar {
+  display: none;
+}
+.app.mobile .main {
+  position: relative;
+  display: block;
+}
+.app.mobile .main > .sidebar,
+.app.mobile .main > .claude,
+.app.mobile .main > .explorer,
+.app.mobile .main > .center {
+  display: none;
+  width: 100% !important;
+  height: 100%;
+  border: none;
+}
+.app.mobile[data-mobile-tab='chat'] .main > .claude {
+  display: flex;
+}
+.app.mobile[data-mobile-tab='panel'] .main > .explorer {
+  display: flex;
+  flex-direction: column;
+}
+.app.mobile[data-mobile-tab='editor'] .main > .center,
+.app.mobile[data-mobile-tab='browser'] .main > .center,
+.app.mobile[data-mobile-tab='terminal'] .main > .center {
+  display: flex;
+}
+/* エディタ・ブラウザのタブではターミナルを出さず、ターミナルのタブではターミナルだけを画面いっぱいに出す */
+.app.mobile[data-mobile-tab='editor'] .center > .terminal-panel,
+.app.mobile[data-mobile-tab='browser'] .center > .terminal-panel {
+  display: none;
+}
+/* ブラウザとターミナルは下のタブで開くので、パネルの切り替えの列には出さない */
+.app.mobile .explorer .activity-bar .activity-sep,
+.app.mobile .explorer .activity-bar .activity-toggle {
+  display: none;
+}
+.app.mobile[data-mobile-tab='terminal'] .center > :not(.terminal-panel) {
+  display: none !important;
+}
+.app.mobile[data-mobile-tab='terminal'] .center > .terminal-panel {
+  flex: 1;
+  height: auto !important;
+}
+/* パネルのタブ: 切り替えのアイコンを上に横 1 列で並べる */
+.app.mobile .explorer .activity-bar {
+  width: auto;
+  flex-direction: row;
+  overflow-x: auto;
+  padding: 4px 6px;
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.app.mobile .explorer .activity-bar button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app.mobile .explorer .side-panel {
+  flex: 1;
+  min-height: 0;
+}
+/* セッションの引き出し（左から重ねて、スライドで出し入れする）。閉じている間も置いておき、画面の外へずらして隠す
+   （閉じ終わったら visibility で隠し、押せず・読み上げにも出ないようにする） */
+.app.mobile .main > .sidebar {
+  display: flex;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 85% !important;
+  z-index: 40;
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform 0.25s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0.25s;
+}
+.app.mobile[data-session-drawer='open'] .main > .sidebar {
+  transform: none;
+  visibility: visible;
+  box-shadow: 8px 0 24px rgb(0 0 0 / 45%);
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mobile-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgb(0 0 0 / 45%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.app.mobile[data-session-drawer='open'] .mobile-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app.mobile .main > .sidebar,
+  .app.mobile[data-session-drawer='open'] .main > .sidebar,
+  .mobile-backdrop {
+    transition: none;
+  }
+}
+
+/* 上の帯 */
+.mobile-bar {
+  flex: none;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-bar-menu {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+}
+.mobile-bar-burger,
+.mobile-bar-burger::before,
+.mobile-bar-burger::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-primary);
+}
+.mobile-bar-burger {
+  position: relative;
+}
+.mobile-bar-burger::before,
+.mobile-bar-burger::after {
+  content: '';
+  position: absolute;
+  left: 0;
+}
+.mobile-bar-burger::before {
+  top: -6px;
+}
+.mobile-bar-burger::after {
+  top: 6px;
+}
+.mobile-bar-badge {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: var(--text-on-fill);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+.mobile-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mobile-bar-connection {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.mobile-bar-connection.on {
+  background: var(--ok);
+}
+
+/* 下のタブ（キーボードが出ている間は隠す） */
+.mobile-tabs {
+  flex: none;
+  display: flex;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-tabs button {
+  flex: 1;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.mobile-tabs button.on {
+  color: var(--send-fg);
+  box-shadow: inset 0 2px 0 var(--send-fg);
+}
+/* 隠すのは、チャットの入力欄とターミナルの 1 行の入力欄で書いている間だけ（xterm は見えない入力欄にフォーカスを置くので、含めるとタブから出られない） */
+.app.mobile:has(.chat-input-wrap textarea:focus, .mobile-keys-line input:focus) .mobile-tabs {
+  display: none;
+}
+/* ほかのセッションの答え待ち（チャットのタブで、下のタブの上に出す） */
+.mobile-waiting {
+  flex: none;
+  min-height: 40px;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+/* ターミナルの補助キーと 1 行の入力欄 */
+.mobile-keys {
+  flex: none;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.mobile-keys-row {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  overflow-x: auto;
+}
+.mobile-keys-row button {
+  flex: none;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: 13px var(--font-mono);
+}
+.mobile-keys-row button.on {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.mobile-keys-line {
+  display: flex;
+  gap: 6px;
+  padding: 6px 6px 0;
+}
+.mobile-keys-line input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-heading);
+  font: 14px var(--font-mono);
+}
+/* スマホのターミナルは Mac の桁数のまま描くので、横にスクロールして見る */
+.app.mobile .terminal-host {
+  overflow-x: auto;
+}
+/* ターミナルモードの Claude の画面も、スマホの画面では Mac の桁数のまま描く（幅が狭くなくても同じ） */
+.claude-screen.remote {
+  overflow: auto;
+}
+.claude-screen.remote .terminal-instance {
+  position: static;
+  margin: 6px 0 0 8px;
+}
+/* チャットの見出し: セッションの名前は上の帯に出すので、スマホの配置では出さない（ボタンの並びを狭い幅に収める） */
+.app.mobile .claude-header .claude-title {
+  display: none;
+}
+/* 見出しのスイッチとボタンは「…」の中（ClaudePane）。見出しの下に、右に寄せて重ねて出す */
+.claude-header-tools {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 51;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  animation: claude-header-tools-in 0.16s ease-out;
+  transform-origin: top right;
+}
+@keyframes claude-header-tools-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+.claude-header-tool {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+button.claude-header-tool {
+  justify-content: flex-start;
+}
+button.claude-header-tool:active {
+  background: var(--bg-hover);
+}
+button.claude-header-tool:disabled {
+  color: var(--text-tertiary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .claude-header-tools {
+    animation: none;
+  }
+}
+/* 入力欄の下の切り替え（設定ファイル・モデル・エフォート・モード）は、折り返さずに 1 行で幅を分け合う。押すと iOS の選ぶ画面が出る。
+   モデルの一覧の読み直しは、めったに使わないので出さない */
+.app.mobile .chat-options {
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.app.mobile .chat-options select,
+.app.mobile .chat-options select.settings-file-select {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  min-height: 32px;
+  text-overflow: ellipsis;
+}
+.app.mobile .chat-options .model-refresh {
+  display: none;
+}

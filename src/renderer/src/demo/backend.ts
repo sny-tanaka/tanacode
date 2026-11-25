@@ -608,6 +608,8 @@ export class DemoBackend {
         resize: () => {},
         resetSize: () => {},
         onData: () => () => {},
+        snapshot: () => ok(null),
+        onResized: () => () => {},
       },
       shell: {
         // 開くたびに別のシェル（タブ）にする。出力は台本が shellOutput で流す
@@ -617,6 +619,7 @@ export class DemoBackend {
         resize: () => {},
         kill: () => {},
         onData: (l) => this.ch.shellData.on(l),
+        onResized: () => () => {},
         onExit: (l) => this.ch.shellExit.on(l),
         onOpened: (l) => this.ch.shellOpened.on(l),
         // デモの worktree は install しない

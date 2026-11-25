@@ -590,6 +590,39 @@ describe('Remote Control を使わないセッション', () => {
   });
 });
 
+describe('スマホの画面が読む TUI の画面と大きさ（Issue #464）', () => {
+  it('ptySnapshot: 常駐のホストが持つ今の画面と大きさを返す。切り替えの途中なら、動いているうち最後のもの。ターミナルモードでなければ null', async () => {
+    const { id } = await chatting();
+    await expect(app.manager.ptySnapshot(id)).resolves.toBeNull();
+    await expect(app.manager.ptySnapshot('無いセッション')).resolves.toBeNull();
+    await app.manager.setTerminalMode(id, true);
+    tui();
+    const pty = (over: Partial<HostedPtyInfo>): HostedPtyInfo => ({ kind: 'pty', id: 'pty-1', tag: id, pid: 100, startedAt: 0, exitCode: null, cols: 80, rows: 24, screen: '', ...over });
+    app.host.hosted = [
+      pty({ id: 'pty-0', exitCode: 0, screen: '終わった画面' }),
+      pty({ id: 'pty-1', screen: '止めている前の画面' }),
+      pty({ id: 'pty-2', cols: 132, rows: 43, screen: '今の画面' }),
+      pty({ id: 'pty-3', tag: 'ほかのセッション', screen: 'ほかの画面' }),
+    ];
+    await expect(app.manager.ptySnapshot(id)).resolves.toEqual({ cols: 132, rows: 43, screen: '今の画面' });
+    app.host.hosted = [];
+    await expect(app.manager.ptySnapshot(id)).resolves.toBeNull();
+  });
+
+  it('resize: pty の大きさが変わったときだけ知らせる（スマホの画面が、Mac の大きさに合わせる）', async () => {
+    const { id } = await chatting();
+    await app.manager.setTerminalMode(id, true);
+    tui();
+    app.manager.resize(id, 100, 30);
+    app.manager.resize(id, 100, 30);
+    app.manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows);
+    expect(app.ptyResized).toEqual([
+      [id, 100, 30],
+      [id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows],
+    ]);
+  });
+});
+
 describe('アプリの再起動', () => {
   it('前のアプリがターミナルモードで起動した claude（pty）は、止めずにターミナルモードとして引き継ぐ', async () => {
     const { id, pipe } = await chatting();

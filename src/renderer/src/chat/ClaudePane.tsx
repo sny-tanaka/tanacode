@@ -11,6 +11,7 @@ import type { BashTask, TaskRef } from '@shared/task';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, MoreIcon, ParentIcon, ReloadIcon, type IconComponent } from '../icons';
+import { useMobileLayout } from '../mobile/useMobileLayout';
 import { ContextMenu } from '../explorer/ContextMenu';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ExportDialog } from '../export/ExportDialog';
@@ -174,6 +175,30 @@ export const ClaudePane = memo(function ClaudePane({
   const [exporting, setExporting] = useState(false);
   // 狭いときの「…」のメニュー（開いている位置と、開いたボタン）
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
+  // スマホの配置では、見出しのスイッチとボタンを「…」の中にまとめる（狭い幅に全部は並ばない。Issue #464）
+  const mobile = useMobileLayout();
+  const [tools, setTools] = useState(false);
+  const toolsRef = useRef<HTMLDivElement>(null);
+  // 外を押したら閉じる（中と「…」のボタンは除く。「…」は自分で開け閉めする）。閉じるだけにして、押した先のボタンは押さない
+  // （スマホのメニューの決まり）。セッションを替えたら閉じる
+  useEffect(() => {
+    if (!tools) return;
+    const close = (e: PointerEvent) => {
+      const target = e.target as Element;
+      if (toolsRef.current?.contains(target) || target.closest?.('.claude-header-tools-toggle')) return;
+      setTools(false);
+      const swallow = (click: MouseEvent) => {
+        click.preventDefault();
+        click.stopPropagation();
+      };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      // 押した先がずれて click が来なかったときに、次の押下まで残さない
+      window.setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 600);
+    };
+    document.addEventListener('pointerdown', close, true);
+    return () => document.removeEventListener('pointerdown', close, true);
+  }, [tools]);
+  useEffect(() => setTools(false), [session.id]);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
   // スマホの画面では、つなぎ直して読み込み直すときに、打ちかけの文を控えて戻す（remote/mode.ts）
@@ -825,59 +850,128 @@ export const ClaudePane = memo(function ClaudePane({
         <span className="claude-title">{session.title ?? 'Claude Code'}</span>
         <div className="spacer" />
         <ContextMeter {...contextUsage(session.model, statusLine, contextTokens)} onClick={onShowContext} />
-        {!session.archived && (
-          <RemoteControlToggle
-            on={session.remoteControl}
-            connected={live ? !!chat.remoteControlUrl : null}
-            busy={switchingRemote.has(session.id)}
-            locked={terminalOpen}
-            onChange={(on) => void setRemoteControl(on)}
-          />
-        )}
-        {/* 離席モードは、人が動かすセッションだけ（子は人に聞かない） */}
-        {!session.archived && !session.parentId && (
-          <AwayToggle on={!!session.away} terminal={terminalOpen} onChange={(on) => void window.tanacode.sessions.setAway(session.id, on)} />
-        )}
-        {live && (
-          <CompactButton
-            canStart={canCompact}
-            status={compactStatus}
-            auto={session.autoCompact !== false}
-            onStart={() => void window.tanacode.compact.start(session.id)}
-            onAutoChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)}
-          />
-        )}
-        {extras.map((extra) => (
-          <IconButton key={extra.key} size="md" className="claude-header-extra" {...extra.button} />
-        ))}
-        <IconButton
-          size="md"
-          icon={MoreIcon}
-          className="claude-header-more"
-          label={t('chat.pane.more')}
-          aria-haspopup="menu"
-          aria-expanded={moreMenu !== null}
-          onClick={(e) => {
-            // 開いているときは、閉じるだけ
-            if (moreMenu) return setMoreMenu(null);
-            const rect = e.currentTarget.getBoundingClientRect();
-            setMoreMenu({ x: rect.left, y: rect.bottom + 4, anchor: e.currentTarget });
-          }}
-        />
-        {moreMenu && (
-          <ContextMenu
-            x={moreMenu.x}
-            y={moreMenu.y}
-            // 押せない項目には、ヘッダーのボタンのツールチップと同じ文（押せないわけ）を添える
-            items={extras.map((extra) => ({
-              label: extra.button.label,
-              disabled: extra.button.disabled,
-              tip: extra.button.disabled ? extra.button.tip : undefined,
-              onSelect: extra.button.onClick,
-            }))}
-            onClose={closeMoreMenu}
-            anchor={moreMenu.anchor}
-          />
+        {mobile ? (
+          <>
+            <IconButton
+              size="md"
+              icon={MoreIcon}
+              label={t('chat.pane.more')}
+              aria-haspopup="true"
+              aria-expanded={tools}
+              pressed={tools}
+              className="claude-header-tools-toggle"
+              onClick={() => setTools(!tools)}
+            />
+            {tools && (
+              <>
+                <div className="claude-header-tools" ref={toolsRef} role="group" aria-label={t('chat.pane.more')}>
+                  {!session.archived && (
+                    <div className="claude-header-tool">
+                      <span>Remote Control</span>
+                      <RemoteControlToggle
+                        on={session.remoteControl}
+                        connected={live ? !!chat.remoteControlUrl : null}
+                        busy={switchingRemote.has(session.id)}
+                        locked={terminalOpen}
+                        onChange={(on) => void setRemoteControl(on)}
+                      />
+                    </div>
+                  )}
+                  {/* 離席モードは、人が動かすセッションだけ（子は人に聞かない） */}
+                  {!session.archived && !session.parentId && (
+                    <div className="claude-header-tool">
+                      <span>{t('chat.away.name')}</span>
+                      <AwayToggle on={!!session.away} terminal={terminalOpen} onChange={(on) => void window.tanacode.sessions.setAway(session.id, on)} />
+                    </div>
+                  )}
+                  {live && (
+                    <div className="claude-header-tool">
+                      <span>{t('chat.pane.optimizedCompact')}</span>
+                      <CompactButton
+                        canStart={canCompact}
+                        status={compactStatus}
+                        auto={session.autoCompact !== false}
+                        onStart={() => void window.tanacode.compact.start(session.id)}
+                        onAutoChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)}
+                      />
+                    </div>
+                  )}
+                  {extras.map((extra) => (
+                    <button
+                      key={extra.key}
+                      type="button"
+                      className="claude-header-tool"
+                      disabled={extra.button.disabled}
+                      onClick={() => {
+                        setTools(false);
+                        extra.button.onClick();
+                      }}
+                    >
+                      <extra.button.icon size={16} />
+                      {extra.button.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {!session.archived && (
+              <RemoteControlToggle
+                on={session.remoteControl}
+                connected={live ? !!chat.remoteControlUrl : null}
+                busy={switchingRemote.has(session.id)}
+                locked={terminalOpen}
+                onChange={(on) => void setRemoteControl(on)}
+              />
+            )}
+            {/* 離席モードは、人が動かすセッションだけ（子は人に聞かない） */}
+            {!session.archived && !session.parentId && (
+              <AwayToggle on={!!session.away} terminal={terminalOpen} onChange={(on) => void window.tanacode.sessions.setAway(session.id, on)} />
+            )}
+            {live && (
+              <CompactButton
+                canStart={canCompact}
+                status={compactStatus}
+                auto={session.autoCompact !== false}
+                onStart={() => void window.tanacode.compact.start(session.id)}
+                onAutoChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)}
+              />
+            )}
+            {extras.map((extra) => (
+              <IconButton key={extra.key} size="md" className="claude-header-extra" {...extra.button} />
+            ))}
+            <IconButton
+              size="md"
+              icon={MoreIcon}
+              className="claude-header-more"
+              label={t('chat.pane.more')}
+              aria-haspopup="menu"
+              aria-expanded={moreMenu !== null}
+              onClick={(e) => {
+                // 開いているときは、閉じるだけ
+                if (moreMenu) return setMoreMenu(null);
+                const rect = e.currentTarget.getBoundingClientRect();
+                setMoreMenu({ x: rect.left, y: rect.bottom + 4, anchor: e.currentTarget });
+              }}
+            />
+            {moreMenu && (
+              <ContextMenu
+                x={moreMenu.x}
+                y={moreMenu.y}
+                // 押せない項目には、ヘッダーのボタンのツールチップと同じ文（押せないわけ）を添える
+                items={extras.map((extra) => ({
+                  label: extra.button.label,
+                  disabled: extra.button.disabled,
+                  tip: extra.button.disabled ? extra.button.tip : undefined,
+                  onSelect: extra.button.onClick,
+                }))}
+                onClose={closeMoreMenu}
+                anchor={moreMenu.anchor}
+              />
+            )}
+          </>
         )}
         {!session.archived && (
           <IconButton

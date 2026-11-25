@@ -156,6 +156,7 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.ShellCreate]: same(['string', 'number', 'number']),
   // 遠隔の接続は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
   [IpcChannel.ShellAttach]: same([]),
+  [IpcChannel.PtySnapshot]: same(['string']),
   [IpcChannel.FolderPick]: replace([], 'フォルダを選ぶ Mac のダイアログ（スマホ向けのフォルダの一覧に置き換える）'),
   [IpcChannel.FolderInfo]: same(['string']),
   [IpcChannel.FolderParentInstructions]: same(['string', 'boolean?']),

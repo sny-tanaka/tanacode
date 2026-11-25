@@ -72,6 +72,8 @@ export type TerminalInfo = {
 type Listeners = {
   onData: (id: string, data: string) => void;
   onExit: (id: string, exitCode: number) => void;
+  // pty の大きさが変わった（スマホの画面が、Mac の大きさのまま描くために受ける）
+  onResized?: (id: string, cols: number, rows: number) => void;
   // アプリがターミナルを開いた。task: コマンドのタブ（run）/ false: Claude が打つために開いたシェル（openShell）。
   // replay: 画面に出さずに動かしていたコマンドを出したときの、それまでの画面（reveal）
   onOpened?: (owner: string, id: string, name: string, task: boolean, replay?: ShellReplay) => void;
@@ -158,8 +160,10 @@ export class ShellTerminals {
   resize(id: string, cols: number, rows: number): void {
     const shell = this.shells.get(id);
     if (!shell || shell.exitCode !== null || shell.killed || cols <= 0 || rows <= 0) return;
+    if (shell.term.cols === cols && shell.term.rows === rows) return;
     shell.proc.resize(cols, rows);
     shell.term.resize(cols, rows);
+    this.listeners.onResized?.(id, cols, rows);
   }
 
   // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる。
