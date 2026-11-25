@@ -246,8 +246,19 @@ describe('そのまま渡す受け口', () => {
     await expect(invoke(channel, ...args)).resolves.toEqual(expected);
   });
 
-  // 遠隔の接続（スマホ）から呼んでも、Mac の画面からと同じ相手に同じ引数で渡り、同じ返事が返る（扱いが same のもの）
-  const isSame = (channel: string) => REMOTE_CHANNELS[channel as RemoteChannel].use === 'same';
+  // 遠隔の接続（スマホ）から呼んでも、Mac の画面からと同じ相手に同じ引数で渡り、同じ返事が返る（扱いが same のもの）。
+  // 遠隔の接続ごとに持つ形にしたもの（REMOTE_OWN）は、Mac の画面の分を上書きしないよう、遠隔では動きを変える（下で別に確かめる）
+  const REMOTE_OWN = new Set<string>([IpcChannel.SessionsFocus, IpcChannel.ShellAttach]);
+  const isSame = (channel: string) => REMOTE_CHANNELS[channel as RemoteChannel].use === 'same' && !REMOTE_OWN.has(channel);
+
+  it('遠隔の接続ごとに持つもの: ShellAttach は今の画面の写しだけを返し、SessionsFocus は新しい応答の印だけを外す（Mac の画面の分は変えない）', async () => {
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.ShellAttach)).resolves.toEqual(call('shells.snapshot'));
+    expect(the('ShellTerminals').attach.mock.calls).toEqual([]);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.SessionsFocus, 's1');
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.SessionsFocus, null);
+    expect(the('SessionManager').markRead.mock.calls).toEqual([['s1'], [null]]);
+    expect(the('SessionManager').focus.mock.calls).toEqual([]);
+  });
   it.each(cases.filter(([channel]) => isSame(channel)))('遠隔の接続から %s を呼んでも、Mac の画面からと同じ', async (channel, args, expected) => {
     await expect(invokeRemote(DEFAULT_PROFILE_ID, channel, ...args)).resolves.toEqual(expected);
   });

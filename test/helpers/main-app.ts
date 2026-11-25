@@ -411,6 +411,7 @@ export const githubModule = {
 
 const SessionManager = fakeClass('SessionManager', {
   list: () => [],
+  markRead: () => undefined,
   create: echo('manager.create'),
   createInWorktree: echo('manager.createInWorktree'),
   // worktree を作るのを待たずに返す。作り終えたことにする（作れなかった場合は、テストが created を差し替える）
@@ -597,7 +598,7 @@ const modules: Record<string, Record<string, unknown>> = {
       killAll: () => undefined,
       run: echo('shells.run'),
       attach: echo('shells.attach'),
-      snapshot: () => [],
+      snapshot: echo('shells.snapshot'),
       detach: () => undefined,
     }),
   },
