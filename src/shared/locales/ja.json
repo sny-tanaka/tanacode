@@ -1758,6 +1758,8 @@
       "invalid": "SVG として読み込めません（書きかけの可能性があります）"
     },
     "openInFinder": "Finder で開く",
+    "mobileEdit": "編集",
+    "mobileDone": "編集を終える",
     "tabs": {
       "closeConfirm": "{name} の変更を保存せずに閉じますか？",
       "unsaved": "未保存の変更があります（⌘S で保存）",

@@ -1813,6 +1813,8 @@
       "invalid": "Can't load this as an SVG (it may be unfinished)"
     },
     "openInFinder": "Open in Finder",
+    "mobileEdit": "Edit",
+    "mobileDone": "Done",
     "tabs": {
       "closeConfirm": "Close “{name}” without saving your changes?",
       "unsaved": "Unsaved changes (⌘S to save)",

@@ -6014,6 +6014,16 @@ button.menu-tab:disabled {
   flex: none;
   border-top: 1px solid var(--border-subtle);
 }
+/* スマホの配置のエディタの「編集」（はじめは読むだけ） */
+.editor-mobile-edit {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+}
+.editor-mobile-edit.on {
+  border-color: var(--send-border);
+  color: var(--send-fg);
+}
 /* スマホの画面のログアウト（セッションの一覧のいちばん下） */
 .remote-logout {
   flex: none;
