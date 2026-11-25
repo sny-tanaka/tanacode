@@ -9,7 +9,8 @@ export type RemoteListenConfig = { port: number; publicOrigin: string };
 // 遠隔の接続のセッション（③ で、本人確認を通ったときに main が作る）。tokenHash: Cookie の秘密の SHA-256（hex。秘密そのものは渡さない）/
 // registrationId: どの登録から入ったか / profileIds: その登録に許したプロファイル / expiresAt: 長くても使える期限（エポックのミリ秒）。
 // 使わない時間の期限（30 分）は、遠隔サーバーが人の操作の頼みで数える
-export type RemoteSession = { sessionId: string; tokenHash: string; registrationId: string; profileIds: string[]; expiresAt: number };
+// lastActive: 最後に人の操作の頼みが届いた時刻（main が控え、待ち受けを始め直したときに渡す。使わない時間の期限を延ばさないため）
+export type RemoteSession = { sessionId: string; tokenHash: string; registrationId: string; profileIds: string[]; expiresAt: number; lastActive: number };
 
 // main → 遠隔サーバー
 export type HostMessage =
@@ -19,7 +20,8 @@ export type HostMessage =
   | { type: 'session-remove'; sessionId: string }
   | { type: 'result'; id: number; clientId: string; ok: true; value: unknown }
   | { type: 'result'; id: number; clientId: string; ok: false; error: string }
-  | { type: 'event'; clientIds: string[]; channel: string; payload: unknown }
+  // profileId: どのプロファイルの知らせか（アプリ全体の知らせには無い）
+  | { type: 'event'; clientIds: string[]; channel: string; payload: unknown; profileId?: string }
   | { type: 'disconnect'; clientId: string };
 
 // 遠隔サーバー → main
@@ -33,6 +35,8 @@ export type ServerMessage =
   | { type: 'closed' }
   | { type: 'connected'; clientId: string; sessionId: string }
   | { type: 'disconnected'; clientId: string }
+  // 使わない時間・期限でセッションを捨てた（main も控えから消す）
+  | { type: 'session-expired'; sessionId: string }
   | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[] }
   | { type: 'subscribe'; clientId: string; channels: string[] };
 
@@ -60,6 +64,8 @@ export function parseServerMessage(value: unknown): ServerMessage | null {
       return isId(value.clientId) && isId(value.sessionId) ? { type: 'connected', clientId: value.clientId, sessionId: value.sessionId } : null;
     case 'disconnected':
       return isId(value.clientId) ? { type: 'disconnected', clientId: value.clientId } : null;
+    case 'session-expired':
+      return isId(value.sessionId) ? { type: 'session-expired', sessionId: value.sessionId } : null;
     case 'call':
       return isSeq(value.id) && isId(value.clientId) && isId(value.profileId) && (value.kind === 'invoke' || value.kind === 'send') && isId(value.channel) && Array.isArray(value.args)
         ? { type: 'call', id: value.id, clientId: value.clientId, profileId: value.profileId, kind: value.kind, channel: value.channel, args: value.args }

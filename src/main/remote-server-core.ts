@@ -26,8 +26,14 @@ export const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 export const MAX_CLIENTS = 8;
 // 1 つの接続が 10 秒に送れる頼みの数の上限。超えたら切る
 export const MAX_CALLS_PER_10S = 200;
+// 送りきれずにたまった量の上限。超えたら、その接続を切る（回線の遅い相手に、知らせがたまり続けないように）
+export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+// 1 つのセッションが同時に持てる券の数（古いものから捨てる）
+export const MAX_TICKETS_PER_SESSION = 4;
+// 断った接続を、相手が閉じるのを待たずに切るまで
+const REFUSE_GRACE_MS = 1000;
 
-type Client = { id: string; sessionId: string; socket: WebSocket; calls: number[] };
+type Client = { id: string; sessionId: string; socket: WebSocket; calls: number[]; closing: boolean };
 type Ticket = { sessionId: string; until: number };
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -44,19 +50,6 @@ function cookieOf(req: IncomingMessage, name: string): string | null {
     if (part.slice(0, index).trim() === name) return part.slice(index + 1).trim();
   }
   return null;
-}
-
-// 遠隔の接続が JSON で運ぶ Uint8Array（{ "$bytes": "<base64>" }）を戻す。ほかの値はそのまま
-function decodeBytes(value: unknown, depth = 0): unknown {
-  if (depth > 32 || value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map((item) => decodeBytes(item, depth + 1));
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (keys.length === 1 && keys[0] === '$bytes' && typeof record.$bytes === 'string') return new Uint8Array(Buffer.from(record.$bytes, 'base64'));
-  // __proto__ というキーも、プロトタイプにせず、ふつうのキーとして写す（main の確かめが、キーごと断る）
-  const out: Record<string, unknown> = {};
-  for (const key of keys) Object.defineProperty(out, key, { value: decodeBytes(record[key], depth + 1), enumerable: true, writable: true, configurable: true });
-  return out;
 }
 
 // main の返事・知らせを、遠隔の接続に送れる JSON にする（Uint8Array は { "$bytes": "<base64>" }）
@@ -79,7 +72,7 @@ export class RemoteServerCore {
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
   private config: RemoteListenConfig | null = null;
-  private readonly sessions = new Map<string, RemoteSession & { lastActive: number }>();
+  private readonly sessions = new Map<string, RemoteSession>();
   private readonly tickets = new Map<string, Ticket>();
   private readonly clients = new Map<string, Client>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
@@ -99,7 +92,8 @@ export class RemoteServerCore {
         this.close();
         break;
       case 'session-add':
-        this.sessions.set(message.session.sessionId, { ...message.session, lastActive: this.now() });
+        // 使わない時間は、main が控えた最後の操作から数える（待ち受けを始め直しても延ばさない）
+        this.sessions.set(message.session.sessionId, { ...message.session });
         break;
       case 'session-remove':
         this.dropSession(message.sessionId);
@@ -107,22 +101,49 @@ export class RemoteServerCore {
       case 'result': {
         const client = this.clients.get(message.clientId);
         if (!client) return;
-        client.socket.send(encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error }));
+        this.deliver(client, encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error }));
         break;
       }
-      case 'event':
-        for (const id of message.clientIds) this.clients.get(id)?.socket.send(encodeForClient({ event: message.channel, payload: message.payload }));
+      case 'event': {
+        const text = encodeForClient(message.profileId === undefined ? { event: message.channel, payload: message.payload } : { event: message.channel, profileId: message.profileId, payload: message.payload });
+        for (const id of message.clientIds) {
+          const client = this.clients.get(id);
+          if (client) this.deliver(client, text);
+        }
         break;
+      }
       case 'disconnect':
         this.clients.get(message.clientId)?.socket.close(1000);
         break;
     }
   }
 
+  // 接続に送る。送りきれずにたまった量が上限を超えていたら、送らずに切る
+  private deliver(client: Client, text: string): void {
+    if (client.closing) return;
+    if (client.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+      client.closing = true;
+      client.socket.terminate();
+      return;
+    }
+    client.socket.send(text);
+  }
+
+  // 断った接続を閉じる。相手が閉じるのを待たずに切り、それまでに届いた伝文は受けない
+  private refuse(ws: WebSocket, code: number, client?: Client): void {
+    if (client) client.closing = true;
+    ws.close(code);
+    setTimeout(() => ws.terminate(), REFUSE_GRACE_MS).unref();
+  }
+
   private listen(config: RemoteListenConfig): void {
     this.close(false);
     this.config = config;
     const server = createServer((req, res) => this.request(req, res));
+    // 認証の前に届く面なので、接続の数と、頼みを受けきるまでの時間にも上限を置く
+    server.maxConnections = 32;
+    server.headersTimeout = 10 * 1000;
+    server.requestTimeout = 15 * 1000;
     const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_MESSAGE_BYTES });
     server.on('upgrade', (req, socket, head) => this.upgrade(req, socket, head));
     server.on('error', (error: NodeJS.ErrnoException) => {
@@ -165,7 +186,7 @@ export class RemoteServerCore {
   }
 
   // Cookie のセッション（期限の切れていないもの）
-  private sessionOf(req: IncomingMessage): (RemoteSession & { lastActive: number }) | null {
+  private sessionOf(req: IncomingMessage): RemoteSession | null {
     const token = cookieOf(req, SESSION_COOKIE);
     if (!token || token.length > 256) return null;
     const hash = sha256(token);
@@ -176,10 +197,12 @@ export class RemoteServerCore {
     return null;
   }
 
-  private alive(session: RemoteSession & { lastActive: number }): boolean {
+  private alive(session: RemoteSession): boolean {
     const now = this.now();
     if (now >= session.expiresAt || now - session.lastActive >= IDLE_MS) {
       this.dropSession(session.sessionId);
+      // main も控えから消す（待ち受けを始め直したときに、送り直させない）
+      this.post({ type: 'session-expired', sessionId: session.sessionId });
       return false;
     }
     return true;
@@ -187,6 +210,8 @@ export class RemoteServerCore {
 
   private expire(): void {
     for (const session of [...this.sessions.values()]) this.alive(session);
+    const now = this.now();
+    for (const [ticket, entry] of this.tickets) if (entry.until <= now) this.tickets.delete(ticket);
   }
 
   private dropSession(sessionId: string): void {
@@ -213,6 +238,9 @@ export class RemoteServerCore {
       const session = this.sessionOf(req);
       if (!session) return this.reply(res, 401, { error: 'unauthorized' });
       const ticket = randomBytes(32).toString('base64url');
+      // 券の数に上限を置く（古いものから捨てる）
+      const mine = [...this.tickets].filter(([, entry]) => entry.sessionId === session.sessionId);
+      for (const [old] of mine.slice(0, Math.max(0, mine.length - MAX_TICKETS_PER_SESSION + 1))) this.tickets.delete(old);
       this.tickets.set(ticket, { sessionId: session.sessionId, until: this.now() + TICKET_MS });
       return this.reply(res, 200, { ticket });
     }
@@ -237,19 +265,26 @@ export class RemoteServerCore {
   // 接続を受けた。最初の伝文で、同じセッションの券を求める
   private accept(ws: WebSocket, sessionId: string): void {
     let client: Client | null = null;
-    const helloTimer = setTimeout(() => ws.close(4002), HELLO_MS);
+    // 券の伝文は 1 回だけ（しくじったら、やり直させずに切る）
+    let refused = false;
+    const refuse = (code: number) => {
+      refused = true;
+      this.refuse(ws, code, client ?? undefined);
+    };
+    const helloTimer = setTimeout(() => refuse(4002), HELLO_MS);
     ws.on('message', (data: RawData, isBinary: boolean) => {
-      if (isBinary) return ws.close(4003);
+      if (refused || client?.closing) return;
+      if (isBinary) return refuse(4003);
       let message: unknown;
       try {
         message = JSON.parse(data.toString());
       } catch {
-        return ws.close(4003);
+        return refuse(4003);
       }
       if (!client) {
         clearTimeout(helloTimer);
         client = this.hello(ws, sessionId, message);
-        if (!client) ws.close(4002);
+        if (!client) refuse(4002);
         return;
       }
       this.clientMessage(client, message);
@@ -271,7 +306,9 @@ export class RemoteServerCore {
     if (!entry || entry.sessionId !== sessionId || entry.until <= this.now()) return null;
     const session = this.sessions.get(sessionId);
     if (!session || !this.alive(session)) return null;
-    const client: Client = { id: randomBytes(16).toString('base64url'), sessionId, socket: ws, calls: [] };
+    // 同時に握手した接続も、上限で数え直す
+    if (this.clients.size >= MAX_CLIENTS) return null;
+    const client: Client = { id: randomBytes(16).toString('base64url'), sessionId, socket: ws, calls: [], closing: false };
     this.clients.set(client.id, client);
     this.post({ type: 'connected', clientId: client.id, sessionId });
     ws.send(encodeForClient({ type: 'ready' }));
@@ -280,24 +317,27 @@ export class RemoteServerCore {
 
   // 接続からの伝文。{ id, kind, profileId, channel, args } の頼みと、{ type: 'subscribe', channels } だけを受ける
   private clientMessage(client: Client, message: unknown): void {
-    if (typeof message !== 'object' || message === null || Array.isArray(message)) return client.socket.close(4003);
-    const m = message as Record<string, unknown>;
-    if (m.type === 'subscribe') {
-      if (!Array.isArray(m.channels)) return client.socket.close(4003);
-      this.post({ type: 'subscribe', clientId: client.id, channels: m.channels.filter((c): c is string => typeof c === 'string') });
-      return;
-    }
+    const refuse = (code: number) => this.refuse(client.socket, code, client);
+    // 頼みも subscribe も、頻度の上限に数える
     const now = this.now();
     client.calls = client.calls.filter((at) => now - at < 10 * 1000);
     client.calls.push(now);
-    if (client.calls.length > MAX_CALLS_PER_10S) return client.socket.close(4008);
+    if (client.calls.length > MAX_CALLS_PER_10S) return refuse(4008);
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) return refuse(4003);
+    const m = message as Record<string, unknown>;
     const session = this.sessions.get(client.sessionId);
-    if (!session || !this.alive(session)) return client.socket.close(4001);
-    if (typeof m.id !== 'number' || (m.kind !== 'invoke' && m.kind !== 'send') || typeof m.channel !== 'string' || typeof m.profileId !== 'string' || !Array.isArray(m.args)) {
-      return client.socket.close(4003);
+    if (!session || !this.alive(session)) return refuse(4001);
+    if (m.type === 'subscribe') {
+      if (!Array.isArray(m.channels)) return refuse(4003);
+      this.post({ type: 'subscribe', clientId: client.id, channels: m.channels.filter((c): c is string => typeof c === 'string') });
+      return;
     }
-    // 人の操作の頼みで、使わない時間を数え直す
+    if (typeof m.id !== 'number' || (m.kind !== 'invoke' && m.kind !== 'send') || typeof m.channel !== 'string' || typeof m.profileId !== 'string' || !Array.isArray(m.args)) {
+      return refuse(4003);
+    }
+    // 人の操作の頼みで、使わない時間を数え直す（main も、届いた頼みで控え直す）
     session.lastActive = now;
-    this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: decodeBytes(m.args) as unknown[] });
+    // Uint8Array（{ "$bytes": "<base64>" }）は、main が引数の形（bytes）の位置でだけ戻す
+    this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: m.args });
   }
 }

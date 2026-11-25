@@ -3,7 +3,7 @@ import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { RemoteSession, ServerMessage } from '@shared/remote-protocol';
-import { IDLE_MS, MAX_CALLS_PER_10S, RemoteServerCore, SESSION_COOKIE, TICKET_MS } from '../src/main/remote-server-core';
+import { IDLE_MS, MAX_CALLS_PER_10S, MAX_TICKETS_PER_SESSION, RemoteServerCore, SESSION_COOKIE, TICKET_MS } from '../src/main/remote-server-core';
 
 // 遠隔サーバーの中身（src/main/remote-server-core.ts）を、本物の HTTP・WebSocket で動かす（127.0.0.1 の空いたポート）
 
@@ -16,6 +16,7 @@ const session = (over: Partial<RemoteSession> = {}): RemoteSession => ({
   registrationId: 'r1',
   profileIds: ['default'],
   expiresAt: Date.now() + 60 * 60 * 1000,
+  lastActive: Date.now(),
   ...over,
 });
 
@@ -155,13 +156,17 @@ describe('WebSocket の口', () => {
     client.ws.send(JSON.stringify({ id: 7, kind: 'invoke', profileId: 'default', channel: 'attachments:save', args: ['a.png', { $bytes: Buffer.from('abc').toString('base64') }] }));
     const call = await waitFor(() => posted.find((m) => m.type === 'call'));
     expect(call).toMatchObject({ type: 'call', id: 7, clientId, profileId: 'default', kind: 'invoke', channel: 'attachments:save' });
-    expect(call?.type === 'call' && call.args[1]).toEqual(new Uint8Array(Buffer.from('abc')));
+    // Uint8Array は、main が引数の形（bytes）の位置でだけ戻す。遠隔サーバーは、そのまま渡す
+    expect(call?.type === 'call' && call.args[1]).toEqual({ $bytes: Buffer.from('abc').toString('base64') });
 
     core.handle({ type: 'result', id: 7, clientId, ok: true, value: { saved: new Uint8Array([1, 2]) } });
-    core.handle({ type: 'event', clientIds: [clientId], channel: 'sessions:changed', payload: [] });
-    await waitFor(() => (client.messages.length >= 3 ? true : undefined));
+    core.handle({ type: 'event', clientIds: [clientId], channel: 'sessions:changed', payload: [], profileId: 'default' });
+    core.handle({ type: 'event', clientIds: [clientId], channel: 'claude-version:changed', payload: null });
+    await waitFor(() => (client.messages.length >= 4 ? true : undefined));
     expect(client.messages[1]).toEqual({ id: 7, ok: true, value: { saved: { $bytes: Buffer.from([1, 2]).toString('base64') } } });
-    expect(client.messages[2]).toEqual({ event: 'sessions:changed', payload: [] });
+    // プロファイルの知らせには、どのプロファイルのものかを付ける（アプリ全体の知らせには付けない）
+    expect(client.messages[2]).toEqual({ event: 'sessions:changed', profileId: 'default', payload: [] });
+    expect(client.messages[3]).toEqual({ event: 'claude-version:changed', payload: null });
     client.ws.close();
   });
 
@@ -237,6 +242,40 @@ describe('WebSocket の口', () => {
     clock.now += IDLE_MS + 1;
     client.ws.send(JSON.stringify({ id: 1, kind: 'invoke', profileId: 'default', channel: 'a', args: [] }));
     expect(await client.closed).toBe(4001);
+    // main にも知らせる（控えから消させ、待ち受けを始め直したときに送り直させない）
+    expect(current!.posted).toContainEqual({ type: 'session-expired', sessionId: 's1' });
+  });
+
+  it('使わない時間は、main が渡した最後の操作の時刻から数える（待ち受けを始め直しても延ばさない）', async () => {
+    const { port, core, clock } = await start();
+    core.handle({ type: 'session-add', session: session({ lastActive: clock.now - IDLE_MS - 1 }) });
+    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie })).status).toBe(401);
+  });
+
+  it('券の伝文をしくじったら、やり直させない', async () => {
+    const { port } = await start();
+    const value = await ticket(port);
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: 'nope' }));
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: value }));
+    expect(await client.closed).toBe(4002);
+    expect(client.messages).toEqual([]);
+  });
+
+  it('subscribe の伝文も、頻度の上限に数える', async () => {
+    const { port } = await start();
+    const client = await connect(port);
+    for (let i = 0; i <= MAX_CALLS_PER_10S; i++) client.ws.send(JSON.stringify({ type: 'subscribe', channels: [] }));
+    expect(await client.closed).toBe(4008);
+  });
+
+  it('券は、使わずに残ったものを期限で消し、セッションごとに数の上限を置く（古いものから捨てる）', async () => {
+    const { port } = await start();
+    const first = await ticket(port);
+    for (let i = 0; i < MAX_TICKETS_PER_SESSION; i++) await ticket(port);
+    const client = await open(port, { host: HOST, origin: ORIGIN, cookie });
+    client.ws.send(JSON.stringify({ type: 'hello', ticket: first }));
+    expect(await client.closed).toBe(4002);
   });
 
   it('main が disconnect を送ったら切る', async () => {

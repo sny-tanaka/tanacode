@@ -223,7 +223,10 @@ export { dispatcher as remoteDispatcher };
 // 遠隔サーバー（utilityProcess。remote-server.ts）の持ち手。メニューバーの「遠隔操作」で入り・切りする（applyRemote）
 const remoteHost = new RemoteHost({
   spawn: () => {
-    const child = utilityProcess.fork(join(__dirname, 'remote-server.js'), [], { serviceName: 'tanacode Remote', stdio: 'ignore' });
+    const child = utilityProcess.fork(join(__dirname, 'remote-server.js'), [], { serviceName: 'tanacode Remote', stdio: 'pipe' });
+    // 落ちたときに理由を読めるよう、遠隔サーバーの出力を記録に回す（頼みの中身や秘密は書かない作り）
+    child.stdout?.on('data', (data: Buffer) => console.log(`[remote-server] ${String(data).trimEnd()}`));
+    child.stderr?.on('data', (data: Buffer) => console.error(`[remote-server] ${String(data).trimEnd()}`));
     return {
       post: (message) => child.postMessage(message),
       onMessage: (listener) => child.on('message', listener),
@@ -233,6 +236,10 @@ const remoteHost = new RemoteHost({
   },
   call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
   onStatus: () => {
+    if (settings) buildMenu();
+  },
+  // つながっている数を、メニューバーの様子の文に出し直す
+  onConnections: () => {
     if (settings) buildMenu();
   },
   log: (message) => console.error(message),

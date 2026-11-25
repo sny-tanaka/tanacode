@@ -51,6 +51,12 @@ describe('checkArgs（遠隔から届いた引数の形）', () => {
     expect(checkArgs(['array'], [Array.from({ length: 10001 }, () => 0)])).toBe(t('main.error.remoteArg.tooManyEntries', { index: 1 }));
   });
 
+  it('bytes の位置の { $bytes } は Uint8Array に戻す。ほかの位置の同じ形のオブジェクトは、そのまま', () => {
+    expect(checkArgs(['string', 'bytes'], ['a.png', { $bytes: Buffer.from('abc').toString('base64') }])).toEqual(['a.png', new Uint8Array(Buffer.from('abc'))]);
+    expect(checkArgs(['object'], [{ $bytes: 'YWJj' }])).toEqual([{ $bytes: 'YWJj' }]);
+    expect(checkArgs(['bytes'], [{ $bytes: '***' }])).toBe(t('main.error.remoteArg.wrongType', { index: 1, shape: 'bytes' }));
+  });
+
   it('ふつうのオブジェクトでないもの（Date など）を断る', () => {
     expect(checkArgs(['object'], [new Date()])).toBe(t('main.error.remoteArg.notPlain', { index: 1 }));
   });

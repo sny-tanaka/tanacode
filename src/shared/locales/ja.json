@@ -30,7 +30,8 @@
         "notPlain": "{index} つ目の引数が、ふつうのオブジェクトではありません"
       },
       "remotePort": "ポートは 1024〜65535 の数で決めてください",
-      "remotePublicUrl": "公開する URL は、https で始まり、パスの無いもの（例: https://mac.example.ts.net）にしてください"
+      "remotePublicUrl": "公開する URL は、https で始まり、パスの無いもの（例: https://mac.example.ts.net）にしてください",
+      "remoteProfileNotAllowed": "この接続には許していないプロファイルです"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",

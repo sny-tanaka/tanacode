@@ -22,8 +22,10 @@ export const REMOTE_EVENTS: { readonly [C in keyof IpcEvent]: RemoteEventUse } =
   [IpcChannel.WorkflowsChanged]: 'send',
   [IpcChannel.SubagentsChanged]: 'send',
   [IpcChannel.UsageChanged]: 'send',
-  [IpcChannel.ProfilesChanged]: 'send',
-  [IpcChannel.PrefsChanged]: 'send',
+  // 開いている全プロファイル（許したプロファイルだけに絞るまで送らない。ProfilesGet と同じ）
+  [IpcChannel.ProfilesChanged]: 'mac',
+  // Mac の画面の表示の設定（カラムの幅など。PrefsSync・PrefsSet と同じく、スマホの画面の値を分けるまで送らない）
+  [IpcChannel.PrefsChanged]: 'mac',
   [IpcChannel.ScheduledChanged]: 'send',
   // 2 秒ごとに届く
   [IpcChannel.SystemStats]: 'subscribe',

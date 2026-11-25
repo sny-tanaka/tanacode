@@ -30,7 +30,8 @@
         "notPlain": "Argument {index} is not a plain object"
       },
       "remotePort": "Choose a port number from 1024 to 65535",
-      "remotePublicUrl": "The public URL must start with https and have no path (for example, https://mac.example.ts.net)"
+      "remotePublicUrl": "The public URL must start with https and have no path (for example, https://mac.example.ts.net)",
+      "remoteProfileNotAllowed": "This profile is not allowed for this connection"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",

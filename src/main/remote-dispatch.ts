@@ -78,6 +78,15 @@ function matches(base: string, value: unknown): boolean {
   }
 }
 
+// { "$bytes": "<base64>" } を Uint8Array に戻す。ほかの値はそのまま
+function bytesOf(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || value instanceof Uint8Array) return value;
+  const keys = Object.keys(value);
+  const text = (value as Record<string, unknown>).$bytes;
+  if (keys.length !== 1 || keys[0] !== '$bytes' || typeof text !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) return value;
+  return new Uint8Array(Buffer.from(text, 'base64'));
+}
+
 // 引数を、表の形と照らし合わせる。合えば受け口に渡す引数（省略できる引数の null は undefined にする）、合わなければ理由（画面の言語の文）
 export function checkArgs(shapes: readonly ArgShape[], args: unknown): unknown[] | string {
   if (!Array.isArray(args)) return t('main.error.remoteArg.notArray');
@@ -94,6 +103,8 @@ export function checkArgs(shapes: readonly ArgShape[], args: unknown): unknown[]
       checked.push(undefined);
       continue;
     }
+    // 遠隔の接続は Uint8Array を JSON で運ぶ（{ "$bytes": "<base64>" }）。形が bytes の位置でだけ戻す（ほかの位置の同じ形のオブジェクトは、そのまま）
+    if (base === 'bytes') value = bytesOf(value);
     if (!matches(base, value)) return t('main.error.remoteArg.wrongType', { index: i + 1, shape: base });
     const problem = plainDataProblem(value, i + 1);
     if (problem) return problem;
