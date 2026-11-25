@@ -117,6 +117,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.McpEnabledSet]: mac(['string', 'boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ToolPermissionsSet]: mac(['string', 'string'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ParentAskRulesSet]: mac(['boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
+  [IpcChannel.RemoteSettingsGet]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
+  [IpcChannel.RemoteSettingsSet]: mac(['object'], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.ClaudeVersionGet]: same([]),
   [IpcChannel.ClaudeVerifiedGet]: same([]),
   [IpcChannel.AppUpdateGet]: same([]),

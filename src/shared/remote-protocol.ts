@@ -1,0 +1,87 @@
+// main と遠隔サーバー（utilityProcess。src/main/remote-server.ts）の間の伝文（Issue #464）。
+// main は遠隔サーバーを信じきらない。遠隔サーバーから届いた伝文は、どれも parseServerMessage で形を確かめてから使い、
+// 呼び出し元（Caller）は、伝文の中のプロファイルではなく、main が持つ接続の控えから組み立てる
+
+// 待ち受けの設定。port: 127.0.0.1 で待ち受けるポート / publicOrigin: スマホが開く URL の origin（例: https://mac.example.ts.net）。
+// Host と Origin は、これと完全に一致しなければ断る
+export type RemoteListenConfig = { port: number; publicOrigin: string };
+
+// 遠隔の接続のセッション（③ で、本人確認を通ったときに main が作る）。tokenHash: Cookie の秘密の SHA-256（hex。秘密そのものは渡さない）/
+// registrationId: どの登録から入ったか / profileIds: その登録に許したプロファイル / expiresAt: 長くても使える期限（エポックのミリ秒）。
+// 使わない時間の期限（30 分）は、遠隔サーバーが人の操作の頼みで数える
+export type RemoteSession = { sessionId: string; tokenHash: string; registrationId: string; profileIds: string[]; expiresAt: number };
+
+// main → 遠隔サーバー
+export type HostMessage =
+  | { type: 'listen'; config: RemoteListenConfig }
+  | { type: 'close' }
+  | { type: 'session-add'; session: RemoteSession }
+  | { type: 'session-remove'; sessionId: string }
+  | { type: 'result'; id: number; clientId: string; ok: true; value: unknown }
+  | { type: 'result'; id: number; clientId: string; ok: false; error: string }
+  | { type: 'event'; clientIds: string[]; channel: string; payload: unknown }
+  | { type: 'disconnect'; clientId: string };
+
+// 遠隔サーバー → main
+// listening: 待ち受けを始めた / listen-failed: 始められなかった（in-use: ポートが使われている）/ closed: 待ち受けをやめた /
+// connected・disconnected: 接続ができた・切れた（sessionId のセッションで入った）/ call: 頼み（kind: invoke は返事を待つ・send は待たない。
+// profileId: スマホの画面が選んでいるプロファイル。main が、そのセッションに許したものかを確かめる）/
+// subscribe: subscribe の知らせのうち、その接続に送るもの（今の全部を送る。空なら送らない）
+export type ServerMessage =
+  | { type: 'listening'; port: number }
+  | { type: 'listen-failed'; reason: 'in-use' | 'other'; message: string }
+  | { type: 'closed' }
+  | { type: 'connected'; clientId: string; sessionId: string }
+  | { type: 'disconnected'; clientId: string }
+  | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[] }
+  | { type: 'subscribe'; clientId: string; channels: string[] };
+
+// 接続の id・セッションの id・チャンネルの名前の上限（ふつうはずっと短い）
+const MAX_ID = 128;
+const MAX_CHANNELS = 64;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isId = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= MAX_ID;
+const isSeq = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+// 遠隔サーバーから届いた伝文の形を確かめる。違えば null（main は使わない）
+export function parseServerMessage(value: unknown): ServerMessage | null {
+  if (!isRecord(value)) return null;
+  switch (value.type) {
+    case 'listening':
+      return isSeq(value.port) ? { type: 'listening', port: value.port } : null;
+    case 'listen-failed':
+      return (value.reason === 'in-use' || value.reason === 'other') && typeof value.message === 'string'
+        ? { type: 'listen-failed', reason: value.reason, message: value.message.slice(0, 500) }
+        : null;
+    case 'closed':
+      return { type: 'closed' };
+    case 'connected':
+      return isId(value.clientId) && isId(value.sessionId) ? { type: 'connected', clientId: value.clientId, sessionId: value.sessionId } : null;
+    case 'disconnected':
+      return isId(value.clientId) ? { type: 'disconnected', clientId: value.clientId } : null;
+    case 'call':
+      return isSeq(value.id) && isId(value.clientId) && isId(value.profileId) && (value.kind === 'invoke' || value.kind === 'send') && isId(value.channel) && Array.isArray(value.args)
+        ? { type: 'call', id: value.id, clientId: value.clientId, profileId: value.profileId, kind: value.kind, channel: value.channel, args: value.args }
+        : null;
+    case 'subscribe':
+      return isId(value.clientId) && Array.isArray(value.channels) && value.channels.length <= MAX_CHANNELS && value.channels.every(isId)
+        ? { type: 'subscribe', clientId: value.clientId, channels: value.channels as string[] }
+        : null;
+    default:
+      return null;
+  }
+}
+
+// 公開する URL を、待ち受けの設定に使える origin にする。https で、パス・クエリ・利用者名の無いものだけ。違えば null
+export function publicOriginOf(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  if (parsed.pathname !== '/' && parsed.pathname !== '') return null;
+  return parsed.origin;
+}

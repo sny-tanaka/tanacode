@@ -510,6 +510,11 @@ export class DemoBackend {
         setParentAskRules: (on) => ok(on),
         onOpen: () => () => {},
       },
+      remote: {
+        settings: () => ok({ settings: { enabled: false, port: 47413, publicUrl: '' }, status: { state: 'off' }, connections: 0 }),
+        setSettings: (input) => ok({ settings: { enabled: false, ...input }, status: { state: 'off' }, connections: 0 }),
+        onOpen: () => () => {},
+      },
       shortcuts: {
         onRun: () => () => {},
       },

@@ -4,8 +4,9 @@ import { REMOTE_CHANNELS, type ArgShape, type RemoteChannel } from '@shared/remo
 
 // 画面 → main の頼みの呼び出し元（Issue #464）。
 // app: アプリの画面（主ウインドウと、足したプロファイルの画面）。ipcMain から届き、fromApp で確かめたもの
-// remote: 遠隔の接続（スマホ）。遠隔サーバーで本人確認を通ったもの。profileId: その接続のプロファイル / clientId: 接続の id
-export type Caller = { kind: 'app'; contents: WebContents } | { kind: 'remote'; profileId: string; clientId: string };
+// remote: 遠隔の接続（スマホ）。本人確認を通ったもの。profileId: その頼みのプロファイル（その接続に許したもの）/ clientId: 接続の id /
+// registrationId: どの登録から入ったか（遠隔から入れた予約などに控え、登録を取り消すときに見せる）
+export type Caller = { kind: 'app'; contents: WebContents } | { kind: 'remote'; profileId: string; clientId: string; registrationId: string };
 export type RemoteCaller = Extract<Caller, { kind: 'remote' }>;
 
 type Listener = (caller: Caller, ...args: unknown[]) => unknown;

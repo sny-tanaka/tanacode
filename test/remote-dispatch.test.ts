@@ -3,7 +3,7 @@ import { t } from '@shared/i18n';
 import { IpcChannel } from '@shared/ipc';
 import { checkArgs, IpcDispatcher, RemoteCallError, type RemoteCaller } from '../src/main/remote-dispatch';
 
-const caller: RemoteCaller = { kind: 'remote', profileId: 'default', clientId: 'c1' };
+const caller: RemoteCaller = { kind: 'remote', profileId: 'default', clientId: 'c1', registrationId: 'r1' };
 
 describe('checkArgs（遠隔から届いた引数の形）', () => {
   it('形が合えば、届いた数のまま返す', () => {

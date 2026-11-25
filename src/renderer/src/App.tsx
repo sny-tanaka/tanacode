@@ -61,6 +61,7 @@ import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, use
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { PromptsDialog } from './prompts/PromptsDialog';
+import { RemoteSettingsDialog } from './remote/RemoteSettingsDialog';
 import { McpSettingsDialog } from './mcp/McpSettingsDialog';
 import { onOpenMcpSettings } from './mcp/openMcpSettings';
 import { PreviewPane } from './preview/PreviewPane';
@@ -172,6 +173,7 @@ export function App() {
   // メニューの「Claude に送る文…」
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [mcpSettingsOpen, setMcpSettingsOpen] = useState(false);
+  const [remoteSettingsOpen, setRemoteSettingsOpen] = useState(false);
   // ウォークスルーを GitHub の PR に載せる下見のダイアログ（どのセッションのものか）
   const [commenting, setCommenting] = useState<string | null>(null);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
@@ -461,12 +463,14 @@ export function App() {
     });
     const offPrompts = window.tanacode.prompts.onOpen(() => setPromptsOpen(true));
     const offMcpSettings = window.tanacode.mcpSettings.onOpen(() => setMcpSettingsOpen(true));
+    const offRemoteSettings = window.tanacode.remote.onOpen(() => setRemoteSettingsOpen(true));
     // 画面の中から開くよう頼まれた（アプリ内ブラウザの帯の 1Password の案内）
     const offMcpSettingsInPage = onOpenMcpSettings(() => setMcpSettingsOpen(true));
     return () => {
       offActivity();
       offPrompts();
       offMcpSettings();
+      offRemoteSettings();
       offMcpSettingsInPage();
     };
   }, []);
@@ -1273,6 +1277,7 @@ export function App() {
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
         {promptsOpen && <PromptsDialog onClose={() => setPromptsOpen(false)} />}
+        {remoteSettingsOpen && <RemoteSettingsDialog onClose={() => setRemoteSettingsOpen(false)} />}
         {mcpSettingsOpen && <McpSettingsDialog onClose={() => setMcpSettingsOpen(false)} />}
         {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
