@@ -15,7 +15,10 @@
       "folderNotFound": "フォルダが見つかりません: {path}",
       "folderCannotOpen": "フォルダを開けません: {path}",
       "ptyHostUnreachable": "pty ホストに繋がりません: {path}",
-      "notFromApp": "アプリの画面からの呼び出しではありません"
+      "notFromApp": "アプリの画面からの呼び出しではありません",
+      "remoteUnknownChannel": "遠隔の接続から、知らない頼みが届きました: {channel}",
+      "remoteNotAvailable": "この操作は、遠隔の接続からはできません: {channel}",
+      "remoteBadArguments": "遠隔の接続から届いた頼みの形が違います（{channel}）: {reason}"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",

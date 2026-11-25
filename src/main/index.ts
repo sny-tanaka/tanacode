@@ -19,6 +19,7 @@ import { SharedPrefStore } from './shared-prefs';
 import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
+import { IpcDispatcher, type Caller } from './remote-dispatch';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -195,22 +196,36 @@ function broadcastProfiles(force = false): void {
   }
 }
 
-// 画面からの呼び出しと知らせは、どれもここで受け口を登録する。アプリの画面のメインフレームから来たものだけを受ける
+// 呼び出し元（画面か遠隔の接続か）のプロファイル。ほかのプロファイルのものは扱わせない
+function profileOfCaller(caller: Caller): Profile {
+  if (caller.kind === 'app') return profileOf(caller.contents);
+  const p = opened.get(caller.profileId);
+  if (!p) throw new Error(t('main.error.profileOfViewNotFound'));
+  return p;
+}
+
+// 画面 → main の受け口の一覧。遠隔の接続（スマホ）は、ここから Mac の画面と同じ受け口を呼ぶ（remote-dispatch.ts）
+const dispatcher = new IpcDispatcher();
+
+// 画面からの呼び出しと知らせは、どれもここで受け口を登録する。ipcMain からは、アプリの画面のメインフレームから来たものだけを受ける。
+// 受け口には、送り元の代わりに呼び出し元（Caller）を渡す。遠隔の接続から呼んでも、同じ受け口が同じに動くように
 function handle<C extends keyof IpcInvoke>(
   channel: C,
-  listener: (event: IpcMainInvokeEvent, ...args: Parameters<IpcInvoke[C]>) => ReturnType<IpcInvoke[C]> | Awaited<ReturnType<IpcInvoke[C]>>,
+  listener: (caller: Caller, ...args: Parameters<IpcInvoke[C]>) => ReturnType<IpcInvoke[C]> | Awaited<ReturnType<IpcInvoke[C]>>,
 ): void {
-  const run = listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+  const run = listener as (caller: Caller, ...args: unknown[]) => unknown;
+  dispatcher.register(channel, run);
   ipcMain.handle(channel, (event, ...args) => {
     if (!fromApp(event)) throw new Error(t('main.error.notFromApp'));
-    return run(event, ...args);
+    return run({ kind: 'app', contents: event.sender }, ...args);
   });
 }
 
-function listen<C extends keyof IpcSend>(channel: C, listener: (event: IpcMainEvent, ...args: Parameters<IpcSend[C]>) => void): void {
-  const run = listener as (event: IpcMainEvent, ...args: unknown[]) => void;
+function listen<C extends keyof IpcSend>(channel: C, listener: (caller: Caller, ...args: Parameters<IpcSend[C]>) => void): void {
+  const run = listener as (caller: Caller, ...args: unknown[]) => void;
+  dispatcher.register(channel, run);
   ipcMain.on(channel, (event, ...args) => {
-    if (fromApp(event)) run(event, ...args);
+    if (fromApp(event)) run({ kind: 'app', contents: event.sender }, ...args);
   });
 }
 
@@ -628,7 +643,7 @@ async function pickProfileDir(): Promise<string | null> {
 
 function registerIpc(): void {
   // 送り元の画面のプロファイル
-  const P = (e: IpcMainEvent | IpcMainInvokeEvent) => profileOf(e.sender);
+  const P = profileOfCaller;
   handle(IpcChannel.SessionsList, (e) => P(e).manager.list());
   const isDirectory = (path: string) => stat(path).then((s) => s.isDirectory(), () => false);
   handle(IpcChannel.SessionsCreate, async (e, cwd: string, options: NewSessionOptions) => {
@@ -800,7 +815,7 @@ function registerIpc(): void {
   handle(IpcChannel.WriteFile, (e, id: string, relPath: string, text: string, expected: unknown) =>
     new Workspace(P(e).cwdOf(id)).writeFile(relPath, text, typeof expected === 'string' ? expected : null),
   );
-  const scm = (e: IpcMainInvokeEvent, id: string) => new SourceControl(P(e).cwdOf(id));
+  const scm = (e: Caller, id: string) => new SourceControl(P(e).cwdOf(id));
   handle(IpcChannel.GitState, (e, id: string) => scm(e, id).state());
   handle(IpcChannel.GitBranches, (e, id: string) => scm(e, id).branches());
   handle(IpcChannel.GitDiffSides, (e, id: string, relPath: string, staged: boolean) => scm(e, id).diffSides(relPath, staged));
@@ -849,20 +864,21 @@ function registerIpc(): void {
   handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
   handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
   // プロファイルをまたいで同じにする表示設定。変わったら、ほかのプロファイルの画面に配る（送り元は、もうその値になっている）
-  const sharePrefs = (sender: WebContents, changes: SharedPrefChange[]) => {
+  // 変えた画面のほかへ知らせる（遠隔の接続から変えたときは、すべての画面へ）
+  const sharePrefs = (sender: Caller, changes: SharedPrefChange[]) => {
     for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) {
-      if (contentsOf(id) === sender) continue;
+      if (sender.kind === 'app' && contentsOf(id) === sender.contents) continue;
       for (const change of changes) sendTo(id)(IpcChannel.PrefsChanged, change);
     }
   };
   handle(IpcChannel.PrefsSync, (e, local: SharedPrefs) => {
     P(e);
-    sharePrefs(e.sender, sharedPrefs.adopt(local));
+    sharePrefs(e, sharedPrefs.adopt(local));
     return sharedPrefs.all();
   });
   listen(IpcChannel.PrefsSet, (e, key: SharedPrefKey, value: string) => {
     P(e);
-    if (sharedPrefs.set(key, value)) sharePrefs(e.sender, [{ key, value }]);
+    if (sharedPrefs.set(key, value)) sharePrefs(e, [{ key, value }]);
   });
   // チャットの入力欄から、人の操作でないのにフォーカスが外れた（どのプロファイルの画面のものも、同じファイルに書く）
   listen(IpcChannel.FocusLost, (e, report) => {

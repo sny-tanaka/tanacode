@@ -15,7 +15,10 @@
       "folderNotFound": "Folder not found: {path}",
       "folderCannotOpen": "Can't open folder: {path}",
       "ptyHostUnreachable": "Can't connect to the pty host: {path}",
-      "notFromApp": "This call didn't come from the app window"
+      "notFromApp": "This call didn't come from the app window",
+      "remoteUnknownChannel": "An unknown request came from a remote connection: {channel}",
+      "remoteNotAvailable": "This operation is not available from a remote connection: {channel}",
+      "remoteBadArguments": "A request from a remote connection has the wrong shape ({channel}): {reason}"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
