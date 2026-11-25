@@ -984,9 +984,9 @@ describe('結果の文の細かいところ（取り消し・ゴミ箱・一覧�
     // 人が取り消したものは、ゴミ箱に入れずに画面に残る（理由は省ける）
     store.revokeCards(ME, 'human', decisions.id, [cards[0].id, cards[1].id], '');
     expect(first(await call('card_revoke', { list: '決定事項', numbers: '1-3', reason: '取り下げ' }))).toBe(
-      'Revoked #3 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #1, #2 were already revoked. 2 cards in force in "決定事項".',
+      'Revoked #3 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #1, #2 were already revoked or settled. 2 cards in force in "決定事項".',
     );
-    expect(first(await call('card_revoke', { list: '決定事項', numbers: '1', reason: '取り下げ' }))).toBe('#1 was already revoked. 2 cards in force in "決定事項".');
+    expect(first(await call('card_revoke', { list: '決定事項', numbers: '1', reason: '取り下げ' }))).toBe('#1 was already revoked or settled. 2 cards in force in "決定事項".');
     expect(first(await call('card_revoke', { list: '決定事項', numbers: '4-5', reason: '取り下げ' }))).toBe(
       'Revoked #4, #5 in "決定事項" and moved them to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate them). 0 cards in force in "決定事項".',
     );
@@ -1001,7 +1001,7 @@ describe('結果の文の細かいところ（取り消し・ゴミ箱・一覧�
     store.addCards(ME, 'human', state.id, [{ title: 'いまやっていること' }]);
     expect(first(await call('checklist_overview'))).toBe(
       [
-        '## 決定事項 (decisions list: permanent, no checks; 0 in force, 2 revoked)',
+        '## 決定事項 (decisions list: permanent, no checks; 0 in force, 2 revoked or settled)',
         'Description: (none)',
         '- (revoked) #1 A',
         `- (revoked: ${'あ'.repeat(199)}い…) #2 B`,

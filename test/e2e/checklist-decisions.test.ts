@@ -3,8 +3,9 @@ import { CHECKLIST_REMINDER_TAG, checklistToolId } from '@shared/checklist-tools
 import { E2EApp } from './app';
 
 // 決定事項（チェックで消えないリスト）を、画面と Claude の両方から通しで使う。
-// Claude が MCP で決定事項と確認事項のリストを作る → 人が確認事項のカードをチェック（承認）すると、決定事項に移る →
-// 次の発言で、有効な決定が Claude に渡る（承認したものも）→ Claude は取り消せて、取り消したカードはゴミ箱に入る。有効なカードは消せない →
+// Claude が MCP で決定事項と確認事項のリストを作る → 人が確認事項のカードをチェック（承認）しても、カードは確認事項に残る →
+// 次の発言で、有効な決定が Claude に渡る → Claude は、この先も守る決まりになった判断を決定事項に足す →
+// Claude は取り消せて、取り消したカードはゴミ箱に入る。有効なカードは消せない →
 // 人は、ゴミ箱から戻して取り消しを戻せて、自分でも取り消せる（画面に残る）→ 取り消したものは、次の発言から Claude に渡らない →
 // 人が取り消して残っているカードは、Claude が消せる
 
@@ -24,6 +25,8 @@ const CHECKED = '確かめました';
 describe('決定事項を、人と Claude が画面と MCP で使う', () => {
   let app: E2EApp;
   const row = (title: string) => app.page.locator('.checklist-card', { hasText: title });
+  // 決定事項のリストのカード（承認した判断は、確認事項と決定事項の両方にある）
+  const decided = (title: string) => app.page.locator('.checklist-list.kind-decisions .checklist-card', { hasText: title });
   const decisionsHead = () => app.page.locator('.checklist-list.kind-decisions .checklist-list-head');
   const trashed = (title: string) => app.page.locator('.checklist-trash-item', { hasText: title });
   // ゴミ箱を開く（開いたままなら、そのまま。見出しは押すたびに開け閉めする）
@@ -56,7 +59,8 @@ describe('決定事項を、人と Claude が画面と MCP で使う', () => {
             ],
             [{ type: 'tool_use', id: 'toolu_judge', name: checklistToolId('card_add'), input: { list: REVIEW, list_description: '判断と理由', list_kind: 'review', cards: [{ title: JUDGMENT }] } }],
             [{ type: 'text', text: READY }],
-            // 2 つめの発言。決定を取り消す（理由つき）。有効な決定は消せない
+            // 2 つめの発言。承認された判断を、この先も守る決まりとして決定事項に足す。決定を取り消す（理由つき）。有効な決定は消せない
+            [{ type: 'tool_use', id: 'toolu_keep', name: checklistToolId('card_add'), input: { list: DECISIONS, cards: [{ title: JUDGMENT }] } }],
             [{ type: 'tool_use', id: 'toolu_revoke', name: checklistToolId('card_revoke'), input: { list: DECISIONS, numbers: '1', reason: REASON } }],
             [{ type: 'tool_use', id: 'toolu_delete', name: checklistToolId('card_delete'), input: { list: DECISIONS, numbers: '2' } }],
             [{ type: 'text', text: DONE }],
@@ -88,19 +92,21 @@ describe('決定事項を、人と Claude が画面と MCP で使う', () => {
     await app.byText('.checklist-list.kind-review .checklist-list-name', REVIEW).waitFor();
   });
 
-  it('確認事項のカードを人がチェック（承認）すると、決定事項に移る', async () => {
+  it('確認事項のカードを人がチェック（承認）しても、決定事項には移らず、チェック済みのまま残る', async () => {
     await row(JUDGMENT).locator('.card-check').click();
-    await app.page.locator('.checklist-list.kind-decisions .checklist-card', { hasText: JUDGMENT }).waitFor();
-    await app.byText('.checklist-list.kind-decisions .checklist-progress.pinned', '2 件').waitFor();
-    expect(await app.page.locator('.checklist-list.kind-review .checklist-card').count()).toBe(0);
+    await app.page.locator('.checklist-list.kind-review .checklist-card.checked', { hasText: JUDGMENT }).waitFor();
+    expect(await decided(JUDGMENT).count()).toBe(0);
+    expect(await decisionsHead().locator('.checklist-progress.pinned').textContent()).toBe('1 件');
   });
 
-  it('次の発言で、有効な決定（承認したものも）が Claude に渡る。Claude が取り消したものはゴミ箱に入る。有効な決定は消せない', async () => {
+  it('次の発言で、有効な決定が Claude に渡る（承認した判断は、決定事項としては渡らない）。Claude が取り消したものはゴミ箱に入る。有効な決定は消せない', async () => {
     await app.send(NEXT);
     await app.byText('.chat-list', DONE).waitFor();
     const reminder = reminderFor(NEXT);
-    expect(reminder).toContain(`## ${DECISIONS} (decisions; 2 in force)`);
-    expect(reminder).toContain(`- #1 ${RULE}\n- #2 ${JUDGMENT}`);
+    expect(reminder).toContain(`## ${DECISIONS} (decisions; 1 in force)\nDescription: 決まったこと\n- #1 ${RULE}\n`);
+    expect(reminder).toContain(`## ${REVIEW} (1/1 checked; review list: the user checks the cards they approve)`);
+    // Claude が足した決定は、#2 になる
+    await decided(JUDGMENT).waitFor();
     // 取り消しは通り、リストからゴミ箱に移る（取り消したカードが画面にたまらない）
     await app.byText('.checklist-list.kind-decisions .checklist-progress.pinned', '1 件').waitFor();
     await row(RULE).waitFor({ state: 'detached' });
@@ -108,8 +114,8 @@ describe('決定事項を、人と Claude が画面と MCP で使う', () => {
     await trashed(RULE).waitFor();
     // 有効な決定の削除は断られ、カードは残る
     expect(app.api.toolResults.some((r) => r.includes('You can delete only revoked cards') && r.includes('card_revoke'))).toBe(true);
-    expect(await row(JUDGMENT).count()).toBe(1);
-    expect(await row(JUDGMENT).locator('.checklist-revoked').count()).toBe(0);
+    expect(await decided(JUDGMENT).count()).toBe(1);
+    expect(await decided(JUDGMENT).locator('.checklist-revoked').count()).toBe(0);
   });
 
   it('人は、Claude が取り消したものをゴミ箱から戻して有効に戻せて、自分でも理由つきで取り消せる（画面に残る）', async () => {
@@ -121,13 +127,13 @@ describe('決定事項を、人と Claude が画面と MCP で使う', () => {
     await app.byText('.card-pane .ghost-button', '有効に戻す').click();
     await app.byText('.card-pane .card-pane-state', '有効').waitFor();
     await app.byText('.checklist-list.kind-decisions .checklist-progress.pinned', '2 件').waitFor();
-    await row(JUDGMENT).locator('.checklist-title').click();
+    await decided(JUDGMENT).locator('.checklist-title').click();
     await app.byText('.card-pane .card-pane-where', `${DECISIONS} #2`).waitFor();
     await app.byText('.card-pane .diff-pane-head .ghost-button', '取り消す').click();
     await app.page.fill('.card-pane-revoke input', HUMAN_REASON);
     await app.page.keyboard.press('Enter');
     await app.byText('.card-pane .card-pane-revoked', HUMAN_REASON).waitFor();
-    await row(JUDGMENT).locator('.checklist-revoked').waitFor();
+    await decided(JUDGMENT).locator('.checklist-revoked').waitFor();
     expect(await row(RULE).locator('.checklist-revoked').count()).toBe(0);
     expect(await decisionsHead().locator('.checklist-progress.pinned').textContent()).toBe('1 件');
   });
@@ -136,12 +142,12 @@ describe('決定事項を、人と Claude が画面と MCP で使う', () => {
     await app.send(LAST);
     await app.byText('.chat-list', CHECKED).waitFor();
     const reminder = reminderFor(LAST);
-    expect(reminder).toContain(`## ${DECISIONS} (decisions; 1 in force, 1 revoked and not shown)`);
+    expect(reminder).toContain(`## ${DECISIONS} (decisions; 1 in force, 1 revoked or settled and not shown)`);
     expect(reminder).toContain(`- #1 ${RULE}`);
     expect(reminder).not.toContain(JUDGMENT);
     // Claude が消すと、ゴミ箱に移る
     expect(app.api.toolResults.some((r) => r.includes(`Moved #2 in "${DECISIONS}" to the trash (the user can restore it in the app).`))).toBe(true);
-    await row(JUDGMENT).waitFor({ state: 'detached' });
+    await decided(JUDGMENT).waitFor({ state: 'detached' });
     await openTrash();
     await trashed(JUDGMENT).waitFor();
     expect(await decisionsHead().locator('.checklist-progress.pinned').textContent()).toBe('1 件');

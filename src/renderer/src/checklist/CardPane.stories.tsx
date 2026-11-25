@@ -29,6 +29,11 @@ export const 取り消した決定: StoryObj = {
   render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={keptList} card={keptList.cards[1]} onClose={() => {}} />),
 };
 
+// 済みにした決定。間違いではなく、やり終えてもう縛らないので、Claude が外した（理由つき）。「有効に戻す」で戻せる
+export const 済みにした決定: StoryObj = {
+  render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={keptList} card={keptList.cards[3]} onClose={() => {}} />),
+};
+
 export const 説明文なし: StoryObj = {
   render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={goalList} card={goalList.cards[1]} onClose={() => {}} />),
 };

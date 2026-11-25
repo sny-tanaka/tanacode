@@ -241,14 +241,15 @@ export class ChecklistBook {
   }
 
   // comment: チェックと一緒にスレッドに書く返信（どう確かめたか・なぜ外したか）。read は reply と同じ。
-  // 確認事項のリストで人がチェックした（承認した）カードは、決定事項のリストに移す（チェックで知らせから消えないように）
+  // 確認事項のリストで人がチェックした（承認した）カードも、そのリストに残す。決定事項には移さない
+  // （以前は移していた。その場かぎりの判断まで、毎回の知らせに出続けて膨らむため。ずっと守る決まりなら、Claude か人が決定事項に足す）
   setChecked(sessionId: string, author: Author, listId: string, cardIds: string[], checked: boolean, comment?: string, read = true): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     if (!traitsOf(list).checkable) {
       throw new ChecklistError(
         author === 'claude'
-          ? `The cards of "${list.name}" have no checks (it is ${kindLabel(kindOf(list))}). ${traitsOf(list).locked ? 'To withdraw one, use card_revoke with a reason.' : 'Rewrite a card with card_update, or delete it with card_delete, when it is no longer true.'}`
+          ? `The cards of "${list.name}" have no checks (it is ${kindLabel(kindOf(list))}). ${traitsOf(list).locked ? 'To withdraw one, use card_revoke (it no longer holds) or card_settle (its work is done) with a reason.' : 'Rewrite a card with card_update, or delete it with card_delete, when it is no longer true.'}`
           : t('checklist.errors.noChecks', { list: list.name }),
       );
     }
@@ -269,44 +270,36 @@ export class ChecklistBook {
     if (changed.length > 0) {
       this.log(doc, author, `${checked ? 'checked' : 'unchecked'} ${cardRefs(changed)} in "${list.name}"${comment?.trim() ? ` (${comment.trim()})` : ''}`);
     }
-    if (checked && author === 'human' && traitsOf(list).approves && changed.length > 0) {
-      const to = this.decisionsList(sessionId);
-      this.moveCards(sessionId, author, list.id, changed.map((c) => c.id), to.id);
-      return changed;
-    }
     this.changed(sessionId);
     return changed;
-  }
-
-  // 承認したカードを移す先。セッションの最初の決定事項のリスト。無ければ作る（名前と説明は、承認した人の画面の言語で）
-  private decisionsList(sessionId: string): Checklist {
-    const found = liveLists(this.doc(sessionId).lists).find((l) => kindOf(l) === 'decisions');
-    return found ?? this.createList(sessionId, 'human', t('checklist.decisions.defaultName'), t('checklist.decisions.defaultDescription'), 'decisions');
   }
 
   // 取り消す。有効なものとしては扱わない（知らせに出さない）。Claude は理由が要る。
   // 人が取り消したものは画面に残す。Claude が取り消したものは、そのままゴミ箱に入れる（取り消したカードが画面にたまらないように。
   // 理由はスレッドに残り、人はゴミ箱から戻して有効に戻せる）
-  revokeCards(sessionId: string, author: Author, listId: string, cardIds: string[], rawReason: string): Card[] {
+  // settled: 済みにする（Claude だけ）。間違いだったのではなく、やり終えてもう縛らない決定を外す。
+  // 扱いは Claude の取り消しと同じ（有効でなくなり、ゴミ箱に入る。人はゴミ箱から戻して有効に戻せる）で、記録と画面の言い方だけが違う
+  revokeCards(sessionId: string, author: Author, listId: string, cardIds: string[], rawReason: string, settled = false): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const reason = rawReason.trim();
+    if (settled && author !== 'claude') throw new ChecklistError(t('checklist.errors.badOp'));
     if (!traitsOf(list).locked) {
       throw new ChecklistError(
         author === 'claude'
-          ? `"${list.name}" is ${kindLabel(kindOf(list))}, so its cards cannot be revoked. Update or delete them instead (card_update, card_delete).`
+          ? `"${list.name}" is ${kindLabel(kindOf(list))}, so its cards cannot be ${settled ? 'settled' : 'revoked'}. Update or delete them instead (card_update, card_delete).`
           : t('checklist.errors.notRevocable', { list: list.name }),
       );
     }
     if (author === 'claude' && !reason) throw new ChecklistError('reason is required.');
     const cards = cardIds.map((id) => this.card(list, id)).filter((c) => !c.revoked);
     for (const card of cards) {
-      this.event(card, author, { type: 'revoked', reason });
-      card.revoked = { by: author, at: card.updatedAt, reason };
+      this.event(card, author, settled ? { type: 'settled', reason } : { type: 'revoked', reason });
+      card.revoked = { by: author, at: card.updatedAt, reason, ...(settled ? { settled: true } : {}) };
       if (author === 'claude') this.trash(card, author);
     }
     if (cards.length > 0) {
-      this.log(doc, author, `revoked ${cardRefs(cards)} in "${list.name}"${reason ? ` (${clip(reason, 200)})` : ''}${author === 'claude' ? ' and moved them to the trash' : ''}`);
+      this.log(doc, author, `${settled ? 'settled' : 'revoked'} ${cardRefs(cards)} in "${list.name}"${reason ? ` (${clip(reason, 200)})` : ''}${author === 'claude' ? ' and moved them to the trash' : ''}`);
     }
     this.changed(sessionId);
     return cards;
@@ -379,7 +372,7 @@ export class ChecklistBook {
     const inForce = cards.filter((c) => !c.revoked);
     if (author === 'claude' && traitsOf(list).locked && inForce.length > 0) {
       throw new ChecklistError(
-        `"${list.name}" is ${kindLabel(kindOf(list))}. You can delete only revoked cards from it, and ${cardRefs(inForce)} ${inForce.length === 1 ? 'is' : 'are'} in force. If a decision no longer holds, revoke it with card_revoke and a reason; that also moves it to the trash.`,
+        `"${list.name}" is ${kindLabel(kindOf(list))}. You can delete only revoked cards from it, and ${cardRefs(inForce)} ${inForce.length === 1 ? 'is' : 'are'} in force. If a decision no longer holds, revoke it with card_revoke; if its work is done and it no longer binds, settle it with card_settle. Both take a reason and move the card to the trash.`,
       );
     }
     for (const card of cards) this.trash(card, author);
@@ -568,12 +561,12 @@ export class ChecklistBook {
 function kindLabel(kind: ListKind): string {
   if (kind === 'decisions') return 'a decisions list: permanent, no checks';
   if (kind === 'state') return 'a state list: no checks, you keep it current by rewriting its cards';
-  return kind === 'review' ? 'a review list: cards the user checks move to the decisions list' : 'an ordinary list';
+  return kind === 'review' ? 'a review list: the user checks the cards they approve' : 'an ordinary list';
 }
 
 // Claude が書き換えられないリストで、Claude を断る文
 function lockedMessage(list: Checklist, what: string): string {
-  return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it, revoke them with a reason (card_revoke, which also moves them to the trash) and delete revoked ones, but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
+  return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it, revoke or settle them with a reason (card_revoke, card_settle; both move them to the trash) and delete revoked ones, but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
 }
 
 // 消した・取り消した決定がまた成り立つとき、Claude にしてもらうこと（人に見える形で、新しく足す）

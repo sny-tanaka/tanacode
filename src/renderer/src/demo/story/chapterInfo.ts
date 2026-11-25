@@ -37,7 +37,7 @@ export const CHAPTER_INFO: ChapterInfo[] = [
   {
     id: 'review',
     title: 'レビューして直す',
-    summary: 'Claude が残した確認事項にスレッドで答え、承認して決定事項へ。ブランチの変更を PR のように見て差分の行にコメント。テストはターミナルで流します。',
+    summary: 'Claude が残した確認事項にスレッドで答えて承認。この先も守る決まりは決定事項へ。ブランチの変更を PR のように見て差分の行にコメント。テストはターミナルで流します。',
     isNew: true,
   },
   {

@@ -68,10 +68,26 @@ describe('サイドパネル', () => {
     expect(row('決済には触らない').querySelector('.checklist-revoked')).toBeNull();
   });
 
+  it('Claude が済みにしたカード（人がゴミ箱から戻したもの）は、取り消しと分けて「済み」の印と理由を出す', () => {
+    const settled = card('d4', 4, 'ボタンは A 案にする', { revoked: { by: 'claude', at: NOW, reason: 'A 案で作り終えた', settled: true } });
+    panel([list('D1', '決定事項', [kept(), settled], { kind: 'decisions' })]);
+    const r = row('ボタンは A 案にする');
+    expect(r.classList.contains('revoked')).toBe(true);
+    const badge = r.querySelector('.checklist-revoked') as HTMLElement;
+    expect(badge.textContent).toBe('済み');
+    expect(badge.getAttribute('data-tip')).toBe('やり終えて、Claude が済みにした決定（有効ではありません）: A 案で作り終えた');
+    expect(head('決定事項').querySelector('.checklist-progress')!.textContent).toBe('1 件');
+    cleanup();
+    pane(list('D1', '決定事項', [settled], { kind: 'decisions' }), settled);
+    expect(document.querySelector('.card-pane-state')!.textContent).toBe('済み');
+    expect(document.querySelector('.card-pane-revoked')!.textContent).toContain('済みにした理由: A 案で作り終えた');
+    expect(screen.getByText('有効に戻す')).toBeDefined();
+  });
+
   it('見出しのツールチップで、種類が分かる', () => {
     panel();
     expect(head('決定事項').getAttribute('data-tip')).toContain('決定事項のリスト。チェックで消えず、有効なカードを Claude にいつも渡します');
-    expect(head('確認事項').getAttribute('data-tip')).toContain('チェック（承認）したカードは、決定事項に移ります');
+    expect(head('確認事項').getAttribute('data-tip')).toContain('承認したカードは、チェック済みのままここに残ります');
     expect(head('やること').getAttribute('data-tip')).toBe('説明はありません\nダブルクリックで名前と説明を変える');
   });
 

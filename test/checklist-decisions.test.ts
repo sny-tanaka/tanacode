@@ -14,10 +14,11 @@ import type { ToolResult } from '../src/main/mcp-bridge';
 import type { NoticeHost } from '../src/main/session-notices';
 
 // 決定事項（チェックで消えないリスト）。会話の圧縮で消えると困る「決まったこと」を残す場所。
-// - ふつうのリストは、チェックしたカードが毎回の知らせから消える。人が承認（チェック）した判断ほど、Claude に見えなくなっていた
-// - 決定事項のリストのカードはチェックが無く、有効なかぎり、毎回の知らせに出る。Claude は足すことと、理由つきの取り消し（ゴミ箱に入る）と、
-//   取り消したカードの削除だけができる
-// - 確認事項のリストで人がチェックしたカードは、決定事項に移る
+// - ふつうのリストは、チェックしたカードが毎回の知らせから消える
+// - 決定事項のリストのカードはチェックが無く、有効なかぎり、毎回の知らせに出る。Claude は足すことと、理由つきの取り消し・済みにすること
+//   （どちらもゴミ箱に入る）と、取り消したカードの削除だけができる
+// - 確認事項のリストで人がチェック（承認）したカードは、そのまま残る（以前は決定事項に移していたが、その場かぎりの判断まで
+//   毎回の知らせに出続けたのでやめた。この先も守る決まりなら、Claude が決定事項に足す）
 
 const S = 'session-1';
 const T = 'session-2';
@@ -123,7 +124,7 @@ describe('決定事項のリスト（Claude ができること）', () => {
     const { book, list, cards } = withDecisions(['A', 'B', 'C']);
     book.apply(S, { type: 'card-revoke', listId: list.id, cardIds: [cards[0].id, cards[1].id] });
     expect(denied(() => book.deleteCards(S, 'claude', list.id, [cards[1].id, cards[2].id]))).toBe(
-      '"決定事項" is a decisions list: permanent, no checks. You can delete only revoked cards from it, and #3 "C" is in force. If a decision no longer holds, revoke it with card_revoke and a reason; that also moves it to the trash.',
+      '"決定事項" is a decisions list: permanent, no checks. You can delete only revoked cards from it, and #3 "C" is in force. If a decision no longer holds, revoke it with card_revoke; if its work is done and it no longer binds, settle it with card_settle. Both take a reason and move the card to the trash.',
     );
     expect(liveCards(list)).toHaveLength(3);
     expect(book.deleteCards(S, 'claude', list.id, [cards[0].id, cards[1].id])).toHaveLength(2);
@@ -235,7 +236,7 @@ describe('決定事項のリスト（人ができること）', () => {
   });
 });
 
-describe('承認した判断を、決定事項に移す', () => {
+describe('承認した判断は、確認事項に残す（決定事項には移さない）', () => {
   function withReview() {
     const book = make();
     const review = book.createList(S, 'claude', '確認事項', '判断と理由を書く', 'review');
@@ -243,59 +244,33 @@ describe('承認した判断を、決定事項に移す', () => {
     return { book, review, cards };
   }
 
-  it('確認事項のリストで人がチェックすると、決定事項のリストに移る。決定事項のリストが無ければ作る', () => {
+  // 直す前: 承認したカードは決定事項に移り、その場かぎりの判断まで毎回の知らせに出続けて、知らせが膨らんだ
+  it('確認事項のリストで人がチェック（承認）しても、カードはチェック済みのまま残る。決定事項のリストは作らない', () => {
     const { book, review, cards } = withReview();
     book.takeHumanActivity(S);
     book.apply(S, { type: 'card-check', listId: review.id, cardIds: [cards[0].id], checked: true });
-    const decisions = book.findList(S, '決定事項')!;
-    expect(decisions).toMatchObject({ kind: 'decisions', createdBy: 'human' });
-    expect(decisions.description).not.toBe('');
-    expect(liveCards(review).map((c) => c.title)).toEqual(['税率は設定ファイルに置いた']);
-    expect(activeCards(decisions).map((c) => [c.number, c.title, c.body])).toEqual([[1, '端数は四捨五入にした', '経理の指示']]);
-    // スレッドは残り、承認と移動の記録が付く
-    expect(cards[0].thread.map((e) => (e.kind === 'event' ? e.event.type : 'reply'))).toEqual(['created', 'checked', 'moved']);
-    expect(cards[0].thread.at(-1)).toMatchObject({ author: 'human', event: { type: 'moved', fromList: '確認事項', fromNumber: 1 } });
-    // Claude には、次のツールの結果で伝わる
+    expect(book.lists(S)).toHaveLength(1);
+    expect(liveCards(review).map((c) => [c.title, c.checked, c.checkedBy])).toEqual([
+      ['端数は四捨五入にした', true, 'human'],
+      ['税率は設定ファイルに置いた', false, undefined],
+    ]);
+    expect(cards[0].thread.map((e) => (e.kind === 'event' ? e.event.type : 'reply'))).toEqual(['created', 'checked']);
+    // Claude には、次のツールの結果で承認が伝わる（ずっと守る決まりなら、Claude が決定事項に足す）
     const activity = book.takeHumanActivity(S).join('\n');
     expect(activity).toContain('The user checked #1 "端数は四捨五入にした" in "確認事項"');
-    expect(activity).toContain('The user moved 1 card from "確認事項" to "決定事項" (#1 "端数は四捨五入にした")');
+    expect(activity).not.toContain('moved');
   });
 
-  it('すでにある決定事項のリストに足す（名前は問わない）。まとめて承認したものは、まとめて移る', () => {
+  it('決定事項のリストがあっても、承認したカードは移さない。知らせには、ほかのチェック済みのカードと同じく出さない', () => {
     const { book, review, cards } = withReview();
     const kept = book.createList(S, 'claude', '決めたこと', '', 'decisions');
     book.addCards(S, 'claude', kept.id, [{ title: '決済には触らない' }]);
     book.apply(S, { type: 'card-check', listId: review.id, cardIds: cards.map((c) => c.id), checked: true });
-    expect(book.findList(S, '決定事項')).toBeUndefined();
-    expect(activeCards(kept).map((c) => `#${c.number} ${c.title}`)).toEqual(['#1 決済には触らない', '#2 端数は四捨五入にした', '#3 税率は設定ファイルに置いた']);
-    expect(liveCards(review)).toEqual([]);
-  });
-
-  it('Claude がチェックしても移さない（承認は人のもの）。チェックを外しても移さない', () => {
-    const { book, review, cards } = withReview();
-    book.setChecked(S, 'claude', review.id, [cards[0].id], true);
+    expect(activeCards(kept).map((c) => c.title)).toEqual(['決済には触らない']);
     expect(liveCards(review)).toHaveLength(2);
-    expect(book.lists(S)).toHaveLength(1);
-    book.apply(S, { type: 'card-check', listId: review.id, cardIds: [cards[0].id], checked: false });
-    expect(liveCards(review)).toHaveLength(2);
-    // すでにチェック済みのカードを人がチェックしても、変わっていないので移さない
-    book.setChecked(S, 'claude', review.id, [cards[1].id], true);
-    book.apply(S, { type: 'card-check', listId: review.id, cardIds: [cards[1].id], checked: true });
-    expect(liveCards(review)).toHaveLength(2);
-  });
-
-  it('ふつうのリスト（種類の無い、古い「確認事項」も）では、人がチェックしても移さない', () => {
-    const book = make();
-    const list = book.createList(S, 'claude', '確認事項', '');
-    const [card] = book.addCards(S, 'claude', list.id, [{ title: 'A' }]);
-    book.apply(S, { type: 'card-check', listId: list.id, cardIds: [card.id], checked: true });
-    expect(liveCards(list)).toHaveLength(1);
-    expect(book.lists(S)).toHaveLength(1);
-    // 人が種類を確認事項に変えれば、次の承認から移る
-    book.apply(S, { type: 'list-update', listId: list.id, kind: 'review' });
-    const [next] = book.addCards(S, 'claude', list.id, [{ title: 'B' }]);
-    book.apply(S, { type: 'card-check', listId: list.id, cardIds: [next.id], checked: true });
-    expect(activeCards(book.findList(S, '決定事項')!).map((c) => c.title)).toEqual(['B']);
+    const text = checklistReminder('prompt', book.lists(S))!;
+    expect(text).toContain('- #1 決済には触らない');
+    expect(text).not.toContain('端数は四捨五入にした');
   });
 });
 
@@ -368,7 +343,7 @@ const TODO = list('やること', [card(1, '税率を変える', { checked: true
 describe('知らせに、有効な決定をいつも出す', () => {
   it('発言のとき: 有効なカードを全部、ほかのリストより先に出す。取り消したもの・ゴミ箱のものは出さない', () => {
     const text = checklistReminder('prompt', [TODO, DECISIONS])!;
-    expect(text).toContain('## 決定事項 (decisions; 2 in force, 1 revoked and not shown)\nDescription: 決まったこと\n- #1 決済には触らない\n- #4 端数は四捨五入');
+    expect(text).toContain('## 決定事項 (decisions; 2 in force, 1 revoked or settled and not shown)\nDescription: 決まったこと\n- #1 決済には触らない\n- #4 端数は四捨五入');
     expect(text).not.toContain('端数は切り捨て');
     expect(text).not.toContain('ゴミ箱の決定');
     expect(text.indexOf('## 決定事項')).toBeLessThan(text.indexOf('## やること'));
@@ -387,12 +362,12 @@ describe('知らせに、有効な決定をいつも出す', () => {
   it('決定事項のリストだけでも出す。有効なカードが無ければ、そう書く', () => {
     expect(checklistReminder('prompt', [DECISIONS])).toContain('- #1 決済には触らない');
     const empty = list('決定事項', [card(1, 'A', { revoked: { by: 'human', at: 1, reason: '' } })], { kind: 'decisions' });
-    expect(checklistReminder('prompt', [empty])).toContain('## 決定事項 (decisions; 0 in force, 1 revoked and not shown)\n(no cards in force)');
+    expect(checklistReminder('prompt', [empty])).toContain('## 決定事項 (decisions; 0 in force, 1 revoked or settled and not shown)\n(no cards in force)');
   });
 
-  it('確認事項のリストには、チェックすると決定事項に移ることを添える', () => {
+  it('確認事項のリストには、チェックが承認であることを添える', () => {
     const review = list('確認事項', [card(1, 'A')], { kind: 'review' });
-    expect(checklistReminder('prompt', [review])).toContain('## 確認事項 (0/1 checked; review list: cards the user checks move to the decisions list)');
+    expect(checklistReminder('prompt', [review])).toContain('## 確認事項 (0/1 checked; review list: the user checks the cards they approve)');
   });
 
   it('前のターンでチェックリストに触れなかったら、次の発言で、そのターンで決まったことも決定事項に書かせる', () => {
@@ -526,9 +501,9 @@ describe('MCP のツール', () => {
 
   it('card_add の list_kind・list_create の kind で、決定事項と確認事項のリストを作る。知らない種類は断る', async () => {
     expect(first(await call('card_add', { list: '決定事項', list_description: '決まったこと', list_kind: 'decisions', cards: [{ title: '決済には触らない' }] }))).toBe(
-      'Created the list "決定事項" as a decisions list (permanent, no checks; you can add cards and revoke them with card_revoke). Added #1 "決済には触らない" to "決定事項".',
+      'Created the list "決定事項" as a decisions list (permanent, no checks; you can add cards, and revoke or settle them with card_revoke or card_settle). Added #1 "決済には触らない" to "決定事項".',
     );
-    expect(first(await call('list_create', { name: '確認事項', description: '', kind: 'review' }))).toBe('Created the list "確認事項" as a review list (cards the user checks move to the decisions list).');
+    expect(first(await call('list_create', { name: '確認事項', description: '', kind: 'review' }))).toBe('Created the list "確認事項" as a review list (the user checks the cards they approve).');
     expect(store.findList(ME, '決定事項')!.kind).toBe('decisions');
     expect(store.findList(ME, '確認事項')!.kind).toBe('review');
     const bad = await call('list_create', { name: 'X', description: '', kind: 'permanent' });
@@ -579,11 +554,11 @@ describe('MCP のツール', () => {
     expect(noReason.isError).toBe(true);
     expect(first(noReason)).toBe('reason is required.');
     expect(first(await call('card_revoke', { list: '決定事項', numbers: '2,3', reason: '経理の指示で\n四捨五入に変わった' }))).toBe(
-      'Revoked #2 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #3 was already revoked. 1 card in force in "決定事項".',
+      'Revoked #2 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #3 was already revoked or settled. 1 card in force in "決定事項".',
     );
     expect(list.cards[1]).toMatchObject({ revoked: { by: 'claude', reason: '経理の指示で\n四捨五入に変わった' }, deletedAt: expect.any(Number) });
     expect(first(await call('checklist_overview'))).toBe(
-      '## 決定事項 (decisions list: permanent, no checks; 1 in force, 1 revoked)\nDescription: 決まったこと\n- #1 決済には触らない\n- (revoked: 税率は別の PR で) #3 税率は 10%',
+      '## 決定事項 (decisions list: permanent, no checks; 1 in force, 1 revoked or settled)\nDescription: 決まったこと\n- #1 決済には触らない\n- (revoked: 税率は別の PR で) #3 税率は 10%',
     );
     const got = first(await call('card_get', { list: '決定事項', numbers: '1,3' }));
     expect(got).toContain('## "決定事項" #1 決済には触らない\n- Status: in force');
@@ -594,43 +569,86 @@ describe('MCP のツール', () => {
     expect(first(await call('checklist_overview'))).toBe('## 決定事項 (decisions list: permanent, no checks; 1 in force)\nDescription: 決まったこと\n- #1 決済には触らない');
   });
 
-  it('ふつうのリストでの card_revoke は断る。確認事項の一覧には、承認で移ることを書く', async () => {
+  it('ふつうのリストでの card_revoke は断る。確認事項の一覧には、チェックが承認であることを書く', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
     const result = await call('card_revoke', { list: 'やること', numbers: '1', reason: 'x' });
     expect(result.isError).toBe(true);
     expect(first(result)).toContain('is an ordinary list');
     await call('list_create', { name: '確認事項', description: '', kind: 'review' });
-    expect(first(await call('checklist_overview'))).toContain('## 確認事項 (0/0 checked; review list: cards the user checks move to the decisions list)');
+    expect(first(await call('checklist_overview'))).toContain('## 確認事項 (0/0 checked; review list: the user checks the cards they approve)');
   });
 
   // 直す前: 人が承認（チェック）した判断は、そのあとの知らせから消えた（未チェックのカードだけを出すため）
-  it('人が承認した判断は、そのあとの発言の知らせにも、圧縮の直後の知らせにも出続ける', async () => {
-    await call('card_add', { list: '確認事項', list_description: '判断と理由', list_kind: 'review', cards: [{ title: '端数は四捨五入にした' }] });
-    const review = store.findList(ME, '確認事項')!;
-    control.apply(ME, { type: 'card-check', listId: review.id, cardIds: [review.cards[0].id], checked: true });
+  it('有効な決定は、そのあとの発言の知らせにも、圧縮の直後の知らせにも出続ける。取り消すと出なくなり、人が戻すとまた出る', async () => {
+    await call('card_add', { list: '決定事項', list_description: '決まったこと', list_kind: 'decisions', cards: [{ title: '端数は四捨五入にする' }] });
     for (const hook of ['hook:prompt', 'hook:compact']) {
       const text = first(await call(hook, { turn: 0, checklist: 0 }));
       expect(text, hook).toContain('## 決定事項 (decisions; 1 in force)');
-      expect(text, hook).toContain('- #1 端数は四捨五入にした');
+      expect(text, hook).toContain('- #1 端数は四捨五入にする');
     }
     // Claude が取り消すと、有効な決定としては出なくなる
     await call('card_revoke', { list: '決定事項', numbers: '1', reason: 'ユーザーが切り捨てに戻した' });
-    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).not.toContain('端数は四捨五入にした');
+    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).not.toContain('端数は四捨五入にする');
     // 人がゴミ箱から戻して、有効に戻すと、また出る
     const decisions = store.findList(ME, '決定事項')!;
     control.apply(ME, { type: 'card-restore', listId: decisions.id, cardIds: [decisions.cards[0].id] });
     control.apply(ME, { type: 'card-reinstate', listId: decisions.id, cardIds: [decisions.cards[0].id] });
-    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).toContain('- #1 端数は四捨五入にした');
+    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).toContain('- #1 端数は四捨五入にする');
+  });
+
+  // その場かぎりの決定を、間違いだったと言わずに外せるように（取り消しは「もう成り立たない」の意味なので、やり終えた決定には使われなかった）
+  it('card_settle: やり終えた決定を、理由つきで済みにして、ゴミ箱に入れる。知らせには出なくなり、記録には「済み」と残る。人は戻せる', async () => {
+    await call('card_add', { list: '決定事項', list_description: '決まったこと', list_kind: 'decisions', cards: [{ title: '決済には触らない' }, { title: 'ボタンは A 案にする' }] });
+    const list = store.findList(ME, '決定事項')!;
+    const noReason = await call('card_settle', { list: '決定事項', numbers: '2' });
+    expect(noReason.isError).toBe(true);
+    expect(first(noReason)).toBe('reason is required.');
+    expect(first(await call('card_settle', { list: '決定事項', numbers: '2', reason: 'A 案で作り終えた。このあとの作業はボタンに関わらない' }))).toBe(
+      'Settled #2 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). 1 card in force in "決定事項".',
+    );
+    expect(list.cards[1]).toMatchObject({ revoked: { by: 'claude', reason: 'A 案で作り終えた。このあとの作業はボタンに関わらない', settled: true }, deletedAt: expect.any(Number) });
+    expect(list.cards[1].thread.at(-2)).toMatchObject({ author: 'claude', event: { type: 'settled', reason: 'A 案で作り終えた。このあとの作業はボタンに関わらない' } });
+    const reminder = first(await call('hook:prompt', { turn: 0, checklist: 0 }));
+    expect(reminder).toContain('## 決定事項 (decisions; 1 in force)\nDescription: 決まったこと\n- #1 決済には触らない');
+    expect(reminder).not.toContain('ボタンは A 案にする');
+    expect(first(await call('checklist_trash'))).toContain('"決定事項" #2 ボタンは A 案にする (deleted by Claude');
+    expect(first(await call('checklist_trash'))).toContain('; settled; only the user can restore it)');
+    // 人がゴミ箱から戻すと、済みのままリストに出る（一覧・カードにも「済み」と出る）。有効に戻すと、また知らせに出る
+    control.apply(ME, { type: 'card-restore', listId: list.id, cardIds: [list.cards[1].id] });
+    // もう済みのものは、そう返す（取り消しと済みは、どちらか一度だけ）
+    expect(first(await call('card_settle', { list: '決定事項', numbers: '2', reason: 'x' }))).toBe('#2 was already revoked or settled. 1 card in force in "決定事項".');
+    expect(first(await call('checklist_overview'))).toContain('- (settled: A 案で作り終えた。このあとの作業はボタンに関わらない) #2 ボタンは A 案にする');
+    const got = first(await call('card_get', { list: '決定事項', numbers: '2' }));
+    expect(got).toMatch(/- Status: settled, no longer in force \(by Claude, [\d: -]+: A 案で作り終えた/);
+    expect(got).toContain('Claude settled the card: its work is done and it no longer binds (A 案で作り終えた。このあとの作業はボタンに関わらない)');
+    control.apply(ME, { type: 'card-reinstate', listId: list.id, cardIds: [list.cards[1].id] });
+    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).toContain('- #2 ボタンは A 案にする');
+  });
+
+  it('card_settle は、決定事項のリストのものだけ。ふつうのリストでは断る。人は済みにできない（取り消すか消す）', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
+    const result = await call('card_settle', { list: 'やること', numbers: '1', reason: 'x' });
+    expect(result.isError).toBe(true);
+    expect(first(result)).toContain('so its cards cannot be settled');
+    const list = store.findList(ME, 'やること')!;
+    expect(() => store.revokeCards(ME, 'human', list.id, [list.cards[0].id], 'x', true)).toThrow(ChecklistError);
   });
 
   it('説明とツールの定義で、決まった時点で書くこと・書くもの・取り消し方を伝える', () => {
-    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('Write a card the moment something is decided');
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('write a card the moment it is decided');
     expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('a permission and its scope');
-    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('an option that was rejected, with the reason');
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('an option that must not come back');
+    // 局所的な決定は決定事項に書かず、そのカードに返信する。やり終えた決定は済みにする
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('would acting against it later be a mistake?');
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain("A choice for the step at hand (A or B) is not one: reply it on that step's card.");
     expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('card_revoke');
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('card_settle');
     const tool = (name: string) => CHECKLIST_TOOLS.find((t) => t.name === name)!;
     expect(tool('card_revoke').inputSchema.required).toEqual(['list', 'numbers', 'reason']);
     expect(tool('card_revoke').description).toContain('move to the trash');
+    expect(tool('card_settle').inputSchema.required).toEqual(['list', 'numbers', 'reason']);
+    expect(tool('card_settle').description).toContain('Do not settle a rule that still applies to later work');
+    expect(tool('card_add').description).toContain('is not a decision: reply it on the card of that step (card_reply)');
     expect(tool('card_delete').description).toContain('On a decisions list, you can delete only revoked cards');
     expect(tool('list_create').inputSchema.properties.kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });
     expect(tool('card_add').inputSchema.properties.list_kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });

@@ -104,7 +104,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
         <span className="card-pane-where">
           {list.name} #{card.number}
         </span>
-        {traits.locked && <span className={`card-pane-state${card.revoked ? ' revoked' : ''}`}>{card.revoked ? t('checklist.panel.revoked') : t('checklist.cardPane.inForce')}</span>}
+        {traits.locked && <span className={`card-pane-state${card.revoked ? ' revoked' : ''}`}>{card.revoked ? t(card.revoked.settled ? 'checklist.panel.settled' : 'checklist.panel.revoked') : t('checklist.cardPane.inForce')}</span>}
         <div className="spacer" />
         {traits.locked &&
           (card.revoked ? (
@@ -151,8 +151,18 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
       <div className="card-pane-scroll">
         {card.revoked && (
           <div className="card-pane-revoked">
-            <div>{t(card.revoked.by === 'claude' ? 'checklist.cardPane.revokedByClaude' : 'checklist.cardPane.revokedByHuman', { time: formatTime(card.revoked.at) })}</div>
-            <div>{card.revoked.reason ? t('checklist.cardPane.revokedReason', { reason: card.revoked.reason }) : t('checklist.cardPane.revokedNoReason')}</div>
+            {card.revoked.settled ? (
+              // 済み（Claude だけが付ける。理由は必ずある）
+              <>
+                <div>{t('checklist.cardPane.settledByClaude', { time: formatTime(card.revoked.at) })}</div>
+                <div>{t('checklist.cardPane.settledReason', { reason: card.revoked.reason })}</div>
+              </>
+            ) : (
+              <>
+                <div>{t(card.revoked.by === 'claude' ? 'checklist.cardPane.revokedByClaude' : 'checklist.cardPane.revokedByHuman', { time: formatTime(card.revoked.at) })}</div>
+                <div>{card.revoked.reason ? t('checklist.cardPane.revokedReason', { reason: card.revoked.reason }) : t('checklist.cardPane.revokedNoReason')}</div>
+              </>
+            )}
           </div>
         )}
         {editingTitle !== null ? (
