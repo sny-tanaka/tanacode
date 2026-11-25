@@ -258,6 +258,7 @@ PR で、次のものを流します。develop への push では流しません
   - `IpcSend`: 画面 → main の知らせ（preload の `send` ↔ main の `listen`）
   - `IpcEvent`: main → 画面の知らせ（main の `send` ↔ preload の `subscribe`）
   - preload と main の両方がこの表で型を付けるので、引数の順番・型、戻り値、知らせの中身が食い違うと、型チェックで止まります。同じ型の引数どうしの入れ替え（`mergeBase` と `relPath` など）は止まりません。
+  - preload の `window.tanacode` の対応表（メソッド → チャンネル）は `src/shared/api-bindings.ts` の `createApi` にあります。preload は Electron の IPC で、スマホの画面は WebSocket で運び、同じ表を使います（チャンネルを足したら、ここに足す）。
   - main の受け口は、必ず `index.ts` の `handle`・`listen` で登録します（`ipcMain` を直に使わない）。どちらも、送り元を確かめてから中を動かします（`fromApp`）。受けるのは、アプリの画面（主ウインドウと、足したプロファイルの画面）のメインフレームで、アプリの画面の URL（ビルドした画面のファイル。開発中は開発サーバーのオリジン）を開いているものからだけ。中のフレーム・アプリ内ブラウザのページ・ほかの URL になった画面・フレームの分からないものからの呼び出しは断り（`main.error.notFromApp`）、知らせは捨てます。`test/main-ipc.test.ts` の「送り元」が、どの受け口も確かめるかを見ます。
   - 受け口には、送り元（`event`）の代わりに呼び出し元（`Caller`。`src/main/remote-dispatch.ts`）を渡します。アプリの画面からなら `kind: 'app'`、遠隔の接続（スマホ。Issue #464）からなら `kind: 'remote'` で、プロファイルは `profileOfCaller` で決めます。`handle`・`listen` は、ipcMain に登録するのと同時に `IpcDispatcher` にも登録し、遠隔の接続は `fromRemote` で同じ受け口を呼びます。
   - チャンネルを足したら、`src/shared/remote-channels.ts` の `REMOTE_CHANNELS` にも足します（足し忘れは型チェックで止まる）。決めるのは、遠隔から届いたときの扱いと引数の形です。
