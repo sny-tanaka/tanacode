@@ -2622,6 +2622,7 @@
       "chat": "チャット",
       "panel": "パネル",
       "editor": "エディタ",
+      "browser": "ブラウザ",
       "terminal": "ターミナル"
     },
     "keys": {

@@ -9002,11 +9002,18 @@ body.resizing-rows webview {
   flex-direction: column;
 }
 .app.mobile[data-mobile-tab='editor'] .main > .center,
+.app.mobile[data-mobile-tab='browser'] .main > .center,
 .app.mobile[data-mobile-tab='terminal'] .main > .center {
   display: flex;
 }
-/* エディタのタブではターミナルを出さず、ターミナルのタブではターミナルだけを画面いっぱいに出す */
-.app.mobile[data-mobile-tab='editor'] .center > .terminal-panel {
+/* エディタ・ブラウザのタブではターミナルを出さず、ターミナルのタブではターミナルだけを画面いっぱいに出す */
+.app.mobile[data-mobile-tab='editor'] .center > .terminal-panel,
+.app.mobile[data-mobile-tab='browser'] .center > .terminal-panel {
+  display: none;
+}
+/* ブラウザとターミナルは下のタブで開くので、パネルの切り替えの列には出さない */
+.app.mobile .explorer .activity-bar .activity-sep,
+.app.mobile .explorer .activity-bar .activity-toggle {
   display: none;
 }
 .app.mobile[data-mobile-tab='terminal'] .center > :not(.terminal-panel) {

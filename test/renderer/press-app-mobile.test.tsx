@@ -174,6 +174,23 @@ describe('スマホの画面の配置（App）', () => {
     await flush();
     expect(app().dataset.mobileTab).toBe('terminal');
     expect((document.querySelector('.terminal-panel') as HTMLElement).hidden).toBe(false);
+    // ブラウザのタブでは、真ん中の列にブラウザを出す。エディタのタブでは、ブラウザを閉じてエディタを出す
+    fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
+    await flush();
+    expect(app().dataset.mobileTab).toBe('browser');
+    expect(document.querySelector('.center .preview-toolbar')).not.toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'エディタ' }));
+    await flush();
+    expect(app().dataset.mobileTab).toBe('editor');
+    // パネルの切り替えの列のブラウザで開いたら、ブラウザのタブへ移る。ブラウザを閉じたら、エディタのタブへ移る
+    fireEvent.click(screen.getByRole('tab', { name: 'パネル' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ブラウザ' }));
+    await flush();
+    expect(app().dataset.mobileTab).toBe('browser');
+    fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
+    fireEvent.click(document.querySelector('.center [aria-label="ブラウザを閉じる"]')!);
+    await flush();
+    expect(app().dataset.mobileTab).toBe('editor');
     fireEvent.click(screen.getByRole('tab', { name: 'パネル' }));
     expect(app().dataset.mobileTab).toBe('panel');
     fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));

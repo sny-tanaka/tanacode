@@ -2702,6 +2702,7 @@
       "chat": "Chat",
       "panel": "Panel",
       "editor": "Editor",
+      "browser": "Browser",
       "terminal": "Terminal"
     },
     "keys": {

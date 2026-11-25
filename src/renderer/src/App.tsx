@@ -1052,13 +1052,31 @@ export function App() {
   useEffect(() => {
     if (mobile && mobileTab === 'terminal') showShell();
   }, [mobile, mobileTab, showShell]);
-  // パネルからファイルや差分を開いたら、エディタのタブへ移る
+  // ブラウザのタブを選んだら、真ん中の列にブラウザを出す。エディタのタブを選んだら、ブラウザを閉じてエディタを出す
+  const changeMobileTab = useCallback(
+    (tab: MobileTab) => {
+      setMobileTab(tab);
+      if (tab === 'browser') showPreview();
+      else if (tab === 'editor') setDiffView((view) => (view?.source === 'preview' ? null : view));
+    },
+    [showPreview],
+  );
+  // パネルからファイルや差分を開いたら、エディタのタブへ移る。ブラウザを開いたら（パネル・エディタのタブを見ている間に、Claude が開いたときも）、
+  // ブラウザのタブへ移る。ブラウザのタブで、ブラウザを閉じたらエディタのタブへ移る
   const openedInCenter = `${diffView?.source ?? ''}:${editor.activePath ?? ''}`;
   const lastOpened = useRef(openedInCenter);
   useEffect(() => {
     if (lastOpened.current === openedInCenter) return;
     lastOpened.current = openedInCenter;
-    if (mobile && mobileTab === 'panel' && (diffView || editor.activePath)) setMobileTab('editor');
+    if (!mobile) return;
+    // ブラウザを閉じた（ブラウザの ×）・ほかのものを開いたら、エディタのタブへ
+    if (mobileTab === 'browser') {
+      if (diffView?.source !== 'preview') setMobileTab('editor');
+      return;
+    }
+    if (mobileTab !== 'panel' && mobileTab !== 'editor') return;
+    if (diffView?.source === 'preview') setMobileTab('browser');
+    else if (mobileTab === 'panel' && (diffView || editor.activePath)) setMobileTab('editor');
   }, [mobile, mobileTab, openedInCenter, diffView, editor.activePath]);
   const language = activeFile?.content.kind === 'text' ? languageLabel(languageFor(activeFile.path)) : null;
   // worktree のフォルダができるのを待っている間、フォルダを読むパネル（エクスプローラー・ソース管理・検索）の代わりに出す
@@ -1431,7 +1449,7 @@ export function App() {
         </div>
       </div>
       {mobile && mobileTab === 'chat' && <MobileWaiting count={waitingOthers.length} onShow={() => select(waitingOthers[0].id)} />}
-      {mobile && <MobileTabs tab={mobileTab} onChange={setMobileTab} />}
+      {mobile && <MobileTabs tab={mobileTab} onChange={changeMobileTab} />}
       <StatusBar
         status={statusBarStatus(chat.status, selected)}
         exitCode={chat.exitCode}
