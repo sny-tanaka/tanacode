@@ -18,7 +18,17 @@
       "notFromApp": "This call didn't come from the app window",
       "remoteUnknownChannel": "An unknown request came from a remote connection: {channel}",
       "remoteNotAvailable": "This operation is not available from a remote connection: {channel}",
-      "remoteBadArguments": "A request from a remote connection has the wrong shape ({channel}): {reason}"
+      "remoteBadArguments": "A request from a remote connection has the wrong shape ({channel}): {reason}",
+      "remoteArg": {
+        "notArray": "The arguments are not an array",
+        "tooMany": "Too many arguments ({count}; up to {max})",
+        "missing": "Argument {index} is missing",
+        "wrongType": "Argument {index} has the wrong shape (not {shape})",
+        "tooDeep": "Argument {index} is nested too deeply",
+        "tooManyEntries": "Argument {index} has too many entries",
+        "forbiddenKey": "Argument {index} has a key that cannot be used ({key})",
+        "notPlain": "Argument {index} is not a plain object"
+      }
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",

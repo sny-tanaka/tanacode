@@ -8,8 +8,7 @@ import { IpcChannel, type IpcInvoke, type IpcSend } from './ipc';
 //   same: そのまま受ける
 //   replace: Mac にしか無いもの（Mac のダイアログ・Mac の画面の位置など）。スマホ向けに置き換えるまで、遠隔からは呼べない
 //   mac: Mac の設定（メニューバーから開くもの）と、Mac の画面にしか意味が無いもの。スマホには出さない
-// チャンネルを足したら、ここにも足す（足し忘れは型チェックで止まる）。引数の数は test/remote-channels.test.ts が
-// src/shared/ipc.ts の TanacodeApi の宣言と照らし合わせる
+// チャンネルを足したら、ここにも足す。足し忘れと、引数の形が ipc.ts の表の型と食い違うのは、型チェックで止まる
 
 // string・number・boolean: その型 / strings: 文字列の配列 / object: ふつうのオブジェクト（配列・null でない）/
 // array: 配列 / bytes: Uint8Array / nullable-*: null も受ける。末尾の ? は省略できる（無い・undefined・null）
@@ -22,11 +21,37 @@ export type RemoteChannelSpec = { use: RemoteUse; args: readonly ArgShape[]; rea
 // 遠隔から届きうる頼み（画面 → main の呼び出しと知らせ）
 export type RemoteChannel = keyof IpcInvoke | keyof IpcSend;
 
-const same = (args: readonly ArgShape[]): RemoteChannelSpec => ({ use: 'same', args });
-const replace = (args: readonly ArgShape[], reason: string): RemoteChannelSpec => ({ use: 'replace', args, reason });
-const mac = (args: readonly ArgShape[], reason: string): RemoteChannelSpec => ({ use: 'mac', args, reason });
+// チャンネルの受け口の型（引数の形は、ここから決まる）
+type ListenerOf<C extends RemoteChannel> = C extends keyof IpcInvoke ? IpcInvoke[C] : C extends keyof IpcSend ? IpcSend[C] : never;
 
-export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec } = {
+// 1 つの引数の型から、その形（ArgShape）を決める。表の形が型と食い違うと、型チェックで止まる
+type ShapeOf<T> = [T] extends [string]
+  ? 'string'
+  : [T] extends [number]
+    ? 'number'
+    : [T] extends [boolean]
+      ? 'boolean'
+      : [T] extends [string[]]
+        ? 'strings'
+        : [T] extends [Uint8Array]
+          ? 'bytes'
+          : [T] extends [readonly unknown[]]
+            ? 'array'
+            : null extends T
+              ? [NonNullable<T>] extends [string]
+                ? 'nullable-string'
+                : 'nullable-object'
+              : 'object';
+
+// 引数の並びから、形の並びを決める（省略できる引数は、末尾に ? が付く）
+type ShapesOf<P extends readonly unknown[]> = { readonly [K in keyof P]-?: undefined extends P[K] ? `${ShapeOf<Exclude<P[K], undefined>>}?` : ShapeOf<P[K]> };
+type SpecOf<C extends RemoteChannel> = { use: RemoteUse; args: ShapesOf<Parameters<ListenerOf<C>>>; reason?: string };
+
+const same = <const A extends readonly ArgShape[]>(args: A) => ({ use: 'same', args }) as const;
+const replace = <const A extends readonly ArgShape[]>(args: A, reason: string) => ({ use: 'replace', args, reason }) as const;
+const mac = <const A extends readonly ArgShape[]>(args: A, reason: string) => ({ use: 'mac', args, reason }) as const;
+
+const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.SessionsList]: same([]),
   [IpcChannel.SessionsCreate]: same(['string', 'object']),
   [IpcChannel.SessionsOpen]: same(['string']),
@@ -71,11 +96,11 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.UsageGet]: same([]),
   [IpcChannel.UsageRefresh]: same([]),
   [IpcChannel.AccountGet]: same([]),
-  [IpcChannel.ProfilesGet]: same([]),
-  [IpcChannel.ProfilesSwitch]: same(['string']),
-  [IpcChannel.ProfilesAdd]: same(['object']),
-  [IpcChannel.ProfilesUpdate]: same(['string', 'object']),
-  [IpcChannel.ProfilesRemove]: same(['string']),
+  [IpcChannel.ProfilesGet]: replace([], '開いている全プロファイルを返す（許したプロファイルだけに絞るまで）'),
+  [IpcChannel.ProfilesSwitch]: replace(['string'], 'Mac のウインドウに出すプロファイルを切り替える（遠隔の接続のプロファイルは接続で決まる）'),
+  [IpcChannel.ProfilesAdd]: replace(['object'], 'プロファイルを足す（許したプロファイルの扱いを決めるまで）'),
+  [IpcChannel.ProfilesUpdate]: replace(['string', 'object'], '呼び出し元のプロファイルを見ずに、渡された id のプロファイルを変える（許したプロファイルだけに絞るまで）'),
+  [IpcChannel.ProfilesRemove]: replace(['string'], '呼び出し元のプロファイルを見ずに、渡された id のプロファイルを変える（許したプロファイルだけに絞るまで）'),
   [IpcChannel.ProfilesPickDir]: replace([], 'フォルダを選ぶ Mac のダイアログ'),
   [IpcChannel.ScheduledList]: same([]),
   [IpcChannel.ScheduledAdd]: same(['string', 'string', 'strings', 'number', 'strings?']),
@@ -83,14 +108,14 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.ScheduledEdit]: same(['string', 'string']),
   [IpcChannel.ScheduledSendNow]: same(['string']),
   [IpcChannel.ScheduledCancel]: same(['string']),
-  [IpcChannel.PrefsSync]: same(['object']),
+  [IpcChannel.PrefsSync]: replace(['object'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
   [IpcChannel.NotificationsGet]: same([]),
   [IpcChannel.NotificationsSet]: same(['boolean']),
   [IpcChannel.PromptsGet]: mac([], 'メニューバーから開く「Claude に送る文」のダイアログ'),
   [IpcChannel.PromptsUpdate]: mac(['object'], 'メニューバーから開く「Claude に送る文」のダイアログ'),
   [IpcChannel.McpSettingsGet]: mac([], 'メニューバーの「MCP の設定…」で開くダイアログ'),
-  [IpcChannel.McpEnabledSet]: mac(['object', 'boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
-  [IpcChannel.ToolPermissionsSet]: mac(['string', 'object'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
+  [IpcChannel.McpEnabledSet]: mac(['string', 'boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
+  [IpcChannel.ToolPermissionsSet]: mac(['string', 'string'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ParentAskRulesSet]: mac(['boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ClaudeVersionGet]: same([]),
   [IpcChannel.ClaudeVerifiedGet]: same([]),
@@ -117,7 +142,7 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.TasksAgentLog]: same(['string', 'object']),
   [IpcChannel.TasksStop]: same(['string', 'object']),
   [IpcChannel.ShellCreate]: same(['string', 'number', 'number']),
-  [IpcChannel.ShellAttach]: same([]),
+  [IpcChannel.ShellAttach]: replace([], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
   [IpcChannel.FolderPick]: replace([], 'フォルダを選ぶ Mac のダイアログ（スマホ向けのフォルダの一覧に置き換える）'),
   [IpcChannel.FolderInfo]: same(['string']),
   [IpcChannel.FolderParentInstructions]: same(['string', 'boolean?']),
@@ -125,7 +150,7 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.FolderCommands]: same(['string']),
   [IpcChannel.FolderOpen]: same(['string']),
   [IpcChannel.WorkspaceInfo]: same(['string']),
-  [IpcChannel.WorkspaceAddFolder]: same(['string']),
+  [IpcChannel.WorkspaceAddFolder]: replace(['string'], 'フォルダを選ぶ Mac のダイアログ'),
   [IpcChannel.WorkspaceRemoveFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceKeepReadFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceDismissRead]: same(['string', 'string']),
@@ -168,11 +193,11 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.BrowserLoginsGet]: same([]),
   [IpcChannel.BrowserRemembersGet]: same([]),
   [IpcChannel.BrowserPopupsGet]: same([]),
-  [IpcChannel.SessionsFocus]: same(['nullable-string']),
+  [IpcChannel.SessionsFocus]: replace(['nullable-string'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
   [IpcChannel.SessionsInterrupt]: same(['string']),
   [IpcChannel.SessionsDismissSuggestion]: same(['string']),
   [IpcChannel.SessionsExportReveal]: mac(['string'], 'Finder で表示する'),
-  [IpcChannel.PrefsSet]: same(['string', 'string']),
+  [IpcChannel.PrefsSet]: replace(['string', 'string'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
   [IpcChannel.FocusLost]: mac(['object'], 'Mac の画面の入力欄のフォーカスの記録'),
   [IpcChannel.PtyWrite]: same(['string', 'string']),
   [IpcChannel.PtyResize]: same(['string', 'number', 'number']),
@@ -182,7 +207,7 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.ShellKill]: same(['string']),
   [IpcChannel.ShellReveal]: same(['string']),
   [IpcChannel.FolderClose]: same(['string']),
-  [IpcChannel.WatchOpenFiles]: same(['object']),
+  [IpcChannel.WatchOpenFiles]: replace(['object'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
   [IpcChannel.BrowserAttach]: mac(['string', 'string', 'number'], 'Mac の画面が作った webview を main に知らせる（スマホには webview が無い）'),
   [IpcChannel.BrowserActivate]: mac(['string', 'nullable-string'], 'Mac の画面の今のタブを main に知らせる（スマホには webview が無い）'),
   [IpcChannel.BrowserPopupView]: replace(['string', 'string', 'nullable-object'], 'ポップアップの絵を Mac の画面の位置に映す（段階 3 で置き換える）'),
@@ -191,10 +216,12 @@ export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec
   [IpcChannel.BrowserPopupReveal]: mac(['string', 'string'], 'Mac に実物のポップアップの窓を出す'),
   [IpcChannel.BrowserPopupClose]: same(['string', 'string']),
   [IpcChannel.BrowserAnswer]: same(['string', 'string', 'object']),
-  [IpcChannel.BrowserLoginAnswer]: same(['string', 'string', 'object']),
+  [IpcChannel.BrowserLoginAnswer]: same(['string', 'string', 'nullable-object']),
   [IpcChannel.BrowserRememberAnswer]: same(['string', 'string', 'boolean']),
   [IpcChannel.BrowserViewportReset]: same(['string']),
   [IpcChannel.BrowserThrottleClear]: same(['string', 'string']),
-  [IpcChannel.WalkthroughShown]: same(['string', 'string', 'number', 'object']),
-  [IpcChannel.WalkthroughViewing]: same(['nullable-string', 'boolean']),
+  [IpcChannel.WalkthroughShown]: same(['string', 'string', 'number', 'string']),
+  [IpcChannel.WalkthroughViewing]: replace(['nullable-string', 'boolean'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
 };
+
+export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec } = TABLE;

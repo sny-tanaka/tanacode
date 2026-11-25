@@ -720,12 +720,15 @@ export async function boot(o: BootOptions = {}): Promise<typeof state> {
   Object.assign(process, { resourcesPath: state.resources, getSystemVersion: () => systemVersion });
   o.before?.(state);
   vi.resetModules();
-  await import('../../src/main/index');
+  mainModule = await import('../../src/main/index');
   if (!o.noWait) await started();
   return state;
 }
 
 // 起動の流れが終わるまで待つ（最後に app.on('activate') を登録する。起動できずに終了したときは app.quit）
+// 読み込んだ index.ts（遠隔の道を通すテストで、受け口の一覧を使う）
+let mainModule: typeof import('../../src/main/index') | null = null;
+
 export async function started(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -766,6 +769,18 @@ export async function invokeWith(event: { sender: unknown; senderFrame: FakeFram
   const handler = state.handlers.get(channel);
   if (!handler) throw new Error(`${channel} の受け口がありません`);
   return await handler(event, ...args);
+}
+
+// 遠隔の接続（スマホ）からの頼み。Mac の画面と同じ受け口を、IpcDispatcher の fromRemote で呼ぶ
+export async function invokeRemote(profileId: string, channel: string, ...args: unknown[]): Promise<unknown> {
+  if (!mainModule) throw new Error('boot() の前です');
+  return await mainModule.remoteDispatcher.fromRemote({ kind: 'remote', profileId, clientId: 'test' }, channel, args);
+}
+
+// 遠隔の接続から呼べる受け口のチャンネル
+export function remoteChannels(): string[] {
+  if (!mainModule) throw new Error('boot() の前です');
+  return mainModule.remoteDispatcher.channels();
 }
 
 // 画面からの知らせ（ipcRenderer.send の代わり）

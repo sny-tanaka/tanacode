@@ -204,8 +204,10 @@ function profileOfCaller(caller: Caller): Profile {
   return p;
 }
 
-// 画面 → main の受け口の一覧。遠隔の接続（スマホ）は、ここから Mac の画面と同じ受け口を呼ぶ（remote-dispatch.ts）
+// 画面 → main の受け口の一覧。遠隔の接続（スマホ）は、ここから Mac の画面と同じ受け口を呼ぶ（remote-dispatch.ts）。
+// テスト（test/helpers/main-app.ts の invokeRemote）も、ここから遠隔の道を通す
 const dispatcher = new IpcDispatcher();
+export { dispatcher as remoteDispatcher };
 
 // 画面からの呼び出しと知らせは、どれもここで受け口を登録する。ipcMain からは、アプリの画面のメインフレームから来たものだけを受ける。
 // 受け口には、送り元の代わりに呼び出し元（Caller）を渡す。遠隔の接続から呼んでも、同じ受け口が同じに動くように
