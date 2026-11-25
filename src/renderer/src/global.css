@@ -9212,3 +9212,10 @@ body.resizing-rows webview {
 .app.mobile .terminal-host {
   overflow-x: auto;
 }
+/* チャットの見出し: セッションの名前は上の帯に出すので、スマホの配置では出さない（ボタンの並びを狭い幅に収める） */
+.app.mobile .claude-header .claude-title {
+  display: none;
+}
+.app.mobile .claude-header {
+  overflow-x: auto;
+}
