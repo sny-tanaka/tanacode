@@ -58,10 +58,28 @@ export function RemoteSettingsDialog({ onClose }: { onClose: () => void }) {
     if (!saving) onClose();
   };
 
+  // URL のホスト名（読めなければ null）
+  const hostOf = (url: string) => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
+      // ホスト名を変えると、パスキーの RP ID が変わり、登録した端末はログインできなくなる。登録があれば、先に確かめる
+      const before = state ? hostOf(state.settings.publicUrl) : null;
+      if (before && hostOf(publicUrl.trim()) !== before) {
+        const { devices } = await window.tanacode.remote.devices();
+        if (devices.length > 0 && !window.confirm(t('remote.confirmHostChange', { count: devices.length }))) {
+          setSaving(false);
+          return;
+        }
+      }
       setState(await window.tanacode.remote.setSettings({ port: Number(port.trim()), publicUrl: publicUrl.trim() }));
       onClose();
     } catch (e) {

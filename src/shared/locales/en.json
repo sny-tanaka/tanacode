@@ -2653,6 +2653,7 @@
     "portHint": "The port the forwarder sends to (this port on 127.0.0.1). If it is in use, tanacode stops instead of listening.",
     "status": "Status",
     "loadFailed": "Could not read the remote access settings: {error}",
+    "confirmHostChange": "Changing the host name of the public URL means the {count} registered device(s) can no longer log in (passkeys are tied to the host name). Register the devices again after the change.\nSave anyway?",
     "saveFailed": "Could not save the remote access settings: {error}",
     "banner": {
       "active": "Remote access active ({names})",
