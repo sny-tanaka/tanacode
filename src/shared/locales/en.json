@@ -542,6 +542,7 @@
       "card_check": "Check",
       "card_uncheck": "Uncheck",
       "card_revoke": "Revoke",
+      "card_settle": "Settle",
       "card_reply": "Reply",
       "card_move": "Move Card",
       "card_delete": "Delete Card",
@@ -942,14 +943,14 @@
         "triggerAuto": "(automatic; context {percent}% full)",
         "intro": "tanacode is about to reset this conversation instead of compacting it {trigger}. Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, and write down everything that is needed to continue the work without this conversation. Do not continue the task itself, and do not ask the user anything.",
         "start": "Start by calling checklist_overview, even if you think the lists are already up to date or you read them a moment ago: if you do not use a checklist tool in this turn, tanacode cancels the reset. Then compare the lists with this conversation, and add what is missing and fix what is out of date.",
-        "calls": "Use few tool calls, because every call re-reads this whole conversation: card_add takes many cards at once, and card_delete, card_check and card_revoke take several numbers at once. Write all the new cards of a list in one card_add call instead of one call per card. Do not write less to save calls.",
-        "decisions": "- Decisions list (kind \"decisions\"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Quote the user's own words where the wording matters. Add what is missing, and revoke what no longer holds.",
+        "calls": "Use few tool calls, because every call re-reads this whole conversation: card_add takes many cards at once, and card_delete, card_check, card_revoke and card_settle take several numbers at once. Write all the new cards of a list in one card_add call instead of one call per card. Do not write less to save calls.",
+        "decisions": "- Decisions list (kind \"decisions\"): what must keep holding in later work: what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and must not come back, and why. Quote the user's own words where the wording matters. Add what is missing. Then go through the cards in force one by one: revoke what no longer holds (card_revoke), and settle what was done and no longer binds later work (card_settle). A choice that only settled a step (which of two options to take, for example) is not a decision: leave it as a reply on the card of that step.",
         "stateList": "- State list (kind \"state\"; create one if there is none): rewrite it so that it is true now (delete the cards that are out of date, and add the new ones). Its cards are handed to you in full after the reset, so the details go here, as separate cards, one topic per card:",
         "state": "  - State: what is being worked on right now and why; what is done and what is not; changes that are not committed or not pushed; what you were about to do next; anything still running in the background.",
         "waiting": "  - Waiting: whether you are waiting for an answer from the user (or from the parent session that gave you the task) before you can go on. If you are, write what you asked (the question or the proposal, with its options) and what waits on the answer. If you are not, say so, and write the next action. Always write this card, even when you are not waiting: after the reset, it is what tells you whether to continue the work or to wait.",
         "tried": "  - Tried: every approach that failed or was abandoned, and why, so that it is not repeated.",
         "pointers": "  - Pointers: where things are (files, functions, branches, PR and issue numbers, URLs); the commands used to build, test and verify, exactly as you ran them, with every option; and facts that would be costly to rediscover, with their exact values (names, numbers, versions, timeouts, scopes, settings).",
-        "todos": "- To-do lists: check what is finished, and add the tasks that are left, in order.",
+        "todos": "- The other lists (to-dos, conditions to meet before finishing, things only the user can do, review lists and the like): go through every card of every list, not only the ones for the work at hand. Check what is finished, add the tasks that are left, in order, fix the cards that are out of date, and delete the ones that are no longer needed.",
         "closing": "Be specific and complete: exact names, numbers and commands matter more than prose. There is no length limit, so do not shorten anything or leave anything out to keep the lists small. When one card would get long (more than about {chars} characters), split it into several cards by topic instead of cutting it. But do not copy file contents that can simply be read again from disk; point to them instead. Write in the language the user is using. When the lists are up to date, reply with one short line and end your turn. tanacode then resets the conversation by itself.",
         "autoMidTurn": "This reset is automatic: the user did not press anything and is not watching for a question. tanacode stopped your turn between tool calls, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.",
         "autoTurnEnd": "This reset is automatic: the user did not press anything and is not watching for a question. After the reset you will pick the work up from the state list: you will continue it, unless the list says that you are waiting for an answer."
@@ -1293,6 +1294,7 @@
         "card_check": "Checks cards",
         "card_uncheck": "Unchecks cards",
         "card_revoke": "Revokes decisions",
+        "card_settle": "Settles decisions whose work is done",
         "card_reply": "Replies to a card",
         "card_move": "Moves cards",
         "card_delete": "Moves cards to the trash",
@@ -2097,9 +2099,11 @@
       "kindStateTip": "A state list. Cards have no checks, Claude keeps them current by rewriting them, and they are always passed to Claude.",
       "cardCountTip": "{count} cards",
       "kindReview": "Review",
-      "kindReviewTip": "A review list. Cards you check (approve) move to the decisions list.",
+      "kindReviewTip": "A review list. A check means you approve the card; approved cards stay here, checked.",
       "revoked": "Revoked",
+      "settled": "Settled",
       "revokedTip": "Revoked decision (no longer in force): {reason}",
+      "settledTip": "Decision settled by Claude once its work was done (no longer in force): {reason}",
       "noReason": "no reason given",
       "unsaved": "This session's checklist file could not be read, so changes are not saved. They are lost when you quit the app (the original file is kept as it is)."
     },
@@ -2142,7 +2146,9 @@
       "inForce": "In force",
       "revokedByHuman": "Revoked by you ({time})",
       "revokedByClaude": "Revoked by Claude ({time})",
+      "settledByClaude": "Settled by Claude ({time})",
       "revokedReason": "Reason for revoking: {reason}",
+      "settledReason": "Reason for settling: {reason}",
       "revokedNoReason": "This decision was revoked (no reason given)"
     },
     "eventByHuman": {
@@ -2157,6 +2163,7 @@
       "restored": "You restored this card from the Trash",
       "revoked": "You revoked this card (reason: {reason})",
       "revokedNoReason": "You revoked this card",
+      "settled": "You settled this card (reason: {reason})",
       "reinstated": "You reinstated this card"
     },
     "eventByClaude": {
@@ -2171,6 +2178,7 @@
       "restored": "Claude restored this card from the Trash",
       "revoked": "Claude revoked this card (reason: {reason})",
       "revokedNoReason": "Claude revoked this card",
+      "settled": "Claude settled this card (reason: {reason})",
       "reinstated": "Claude reinstated this card"
     },
     "copyDialog": {
@@ -2224,10 +2232,6 @@
       "emptyListName": "The list name is empty",
       "noChecks": "Cards in “{list}” have no checks",
       "notRevocable": "Cards in “{list}” can’t be revoked (only cards on a decisions list can)"
-    },
-    "decisions": {
-      "defaultName": "Decisions",
-      "defaultDescription": "What was decided (requirements, constraints, corrections, permissions and their scope, rejected options with the reason, approved judgments). In force even after the work is done. When one changes, revoke it and write a new one."
     }
   },
   "tasks": {

@@ -3,7 +3,7 @@ import { t } from '@shared/i18n';
 import { carriedMessages, handoffText, lastReply, parseCompactMessage, resumeText } from '@shared/optimized-compact';
 import { isFastForward, sleep } from '../../director';
 import { statusLine } from '../../scenarios/claude';
-import { addCards, readOverview, showPanel, STATE_LIST } from '../checklist';
+import { addCards, DECISIONS_LIST, readOverview, showPanel, STATE_LIST } from '../checklist';
 import { MAIN, type Story } from '../story';
 
 // 章 7「整理して振り返る」: コンテキストの中身を見て、最適化圧縮（会話を消して、チェックリストから再開）する →
@@ -149,7 +149,7 @@ export async function runWrapup(story: Story): Promise<void> {
   // 3b. チェックリストを開いて、決定事項と「いまの状態」を見る
   await showPanel(d, 'チェックリスト', 900);
   d.caption(
-    '決定事項（章 5 で承認した判断）と「いまの状態」の 4 枚が残っています。決定事項は、人が発言するたびと、圧縮の直後に、全部 Claude に渡されます',
+    '決定事項（章 5 で答えた、この先も守る決まり）と「いまの状態」の 4 枚が残っています。決定事項は、人が発言するたびと、圧縮の直後に、全部 Claude に渡されます',
     '.checklist-panel',
   );
   await sleep(4600);
@@ -164,7 +164,7 @@ export async function runWrapup(story: Story): Promise<void> {
   // 全文は、指示の文・決定事項と「いまの状態」のカード・人の発言の原文の順。カードのところまで送って見せる
   const detail = await d.find(() => resumeNotice()?.querySelector('pre.chat-notice-detail'));
   await sleep(1200);
-  const at = resume.indexOf(t('chat.compactPrompt.resume.listHeading', { name: t('checklist.decisions.defaultName'), kind: t('chat.compactPrompt.resume.kindDecisions') }));
+  const at = resume.indexOf(t('chat.compactPrompt.resume.listHeading', { name: DECISIONS_LIST, kind: t('chat.compactPrompt.resume.kindDecisions') }));
   if (at > 0) detail.scrollTo({ top: (at / resume.length) * detail.scrollHeight - 8, behavior: 'smooth' });
   await sleep(2600);
   await d.click(() => resumeNotice()?.querySelector('summary'), { ms: 600 });

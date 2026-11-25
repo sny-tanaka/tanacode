@@ -653,6 +653,7 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
     "mcp__tanacode-checklist__card_check",
     "mcp__tanacode-checklist__card_uncheck",
     "mcp__tanacode-checklist__card_revoke",
+    "mcp__tanacode-checklist__card_settle",
     "mcp__tanacode-checklist__card_reply",
     "mcp__tanacode-checklist__card_move",
     "mcp__tanacode-checklist__card_delete",
@@ -929,6 +930,33 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
       "kind": "note",
       "label": "取り消す",
       "name": "card_revoke",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+          "reason": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+          "reason",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "済みにする",
+      "name": "card_settle",
     },
     {
       "inputSchema": {

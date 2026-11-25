@@ -1,11 +1,12 @@
 import { monaco } from '../../../editor/monaco';
 import { type Director, sleep } from '../../director';
 import { MENU_CARD_WITH_TAKEOUT, PRICE_TEST_WITH_TAKEOUT, PRICE_WITH_TAKEOUT } from '../files';
-import { ASK_LIST, ASK_TITLE, readCard, replyCard, showPanel } from '../checklist';
+import { addCards, ASK_LIST, ASK_TITLE, DECISIONS_LIST, readCard, replyCard, showPanel } from '../checklist';
 import { MAIN, type Story } from '../story';
 
 // 章 5「レビューして直す」: レビューの前に、章 3 で Claude が残した「確認事項」にカードのスレッドで答える（「Claude に通知する」で Claude に届く）。
-// Claude の返事を読んで、人が判断を承認（チェック）すると、カードが「決定事項」のリストに移る（確認事項は種類 review）。
+// Claude は、この先も守る決まりになった答えを「決定事項」に書いて、スレッドで答える。人は返事を読んで、判断を承認（チェック）する
+// （確認事項は種類 review。承認したカードは、チェック済みのまま確認事項に残る）。
 // ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
 // 直したあと、回答のコマンドを ▶ でターミナルで流し、落ちたテストの出力を選んで「Claude へ送る」（長い出力は札になって、入力欄に添えられる）
 
@@ -152,21 +153,24 @@ export async function runReview(story: Story): Promise<void> {
   story.toBottom();
   await readCard(story, ASK_LIST, 1, `## ${ASK_LIST} #1「${ASK_TITLE}」\n\n人の返信（未読）: ${ANSWER}`);
   await sleep(300);
-  await replyCard(story, ASK_LIST, 1, '了解しました。8 品目のままにします。よければ、このカードを承認（チェック）してください。');
+  // 表示の決まりとして、この先の作業でも守るので、決定事項に書く（その場かぎりの選択なら、スレッドに書くだけ）
+  await addCards(story, DECISIONS_LIST, [{ title: ASK_TITLE, body: `ユーザーの返信:「${ANSWER}」` }]);
+  await sleep(300);
+  await replyCard(story, ASK_LIST, 1, '了解しました。8 品目のままにします。この先のメニューの追加でも守る決まりなので、「決定事項」にも書きました。よければ、このカードを承認（チェック）してください。');
   await sleep(300);
   claude.stopWorking();
-  claude.say('「確認事項」#1 は、8 品目のままにします。スレッドに返事を書いたので、よければ承認してください。');
+  claude.say('「確認事項」#1 は、8 品目のままにします。この先も守る決まりなので「決定事項」に書きました。スレッドに返事を書いたので、よければ承認してください。');
   backend.push(id, { type: 'turn-end' });
   story.toBottom();
   d.caption('Claude の返事はスレッドに残り、返信やチェックを人と Claude のどちらがしたかも分かります', '.card-thread');
   await sleep(1800);
 
-  // 3b. 人が判断を承認（チェック）すると、カードが決定事項のリストに移る
-  d.caption('判断でよければ、人がチェック（承認）します。確認事項のリストでは、承認したカードは「決定事項」に移ります', '.card-pane .diff-pane-head .card-check');
+  // 3b. 人が判断を承認（チェック）する。カードはチェック済みのまま確認事項に残る。この先も守る決まりは、決定事項にある
+  d.caption('判断でよければ、人がチェック（承認）します。承認したカードは、チェック済みのまま確認事項に残ります', '.card-pane .diff-pane-head .card-check');
   await d.click('.card-pane .diff-pane-head .card-check', { ms: 800 });
   await sleep(700);
   d.caption(
-    '決定事項にはチェック欄がなく、有効なカードは、人が発言するたびに全部 Claude に渡されます（画面には出ません）',
+    'この先も守る決まりは「決定事項」へ。チェック欄がなく、有効なカードは、人が発言するたびに全部 Claude に渡されます（画面には出ません）。その場かぎりの選択は、決定事項には書かず、カードのスレッドに残します',
     () => document.querySelector('.checklist-list.kind-decisions'),
   );
   await sleep(3400);

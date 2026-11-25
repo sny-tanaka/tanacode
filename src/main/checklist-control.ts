@@ -339,17 +339,20 @@ export class ChecklistControl {
         const left = check ? `${rest} unchecked ${rest === 1 ? 'card' : 'cards'} left in "${list.name}".` : '';
         return [done, skipped, left].filter(Boolean).join(' ');
       }
-      case 'card_revoke': {
+      // 済みにするのは、取り消しと同じ扱い（ゴミ箱に入る）で、言い方だけが違う
+      case 'card_revoke':
+      case 'card_settle': {
+        const settle = name === 'card_settle';
         const list = this.listArg(id, args.list);
         const cards = this.cardsArg(list, args, 'numbers');
-        const revoked = store.revokeCards(id, 'claude', list.id, cards.map((c) => c.id), stringArg(args.reason, 'reason'));
+        const revoked = store.revokeCards(id, 'claude', list.id, cards.map((c) => c.id), stringArg(args.reason, 'reason'), settle);
         const same = cards.filter((c) => !revoked.includes(c));
         const them = revoked.length === 1 ? 'it' : 'them';
         const done =
           revoked.length > 0
-            ? `Revoked ${claudeNumbers(revoked.map((c) => c.number))} in "${list.name}" and moved ${them} to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate ${them}).`
+            ? `${settle ? 'Settled' : 'Revoked'} ${claudeNumbers(revoked.map((c) => c.number))} in "${list.name}" and moved ${them} to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate ${them}).`
             : '';
-        const skipped = same.length > 0 ? `${claudeNumbers(same.map((c) => c.number))} ${same.length === 1 ? 'was' : 'were'} already revoked.` : '';
+        const skipped = same.length > 0 ? `${claudeNumbers(same.map((c) => c.number))} ${same.length === 1 ? 'was' : 'were'} already revoked or settled.` : '';
         const rest = activeCards(list).length;
         return [done, skipped, `${rest} ${rest === 1 ? 'card' : 'cards'} in force in "${list.name}".`].filter(Boolean).join(' ');
       }
@@ -549,15 +552,15 @@ function overview(lists: Checklist[], own: boolean): string {
       const { done, total } = progressOf(list);
       const cards = liveCards(list).map((c) => {
         const unread = own ? claudeUnread(c) : 0;
-        // チェックの無いリストは、チェック欄の代わりに、取り消したかどうかを出す
-        const mark = traits.checkable ? `[${c.checked ? 'x' : ' '}] ` : c.revoked ? `(revoked${c.revoked.reason ? `: ${oneLine(c.revoked.reason, 200)}` : ''}) ` : '';
+        // チェックの無いリストは、チェック欄の代わりに、取り消した（済みにした）かどうかを出す
+        const mark = traits.checkable ? `[${c.checked ? 'x' : ' '}] ` : c.revoked ? `(${revokedWord(c)}${c.revoked.reason ? `: ${oneLine(c.revoked.reason, 200)}` : ''}) ` : '';
         return `- ${mark}#${c.number} ${c.title}${unread > 0 ? ` (${unread} unread ${unread === 1 ? 'reply' : 'replies'})` : ''}`;
       });
       const inForce = activeCards(list).length;
       const state = traits.checkable
-        ? `${done}/${total} checked${traits.approves ? '; review list: cards the user checks move to the decisions list' : ''}`
+        ? `${done}/${total} checked${traits.approves ? '; review list: the user checks the cards they approve' : ''}`
         : traits.locked
-          ? `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked` : ''}`
+          ? `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked or settled` : ''}`
           : `state list: no checks, keep it current by rewriting its cards; ${total} ${total === 1 ? 'card' : 'cards'}`;
       return [`## ${list.name} (${state})`, `Description: ${list.description || '(none)'}`, ...(cards.length > 0 ? cards : ['(no cards)'])].join('\n');
     })
@@ -568,7 +571,7 @@ function overview(lists: Checklist[], own: boolean): string {
 function cardText(list: Checklist, card: Card, own: boolean): string {
   const checked = card.checked ? `checked (by ${card.checkedBy === 'claude' ? 'Claude' : 'the user'}, ${time(card.checkedAt ?? 0)})` : 'not checked';
   const revoked = card.revoked
-    ? `revoked, no longer in force (by ${card.revoked.by === 'claude' ? 'Claude' : 'the user'}, ${time(card.revoked.at)}${card.revoked.reason ? `: ${card.revoked.reason}` : ''})`
+    ? `${revokedWord(card)}, no longer in force (by ${card.revoked.by === 'claude' ? 'Claude' : 'the user'}, ${time(card.revoked.at)}${card.revoked.reason ? `: ${card.revoked.reason}` : ''})`
     : 'in force';
   const traits = traitsOf(list);
   const state = traits.checkable ? checked : traits.locked ? revoked : 'no checks (state list: rewrite the card when it is no longer true)';
@@ -612,7 +615,7 @@ function trashText(lists: Checklist[]): string {
     const items = trash.cards.map(({ list, card }) => {
       // 消した人は、スレッドの最後の「消した」の記録
       const by = card.thread.filter((e) => e.kind === 'event' && e.event.type === 'deleted').at(-1)?.author;
-      const notes = [`deleted${deleted(by, card.deletedAt)}`, ...(card.revoked ? ['revoked'] : []), ...(traitsOf(list).locked ? ['only the user can restore it'] : [])];
+      const notes = [`deleted${deleted(by, card.deletedAt)}`, ...(card.revoked ? [revokedWord(card)] : []), ...(traitsOf(list).locked ? ['only the user can restore it'] : [])];
       return `- "${list.name}" #${card.number} ${card.title} (${notes.join('; ')})`;
     });
     sections.push(['## Cards in the trash (restore them with card_restore)', ...items].join('\n'));
@@ -649,9 +652,14 @@ function sequence(numbers: number[]): string {
 // 作ったリストの種類（ふつうのリストでは何も足さない）
 function kindNote(list: Checklist): string {
   const kind = kindOf(list);
-  if (kind === 'decisions') return ' as a decisions list (permanent, no checks; you can add cards and revoke them with card_revoke)';
+  if (kind === 'decisions') return ' as a decisions list (permanent, no checks; you can add cards, and revoke or settle them with card_revoke or card_settle)';
   if (kind === 'state') return ' as a state list (no checks; keep it current by rewriting its cards with card_update)';
-  return kind === 'review' ? ' as a review list (cards the user checks move to the decisions list)' : '';
+  return kind === 'review' ? ' as a review list (the user checks the cards they approve)' : '';
+}
+
+// 有効でなくなったカードの言い方（取り消した・済みにした）
+function revokedWord(card: Card): string {
+  return card.revoked?.settled ? 'settled' : 'revoked';
 }
 
 // 種類の引数。省くと、ふつうのリスト

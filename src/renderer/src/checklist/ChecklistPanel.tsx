@@ -253,8 +253,11 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         <span className="checklist-number">#{card.number}</span>
                         <span className="checklist-title">{card.title}</span>
                         {card.revoked && (
-                          <span className="checklist-revoked" data-tip={t('checklist.panel.revokedTip', { reason: card.revoked.reason || t('checklist.panel.noReason') })}>
-                            {t('checklist.panel.revoked')}
+                          <span
+                            className="checklist-revoked"
+                            data-tip={t(card.revoked.settled ? 'checklist.panel.settledTip' : 'checklist.panel.revokedTip', { reason: card.revoked.reason || t('checklist.panel.noReason') })}
+                          >
+                            {t(card.revoked.settled ? 'checklist.panel.settled' : 'checklist.panel.revoked')}
                           </span>
                         )}
                         {unread > 0 && <span className="checklist-unread" data-tip={t('checklist.panel.unreadTip', { count: unread })} aria-label={t('checklist.panel.unreadLabel', { count: unread })} />}

@@ -31,7 +31,7 @@ const kind: Schema = {
   type: 'string',
   enum: ['decisions', 'state', 'review'],
   description:
-    'Kind of the list. Omit for an ordinary list (cards are checked off). "decisions": a permanent list of what was decided; its cards have no checks, are always shown to you in the reminders, and you can only add them or revoke them with a reason. "state": the current state of the work (what you are doing and the next step, uncommitted changes, what was tried and failed, where things are and how to build and verify); its cards have no checks, are always shown to you in the reminders, and you rewrite them as the work moves on. "review": a list of your judgment calls for the user to review; a card the user checks (approves) moves to the decisions list.',
+    'Kind of the list. Omit for an ordinary list (cards are checked off). "decisions": what must keep holding in later work; its cards have no checks, are always shown to you in the reminders, and you can only add them, or revoke or settle them with a reason. "state": the current state of the work (what you are doing and the next step, uncommitted changes, what was tried and failed, where things are and how to build and verify); its cards have no checks, are always shown to you in the reminders, and you rewrite them as the work moves on. "review": a list of your judgment calls for the user to review; the user checks the cards they approve, and they stay on the list.',
 };
 const sessionId: Schema = {
   type: 'string',
@@ -55,7 +55,7 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'checklist_overview',
     kind: 'read',
     description:
-      "Returns this session's checklists: the name, kind, description (the rules for using the list) and progress of every list, and the number, title, check state (or, on a decisions list, whether it was revoked; state lists have neither) and unread reply count of every card, in the order of the list. Call this first at every break in the work and after the conversation was compacted. With session_id, returns the checklists of another session (without unread counts).",
+      "Returns this session's checklists: the name, kind, description (the rules for using the list) and progress of every list, and the number, title, check state (or, on a decisions list, whether it was revoked or settled; state lists have neither) and unread reply count of every card, in the order of the list. Call this first at every break in the work and after the conversation was compacted. With session_id, returns the checklists of another session (without unread counts).",
     inputSchema: { type: 'object', properties: { session_id: readSession }, additionalProperties: false },
   },
   {
@@ -103,7 +103,7 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'card_add',
     kind: 'note',
     description:
-      'Adds cards to the end of a list (several at once). Keep titles short, and write each one as a task ("Make the tax rate configurable") or as a condition to meet ("Prices including tax are integers"). Put the details in body (Markdown). If the list does not exist, pass list_description to create it. On a decisions list, write the title as the decision itself in one sentence, close to the user\'s own words where they matter ("Do not touch the payment module in this PR"), and put the reason, the scope and the exact words of the user in body.',
+      'Adds cards to the end of a list (several at once). Keep titles short, and write each one as a task ("Make the tax rate configurable") or as a condition to meet ("Prices including tax are integers"). Put the details in body (Markdown). If the list does not exist, pass list_description to create it. On a decisions list, add only what must keep holding in later work, where acting against it later would be a mistake ("Do not touch the payment module in this PR"). A choice for the step at hand (option A or B, the user picked A, and once A is done nothing later depends on it) is not a decision: reply it on the card of that step (card_reply), where it is kept without being shown in every reminder. Likewise, when the user approves (checks) a card on a review list, it stays there; add it to the decisions list only if it passes the same test. Write the title as the decision itself in one sentence, close to the user\'s own words where they matter, and put the reason, the scope and the exact words of the user in body.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -184,6 +184,23 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     },
   },
   {
+    name: 'card_settle',
+    kind: 'note',
+    description:
+      'Settles cards on a decisions list: the decision was right, but the work it was about is done and nothing later depends on it, so it no longer needs to be shown to you in every reminder (e.g. "Use option A for the button" once A is implemented and the user is not going to change it again). Unlike card_revoke, this does not say the decision was wrong. The cards are no longer in force and move to the trash; reason is recorded in the thread, and the user can restore them. Do not settle a rule that still applies to later work (a constraint, a permission and its scope, an option you must not bring back), even if the step that raised it is done; when in doubt, keep it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        list,
+        numbers,
+        reason: { type: 'string', description: 'What was done, and why nothing later depends on the decision any more' },
+        session_id: writeSession,
+      },
+      required: ['list', 'numbers', 'reason'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'card_reply',
     kind: 'note',
     description: 'Replies in the thread of a card. Write judgments, questions and reports about a card here, not in the main chat.',
@@ -216,7 +233,7 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'card_delete',
     kind: 'note',
     description:
-      'Moves cards to the trash (restore them with card_restore; checklist_trash shows the trash). On a decisions list, you can delete only revoked cards (e.g. ones the user revoked); to withdraw a decision in force, use card_revoke, which also moves it to the trash.',
+      'Moves cards to the trash (restore them with card_restore; checklist_trash shows the trash). On a decisions list, you can delete only revoked cards (e.g. ones the user revoked); to withdraw a decision in force, use card_revoke (it no longer holds) or card_settle (its work is done), which also move it to the trash.',
     inputSchema: { type: 'object', properties: { list, numbers, session_id: writeSession }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
@@ -274,7 +291,7 @@ export const CHECKLIST_MCP_INSTRUCTIONS = [
   'Tools for the checklists you share with the user. tanacode stores them apart from the conversation, so they survive compaction and /clear. The user sees them in the side panel and can edit them at any time.',
   '- The user may not know about these checklists, so do not wait to be asked. The first time you create a list in a session, tell the user in one short line that it is in the side panel. The description of a list is the rule for using it. Reuse a list that fits instead of creating a similar one. Write names, cards and replies in the language the user is using.',
   '- For a task with several steps, or one that may outlast the context, check checklist_overview, put the plan on a to-do list (e.g. 「やること」) before you start, and check each card as you finish it. Put the conditions the user gave you on a list of conditions to meet before finishing (「完了前チェック」), what only the user can do on a list for the user (「人のやること」), and judgment calls you made instead of asking, with the reason, on a list of kind "review" (「確認事項」). Skip all of this for quick one-step tasks and plain questions. Use these lists for the plan rather than TaskCreate or TodoWrite.',
-  '- Decisions (kind "decisions", e.g. 「決定事項」) are for what must keep holding; every card in force is shown to you in each reminder, also after compaction. Write a card the moment something is decided, not later in a batch: a requirement, a constraint or a correction from the user; a permission and its scope; an option that was rejected, with the reason; a judgment the user approved. Write the title as the decision itself, close to the user\'s words. Before you act, check that the action does not go against a decision in force. When one no longer holds, revoke it with card_revoke.',
+  '- Decisions (kind "decisions", e.g. 「決定事項」) are for what must keep holding in later work; every card in force is shown to you in each reminder, so keep them few. The test: would acting against it later be a mistake? If so (a requirement, a constraint or a correction from the user; a permission and its scope; an option that must not come back), write a card the moment it is decided, the title close to the user\'s words. A choice for the step at hand (A or B) is not one: reply it on that step\'s card. Before you act, check the decisions in force. Revoke one that no longer holds (card_revoke); settle one whose work is done (card_settle).',
   '- State. Keep one state list (kind "state", e.g. 「いまの状態」) of what is needed to pick the work up again without the conversation, and keep it true as you go, not only when asked. One topic per card: what you are doing and the next step, whether you are waiting for the user, uncommitted changes, what failed and why, and where things are (files, branch, PR, the exact commands and values).',
   '- Check checklist_overview at every break in the work and after compaction. "Clear the to-do list" or "up to #3" from the user means these lists. Check a condition card only after you verified it, and say how in comment. Write judgments, questions and reports about a card in its thread with card_reply, not in the chat.',
   `- At the end of a turn, before your final reply, make the lists true to the conversation: check the cards you finished; add the work that is left, including what you found, even if the turn was only an investigation; add what you ask the user to do to a list for the user; record judgment calls and decisions. When a <${CHECKLIST_REMINDER_TAG}> says that your previous turn ended without touching the checklists, do this for that turn first.`,

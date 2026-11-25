@@ -18,8 +18,9 @@ export type CardEvent =
   | { type: 'copied'; fromSessionTitle: string; fromList: string; fromNumber: number }
   | { type: 'deleted' }
   | { type: 'restored' }
-  // 取り消した（決定事項。理由つき）・取り消しを戻した
+  // 取り消した（決定事項。理由つき）・済みにした（決定事項。Claude だけ。理由つき）・取り消しを戻した
   | { type: 'revoked'; reason: string }
+  | { type: 'settled'; reason: string }
   | { type: 'reinstated' };
 
 // スレッドの 1 つ。reply: 返信（notify: Claude に知らせた）/ event: 記録の行
@@ -42,16 +43,17 @@ export type Card = {
   updatedAt: number;
   // ゴミ箱に入れた時刻。無いものは表示中
   deletedAt?: number;
-  // 取り消し（Claude が書き換えられないリストのカードだけ）。画面には残るが、有効なものとしては扱わない
-  revoked?: { by: Author; at: number; reason: string };
+  // 取り消し（Claude が書き換えられないリストのカードだけ）。画面には残るが、有効なものとしては扱わない。
+  // settled: 間違いだったのではなく、やり終えてもう縛らないので外した（「済み」。Claude だけが付ける）
+  revoked?: { by: Author; at: number; reason: string; settled?: boolean };
   thread: ThreadEntry[];
   // 人が最後にスレッドを開いた時刻・Claude が最後に card_get で読んだ時刻（未読の判定）
   readByHuman: number;
   readByClaude: number;
 };
 
-// リストの種類。normal: ふつう（チェックして消していく）/ review: 確認事項（人がチェック＝承認したカードを、決定事項に移す）/
-// decisions: 決定事項（チェックが無く、消えない。Claude は足すことと、理由つきの取り消しだけができる）/
+// リストの種類。normal: ふつう（チェックして消していく）/ review: 確認事項（人のチェックが承認。承認しても決定事項には移さない）/
+// decisions: 決定事項（チェックが無く、消えない。Claude は足すことと、理由つきの取り消し・済みにすることだけができる）/
 // state: いまの状態（チェックが無く、いつも知らせに出る。Claude がその場で書き換える。今やっていること・未コミットの変更・試してだめだったこと・場所と手順）
 export type ListKind = 'normal' | 'review' | 'decisions' | 'state';
 
@@ -62,10 +64,11 @@ export type KindTraits = {
   checkable: boolean;
   // 有効なカードを、毎回の知らせにいつも出す（チェックで消えない）
   pinned: boolean;
-  // Claude は、カードを足すことと、理由つきの取り消し（ゴミ箱に入る）と、取り消したカードの削除だけができる
+  // Claude は、カードを足すことと、理由つきの取り消し・済みにすること（どちらもゴミ箱に入る）と、取り消したカードの削除だけができる
   // （書き換え・有効なカードの削除・外への移動・ゴミ箱から戻すことはできない）。人は何でもできる
   locked: boolean;
-  // 人がチェックしたカードを、決定事項のリストに移す
+  // 人のチェックが承認（知らせと一覧で、そう伝える）。承認したカードは、チェック済みとしてそのリストに残す
+  // （決定事項には移さない。その場かぎりの判断まで、毎回の知らせに出続けないように）
   approves: boolean;
 };
 
@@ -279,6 +282,8 @@ function eventPhrase(event: CardEvent): string {
       return 'restored the card from the trash';
     case 'revoked':
       return event.reason ? `revoked the card (${event.reason})` : 'revoked the card';
+    case 'settled':
+      return `settled the card: its work is done and it no longer binds (${event.reason})`;
     case 'reinstated':
       return 'reinstated the card (it is in force again)';
   }

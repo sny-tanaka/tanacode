@@ -71,7 +71,7 @@ export function checklistReminder(event: ReminderEvent, lists: Checklist[], miss
     false,
     [
       ...(late ? [late] : []),
-      'Before you work on the latest message of the user, check whether it changes these lists: new work to add, a card it corrects or makes obsolete (update the card, not only your reply), something the user reports as done, or something it decides (a requirement, a constraint, a correction, a permission and its scope, a rejected option: record it on the decisions list now, in words close to the user\'s). If so, update the lists first, then work, and check each card as you finish it. Rewrite the state list when it is no longer true. If the message changes nothing here, do not mention this reminder.',
+      'Before you work on the latest message of the user, check whether it changes these lists: new work to add, a card it corrects or makes obsolete (update the card, not only your reply), something the user reports as done, or something it decides (a requirement, a constraint, a correction, a permission and its scope, a rejected option that must not come back: record it on the decisions list now, in words close to the user\'s; a choice that only settles the step at hand, such as which of two options to take, goes in a reply on that step\'s card instead). If so, update the lists first, then work, and check each card as you finish it. Rewrite the state list when it is no longer true. If the message changes nothing here, do not mention this reminder.',
     ].join('\n'),
   );
 }
@@ -133,7 +133,8 @@ function compose(intro: string, live: Checklist[], all: boolean, outro: string):
 // 収まらなければ、題名を切り、それでも収まらなければ古いカードから省いて、ツールで読むよう伝える
 function pinned(lists: Checklist[], budget: number): string {
   if (lists.length === 0) return '';
-  const head = 'Decisions in force. They do not go away when the work is done: follow them until the user removes them or they are revoked (the details are in the body of each card: card_get).';
+  const head =
+    'Decisions in force. Checking off the work does not remove them: follow them until they are revoked, or settled once their work is done and nothing later depends on them (the details are in the body of each card: card_get). Settle such a decision (card_settle) so that this list stays short.';
   const build = (titleMax: number, keep: number) =>
     [
       head,
@@ -143,7 +144,7 @@ function pinned(lists: Checklist[], budget: number): string {
         const shown = cards.slice(Math.max(0, cards.length - keep));
         const omitted = cards.length - shown.length;
         return [
-          `## ${clip(list.name)} (decisions; ${cards.length} in force${revoked > 0 ? `, ${revoked} revoked and not shown` : ''})`,
+          `## ${clip(list.name)} (decisions; ${cards.length} in force${revoked > 0 ? `, ${revoked} revoked or settled and not shown` : ''})`,
           ...(list.description ? [`Description: ${clip(list.description, 300)}`] : []),
           ...(omitted > 0 ? [`(${omitted} older ${omitted === 1 ? 'card is' : 'cards are'} not shown here but still in force; read them with checklist_overview)`] : []),
           ...shown.map((c) => `- #${c.number} ${clip(c.title, titleMax)}`),
@@ -212,7 +213,7 @@ function state(lists: Checklist[], all: boolean, budget: number): string {
         const shown = cards.slice(0, maxCards).map((c) => `- [${c.checked ? 'x' : ' '}] #${c.number} ${clip(c.title)}`);
         const more = cards.length - shown.length;
         return [
-          `## ${clip(list.name)} (${done}/${total} checked${traitsOf(list).approves ? '; review list: cards the user checks move to the decisions list' : ''})`,
+          `## ${clip(list.name)} (${done}/${total} checked${traitsOf(list).approves ? '; review list: the user checks the cards they approve' : ''})`,
           ...(list.description ? [`Description: ${clip(list.description, 300)}`] : []),
           ...shown,
           ...(more > 0 ? [`(${more} more ${more === 1 ? 'card' : 'cards'}; see checklist_overview)`] : []),

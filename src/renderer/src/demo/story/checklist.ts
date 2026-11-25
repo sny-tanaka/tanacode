@@ -5,20 +5,23 @@ import { MAIN, type Story } from './story';
 
 // ツアーのチェックリスト。章 2 で、指示どおり Claude が要件を「完了前チェック」に積み、終わる前に確かめる。
 // 章 3 で、迷うところを質問せずに決めて、種類「確認事項」（review）のリストに残す。章 4 で、残っていたスマホの幅のカードを確かめる。
-// 章 5 で、人がレビューの前に確認事項のスレッドに答え、Claude の返事を読んで承認（チェック）すると、カードが「決定事項」に移る。
+// 章 5 で、人がレビューの前に確認事項のスレッドに答える。Claude は、この先も守る決まりになった答えを「決定事項」に書き、
+// 人は Claude の返事を読んで承認（チェック）する（承認したカードは、チェック済みのまま確認事項に残る）。
 // 章 7 の最適化圧縮で、Claude が「いまの状態」（種類 state）を書き、再開のあとに、決定事項と状態のカードを見せる。
 // Claude の操作は、MCP のツール（tanacode-checklist）の呼び出しとして会話に足し、作り物の API のチェックリストを書き換える。
-// 人の操作（チェック・返信）は、画面から本物と同じ ChecklistBook に届くので、承認でカードが決定事項に移る動きも、本物のまま
+// 人の操作（チェック・返信）は、画面から本物と同じ ChecklistBook に届くので、承認したカードが確認事項に残る動きも、本物のまま
 
 export const DONE_LIST = '完了前チェック';
 export const ASK_LIST = '確認事項';
 export const STATE_LIST = 'いまの状態';
+export const DECISIONS_LIST = '決定事項';
 
 // リストの説明（使い方のルール）と種類。Claude が作るとき（card_add の list_description・list_kind）にも、そのまま使う
 const LISTS: Record<string, { description: string; kind?: ListKind }> = {
   [DONE_LIST]: { description: '作業を終える前に、すべて満たされているか確かめる' },
   [ASK_LIST]: { description: '迷ったら質問せずに判断して進め、判断と理由をここに書く。人があとでまとめて見て、承認（チェック）するか訂正する', kind: 'review' },
   [STATE_LIST]: { description: '会話が無くても続きができるように、今の状態を書く。変わったら書き換える。', kind: 'state' },
+  [DECISIONS_LIST]: { description: 'この先の作業でも守り続けること。変わったら取り消して、新しく書く', kind: 'decisions' },
 };
 
 // 章 3 で Claude が確認事項に残す判断
@@ -82,9 +85,9 @@ function overviewText(lists: Checklist[]): string {
       const cards = liveCards(list).map((c) => `- ${traits.checkable ? `[${c.checked ? 'x' : ' '}] ` : ''}#${c.number} ${c.title}`);
       const inForce = activeCards(list).length;
       const state = traits.checkable
-        ? `${done}/${total} checked${traits.approves ? '; review list: cards the user checks move to the decisions list' : ''}`
+        ? `${done}/${total} checked${traits.approves ? '; review list: the user checks the cards they approve' : ''}`
         : traits.locked
-          ? `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked` : ''}`
+          ? `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked or settled` : ''}`
           : `state list: no checks, keep it current by rewriting its cards; ${total} ${total === 1 ? 'card' : 'cards'}`;
       return [`## ${list.name} (${state})`, `Description: ${list.description || '(none)'}`, ...(cards.length > 0 ? cards : ['(no cards)'])].join('\n');
     })
