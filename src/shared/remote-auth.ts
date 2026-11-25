@@ -11,13 +11,18 @@ export type BindingJwk = { kty: 'EC'; crv: 'P-256'; x: string; y: string };
 
 // 遠隔サーバー → main の、本人確認の頼み
 // pair-begin: スマホが打った登録のコードを確かめる / pair-finish: 検証したパスキーと束縛の鍵を、承認待ちにする（確認の数字を作る）/
-// pair-status: 承認されたか / challenge: 束縛の鍵に署名させる乱数 / login: パスキーを検証した登録の、束縛の鍵の署名を確かめてセッションを作る
+// pair-status: 承認されたか / challenge: 束縛の鍵に署名させる乱数（purpose: ログイン用か券用か。取り違えて使えない）/
+// login: パスキーを検証した登録の、束縛の鍵の署名を確かめてセッションを作る /
+// ticket: セッションの登録の束縛の鍵の署名を確かめて、WebSocket の券を出す（main も控え、接続のときに確かめる）
 export type AuthRequest =
   | { op: 'pair-begin'; code: string }
   | { op: 'pair-finish'; pairingId: string; credential: { id: string; publicKey: string; counter: number }; bindingJwk: BindingJwk; bindingSignature: string; name: string }
   | { op: 'pair-status'; requestId: string }
-  | { op: 'challenge' }
-  | { op: 'login'; registrationId: string; counter: number; challengeId: string; bindingSignature: string };
+  | { op: 'challenge'; purpose: ChallengePurpose }
+  | { op: 'login'; registrationId: string; counter: number; challengeId: string; bindingSignature: string }
+  | { op: 'ticket'; sessionId: string; challengeId: string; bindingSignature: string };
+
+export type ChallengePurpose = 'login' | 'ticket';
 
 // main → 遠隔サーバーの、本人確認の返事（op ごと）
 export type AuthReplies = {
@@ -26,6 +31,7 @@ export type AuthReplies = {
   'pair-status': { state: 'pending' | 'approved' | 'rejected' };
   challenge: { challengeId: string; challenge: string };
   login: { token: string; maxAgeSeconds: number };
+  ticket: { ticket: string };
 };
 
 // 文字列の上限（ふつうはずっと短い）
@@ -65,10 +71,14 @@ export function parseAuthRequest(value: unknown): AuthRequest | null {
     case 'pair-status':
       return isText(v.requestId) ? { op: 'pair-status', requestId: v.requestId } : null;
     case 'challenge':
-      return { op: 'challenge' };
+      return v.purpose === 'login' || v.purpose === 'ticket' ? { op: 'challenge', purpose: v.purpose } : null;
     case 'login':
       return isText(v.registrationId) && isCount(v.counter) && isText(v.challengeId) && isB64url(v.bindingSignature, 256)
         ? { op: 'login', registrationId: v.registrationId, counter: v.counter, challengeId: v.challengeId, bindingSignature: v.bindingSignature }
+        : null;
+    case 'ticket':
+      return isText(v.sessionId, 128) && isText(v.challengeId) && isB64url(v.bindingSignature, 256)
+        ? { op: 'ticket', sessionId: v.sessionId, challengeId: v.challengeId, bindingSignature: v.bindingSignature }
         : null;
     default:
       return null;

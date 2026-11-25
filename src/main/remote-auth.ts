@@ -1,5 +1,5 @@
 import { createHash, createHmac, createPublicKey, randomBytes, randomInt, timingSafeEqual, verify } from 'node:crypto';
-import { deviceNameOf, type AuthReplies, type AuthRequest, type BindingJwk } from '@shared/remote-auth';
+import { deviceNameOf, type AuthReplies, type AuthRequest, type BindingJwk, type ChallengePurpose } from '@shared/remote-auth';
 import type { RemoteSession } from '@shared/remote-protocol';
 import type { Registration, RemoteRegistrations } from './remote-registrations';
 
@@ -36,6 +36,9 @@ export type RemoteAuthDeps = {
   onRegistrationsChange: () => void;
   // Mac に知らせること（横取りの試み・新しいログイン）
   notify: (event: { kind: 'pairing-hijack' } | { kind: 'login'; name: string }) => void;
+  // 生きているセッションの登録（無い・切れていれば null）/ そのセッションに WebSocket の券を出す（RemoteHost が控える）
+  sessionRegistration: (sessionId: string) => string | null;
+  grantTicket: (sessionId: string) => string;
   now?: () => number;
 };
 
@@ -148,9 +151,11 @@ export class RemoteAuth {
       case 'pair-status':
         return this.pairStatus(request.requestId);
       case 'challenge':
-        return this.challenge();
+        return this.challenge(request.purpose);
       case 'login':
         return this.login(request);
+      case 'ticket':
+        return this.ticket(request);
     }
   }
 
@@ -210,30 +215,31 @@ export class RemoteAuth {
     return { state: pending.state };
   }
 
-  private challengeMac(body: string): string {
-    return b64url(createHmac('sha256', this.challengeKey).update(body).digest());
+  // HMAC には用途も混ぜる（ログイン用の乱数を券に、券用の乱数をログインに使えないように）
+  private challengeMac(purpose: ChallengePurpose, body: string): string {
+    return b64url(createHmac('sha256', this.challengeKey).update(`${purpose}|${body}`).digest());
   }
 
   // 乱数は「期限.乱数.HMAC」。challengeId も同じ値（控えずに、届いたものを確かめる）
-  private challenge(): AuthReplies['challenge'] {
+  private challenge(purpose: ChallengePurpose): AuthReplies['challenge'] {
     const body = `${this.now() + CHALLENGE_MS}.${b64url(randomBytes(32))}`;
-    const challenge = `${body}.${this.challengeMac(body)}`;
+    const challenge = `${body}.${this.challengeMac(purpose, body)}`;
     return { challengeId: challenge, challenge };
   }
 
-  // main が出した、期限の内の、まだ使っていない乱数なら true
-  private validChallenge(challenge: string): boolean {
+  // main がその用途で出した、期限の内の、まだ使っていない乱数なら true
+  private validChallenge(challenge: string, purpose: ChallengePurpose): boolean {
     const now = this.now();
     for (const [used, until] of this.usedChallenges) if (until <= now) this.usedChallenges.delete(used);
     const parts = challenge.split('.');
     if (parts.length !== 3 || this.usedChallenges.has(challenge)) return false;
     const until = Number(parts[0]);
-    return Number.isFinite(until) && until > now && sameText(parts[2], this.challengeMac(`${parts[0]}.${parts[1]}`));
+    return Number.isFinite(until) && until > now && sameText(parts[2], this.challengeMac(purpose, `${parts[0]}.${parts[1]}`));
   }
 
   private login(request: Extract<AuthRequest, { op: 'login' }>): AuthReplies['login'] {
     const challenge = request.challengeId;
-    if (!this.validChallenge(challenge)) throw new Error('unknown challenge');
+    if (!this.validChallenge(challenge, 'login')) throw new Error('unknown challenge');
     const registration = this.deps.registrations.get(request.registrationId);
     if (!registration) throw new Error('unknown registration');
     if (!verifyBinding(registration.bindingJwk, challenge, request.bindingSignature)) throw new Error('bad binding signature');
@@ -254,4 +260,17 @@ export class RemoteAuth {
     this.deps.notify({ kind: 'login', name: registration.name });
     return { token, maxAgeSeconds: Math.floor(SESSION_MS / 1000) };
   }
+
+  // WebSocket の券。そのセッションの登録の束縛の鍵で、券用の乱数に署名してあれば出す（Cookie だけを得た相手は、つなげない）
+  private ticket(request: Extract<AuthRequest, { op: 'ticket' }>): AuthReplies['ticket'] {
+    const challenge = request.challengeId;
+    if (!this.validChallenge(challenge, 'ticket')) throw new Error('unknown challenge');
+    const registrationId = this.deps.sessionRegistration(request.sessionId);
+    const registration = registrationId ? this.deps.registrations.get(registrationId) : null;
+    if (!registration) throw new Error('unknown session');
+    if (!verifyBinding(registration.bindingJwk, challenge, request.bindingSignature)) throw new Error('bad binding signature');
+    this.usedChallenges.set(challenge, Number(challenge.split('.')[0]));
+    return { ticket: this.deps.grantTicket(request.sessionId) };
+  }
+
 }

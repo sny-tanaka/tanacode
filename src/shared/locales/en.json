@@ -32,6 +32,7 @@
       "remotePort": "Choose a port number from 1024 to 65535",
       "remotePublicUrl": "The public URL must start with https and have no path (for example, https://mac.example.ts.net)",
       "remoteProfileNotAllowed": "This profile is not allowed for this connection",
+      "remoteNoProfiles": "No allowed profile is selected. Choose from the profiles that are open now.",
       "remoteNotListening": "Remote access is not listening. Turn on Use Remote Access in the menu bar, then add a device"
     },
     "dialog": {
@@ -385,6 +386,7 @@
     },
     "notice": {
       "remoteLogin": "A remote access login: {name}",
+      "remoteLoginFailures": "Logging in as “{name}” for remote access failed several times in a row. If this wasn’t you, remove the registration.",
       "remoteUnnamed": "Unnamed device",
       "remotePairingHijack": "Device registration was cancelled because the same registration code was used twice. Start again from Add Device."
     }
@@ -2652,7 +2654,13 @@
     "portHint": "The port the forwarder sends to (this port on 127.0.0.1). If it is in use, tanacode stops instead of listening.",
     "status": "Status",
     "loadFailed": "Could not read the remote access settings: {error}",
+    "confirmHostChange": "Changing the host name or port of the public URL means the {count} registered device(s) can no longer log in (passkeys and the login key are tied to the URL). Register the devices again after the change.\nSave anyway?",
     "saveFailed": "Could not save the remote access settings: {error}",
+    "banner": {
+      "active": "Remote access active ({names})",
+      "disconnect": "Disconnect",
+      "disconnectTip": "Disconnects every phone. To reconnect, log in again with Face ID on the phone."
+    },
     "devices": {
       "title": "Registered Devices",
       "empty": "No devices are registered yet.",
@@ -2672,6 +2680,9 @@
       "approve": "Approve",
       "reject": "Reject",
       "wrongNumber": "The number does not match, so this registration was rejected. Start again from Add Device.",
+      "profiles": "Allowed profiles: {names}",
+      "allowProfiles": "Allowed profiles:",
+      "allowProfilesHint": "Only sessions in the chosen profiles can be operated from the phone. If they have Claude use Bash, they can still read files of other profiles.",
       "reset": "Remove all registrations and start over",
       "confirmReset": "Remove all registered devices and start over with an empty list?\nYou will need to register your phone again.",
       "problem": {

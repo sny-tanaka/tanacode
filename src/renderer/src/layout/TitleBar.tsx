@@ -3,6 +3,7 @@ import { REPO_URL, type AppUpdate } from '@shared/app-update';
 import { t } from '@shared/i18n';
 import logo from '../assets/logo.png';
 import { AppUpdateMark } from './AppUpdate';
+import { RemoteBanner } from './RemoteBanner';
 import { BellIcon } from '../icons';
 import { Toggle } from './Toggle';
 
@@ -29,6 +30,7 @@ export const TitleBar = memo(function TitleBar({
       <span className="titlebar-version">v{__APP_VERSION__}</span>
       <AppUpdateMark update={update} />
       <span className="spacer" />
+      <RemoteBanner />
       {notifications !== null && (
         <div className="titlebar-actions">
           <Toggle

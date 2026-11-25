@@ -15,12 +15,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const none: RemoteDevicesState = { devices: [], pairing: null, problem: null };
-const device = { id: 'd1', name: 'iPhone', createdAt: Date.UTC(2026, 10, 25, 1), lastUsedAt: null };
+const profiles = [
+  { id: 'default', name: '個人' },
+  { id: 'work', name: '仕事' },
+];
+const none: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles };
+const device = { id: 'd1', name: 'iPhone', createdAt: Date.UTC(2026, 10, 25, 1), lastUsedAt: null, profileIds: ['default', 'gone'] };
 const pairing = (pending: { requestId: string; name: string }[] = []): RemoteDevicesState => ({
   devices: [],
   pairing: { code: '12345678', url: 'https://mac.example.ts.net/#pair=12345678', until: Date.now() + 600_000, pending },
   problem: null,
+  profiles,
 });
 
 async function open(initial: RemoteDevicesState, responses: Record<string, (...args: never[]) => unknown> = {}) {
@@ -57,7 +62,35 @@ describe('RemoteDevices', () => {
     fireEvent.change(screen.getByLabelText('スマホに出た数字'), { target: { value: '123456' } });
     fireEvent.click(button('承認する'));
     expect(await screen.findByText(/数字が違います/)).toBeTruthy();
-    expect(api.argsOf('remote.approvePairing')).toEqual([['q1', '123456']]);
+    // 許すプロファイルは、選ばなければ今開いている全部
+    expect(api.argsOf('remote.approvePairing')).toEqual([['q1', '123456', ['default', 'work']]]);
+  });
+
+  it('承認が理由つきで断られたら（選んだプロファイルが閉じられた）、その理由を出す', async () => {
+    await open(pairing([{ requestId: 'q1', name: 'iPhone' }]), {
+      'remote.approvePairing': () => Promise.reject(new Error("Error invoking remote method 'remote:pairing-approve': Error: 許すプロファイルが 1 つもありません。")),
+    });
+    fireEvent.change(screen.getByLabelText('スマホに出た数字'), { target: { value: '123456' } });
+    fireEvent.click(button('承認する'));
+    expect(await screen.findByText(/許すプロファイルが 1 つもありません/)).toBeTruthy();
+    expect(screen.queryByText(/数字が違います/)).toBeNull();
+  });
+
+  it('許すプロファイルを選んで承認する。1 つも選ばなければ承認できない。一覧には許したプロファイルを出す', async () => {
+    await open({ ...pairing([{ requestId: 'q1', name: 'iPhone' }]), devices: [device] }, { 'remote.approvePairing': () => Promise.resolve(true) });
+    expect(screen.getByText('許したプロファイル: 個人・gone')).toBeTruthy();
+    expect(screen.getByText(/Bash を使わせれば/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('スマホに出た数字'), { target: { value: '123456' } });
+    const personal = screen.getByLabelText('個人') as HTMLInputElement;
+    const work = screen.getByLabelText('仕事') as HTMLInputElement;
+    expect([personal.checked, work.checked]).toEqual([true, true]);
+    fireEvent.click(personal);
+    fireEvent.click(work);
+    expect(button('承認する').disabled).toBe(true);
+    fireEvent.click(work);
+    expect([personal.checked, work.checked]).toEqual([false, true]);
+    fireEvent.click(button('承認する'));
+    await waitFor(() => expect(api.argsOf('remote.approvePairing')).toEqual([['q1', '123456', ['work']]]));
   });
 
   it('断る・受付をやめる', async () => {

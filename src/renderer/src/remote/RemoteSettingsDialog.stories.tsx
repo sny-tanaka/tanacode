@@ -9,7 +9,13 @@ import { RemoteSettingsDialog } from './RemoteSettingsDialog';
 
 const noop = () => {};
 
-const noDevices: RemoteDevicesState = { devices: [], pairing: null, problem: null };
+// 承認のときに選べるプロファイル（ストーリーでは 2 つ開いていることにする）
+const profiles = [
+  { id: 'default', name: '個人' },
+  { id: 'work', name: '仕事' },
+];
+
+const noDevices: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles };
 
 // スマホに出たことにする確認の数字（ストーリーで承認するときは、これを打つ）
 const DEMO_NUMBER = '123456';
@@ -43,13 +49,15 @@ function devicesOf(initial: RemoteDevicesState) {
     },
     'remote.cancelPairing': () => change({ ...devices, pairing: null }),
     'remote.rejectPairing': (requestId: unknown) => change(withoutPending(String(requestId))),
-    'remote.approvePairing': (requestId: unknown, number: unknown) => {
+    'remote.approvePairing': (requestId: unknown, number: unknown, profileIds: unknown) => {
       const request = devices.pairing?.pending.find((p) => p.requestId === requestId);
+      const allowed = Array.isArray(profileIds) ? devices.profiles.map((p) => p.id).filter((id) => profileIds.includes(id)) : [];
+      if (allowed.length === 0) return Promise.resolve(false);
       if (!request || String(number).trim() !== DEMO_NUMBER) {
         void change(withoutPending(String(requestId)));
         return Promise.resolve(false);
       }
-      void change({ ...devices, pairing: null, devices: [...devices.devices, { id: `d-${Date.now()}`, name: request.name, createdAt: Date.now(), lastUsedAt: null }] });
+      void change({ ...devices, pairing: null, devices: [...devices.devices, { id: `d-${Date.now()}`, name: request.name, createdAt: Date.now(), lastUsedAt: null, profileIds: allowed }] });
       return Promise.resolve(true);
     },
     'remote.removeDevice': (id: unknown) => change({ ...devices, devices: devices.devices.filter((d) => d.id !== id) }),
@@ -124,11 +132,12 @@ export const 登録した端末あり: Story = {
   beforeEach: () =>
     registry(listeningState, undefined, {
       devices: [
-        { id: 'd1', name: 'iPhone', createdAt: day(0), lastUsedAt: day(5) },
-        { id: 'd2', name: 'iPad', createdAt: day(1), lastUsedAt: null },
+        { id: 'd1', name: 'iPhone', createdAt: day(0), lastUsedAt: day(5), profileIds: ['default', 'work'] },
+        { id: 'd2', name: 'iPad', createdAt: day(1), lastUsedAt: null, profileIds: ['default'] },
       ],
       pairing: null,
       problem: null,
+      profiles,
     }),
 };
 
@@ -139,10 +148,11 @@ export const 端末を追加中: Story = {
       devices: [],
       pairing: { code: '48203917', url: 'https://mac.example.ts.net/#pair=48203917', until: Date.now() + 9 * 60 * 1000, pending: [{ requestId: 'q1', name: 'iPhone' }] },
       problem: null,
+      profiles,
     }),
 };
 
 // 登録した端末の一覧が、前のものに戻されていた（遠隔操作は止めている）
 export const 一覧が戻されていた: Story = {
-  beforeEach: () => registry(stateOf('https://mac.example.ts.net', { state: 'off' }), undefined, { devices: [], pairing: null, problem: 'rolled-back' }),
+  beforeEach: () => registry(stateOf('https://mac.example.ts.net', { state: 'off' }), undefined, { devices: [], pairing: null, problem: 'rolled-back', profiles }),
 };

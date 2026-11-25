@@ -1,6 +1,7 @@
 import type { IpcEvent } from '@shared/ipc';
 import { REMOTE_EVENTS } from '@shared/remote-events';
-import { parseServerMessage, REMOTE_IDLE_MS, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
+import { createHash, randomBytes } from 'node:crypto';
+import { parseServerMessage, REMOTE_IDLE_MS, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 import { t } from '@shared/i18n';
 import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
 import type { RemoteStatus } from '@shared/remote-settings';
@@ -27,6 +28,8 @@ export type RemoteHostDeps = {
   onStatus: (status: RemoteStatus) => void;
   // つながっている接続の数が変わった（メニューバーの様子の文を作り直す）
   onConnections: (count: number) => void;
+  // その登録のパスキーで、ログインに続けて失敗した（Mac に知らせる）
+  onLoginFailures: (registrationId: string) => void;
   // 断ったこと・届いた形の違う伝文など。秘密や頼みの中身は渡さない
   log: (message: string) => void;
   // 本人確認の頼み（RemoteAuth.handle）。断るときは投げる
@@ -40,6 +43,8 @@ export class RemoteHost {
   private config: RemoteListenConfig | null = null;
   private readonly sessions = new Map<string, RemoteSession>();
   private readonly clients = new Map<string, Client>();
+  // main が出した WebSocket の券（SHA-256 → セッションと期限）。接続のときに、ここに無い券の接続は切らせる
+  private readonly tickets = new Map<string, { sessionId: string; until: number }>();
   private status: RemoteStatus = { state: 'off' };
   private credentials: RemoteCredential[] = [];
 
@@ -74,6 +79,7 @@ export class RemoteHost {
     this.child = null;
     this.config = null;
     this.sessions.clear();
+    this.tickets.clear();
     this.setClients(() => this.clients.clear());
     if (child) {
       child.post({ type: 'close' });
@@ -104,9 +110,49 @@ export class RemoteHost {
     this.child?.post({ type: 'session-remove', sessionId });
   }
 
+  // つながっている接続の登録（接続ごと。Mac の上の帯に出す）
+  connectedRegistrations(): string[] {
+    return [...this.clients.values()].map((client) => this.sessions.get(client.sessionId)?.registrationId).filter((id): id is string => Boolean(id));
+  }
+
+  // 全部のセッションを捨てる（接続は切れ、つなぎ直すにはログインし直す。Mac の上の帯の「切断」）。数の知らせは 1 回にまとめる
+  removeAllSessions(): void {
+    const ids = [...this.sessions.keys()];
+    this.sessions.clear();
+    this.tickets.clear();
+    this.setClients(() => this.clients.clear());
+    for (const sessionId of ids) this.child?.post({ type: 'session-remove', sessionId });
+  }
+
+  // 生きているセッションの登録（無い・切れていれば null）
+  sessionRegistration(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    return session && this.alive(session) ? session.registrationId : null;
+  }
+
+  // そのセッションに WebSocket の券を出す（束縛の鍵の署名を確かめたあと。RemoteAuth が呼ぶ）。1 つのセッションの券の数に上限を置く（古いものから捨てる）
+  grantTicket(sessionId: string): string {
+    const now = this.now();
+    for (const [hash, entry] of this.tickets) if (entry.until <= now) this.tickets.delete(hash);
+    const mine = [...this.tickets].filter(([, entry]) => entry.sessionId === sessionId);
+    for (const [old] of mine.slice(0, Math.max(0, mine.length - REMOTE_TICKETS_PER_SESSION + 1))) this.tickets.delete(old);
+    const ticket = randomBytes(32).toString('base64url');
+    this.tickets.set(createHash('sha256').update(ticket).digest('hex'), { sessionId, until: now + REMOTE_TICKET_MS });
+    return ticket;
+  }
+
+  // 接続に使った券が、main が出したもので、そのセッションの、期限の内か（1 回だけ使える）
+  private takeTicket(ticket: string, sessionId: string): boolean {
+    const hash = createHash('sha256').update(ticket).digest('hex');
+    const entry = this.tickets.get(hash);
+    this.tickets.delete(hash);
+    return Boolean(entry && entry.sessionId === sessionId && entry.until > this.now());
+  }
+
   // セッションと、その接続の控えを消す
   private forget(sessionId: string): void {
     this.sessions.delete(sessionId);
+    for (const [hash, entry] of this.tickets) if (entry.sessionId === sessionId) this.tickets.delete(hash);
     this.setClients(() => {
       for (const [clientId, client] of this.clients) if (client.sessionId === sessionId) this.clients.delete(clientId);
     });
@@ -208,9 +254,10 @@ export class RemoteHost {
         this.setClients(() => this.clients.clear());
         break;
       case 'connected': {
-        // 知らない・期限の切れたセッションの接続と、もうある接続の id は、受けずに切らせる
+        // 知らない・期限の切れたセッションの接続、main が出していない券の接続、もうある接続の id は、受けずに切らせる
+        // （遠隔サーバーの論理の誤りだけでは、束縛の鍵の署名なしにつなげないように）
         const session = this.sessions.get(message.sessionId);
-        if (!session || !this.alive(session) || this.clients.has(message.clientId)) {
+        if (!session || !this.alive(session) || !this.takeTicket(message.ticket, message.sessionId) || this.clients.has(message.clientId)) {
           child.post({ type: 'disconnect', clientId: message.clientId });
           return;
         }
@@ -219,6 +266,9 @@ export class RemoteHost {
       }
       case 'disconnected':
         this.setClients(() => this.clients.delete(message.clientId));
+        break;
+      case 'login-failures':
+        this.deps.onLoginFailures(message.registrationId);
         break;
       case 'session-expired':
         this.forget(message.sessionId);
@@ -253,8 +303,8 @@ export class RemoteHost {
       reply({ ok: false, error: t('main.error.remoteProfileNotAllowed') });
       return;
     }
-    // 人の操作の頼みで、使わない時間を数え直す（待ち受けを始め直したときに、この時刻を渡す）
-    session.lastActive = this.now();
+    // 人の操作の頼み（active）でだけ、使わない時間を数え直す（待ち受けを始め直したときに、この時刻を渡す）
+    if (message.active) session.lastActive = this.now();
     const caller: RemoteCaller = { kind: 'remote', profileId: message.profileId, clientId: message.clientId, registrationId: session.registrationId };
     try {
       reply({ ok: true, value: await this.deps.call(caller, message.channel, message.args) });

@@ -61,3 +61,13 @@ export const Homebrewで更新できる: Story = {
     update: { latest: '9.9.9', available: true, url: 'https://github.com/sny-tanaka/tanacode/releases/tag/v9.9.9', homebrew: { status: 'ready', version: '9.9.9' } },
   },
 };
+
+// スマホがつながっている（上の帯に「遠隔操作中」と「切断」を出す。「切断」で消える）
+export const 遠隔操作中: Story = {
+  args: { notifications: true },
+  beforeEach: () =>
+    mockApi({
+      'remote.connections': () => Promise.resolve([{ registrationId: 'r1', name: '私用の iPhone', count: 1 }]),
+      'remote.disconnectAll': () => Promise.resolve([]),
+    }),
+};

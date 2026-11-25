@@ -30,11 +30,18 @@ export type RemoteSettingsState = { settings: RemoteSettings; status: RemoteStat
 // 設定のダイアログで変えるもの（入り・切りはメニューバーのチェック）
 export type RemoteSettingsInput = { port: number; publicUrl: string };
 
-// 登録した端末（Mac のダイアログに出すもの。鍵は出さない）
-export type RemoteDevice = { id: string; name: string; createdAt: number; lastUsedAt: number | null };
+// 登録した端末（Mac のダイアログに出すもの。鍵は出さない）。profileIds: 許したプロファイル
+export type RemoteDevice = { id: string; name: string; createdAt: number; lastUsedAt: number | null; profileIds: string[] };
+
+// 遠隔でつながっている端末（Mac の上の帯に出す）。count: その端末の接続の数
+export type RemoteConnection = { registrationId: string; name: string; count: number };
+
+// 承認のときに選べるプロファイル（今開いているもの）
+export type RemoteProfileChoice = { id: string; name: string };
 
 // 登録の受付。code: 登録のコード / url: スマホで開く URL（QR にする。コードはフラグメントに入れる）/ until: 期限 / pending: 承認を待っているもの
 export type RemotePairing = { code: string; url: string; until: number; pending: { requestId: string; name: string }[] };
 
 // 端末の一覧と登録の受付。problem: 登録の一覧を読めなかった理由（unavailable: 暗号化が使えない・unreadable: 読めない・rolled-back: 古いファイルに戻された）
-export type RemoteDevicesState = { devices: RemoteDevice[]; pairing: RemotePairing | null; problem: 'unavailable' | 'unreadable' | 'rolled-back' | null };
+// profiles: 承認のときに選べるプロファイル
+export type RemoteDevicesState = { devices: RemoteDevice[]; pairing: RemotePairing | null; problem: 'unavailable' | 'unreadable' | 'rolled-back' | null; profiles: RemoteProfileChoice[] };

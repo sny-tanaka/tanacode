@@ -42,16 +42,25 @@ export type ServerMessage =
   | { type: 'listening'; port: number }
   | { type: 'listen-failed'; reason: 'in-use' | 'other'; message: string }
   | { type: 'closed' }
-  | { type: 'connected'; clientId: string; sessionId: string }
+  // ticket: 握手に使った券（main が出した券かを、main が確かめる）
+  | { type: 'connected'; clientId: string; sessionId: string; ticket: string }
   | { type: 'disconnected'; clientId: string }
   // 使わない時間・期限でセッションを捨てた（main も控えから消す）
   | { type: 'session-expired'; sessionId: string }
-  | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[] }
+  // active: 人が押した・打ったことで送った頼み（スマホの画面が付ける）。これだけで、使わない時間を数え直す
+  //（画面を開いただけで送る読み取りでは延ばさない。置いたままのスマホが切れるように）
+  | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[]; active: boolean }
   | { type: 'subscribe'; clientId: string; channels: string[] }
+  // その登録のパスキーで、ログインに続けて失敗した（待たせ始めた）。main は Mac に知らせる
+  | { type: 'login-failures'; registrationId: string }
   // 本人確認の頼み（remote-auth.ts）。main は auth-result で返す
   | { type: 'auth'; id: number; request: AuthRequest };
 
-// 使わない時間でセッションを捨てるまで（人の操作の頼みで延ばす）。遠隔サーバーと main の両方が、この長さで確かめる
+// WebSocket の券の期限（main が出し、遠隔サーバーと main の両方が控える）と、1 つのセッションが同時に持てる券の数（古いものから捨てる）
+export const REMOTE_TICKET_MS = 30 * 1000;
+export const REMOTE_TICKETS_PER_SESSION = 4;
+
+// 使わない時間でセッションを捨てるまで（人の操作の頼み（active）で延ばす）。遠隔サーバーと main の両方が、この長さで確かめる
 export const REMOTE_IDLE_MS = 30 * 60 * 1000;
 
 // 接続の id・セッションの id・チャンネルの名前の上限（ふつうはずっと短い）
@@ -75,19 +84,21 @@ export function parseServerMessage(value: unknown): ServerMessage | null {
     case 'closed':
       return { type: 'closed' };
     case 'connected':
-      return isId(value.clientId) && isId(value.sessionId) ? { type: 'connected', clientId: value.clientId, sessionId: value.sessionId } : null;
+      return isId(value.clientId) && isId(value.sessionId) && isId(value.ticket) ? { type: 'connected', clientId: value.clientId, sessionId: value.sessionId, ticket: value.ticket } : null;
     case 'disconnected':
       return isId(value.clientId) ? { type: 'disconnected', clientId: value.clientId } : null;
     case 'session-expired':
       return isId(value.sessionId) ? { type: 'session-expired', sessionId: value.sessionId } : null;
     case 'call':
       return isSeq(value.id) && isId(value.clientId) && isId(value.profileId) && (value.kind === 'invoke' || value.kind === 'send') && isId(value.channel) && Array.isArray(value.args)
-        ? { type: 'call', id: value.id, clientId: value.clientId, profileId: value.profileId, kind: value.kind, channel: value.channel, args: value.args }
+        ? { type: 'call', id: value.id, clientId: value.clientId, profileId: value.profileId, kind: value.kind, channel: value.channel, args: value.args, active: value.active === true }
         : null;
     case 'subscribe':
       return isId(value.clientId) && Array.isArray(value.channels) && value.channels.length <= MAX_CHANNELS && value.channels.every(isId)
         ? { type: 'subscribe', clientId: value.clientId, channels: value.channels as string[] }
         : null;
+    case 'login-failures':
+      return isId(value.registrationId) ? { type: 'login-failures', registrationId: value.registrationId } : null;
     case 'auth': {
       const request = parseAuthRequest(value.request);
       return isSeq(value.id) && request ? { type: 'auth', id: value.id, request } : null;

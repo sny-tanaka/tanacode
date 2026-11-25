@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -20,7 +20,7 @@ const session = (over: Partial<RemoteSession> = {}): RemoteSession => ({
   ...over,
 });
 
-type Started = { core: RemoteServerCore; port: number; posted: ServerMessage[]; clock: { now: number } };
+type Started = { core: RemoteServerCore; port: number; posted: ServerMessage[]; clock: { now: number }; main: { refuse: boolean } };
 let current: Started | null = null;
 
 afterEach(() => {
@@ -31,14 +31,26 @@ afterEach(() => {
 async function start(): Promise<Started> {
   const posted: ServerMessage[] = [];
   const clock = { now: Date.now() };
-  const core = new RemoteServerCore((message) => posted.push(message), () => clock.now);
+  // main の代わりに、本人確認の頼みに答える（券の乱数と券。refuse なら断る）
+  const main = { refuse: false };
+  const core: RemoteServerCore = new RemoteServerCore((message) => {
+    posted.push(message);
+    if (message.type !== 'auth') return;
+    const { id, request } = message;
+    setImmediate(() => {
+      if (main.refuse) return core.handle({ type: 'auth-result', id, ok: false, error: 'refused' });
+      if (request.op === 'challenge') return core.handle({ type: 'auth-result', id, ok: true, value: { challengeId: 'cid', challenge: 'bc' } });
+      if (request.op === 'ticket' && request.bindingSignature === 'signed') return core.handle({ type: 'auth-result', id, ok: true, value: { ticket: randomBytes(16).toString('base64url') } });
+      core.handle({ type: 'auth-result', id, ok: false, error: 'bad' });
+    });
+  }, () => clock.now);
   core.handle({ type: 'session-add', session: session() });
   core.handle({ type: 'listen', config: { port: 0, publicOrigin: ORIGIN, language: 'ja' } });
   const port = await waitFor(() => {
     const listening = posted.find((m) => m.type === 'listening');
     return listening?.type === 'listening' ? listening.port : undefined;
   });
-  current = { core, port, posted, clock };
+  current = { core, port, posted, clock, main };
   return current;
 }
 
@@ -53,7 +65,7 @@ async function waitFor<T>(get: () => T | undefined, timeout = 2000): Promise<T> 
 }
 
 // 頼みを送る。何も返さずに切られたら status: null
-function send(port: number, method: string, path: string, headers: Record<string, string>): Promise<{ status: number | null; headers: IncomingHttpHeaders; body: string }> {
+function send(port: number, method: string, path: string, headers: Record<string, string>, payload?: string): Promise<{ status: number | null; headers: IncomingHttpHeaders; body: string }> {
   return new Promise((resolve) => {
     const req = request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
       let body = '';
@@ -61,15 +73,24 @@ function send(port: number, method: string, path: string, headers: Record<string
       res.on('end', () => resolve({ status: res.statusCode ?? null, headers: res.headers, body }));
     });
     req.on('error', () => resolve({ status: null, headers: {}, body: '' }));
-    req.end();
+    req.end(payload);
   });
 }
 
 const cookie = `${SESSION_COOKIE}=${TOKEN}`;
 
+// 券を取る（main の券用の乱数を受け、束縛の鍵で署名したことにして送る）
+async function ticketFor(port: number, cookieHeader = cookie, signature = 'signed'): Promise<{ status: number | null; ticket: string }> {
+  const headers = { host: HOST, origin: ORIGIN, cookie: cookieHeader, 'content-type': 'application/json' };
+  const begun = await send(port, 'POST', '/api/ticket/begin', headers);
+  if (begun.status !== 200) return { status: begun.status, ticket: '' };
+  const { challengeId } = JSON.parse(begun.body) as { challengeId: string };
+  const res = await send(port, 'POST', '/api/ticket', headers, JSON.stringify({ challengeId, bindingSignature: signature }));
+  return { status: res.status, ticket: res.status === 200 ? (JSON.parse(res.body) as { ticket: string }).ticket : '' };
+}
+
 async function ticket(port: number): Promise<string> {
-  const res = await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie });
-  return (JSON.parse(res.body) as { ticket: string }).ticket;
+  return (await ticketFor(port)).ticket;
 }
 
 // WebSocket でつなぐ。開けなければ opened: false
@@ -153,8 +174,23 @@ describe('HTTP の口', () => {
     expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: 'https://other.example.ts.net', cookie })).status).toBeNull();
   });
 
+  it('券は、main が束縛の鍵の署名を確かめて出したときだけ渡す（断られた・本文が無い・壊れているなら 400）', async () => {
+    const { port, main, posted } = await start();
+    expect((await ticketFor(port)).status).toBe(200);
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'auth', request: { op: 'challenge', purpose: 'ticket' } }));
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'auth', request: { op: 'ticket', sessionId: 's1', challengeId: 'cid', bindingSignature: 'signed' } }));
+    expect((await ticketFor(port, cookie, 'not-signed')).status).toBe(400);
+    const headers = { host: HOST, origin: ORIGIN, cookie };
+    expect((await send(port, 'POST', '/api/ticket', headers)).status).toBe(400);
+    expect((await send(port, 'POST', '/api/ticket', headers, '{"challengeId":')).status).toBe(400);
+    expect((await send(port, 'POST', '/api/ticket', headers, '{}')).status).toBe(400);
+    main.refuse = true;
+    expect((await send(port, 'POST', '/api/ticket/begin', headers)).status).toBe(400);
+  });
+
   it('券は、セッションの Cookie が無ければ出さない（401）', async () => {
     const { port } = await start();
+    expect((await send(port, 'POST', '/api/ticket/begin', { host: HOST, origin: ORIGIN })).status).toBe(401);
     expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN })).status).toBe(401);
     expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=wrong` })).status).toBe(401);
   });
@@ -274,7 +310,7 @@ describe('WebSocket の口', () => {
     clock.now += IDLE_MS + 1;
     // 見回りの時点で期限内の券は残す
     core.handle({ type: 'session-add', session: session({ sessionId: 's9', lastActive: clock.now, tokenHash: createHash('sha256').update('nine').digest('hex') }) });
-    await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=nine` });
+    await ticketFor(port, `${SESSION_COOKIE}=nine`);
     (core as unknown as { expire(): void }).expire();
     expect(posted).toContainEqual({ type: 'session-expired', sessionId: 's1' });
     clock.now -= IDLE_MS + 1;
@@ -300,14 +336,14 @@ describe('WebSocket の口', () => {
 
   it('Cookie は名前で選ぶ（ほかの Cookie・= の無いものは飛ばす）。長すぎる秘密は見ない', async () => {
     const { port } = await start();
-    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `other=1; broken; ${cookie}` })).status).toBe(200);
-    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=${'x'.repeat(300)}` })).status).toBe(401);
+    expect((await ticketFor(port, `other=1; broken; ${cookie}`)).status).toBe(200);
+    expect((await ticketFor(port, `${SESSION_COOKIE}=${'x'.repeat(300)}`)).status).toBe(401);
   });
 
   it('セッションを消すと、そのセッションの券と接続だけを捨てる（ほかのセッションは残す）', async () => {
     const { port, core } = await start();
     core.handle({ type: 'session-add', session: session({ sessionId: 's2', tokenHash: createHash('sha256').update('other').digest('hex') }) });
-    const otherTicket = (JSON.parse((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=other` })).body) as { ticket: string }).ticket;
+    const otherTicket = (await ticketFor(port, `${SESSION_COOKIE}=other`)).ticket;
     const mine = await connect(port);
     await ticket(port);
     core.handle({ type: 'session-remove', sessionId: 's2' });
@@ -367,7 +403,7 @@ describe('WebSocket の口', () => {
   it('長さの違うハッシュのセッションは、比べずに飛ばす', async () => {
     const { port, core } = await start();
     core.handle({ type: 'session-add', session: session({ sessionId: 's0', tokenHash: 'ab' }) });
-    expect((await send(port, 'POST', '/api/ticket', { host: HOST, origin: ORIGIN, cookie })).status).toBe(200);
+    expect((await ticketFor(port)).status).toBe(200);
   });
 
   it.each([
@@ -407,6 +443,23 @@ describe('WebSocket の口', () => {
     core.handle({ type: 'session-remove', sessionId: 's1' });
     expect(await client.closed).toBe(4001);
     await waitFor(() => posted.find((m) => m.type === 'disconnected'));
+  });
+
+  it('使わない時間は、人の操作の印（active: true）のある頼みでだけ数え直す。印は main にも渡す', async () => {
+    const { port, clock, posted } = await start();
+    const client = await connect(port);
+    clock.now += IDLE_MS - 1000;
+    client.ws.send(JSON.stringify({ id: 1, kind: 'send', profileId: 'default', channel: 'a', args: [], active: true }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 1));
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'call', id: 1, active: true }));
+    clock.now += IDLE_MS - 1000;
+    // 印の無い頼み（画面を開いただけの読み取り）は通すが、延ばさない
+    client.ws.send(JSON.stringify({ id: 2, kind: 'send', profileId: 'default', channel: 'a', args: [], active: 'yes' }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 2));
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'call', id: 2, active: false }));
+    clock.now += 2000;
+    client.ws.send(JSON.stringify({ id: 3, kind: 'send', profileId: 'default', channel: 'a', args: [], active: true }));
+    expect(await client.closed).toBe(4001);
   });
 
   it('使わない時間が 30 分を超えたら、次の頼みで切る（4001）', async () => {

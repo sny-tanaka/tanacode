@@ -58,10 +58,29 @@ export function RemoteSettingsDialog({ onClose }: { onClose: () => void }) {
     if (!saving) onClose();
   };
 
+  // URL の origin（スキーム・ホスト名・ポート。読めなければ null）
+  const originOf = (url: string) => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return null;
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
+      // origin を変えると、登録した端末はログインできなくなる（ホスト名はパスキーの RP ID、ポートも含めた origin は
+      // PWA の保存先で、束縛の鍵がそこにある）。登録があれば、先に確かめる
+      const before = state ? originOf(state.settings.publicUrl) : null;
+      if (before && originOf(publicUrl.trim()) !== before) {
+        const { devices } = await window.tanacode.remote.devices();
+        if (devices.length > 0 && !window.confirm(t('remote.confirmHostChange', { count: devices.length }))) {
+          setSaving(false);
+          return;
+        }
+      }
       setState(await window.tanacode.remote.setSettings({ port: Number(port.trim()), publicUrl: publicUrl.trim() }));
       onClose();
     } catch (e) {

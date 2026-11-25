@@ -24,7 +24,7 @@ import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
 import { publicOriginOf } from '@shared/remote-protocol';
-import { isRemotePort, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
+import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -239,7 +239,11 @@ const remoteHost = new RemoteHost({
   call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
   // 待ち受けの様子・つながっている数を、メニューバーの様子の文に出し直す（どちらも、起動して設定を読んだあとにしか届かない）
   onStatus: () => buildMenu(),
-  onConnections: () => buildMenu(),
+  onLoginFailures: (registrationId) => remoteNotice(t('main.notice.remoteLoginFailures', { name: remoteRegistrations?.get(registrationId)?.name || t('main.notice.remoteUnnamed') })),
+  onConnections: () => {
+    buildMenu();
+    send(IpcChannel.RemoteConnectionsChanged, remoteConnections());
+  },
   log: (message) => console.error(message),
   auth: (request) => {
     if (!remoteAuth) throw new Error('remote access is not ready');
@@ -267,6 +271,8 @@ function startRemoteAuth(): void {
       send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
     },
     notify: (event) => remoteNotice(event.kind === 'login' ? t('main.notice.remoteLogin', { name: event.name || t('main.notice.remoteUnnamed') }) : t('main.notice.remotePairingHijack')),
+    sessionRegistration: (sessionId) => remoteHost.sessionRegistration(sessionId),
+    grantTicket: (sessionId) => remoteHost.grantTicket(sessionId),
   });
   remoteHost.setCredentials(registrations.credentials());
 }
@@ -284,11 +290,19 @@ function remoteDevicesState(): RemoteDevicesState {
   const pairing = remoteAuth?.pairingState() ?? null;
   const publicOrigin = publicOriginOf(settings.remote().publicUrl);
   return {
-    devices: (registrations?.all() ?? []).map(({ id, name, createdAt, lastUsedAt }) => ({ id, name, createdAt, lastUsedAt })),
+    devices: (registrations?.all() ?? []).map(({ id, name, createdAt, lastUsedAt, profileIds }) => ({ id, name, createdAt, lastUsedAt, profileIds })),
     pairing: pairing && publicOrigin ? { ...pairing, url: `${publicOrigin}/#pair=${pairing.code}` } : null,
     // 登録の一覧をまだ作っていない（起動の途中）ときは、使えないものとして出す。読めたら null
     problem: registrations ? registrations.problem() : 'unavailable',
+    profiles: [...opened.keys()].map((id) => ({ id, name: registry.get(id)?.name ?? id })),
   };
+}
+
+// 遠隔でつながっている端末（登録ごとにまとめる。Mac の上の帯に出す）
+function remoteConnections(): RemoteConnection[] {
+  const counts = new Map<string, number>();
+  for (const id of remoteHost.connectedRegistrations()) counts.set(id, (counts.get(id) ?? 0) + 1);
+  return [...counts].map(([registrationId, count]) => ({ registrationId, name: remoteRegistrations?.get(registrationId)?.name ?? '', count }));
 }
 
 // 設定のダイアログに出すもの
@@ -1160,11 +1174,14 @@ function registerIpc(): void {
     remoteAuth?.cancelPairing();
     return remoteDevicesState();
   });
-  handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown) => {
+  handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown, profileIds: unknown) => {
     P(e);
-    if (typeof requestId !== 'string' || typeof number !== 'string' || !remoteAuth) return false;
-    // 許すプロファイルは、今は開いている全プロファイル（登録のときに絞るのは、あとで足す）
-    return remoteAuth.approve(requestId, number, [...opened.keys()]);
+    if (typeof requestId !== 'string' || typeof number !== 'string' || !Array.isArray(profileIds) || !remoteAuth) return false;
+    // 許すのは、選んだもののうち、今開いているプロファイルだけ（あとから開いたものは、自動では入れない）。
+    // 1 つも無ければ承認しない（頼みは断らずに残す。false は数字が違うときだけにする）
+    const allowed = [...opened.keys()].filter((id) => profileIds.includes(id));
+    if (allowed.length === 0) throw new Error(t('main.error.remoteNoProfiles'));
+    return remoteAuth.approve(requestId, number, allowed);
   });
   handle(IpcChannel.RemotePairingReject, (e, requestId: unknown) => {
     P(e);
@@ -1181,6 +1198,15 @@ function registerIpc(): void {
       send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
     }
     return remoteDevicesState();
+  });
+  handle(IpcChannel.RemoteConnectionsGet, (e) => {
+    P(e);
+    return remoteConnections();
+  });
+  handle(IpcChannel.RemoteDisconnectAll, (e) => {
+    P(e);
+    remoteHost.removeAllSessions();
+    return remoteConnections();
   });
   handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
     P(e);

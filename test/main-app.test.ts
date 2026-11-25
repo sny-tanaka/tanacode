@@ -1448,7 +1448,7 @@ describe('メニュー', () => {
   it('遠隔操作の端末: 待ち受けていなければ、登録を受け付けない', async () => {
     await boot();
     await expect(invoke(IpcChannel.RemotePairingStart)).rejects.toThrow('遠隔操作が待ち受けていません');
-    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null });
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null, profiles: [{ id: 'default', name: expect.any(String) }] });
   });
 
   it('遠隔操作の端末: 登録を受け付け、スマホに出た数字で承認すると一覧に載り、パスキーを遠隔サーバーに渡す。ログインで Mac に知らせ、取り消せる', async () => {
@@ -1467,19 +1467,40 @@ describe('メニュー', () => {
       bindingSignature: binding.sign(String(begun.bindingChallenge)),
       name: 'iPhone',
     }).value!;
-    await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2)).resolves.toBe(false);
-    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number)).resolves.toBe(true);
+    await expect(invoke(IpcChannel.RemotePairingApprove, 1, 2, [])).resolves.toBe(false);
+    // 許すプロファイルが無い・今開いていないものだけなら、承認しない
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, 'default')).resolves.toBe(false);
+    // 今開いているプロファイルが 1 つも選ばれていなければ、理由を添えて断る（頼みは残す）
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['nope'])).rejects.toThrow('許すプロファイルが 1 つもありません');
+    await expect(invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['default', 'nope'])).resolves.toBe(true);
     const devices = (await invoke(IpcChannel.RemoteDevicesGet)) as { devices: { id: string; name: string }[] };
     expect(devices.devices).toMatchObject([{ name: 'iPhone', lastUsedAt: null }]);
     expect(child.posted).toContainEqual({ type: 'credentials', credentials: [expect.objectContaining({ credentialId: 'Y3JlZA', publicKey: 'cHVi' })] });
     expect(existsSync(join(state.userData, 'remote-registrations.bin'))).toBe(true);
     expect(savedSettings()).toMatchObject({ remoteRegistrationsSeq: 1 });
 
-    const challenge = authOf({ op: 'challenge' }).value!;
+    const challenge = authOf({ op: 'challenge', purpose: 'login' }).value!;
     const registrationId = devices.devices[0].id;
     expect(authOf({ op: 'login', registrationId, counter: 0, challengeId: challenge.challengeId, bindingSignature: binding.sign(String(challenge.challenge)) }).ok).toBe(true);
     expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-add', session: expect.objectContaining({ registrationId, profileIds: ['default'] }) }));
     expect(state.notifications.at(-1)?.options.body).toBe('遠隔操作でログインがありました: iPhone');
+
+    // 券は、束縛の鍵の署名を確かめて main が出し、その券の接続だけを受ける。つながっている端末は上の帯に出し、「切断」で全部を切る
+    const added = child.posted.find((m) => (m as { type: string }).type === 'session-add') as { session: { sessionId: string } };
+    const sessionId = added.session.sessionId;
+    const ticketChallenge = authOf({ op: 'challenge', purpose: 'ticket' }).value!;
+    const granted = authOf({ op: 'ticket', sessionId, challengeId: ticketChallenge.challengeId, bindingSignature: binding.sign(String(ticketChallenge.challenge)) });
+    expect(granted.ok).toBe(true);
+    child.emit('message', { type: 'connected', clientId: 'c1', sessionId, ticket: granted.value!.ticket });
+    await expect(invoke(IpcChannel.RemoteConnectionsGet)).resolves.toEqual([{ registrationId, name: 'iPhone', count: 1 }]);
+    expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteConnectionsChanged, [{ registrationId, name: 'iPhone', count: 1 }]]);
+    await expect(invoke(IpcChannel.RemoteDisconnectAll)).resolves.toEqual([]);
+    // ログインに続けて失敗した知らせは、端末の名前で Mac に通知する
+    child.emit('message', { type: 'login-failures', registrationId });
+    expect(state.notifications.at(-1)?.options.body).toContain('「iPhone」のログインに続けて失敗しました');
+    child.emit('message', { type: 'login-failures', registrationId: 'gone' });
+    expect(state.notifications.at(-1)?.options.body).toContain('「名前の無い端末」');
+    expect(child.posted).toContainEqual({ type: 'session-remove', sessionId });
 
     await invoke(IpcChannel.RemoteDeviceRemove, registrationId);
     await invoke(IpcChannel.RemoteDeviceRemove, 'nope');

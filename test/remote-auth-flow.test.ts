@@ -49,6 +49,7 @@ async function world() {
     call: async () => 'ok',
     onStatus: () => {},
     onConnections: () => {},
+    onLoginFailures: (registrationId) => notices.push({ kind: 'login-failures', registrationId } as never),
     log: () => {},
     auth: (r) => auth.handle(r),
   });
@@ -60,6 +61,8 @@ async function world() {
     onPairingChange: () => {},
     onRegistrationsChange: () => host.setCredentials(registrations.credentials()),
     notify: (event) => notices.push(event),
+    sessionRegistration: (sessionId) => host.sessionRegistration(sessionId),
+    grantTicket: (sessionId) => host.grantTicket(sessionId),
   });
   host.start({ port: 0, publicOrigin: ORIGIN, language: 'ja' });
   await vi.waitFor(() => expect(host.current().state).toBe('listening'));
@@ -113,6 +116,12 @@ async function login(w: World, passkey: SoftAuthenticator, binding: SoftBindingK
   });
 }
 
+// WebSocket の券を取る（main の券用の乱数に、束縛の鍵で署名する）
+async function ticketOf(w: World, cookie: string, binding: SoftBindingKey) {
+  const begun = await post(w.port, '/api/ticket/begin', {}, cookie);
+  return post(w.port, '/api/ticket', { challengeId: begun.body.challengeId, bindingSignature: binding.sign(String(begun.body.bindingChallenge)) }, cookie);
+}
+
 describe('遠隔操作の登録とログイン（通し）', () => {
   it('コード → パスキーの登録 → Mac で数字を打って承認 → ログインで Cookie → 券 → WebSocket につながる', async () => {
     const w = await world();
@@ -141,7 +150,7 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect(w.registrations.all()[0].lastUsedAt).not.toBeNull();
 
     const cookie = loggedIn.cookie!.split(';')[0];
-    const ticket = await post(w.port, '/api/ticket', {}, cookie);
+    const ticket = await ticketOf(w, cookie, binding);
     expect(ticket.status).toBe(200);
     const ws = new WebSocket(`ws://127.0.0.1:${w.port}/ws`, { headers: { host: HOST, origin: ORIGIN, cookie } });
     const first = await new Promise<unknown>((resolve) => {
@@ -151,6 +160,44 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect(first).toEqual({ type: 'ready' });
     expect(w.host.connectionCount()).toBe(1);
     ws.close();
+  });
+
+  it('券は、そのセッションの登録の束縛の鍵で、券用の乱数に署名したときだけ出る（Cookie だけ・別の鍵・ログイン用の乱数・使い回しでは出ない）', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    const cookie = (await login(w, passkey, binding)).cookie!.split(';')[0];
+    expect((await post(w.port, '/api/ticket', {}, cookie)).status).toBe(400);
+    expect((await ticketOf(w, cookie, new SoftBindingKey())).status).toBe(400);
+    // ログイン用の乱数は、券に使えない
+    const loginBegun = await post(w.port, '/api/login/begin', {});
+    expect((await post(w.port, '/api/ticket', { challengeId: loginBegun.body.challengeId, bindingSignature: binding.sign(String(loginBegun.body.bindingChallenge)) }, cookie)).status).toBe(400);
+    // 使い回し
+    const begun = await post(w.port, '/api/ticket/begin', {}, cookie);
+    const body = { challengeId: begun.body.challengeId, bindingSignature: binding.sign(String(begun.body.bindingChallenge)) };
+    expect((await post(w.port, '/api/ticket', body, cookie)).status).toBe(200);
+    expect((await post(w.port, '/api/ticket', body, cookie)).status).toBe(400);
+  });
+
+  it('遠隔サーバーが main の出していない券で接続を知らせても、main が切らせる', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    const cookie = (await login(w, passkey, binding)).cookie!.split(';')[0];
+    const ticket = String((await ticketOf(w, cookie, binding)).body.ticket);
+    // 遠隔サーバーの控えにだけ、偽の券を足す（遠隔サーバーの論理の誤りのつもり）
+    const tickets = (w.core as unknown as { tickets: Map<string, { sessionId: string; until: number }> }).tickets;
+    const forged = 'forged-ticket-value';
+    tickets.set(forged, { ...tickets.get(ticket)! });
+    const ws = new WebSocket(`ws://127.0.0.1:${w.port}/ws`, { headers: { host: HOST, origin: ORIGIN, cookie } });
+    const closed = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', ticket: forged })));
+    await closed;
+    expect(w.host.connectionCount()).toBe(0);
   });
 
   it('確認の数字が違えば断り、登録しない（スマホには rejected）', async () => {
@@ -256,7 +303,8 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     w.registrations.remove(id);
     w.host.removeRegistration(id);
     w.host.setCredentials(w.registrations.credentials());
-    expect((await post(w.port, '/api/ticket', {}, cookie)).status).toBe(401);
+    expect((await post(w.port, '/api/ticket/begin', {}, cookie)).status).toBe(401);
+    expect((await ticketOf(w, cookie, binding)).status).toBe(401);
     expect((await login(w, passkey, binding)).status).toBe(400);
   });
 
@@ -274,6 +322,20 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     // 束縛の鍵の違う失敗が続いたら、そのパスキーは待たせる
     for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
     expect((await login(w, passkey, binding)).status).toBe(429);
+    // 待たせ始めたら、Mac に 1 回だけ知らせる
+    const registrationId = w.registrations.all()[0].id;
+    expect(w.notices.filter((n) => (n as { kind: string }).kind === 'login-failures')).toEqual([{ kind: 'login-failures', registrationId }]);
+  });
+
+  it('待たせる回数ちょうどの試みが通ったら、知らせない', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT - 1; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
+    expect((await login(w, passkey, binding)).status).toBe(200);
+    expect(w.notices.filter((n) => (n as { kind: string }).kind === 'login-failures')).toEqual([]);
   });
 
   it('ログインの失敗の数は、最後の失敗から 15 分たったら数え直す', async () => {
