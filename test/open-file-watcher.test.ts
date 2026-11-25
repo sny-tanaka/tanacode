@@ -139,6 +139,26 @@ describe('OpenFileWatchers', () => {
     await untilChanged(outside, 'later.md');
   });
 
+  it('タブは画面ごと（Mac とスマホ）に持ち、合わせて見張る。切れたスマホの分は捨てる（Mac の分は残す）', async () => {
+    const memo = join(outside, 'memo.md');
+    const note = join(outside, 'note.md');
+    put(memo, 'Mac\n');
+    put(note, 'スマホ\n');
+    watchers.set({ [work]: [memo] });
+    watchers.set({ [work]: [note, memo] }, 'phone');
+    await untilWatched([real(memo), real(note)]);
+    // スマホがタブを閉じても、Mac で開いているものは見張る
+    watchers.set({ [work]: [] }, 'phone');
+    await untilWatched([real(memo)]);
+    watchers.set({ [work]: [note] }, 'phone');
+    await untilWatched([real(memo), real(note)]);
+    // つながっている接続は残し、切れた接続の分だけ捨てる
+    watchers.keep(new Set(['phone']));
+    await untilWatched([real(memo), real(note)]);
+    watchers.keep(new Set());
+    await untilWatched([real(memo)]);
+  });
+
   it('同じフォルダのファイルの片方を閉じても、もう片方は見張り続ける', async () => {
     const memo = join(outside, 'memo.md');
     const todo = join(outside, 'todo.md');

@@ -222,6 +222,23 @@ describe('MCP のツール', () => {
     );
   });
 
+  it('walkthrough_status: 見ている所は画面ごと（Mac とスマホ）に持ち、どれか 1 つで見ていれば見ている。切れたスマホの分は捨てる', async () => {
+    const { control } = setup();
+    await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' })] });
+    control.go(ME, 1);
+    control.viewing('another-session', false);
+    control.viewing(ME, true, 'phone');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing 2/2 "切り捨て".');
+    control.viewing(ME, false, 'phone');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user has opened another file or view in the editor instead');
+    // スマホが切れたら、Mac の画面の分だけで決める
+    control.keep(new Set());
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing another session in tanacode now.');
+    control.viewing(ME, true, 'phone');
+    control.keep(new Set(['phone']));
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing 2/2 "切り捨て".');
+  });
+
   it('メニューでオフ・知らないセッション・知らないツールは断る', async () => {
     expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toBe(
       'The user has turned off the tanacode MCP "ウォークスルー". Ask the user to turn it on in tanacode > MCP の設定….',

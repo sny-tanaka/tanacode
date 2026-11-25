@@ -242,6 +242,12 @@ const remoteHost = new RemoteHost({
   onStatus: () => buildMenu(),
   onLoginFailures: (registrationId) => remoteNotice(t('main.notice.remoteLoginFailures', { name: remoteRegistrations?.get(registrationId)?.name || t('main.notice.remoteUnnamed') })),
   onConnections: () => {
+    // 切れた接続の、開いているファイルと見ている所を捨てる
+    const live = new Set(remoteHost.clientIds());
+    for (const p of profiles()) {
+      p.openFiles.keep(live);
+      p.walkthroughControl?.keep(live);
+    }
     buildMenu();
     send(IpcChannel.RemoteConnectionsChanged, remoteConnections());
   },
@@ -921,7 +927,10 @@ function registerIpc(): void {
   handle(IpcChannel.WalkthroughGo, (e, id: string, index: unknown) => P(e).walkthroughControl?.go(String(id), Number(index)));
   handle(IpcChannel.WalkthroughClose, (e, id: string) => P(e).walkthroughControl?.close(String(id)));
   listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) => P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown));
-  listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) => P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true));
+  // 見ている所・開いているファイルは、画面ごと（Mac の画面と、スマホの接続ごと）に持つ
+  listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) =>
+    P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true, e.kind === 'remote' ? e.clientId : 'mac'),
+  );
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
   handle(IpcChannel.WalkthroughDraftComment, async (e, id: string) => {
@@ -1112,7 +1121,7 @@ function registerIpc(): void {
   handle(IpcChannel.WorkspaceClaudeSettings, (e, id: string) => P(e).claudeSettingsOf(id));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
-  listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));
+  listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs, e.kind === 'remote' ? e.clientId : 'mac'));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
     // Claude が読んだリポジトリも、エクスプローラーから開いた Markdown の画像を出せるよう、追加したフォルダと同じく読む
     new Workspace(P(e).cwdOf(id)).readImage(relPath, [...P(e).addedFoldersOf(id), ...P(e).manager.readFoldersOf(id)]).catch(() => null),

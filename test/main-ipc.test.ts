@@ -312,7 +312,6 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ShellResize, ['sh1', 90, 20], 'ShellTerminals', 'resize', ['sh1', 90, 20]],
     [IpcChannel.ShellKill, ['sh1'], 'ShellTerminals', 'kill', ['sh1']],
     [IpcChannel.BrowserAttach, ['s1', 'tab-1', 42], 'BrowserControl', 'attach', ['s1', 'tab-1', 42]],
-    [IpcChannel.WatchOpenFiles, [{ '/work': ['a.ts', '/outside/memo.md'] }], 'OpenFileWatchers', 'set', [{ '/work': ['a.ts', '/outside/memo.md'] }]],
     [IpcChannel.BrowserActivate, ['s1', null], 'BrowserControl', 'activate', ['s1', null]],
     [IpcChannel.BrowserAnswer, ['s1', 'ask-1', { done: false, reason: 'ログインできない' }], 'BrowserControl', 'answerAsk', ['s1', 'ask-1', { done: false, reason: 'ログインできない' }]],
     [IpcChannel.BrowserLoginAnswer, ['s1', 'login-1', { username: 'u', password: 'p' }], 'BrowserControl', 'answerLogin', ['s1', 'login-1', { username: 'u', password: 'p' }]],
@@ -321,6 +320,22 @@ describe('そのまま渡す受け口', () => {
   it.each(listens)('知らせ %s（%j）は、%s の %s に引数をそのまま渡す', (channel, args, name, method, expected) => {
     sendFromRenderer(channel, ...args);
     expect(the(name)[method].mock.calls).toEqual([expected]);
+  });
+
+  it('開いているファイル・ウォークスルーで見ている所は、画面ごと（Mac の画面は mac、スマホは接続の id）に渡す', async () => {
+    const tabs = { '/work': ['a.ts', '/outside/memo.md'] };
+    sendFromRenderer(IpcChannel.WatchOpenFiles, tabs);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.WatchOpenFiles, tabs);
+    expect(the('OpenFileWatchers').set.mock.calls).toEqual([
+      [tabs, 'mac'],
+      [tabs, 'test'],
+    ]);
+    sendFromRenderer(IpcChannel.WalkthroughViewing, 's1', true);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.WalkthroughViewing, null, false);
+    expect(the('WalkthroughControl').viewing.mock.calls).toEqual([
+      ['s1', true, 'mac'],
+      [null, false, 'test'],
+    ]);
   });
 
   it.each(listens.filter(([channel]) => isSame(channel)))('遠隔の接続からの知らせ %s（%j）も、%s の %s に引数をそのまま渡す', async (channel, args, name, method, expected) => {

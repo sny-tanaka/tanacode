@@ -225,6 +225,11 @@ export class RemoteHost {
     if (client) client.focus = sessionId;
   }
 
+  // つながっている接続の id
+  clientIds(): string[] {
+    return [...this.clients.keys()];
+  }
+
   // つながっている接続の数（Mac の上の帯に出す）
   connectionCount(): number {
     return this.clients.size;
