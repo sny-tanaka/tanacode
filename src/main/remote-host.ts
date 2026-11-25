@@ -28,6 +28,8 @@ export type RemoteHostDeps = {
   onStatus: (status: RemoteStatus) => void;
   // つながっている接続の数が変わった（メニューバーの様子の文を作り直す）
   onConnections: (count: number) => void;
+  // その登録のパスキーで、ログインに続けて失敗した（Mac に知らせる）
+  onLoginFailures: (registrationId: string) => void;
   // 断ったこと・届いた形の違う伝文など。秘密や頼みの中身は渡さない
   log: (message: string) => void;
   // 本人確認の頼み（RemoteAuth.handle）。断るときは投げる
@@ -260,6 +262,9 @@ export class RemoteHost {
       }
       case 'disconnected':
         this.setClients(() => this.clients.delete(message.clientId));
+        break;
+      case 'login-failures':
+        this.deps.onLoginFailures(message.registrationId);
         break;
       case 'session-expired':
         this.forget(message.sessionId);

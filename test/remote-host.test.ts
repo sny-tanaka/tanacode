@@ -21,14 +21,15 @@ function setup(call: (...args: unknown[]) => Promise<unknown> = async () => 'ok'
   };
   const statuses: unknown[] = [];
   const log = vi.fn();
+  const onLoginFailures = vi.fn();
   const callSpy = vi.fn(call);
   const connections: number[] = [];
   const auth = vi.fn((request: { op: string }) => {
     if (request.op === 'pair-begin') throw new Error('wrong code');
     return { challengeId: 'c', challenge: 'x' };
   });
-  const host = new RemoteHost({ spawn: () => child, call: callSpy, onStatus: (status) => statuses.push(status), onConnections: (count) => connections.push(count), log, auth: auth as never }, () => clock.now);
-  return { host, child, posted, statuses, connections, log, auth, call: callSpy, toHost: (m: unknown) => toHost(m), exit: (code: number) => exit(code) };
+  const host = new RemoteHost({ spawn: () => child, call: callSpy, onStatus: (status) => statuses.push(status), onConnections: (count) => connections.push(count), onLoginFailures, log, auth: auth as never }, () => clock.now);
+  return { host, child, posted, statuses, connections, log, onLoginFailures, auth, call: callSpy, toHost: (m: unknown) => toHost(m), exit: (code: number) => exit(code) };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -104,6 +105,21 @@ describe('RemoteHost', () => {
     // 生きているセッションの登録だけを返す
     expect(t.host.sessionRegistration('s1')).toBe('r1');
     expect(t.host.sessionRegistration('nope')).toBeNull();
+  });
+
+  it('ログインに続けて失敗した知らせを、Mac に渡す。接続の一覧と、全部のセッションを捨てる', () => {
+    const t = setup();
+    t.host.start(CONFIG);
+    t.toHost({ type: 'login-failures', registrationId: 'r1' });
+    expect(t.onLoginFailures).toHaveBeenCalledWith('r1');
+    t.host.addSession(session());
+    t.host.addSession(session({ sessionId: 's2', registrationId: 'r2' }));
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2', ticket: t.host.grantTicket('s2') });
+    expect(t.host.connectedRegistrations()).toEqual(['r1', 'r2']);
+    t.host.removeAllSessions();
+    expect(t.host.connectedRegistrations()).toEqual([]);
+    expect(t.posted.filter((m) => m.type === 'session-remove')).toHaveLength(2);
   });
 
   it('知らないセッションの接続は、切らせる', () => {

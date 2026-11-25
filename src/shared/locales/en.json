@@ -385,6 +385,7 @@
     },
     "notice": {
       "remoteLogin": "A remote access login: {name}",
+      "remoteLoginFailures": "Logging in as “{name}” for remote access failed several times in a row. If this wasn’t you, remove the registration.",
       "remoteUnnamed": "Unnamed device",
       "remotePairingHijack": "Device registration was cancelled because the same registration code was used twice. Start again from Add Device."
     }

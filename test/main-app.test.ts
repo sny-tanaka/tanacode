@@ -1494,6 +1494,11 @@ describe('メニュー', () => {
     await expect(invoke(IpcChannel.RemoteConnectionsGet)).resolves.toEqual([{ registrationId, name: 'iPhone', count: 1 }]);
     expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteConnectionsChanged, [{ registrationId, name: 'iPhone', count: 1 }]]);
     await expect(invoke(IpcChannel.RemoteDisconnectAll)).resolves.toEqual([]);
+    // ログインに続けて失敗した知らせは、端末の名前で Mac に通知する
+    child.emit('message', { type: 'login-failures', registrationId });
+    expect(state.notifications.at(-1)?.options.body).toContain('「iPhone」のログインに続けて失敗しました');
+    child.emit('message', { type: 'login-failures', registrationId: 'gone' });
+    expect(state.notifications.at(-1)?.options.body).toContain('「名前の無い端末」');
     expect(child.posted).toContainEqual({ type: 'session-remove', sessionId });
 
     await invoke(IpcChannel.RemoteDeviceRemove, registrationId);

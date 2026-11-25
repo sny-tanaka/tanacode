@@ -49,6 +49,7 @@ async function world() {
     call: async () => 'ok',
     onStatus: () => {},
     onConnections: () => {},
+    onLoginFailures: (registrationId) => notices.push({ kind: 'login-failures', registrationId } as never),
     log: () => {},
     auth: (r) => auth.handle(r),
   });
@@ -321,6 +322,20 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     // 束縛の鍵の違う失敗が続いたら、そのパスキーは待たせる
     for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
     expect((await login(w, passkey, binding)).status).toBe(429);
+    // 待たせ始めたら、Mac に 1 回だけ知らせる
+    const registrationId = w.registrations.all()[0].id;
+    expect(w.notices.filter((n) => (n as { kind: string }).kind === 'login-failures')).toEqual([{ kind: 'login-failures', registrationId }]);
+  });
+
+  it('待たせる回数ちょうどの試みが通ったら、知らせない', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT - 1; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
+    expect((await login(w, passkey, binding)).status).toBe(200);
+    expect(w.notices.filter((n) => (n as { kind: string }).kind === 'login-failures')).toEqual([]);
   });
 
   it('ログインの失敗の数は、最後の失敗から 15 分たったら数え直す', async () => {

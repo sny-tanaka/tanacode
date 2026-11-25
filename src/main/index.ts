@@ -239,6 +239,7 @@ const remoteHost = new RemoteHost({
   call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
   // 待ち受けの様子・つながっている数を、メニューバーの様子の文に出し直す（どちらも、起動して設定を読んだあとにしか届かない）
   onStatus: () => buildMenu(),
+  onLoginFailures: (registrationId) => remoteNotice(t('main.notice.remoteLoginFailures', { name: remoteRegistrations?.get(registrationId)?.name || t('main.notice.remoteUnnamed') })),
   onConnections: () => {
     buildMenu();
     send(IpcChannel.RemoteConnectionsChanged, remoteConnections());

@@ -380,6 +380,7 @@
     },
     "notice": {
       "remoteLogin": "遠隔操作でログインがありました: {name}",
+      "remoteLoginFailures": "遠隔操作で「{name}」のログインに続けて失敗しました。心当たりが無ければ、登録を取り消してください。",
       "remoteUnnamed": "名前の無い端末",
       "remotePairingHijack": "端末の登録を取りやめました。同じ登録のコードが 2 回使われたためです。もう一度「端末を追加」から始めてください。"
     }

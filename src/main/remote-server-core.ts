@@ -403,31 +403,36 @@ export class RemoteServerCore {
           if (!credential) throw new Error('unknown login');
           const failures = this.loginFailures.get(credential.credentialId);
           if (failures && failures.until > now) return this.reply(res, 429, { error: 'too many requests' });
-          // 失敗として先に数え、通ったら消す（途中で投げても数えたまま）
-          this.loginFailed(credential.credentialId, now);
-          let usedChallenge = '';
-          const verified = await verifyAuthenticationResponse({
-            response,
-            expectedChallenge: (challenge) => {
-              usedChallenge = challenge;
-              return this.validLoginChallenge(challenge, now);
-            },
-            expectedOrigin: origin,
-            expectedRPID: rpID,
-            credential: { id: credential.credentialId, publicKey: new Uint8Array(Buffer.from(credential.publicKey, 'base64url')), counter: credential.counter },
-            requireUserVerification: true,
-          });
-          if (!verified.verified) throw new Error('not verified');
-          this.usedLogins.set(usedChallenge, this.challengeUntil(usedChallenge));
-          const login = await this.auth({
-            op: 'login',
-            registrationId: credential.registrationId,
-            counter: verified.authenticationInfo.newCounter,
-            challengeId: String(body.challengeId ?? ''),
-            bindingSignature: String(body.bindingSignature ?? ''),
-          });
-          this.loginFailures.delete(credential.credentialId);
-          res.setHeader('set-cookie', `${SESSION_COOKIE}=${login.token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${login.maxAgeSeconds}`);
+          // 失敗として先に数え、通ったら消す（途中で投げても数えたまま）。失敗が待たせる回数に達したら、main に知らせる（Mac に通知する）
+          const count = this.loginFailed(credential.credentialId, now);
+          try {
+            let usedChallenge = '';
+            const verified = await verifyAuthenticationResponse({
+              response,
+              expectedChallenge: (challenge) => {
+                usedChallenge = challenge;
+                return this.validLoginChallenge(challenge, now);
+              },
+              expectedOrigin: origin,
+              expectedRPID: rpID,
+              credential: { id: credential.credentialId, publicKey: new Uint8Array(Buffer.from(credential.publicKey, 'base64url')), counter: credential.counter },
+              requireUserVerification: true,
+            });
+            if (!verified.verified) throw new Error('not verified');
+            this.usedLogins.set(usedChallenge, this.challengeUntil(usedChallenge));
+            const login = await this.auth({
+              op: 'login',
+              registrationId: credential.registrationId,
+              counter: verified.authenticationInfo.newCounter,
+              challengeId: String(body.challengeId ?? ''),
+              bindingSignature: String(body.bindingSignature ?? ''),
+            });
+            this.loginFailures.delete(credential.credentialId);
+            res.setHeader('set-cookie', `${SESSION_COOKIE}=${login.token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${login.maxAgeSeconds}`);
+          } catch (error) {
+            if (count === LOGIN_FAILURES_BEFORE_WAIT) this.post({ type: 'login-failures', registrationId: credential.registrationId });
+            throw error;
+          }
           return this.reply(res, 200, { ok: true });
         }
         default:
@@ -458,11 +463,13 @@ export class RemoteServerCore {
     return Number.isFinite(until) && until > now && given.length === mac.length && timingSafeEqual(given, mac);
   }
 
-  private loginFailed(credentialId: string, now: number): void {
+  // 失敗の数を 1 つ足し、足したあとの数を返す
+  private loginFailed(credentialId: string, now: number): number {
     const last = this.loginFailures.get(credentialId);
     const count = (last && now - last.at < LOGIN_WAIT_MAX_MS ? last.count : 0) + 1;
     const wait = count < LOGIN_FAILURES_BEFORE_WAIT ? 0 : Math.min(LOGIN_WAIT_MAX_MS, LOGIN_WAIT_MS * 2 ** (count - LOGIN_FAILURES_BEFORE_WAIT));
     this.loginFailures.set(credentialId, { count, at: now, until: now + wait });
+    return count;
   }
 
   private reply(res: ServerResponse, status: number, body: unknown): void {

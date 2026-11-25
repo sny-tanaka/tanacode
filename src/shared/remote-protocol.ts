@@ -51,6 +51,8 @@ export type ServerMessage =
   //（画面を開いただけで送る読み取りでは延ばさない。置いたままのスマホが切れるように）
   | { type: 'call'; id: number; clientId: string; profileId: string; kind: 'invoke' | 'send'; channel: string; args: unknown[]; active: boolean }
   | { type: 'subscribe'; clientId: string; channels: string[] }
+  // その登録のパスキーで、ログインに続けて失敗した（待たせ始めた）。main は Mac に知らせる
+  | { type: 'login-failures'; registrationId: string }
   // 本人確認の頼み（remote-auth.ts）。main は auth-result で返す
   | { type: 'auth'; id: number; request: AuthRequest };
 
@@ -95,6 +97,8 @@ export function parseServerMessage(value: unknown): ServerMessage | null {
       return isId(value.clientId) && Array.isArray(value.channels) && value.channels.length <= MAX_CHANNELS && value.channels.every(isId)
         ? { type: 'subscribe', clientId: value.clientId, channels: value.channels as string[] }
         : null;
+    case 'login-failures':
+      return isId(value.registrationId) ? { type: 'login-failures', registrationId: value.registrationId } : null;
     case 'auth': {
       const request = parseAuthRequest(value.request);
       return isSeq(value.id) && request ? { type: 'auth', id: value.id, request } : null;
