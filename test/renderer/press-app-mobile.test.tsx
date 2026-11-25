@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
 import { App } from '../../src/renderer/src/App';
@@ -139,6 +139,12 @@ describe('スマホの画面の配置（App）', () => {
     expect([...tools.querySelectorAll('.claude-header-tool')].map((row) => row.textContent?.trim())).toEqual(
       expect.arrayContaining(['Remote Control', '離席モード', '作業を書き出す…']),
     );
+    // 中のスイッチは、Mac の見出しと同じに効く
+    fireEvent.click(within(tools).getByRole('switch', { name: 'Remote Control' }));
+    fireEvent.click(within(tools).getByRole('switch', { name: '離席モード' }));
+    await flush();
+    expect(api.argsOf('sessions.setRemoteControl')).toEqual([['s1', true]]);
+    expect(api.argsOf('sessions.setAway')).toEqual([['s1', true]]);
     fireEvent.click(screen.getByRole('button', { name: '作業を書き出す…' }));
     expect(header.querySelector('.claude-header-tools')).toBeNull();
     fireEvent.click(more());
