@@ -79,6 +79,8 @@ import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 import { MobileBar } from './mobile/MobileBar';
+import { ContextMenu } from './explorer/ContextMenu';
+import { isRemoteMode } from './remote/mode';
 import { MobileTabs, MobileWaiting, type MobileTab } from './mobile/MobileTabs';
 import { useMobileLayout } from './mobile/useMobileLayout';
 
@@ -665,6 +667,18 @@ export function App() {
       (error: unknown) => window.alert(t('app.sidePanel.addFolderFailed', { error: errorMessage(error) })),
     );
   }, [viewId]);
+  // スマホの画面では、Mac のダイアログが無いので、最近使ったフォルダの一覧から選ぶ（Issue #464）
+  const [recentFolderMenu, setRecentFolderMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
+  const addRecentFolder = useCallback(
+    (folder: string) => {
+      if (!viewId) return;
+      window.tanacode.workspace.addRecentFolder(viewId, folder).then(
+        (folders) => setDraft((d) => (d && d.id === viewId ? { ...d, added: folders } : d)),
+        (error: unknown) => window.alert(t('app.sidePanel.addFolderFailed', { error: errorMessage(error) })),
+      );
+    },
+    [viewId],
+  );
   const removeFolder = useCallback(
     (folder: string) => {
       if (!viewId) return;
@@ -1224,7 +1238,31 @@ export function App() {
               <div className="side-panel-title">
                 {panelLabel(shownPanel)}
                 {shownPanel === 'files' && canEditFolders && (
-                  <IconButton size="sm" icon={AddIcon} label={t('app.sidePanel.addFolder')} tip={t('app.sidePanel.addFolderTip')} onClick={addFolder} />
+                  <IconButton
+                    size="sm"
+                    icon={AddIcon}
+                    label={t('app.sidePanel.addFolder')}
+                    tip={t('app.sidePanel.addFolderTip')}
+                    onClick={(e) => {
+                      if (!isRemoteMode()) return addFolder();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setRecentFolderMenu({ x: rect.left, y: rect.bottom + 4, anchor: e.currentTarget });
+                    }}
+                  />
+                )}
+                {recentFolderMenu && (
+                  <ContextMenu
+                    x={recentFolderMenu.x}
+                    y={recentFolderMenu.y}
+                    anchor={recentFolderMenu.anchor}
+                    items={(() => {
+                      const choices = recentFolders.filter((dir) => dir !== cwd);
+                      return choices.length > 0
+                        ? choices.map((dir) => ({ label: dir.replace(/^\/Users\/[^/]+/, '~'), onSelect: () => addRecentFolder(dir) }))
+                        : [{ label: t('app.sidePanel.noRecentFolder'), disabled: true, onSelect: () => {} }];
+                    })()}
+                    onClose={() => setRecentFolderMenu(null)}
+                  />
                 )}
               </div>
               <div hidden={shownPanel !== 'files'} className="side-body">

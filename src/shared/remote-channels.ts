@@ -165,6 +165,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.FolderOpen]: same(['string']),
   [IpcChannel.WorkspaceInfo]: same(['string']),
   [IpcChannel.WorkspaceAddFolder]: replace(['string'], 'フォルダを選ぶ Mac のダイアログ'),
+  // スマホの画面は、最近使ったフォルダの一覧から選ぶ（main が、一覧にあるかを確かめる）
+  [IpcChannel.WorkspaceAddRecentFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceRemoveFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceKeepReadFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceDismissRead]: same(['string', 'string']),

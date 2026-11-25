@@ -6,6 +6,7 @@ import type { ProfilesState } from '@shared/profile';
 import { AccountPanel } from '../../src/renderer/src/account/AccountPanel';
 import { ProfilesDialog } from '../../src/renderer/src/account/ProfilesDialog';
 import { closeProfilesDialog, defaultClaudeDir, useProfilesDialog } from '../../src/renderer/src/account/profiles';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -222,6 +223,23 @@ describe('プロファイルの管理ダイアログ', () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(api.argsOf('profiles.add')).toEqual([[{ name: 'Work', color: '#9083cf', claudeDir: '~/.claude-work' }]]);
     expect(api.argsOf('profiles.switch')).toEqual([['p3']]);
+  });
+
+  it('スマホの画面では、フォルダを選ばずに、Mac で選ぶよう伝える', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    api = mockApi({ 'profiles.get': () => Promise.resolve(TWO) });
+    api.install();
+    setRemoteMode(true);
+    try {
+      render(<ProfilesDialog mode="add" onClose={() => {}} />);
+      await screen.findAllByLabelText('名前');
+      fireEvent.click(screen.getByRole('button', { name: '選ぶ…' }));
+      expect(alert).toHaveBeenCalledWith('ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）');
+      expect(api.argsOf('profiles.pickDir')).toEqual([]);
+    } finally {
+      setRemoteMode(false);
+      alert.mockRestore();
+    }
   });
 
   it('足せなければ理由を出して、欄はそのまま。選ぶのをやめたら、フォルダは変えない', async () => {

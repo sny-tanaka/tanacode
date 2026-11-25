@@ -146,6 +146,7 @@ export const IpcChannel = {
   ShellReveal: 'shell:reveal',
   WorkspaceInfo: 'workspace:info',
   WorkspaceAddFolder: 'workspace:add-folder',
+  WorkspaceAddRecentFolder: 'workspace:add-recent-folder',
   WorkspaceRemoveFolder: 'workspace:remove-folder',
   WorkspaceKeepReadFolder: 'workspace:keep-read-folder',
   WorkspaceDismissRead: 'workspace:dismiss-read',
@@ -1030,6 +1031,9 @@ export type TanacodeApi = {
     // 追加したあとのフォルダの一覧を返す（取りやめたら null）。追加できなければ理由を添えて失敗する。
     // 動いているセッションでは、Claude Code の手が空いたときに --resume で起動し直して、--add-dir で渡す
     addFolder(sessionId: string): Promise<string[] | null>;
+    // 最近使ったフォルダ（このプロファイルのセッションのフォルダ）の 1 つを、ワークスペースに追加する（スマホの画面。Mac のダイアログが無いので、
+    // 一覧から選ぶ。Issue #464）。最近使ったフォルダでなければ断る。返す値は addFolder と同じ
+    addRecentFolder(sessionId: string, folder: string): Promise<string[]>;
     // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとのフォルダの一覧を返す
     removeFolder(sessionId: string, folder: string): Promise<string[]>;
     // Claude がフォルダの外で読んだリポジトリ（SessionSummary.readFolders のどれか）を、手で足した追加フォルダに移す（--add-dir で渡す）。
@@ -1283,6 +1287,7 @@ export type IpcInvoke = {
   [IpcChannel.FolderOpen]: Api['folders']['open'];
   [IpcChannel.WorkspaceInfo]: Api['workspace']['info'];
   [IpcChannel.WorkspaceAddFolder]: Api['workspace']['addFolder'];
+  [IpcChannel.WorkspaceAddRecentFolder]: Api['workspace']['addRecentFolder'];
   [IpcChannel.WorkspaceRemoveFolder]: Api['workspace']['removeFolder'];
   [IpcChannel.WorkspaceKeepReadFolder]: Api['workspace']['keepReadFolder'];
   [IpcChannel.WorkspaceDismissRead]: Api['workspace']['dismissRead'];

@@ -8,6 +8,7 @@ import { syncSharedPrefs } from '../sharedPrefs';
 import { guardLinks } from './links';
 import { BEFORE_RELOAD, setRemoteConnected, setRemoteMode } from './mode';
 import { RemoteTransport } from './transport';
+import { downloadFile } from './download';
 import '../global.css';
 
 // スマホの画面の入口（遠隔サーバーが /app/ で配る。Issue #464）。Mac の画面と同じ App を、WebSocket の window.tanacode で動かす。
@@ -42,7 +43,11 @@ void transport.start().then(async (ready) => {
   localStorage.setItem(PROFILE_KEY, profileId);
   transport.useProfile(profileId);
   // ドロップしたファイルの Mac の上のパスは、スマホでは分からない
-  (window as unknown as { tanacode: unknown }).tanacode = createApi(transport.api(() => '', () => ready.language));
+  const api = createApi(transport.api(() => '', () => ready.language));
+  // Mac にしか無いものを、スマホのものに置き換える: 外のページはスマホのブラウザの新しいタブで開き、書き出したファイルはスマホにダウンロードする
+  api.browser.openExternal = async (url) => void window.open(url);
+  api.sessions.saveExport = async (html, fileName) => downloadFile(html, fileName);
+  (window as unknown as { tanacode: unknown }).tanacode = api;
   setLanguage(ready.language);
   document.documentElement.lang = ready.language;
   // 共有の表示設定（カラムの幅など）は、スマホでは手元だけ（遠隔では呼べないので、すぐに手元の値で始まる）

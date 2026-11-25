@@ -7526,6 +7526,12 @@ body.resizing-rows webview {
   margin: 4px 2px;
   background: var(--border-subtle);
 }
+/* スマホの画面で「別のフォルダを選ぶ…」の代わりに出す一言 */
+.folder-menu-note {
+  padding: 6px 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
 
 /* ワークフローの再開（resumeFromRunId） */
 .workflow-badge {

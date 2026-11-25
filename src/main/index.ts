@@ -1100,6 +1100,12 @@ function registerIpc(): void {
     const folder = await pickFolder(p, t('main.dialog.addFolder'), p.cwdOf(id));
     return folder ? p.addFolder(id, folder) : null;
   });
+  // スマホの画面は、最近使ったフォルダ（このプロファイルのセッションのフォルダ）からだけ選べる（画面から好きなパスを渡させない。Issue #464）
+  handle(IpcChannel.WorkspaceAddRecentFolder, (e, id: string, folder: string) => {
+    const p = P(e);
+    if (!p.manager.list().some((s) => (s.worktree?.root ?? s.cwd) === folder)) throw new Error(t('main.dialog.notRecentFolder'));
+    return p.addFolder(id, folder);
+  });
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
   handle(IpcChannel.WorkspaceKeepReadFolder, (e, id: string, folder: string) => P(e).keepReadFolder(id, folder));
   handle(IpcChannel.WorkspaceDismissRead, (e, id: string, path: string) => P(e).manager.removeOutsideRead(id, path));

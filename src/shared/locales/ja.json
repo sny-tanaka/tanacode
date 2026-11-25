@@ -63,7 +63,8 @@
       "languageRestartDetail": "言語は、tanacode を起動し直したときに切り替わります。「あとで」を選んだときは、次に起動したときから日本語になります。",
       "restartNow": "今すぐ再起動",
       "restartLater": "あとで",
-      "addFolder": "ワークスペースに追加するフォルダを選択"
+      "addFolder": "ワークスペースに追加するフォルダを選択",
+      "notRecentFolder": "最近使ったフォルダではありません"
     },
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
@@ -1345,7 +1346,8 @@
       "addFolder": "フォルダを追加",
       "addFolderTip": "フォルダを追加\nエクスプローラーに並べ、Claude Code にも作業できるフォルダとして渡します",
       "addFolderFailed": "フォルダを追加できませんでした: {error}",
-      "removeFolderFailed": "フォルダを外せませんでした: {error}"
+      "removeFolderFailed": "フォルダを外せませんでした: {error}",
+      "noRecentFolder": "足せる最近のフォルダがありません。新しいフォルダは Mac で足してください"
     },
     "session": {
       "openFailed": "セッションを開けませんでした: {error}",
@@ -1568,7 +1570,8 @@
       "recent": "最近のフォルダ",
       "forget": "{name} を最近のフォルダから外す",
       "forgetTip": "最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）",
-      "pickOther": "別のフォルダを選ぶ…"
+      "pickOther": "別のフォルダを選ぶ…",
+      "openOnMac": "新しいフォルダは Mac で開いてください"
     },
     "import": {
       "placeholder": "既存の Claude Code の会話を探す（タイトル・フォルダ）",
@@ -2618,6 +2621,7 @@
     "connected": "Mac とつながっています",
     "reconnecting": "Mac につなぎ直しています",
     "waiting": "ほかの {count} 件が答えを待っています",
+    "pickOnMac": "ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）",
     "tab": {
       "chat": "チャット",
       "panel": "パネル",

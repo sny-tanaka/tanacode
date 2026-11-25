@@ -248,6 +248,7 @@ export function createApi({ invoke, send, subscribe, pathForFile, language }: Ap
       trashEntry: (sessionId, path) => invoke(IpcChannel.TrashEntry, sessionId, path),
       writeFile: (sessionId, relPath, text, expected) => invoke(IpcChannel.WriteFile, sessionId, relPath, text, expected),
       addFolder: (sessionId) => invoke(IpcChannel.WorkspaceAddFolder, sessionId),
+      addRecentFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceAddRecentFolder, sessionId, folder),
       removeFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceRemoveFolder, sessionId, folder),
       keepReadFolder: (sessionId, folder) => invoke(IpcChannel.WorkspaceKeepReadFolder, sessionId, folder),
       dismissRead: (sessionId, path) => invoke(IpcChannel.WorkspaceDismissRead, sessionId, path),

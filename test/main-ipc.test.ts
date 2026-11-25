@@ -592,6 +592,25 @@ describe('画面の読み込み直し（⌘R）', () => {
 });
 
 describe('ワークスペースに追加するフォルダ', () => {
+  it('スマホの画面は、最近使ったフォルダ（このプロファイルのセッションのフォルダ・worktree は元のフォルダ）だけを足せる。ほかは断る', async () => {
+    await boot();
+    const other = join(state.root, 'other');
+    const repo = join(state.root, 'repo');
+    for (const dir of [other, repo]) mkdirSync(dir);
+    manager().addedFoldersOf.mockReturnValue([]);
+    manager().list.mockReturnValue([
+      { id: 's1', cwd: cwdOf('s1'), worktree: null },
+      { id: 's2', cwd: join(repo, '.claude/worktrees/x'), worktree: { root: repo } },
+      { id: 's3', cwd: other, worktree: null },
+    ]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', other)).resolves.toEqual([other]);
+    manager().addedFoldersOf.mockReturnValue([other]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', repo)).resolves.toEqual([other, repo]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', '/etc')).rejects.toThrow('最近使ったフォルダではありません');
+    // ダイアログは出さない
+    expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
+  });
+
   it('追加するフォルダは、セッションのフォルダから始まるダイアログで選ぶ。取りやめたら null で、何も変えない', async () => {
     await boot();
     await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).resolves.toBeNull();
