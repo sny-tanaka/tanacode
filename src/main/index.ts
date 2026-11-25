@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
@@ -20,6 +20,9 @@ import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { IpcDispatcher, type Caller } from './remote-dispatch';
+import { RemoteHost } from './remote-host';
+import { publicOriginOf } from '@shared/remote-protocol';
+import { isRemotePort, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -137,15 +140,23 @@ function isAppContents(contents: WebContents): boolean {
 // preload も同じ表で型を付けるので、食い違うと型チェックで止まる
 // アプリ全体の知らせ（新しいバージョン・CPU とメモリなど）は、どのプロファイルの画面にも送る
 function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void {
-  for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) sendTo(id)(channel, payload);
+  for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) deliver(id, channel, payload);
+  // 遠隔の接続には 1 回だけ（プロファイルの数だけ重ねて送らない）
+  remoteHost.emitAll(channel, payload);
 }
 
-// プロファイル id の画面への知らせ
+// プロファイル id の画面と、そのプロファイルを許した遠隔の接続への知らせ
 function sendTo(id: string): Send {
   return (channel, payload) => {
-    const contents = contentsOf(id);
-    if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+    deliver(id, channel, payload);
+    remoteHost.emit(id, channel, payload);
   };
+}
+
+// プロファイル id の（Mac の）画面への知らせ
+function deliver<C extends keyof IpcEvent>(id: string, channel: C, payload: IpcEvent[C]): void {
+  const contents = contentsOf(id);
+  if (contents && !contents.isDestroyed()) contents.send(channel, payload);
 }
 
 // プロファイル id の画面
@@ -208,6 +219,88 @@ function profileOfCaller(caller: Caller): Profile {
 // テスト（test/helpers/main-app.ts の invokeRemote）も、ここから遠隔の道を通す
 const dispatcher = new IpcDispatcher();
 export { dispatcher as remoteDispatcher };
+
+// 遠隔サーバー（utilityProcess。remote-server.ts）の持ち手。メニューバーの「遠隔操作」で入り・切りする（applyRemote）
+const remoteHost = new RemoteHost({
+  spawn: () => {
+    const child = utilityProcess.fork(join(__dirname, 'remote-server.js'), [], { serviceName: 'tanacode Remote', stdio: 'pipe' });
+    // 落ちたときに理由を読めるよう、遠隔サーバーの出力を記録に回す（頼みの中身や秘密は書かない作り）
+    child.stdout?.on('data', (data: Buffer) => console.log(`[remote-server] ${String(data).trimEnd()}`));
+    child.stderr?.on('data', (data: Buffer) => console.error(`[remote-server] ${String(data).trimEnd()}`));
+    return {
+      post: (message) => child.postMessage(message),
+      onMessage: (listener) => child.on('message', listener),
+      onExit: (listener) => child.on('exit', listener),
+      kill: () => child.kill(),
+    };
+  },
+  call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
+  // 待ち受けの様子・つながっている数を、メニューバーの様子の文に出し直す（どちらも、起動して設定を読んだあとにしか届かない）
+  onStatus: () => buildMenu(),
+  onConnections: () => buildMenu(),
+  log: (message) => console.error(message),
+});
+
+// 設定のダイアログに出すもの
+function remoteState(): RemoteSettingsState {
+  return { settings: settings.remote(), status: remoteHost.current(), connections: remoteHost.connectionCount() };
+}
+
+// 設定のダイアログから、ポートと公開する URL を変える。形が違えば理由を添えて失敗する。待ち受けている間に変えたら、始め直す
+function setRemoteSettings(input: RemoteSettingsInput): RemoteSettingsState {
+  const port = typeof input?.port === 'number' ? input.port : Number.NaN;
+  const publicUrl = typeof input?.publicUrl === 'string' ? input.publicUrl.trim() : '';
+  if (!isRemotePort(port)) throw new Error(t('main.error.remotePort'));
+  if (publicUrl !== '' && !publicOriginOf(publicUrl)) throw new Error(t('main.error.remotePublicUrl'));
+  const current = settings.remote();
+  // 公開する URL を消したら、待ち受けもやめる
+  settings.setRemote({ enabled: current.enabled && publicUrl !== '', port, publicUrl });
+  applyRemote();
+  buildMenu();
+  return remoteState();
+}
+
+// メニューバーの「遠隔操作を使う」
+function setRemoteEnabled(item: MenuItem): void {
+  const current = settings.remote();
+  try {
+    settings.setRemote({ ...current, enabled: item.checked && publicOriginOf(current.publicUrl) !== null });
+  } catch {
+    item.checked = !item.checked;
+    return;
+  }
+  applyRemote();
+  buildMenu();
+}
+
+// メニューバーに出す、待ち受けの様子
+function remoteStatusLabel(status: RemoteStatus): string {
+  switch (status.state) {
+    case 'off':
+      return t('main.menu.remoteStatus.off');
+    case 'starting':
+      return t('main.menu.remoteStatus.starting');
+    case 'listening':
+      return t('main.menu.remoteStatus.listening', { port: status.port, count: remoteHost.connectionCount() });
+    case 'in-use':
+      return t('main.menu.remoteStatus.inUse', { port: status.port });
+    case 'failed':
+      return t('main.menu.remoteStatus.failed');
+  }
+}
+
+// 遠隔操作を作っている間（Issue #464 の段階 1 が揃うまで）は、TANACODE_REMOTE_ACCESS=1 で起動したときだけ、メニューに出して待ち受ける
+// （本人確認ができるまでは、誰もつなげない待ち受けになるため。リリースに未完成の項目を出さない）
+const remoteAccessAvailable = () => process.env.TANACODE_REMOTE_ACCESS === '1';
+
+// 遠隔操作の設定に合わせて、待ち受けを始める・やめる
+function applyRemote(): void {
+  if (!remoteAccessAvailable()) return remoteHost.stop();
+  const remote = settings.remote();
+  const publicOrigin = publicOriginOf(remote.publicUrl);
+  if (remote.enabled && publicOrigin) remoteHost.start({ port: remote.port, publicOrigin });
+  else remoteHost.stop();
+}
 
 // 画面からの呼び出しと知らせは、どれもここで受け口を登録する。ipcMain からは、アプリの画面のメインフレームから来たものだけを受ける。
 // 受け口には、送り元の代わりに呼び出し元（Caller）を渡す。遠隔の接続から呼んでも、同じ受け口が同じに動くように
@@ -989,6 +1082,14 @@ function registerIpc(): void {
     settings.setParentAskRulesEnabled(on);
     return settings.parentAskRulesEnabled();
   });
+  handle(IpcChannel.RemoteSettingsGet, (e) => {
+    P(e);
+    return remoteState();
+  });
+  handle(IpcChannel.RemoteSettingsSet, (e, input: RemoteSettingsInput) => {
+    P(e);
+    return setRemoteSettings(input);
+  });
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
@@ -1038,6 +1139,34 @@ async function saveAttachment(name: string, data: Uint8Array): Promise<string> {
   return file;
 }
 
+// メニューバーの「遠隔操作」（スマホから。Issue #464）。Mac の設定なので、スマホには出さない。公開する URL を決めるまでは、入れられない
+function remoteMenu(): MenuItemConstructorOptions {
+  return {
+    id: 'remote',
+    label: t('main.menu.remote'),
+    submenu: [
+      {
+        id: 'remoteEnabled',
+        label: t('main.menu.remoteEnabled'),
+        type: 'checkbox',
+        checked: settings.remote().enabled,
+        enabled: publicOriginOf(settings.remote().publicUrl) !== null,
+        click: (item) => setRemoteEnabled(item),
+      },
+      {
+        id: 'remoteSettings',
+        label: t('main.menu.remoteSettings'),
+        click: () => {
+          showWindow();
+          sendTo(activeId)(IpcChannel.RemoteSettingsOpen, undefined);
+        },
+      },
+      { type: 'separator' },
+      { id: 'remoteStatus', label: remoteStatusLabel(remoteHost.current()), enabled: false },
+    ],
+  };
+}
+
 function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -1060,6 +1189,7 @@ function buildMenu(): void {
               sendTo(activeId)(IpcChannel.McpSettingsOpen, undefined);
             },
           },
+          ...(remoteAccessAvailable() ? [remoteMenu()] : []),
           { type: 'separator' },
           { id: 'usageLimitResume', label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
           {
@@ -1648,6 +1778,8 @@ app.whenReady().then(async () => {
       );
     }
   }
+  // 遠隔操作（既定はオフ）。プロファイルを開いたあと（遠隔の接続は、開いたプロファイルにだけ届く）
+  applyRemote();
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
   appUpdates = new AppUpdateMonitor(
@@ -1695,6 +1827,9 @@ app.whenReady().then(async () => {
   app.on('browser-window-focus', () => void claudeVersions.refresh());
   app.on('activate', () => showWindow());
 });
+
+// 終わるときに、遠隔の待ち受けをやめる（接続を切る）
+app.on('will-quit', () => remoteHost.stop());
 
 app.on('before-quit', (event) => {
   if (!quitDecided) {

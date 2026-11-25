@@ -46,6 +46,7 @@ export default defineConfig({
     resolve: { alias: { '@shared': resolve('src/shared') } },
     plugins: [virtualChunkSourcemap],
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
+    // remote-server: 遠隔操作（スマホから）の待ち受け。アプリが utilityProcess で起動する
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
     // instructions-hook: TANACODE.md を Claude に渡す SessionStart のフック（Claude Code が起動する）
     // worktree-guard-hook: worktree やブランチを消す操作で、失うものが無いかを確かめる（Bash の PreToolUse のフックが起動する）
@@ -56,6 +57,7 @@ export default defineConfig({
         input: {
           index: resolve('src/main/index.ts'),
           'pty-host': resolve('src/main/pty-host.ts'),
+          'remote-server': resolve('src/main/remote-server.ts'),
           'browser-mcp': resolve('src/main/browser-mcp.ts'),
           'sessions-mcp': resolve('src/main/sessions-mcp.ts'),
           'checklist-mcp': resolve('src/main/checklist-mcp.ts'),

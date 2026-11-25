@@ -3,7 +3,7 @@ import { t } from '@shared/i18n';
 import { IpcChannel } from '@shared/ipc';
 import { checkArgs, IpcDispatcher, RemoteCallError, type RemoteCaller } from '../src/main/remote-dispatch';
 
-const caller: RemoteCaller = { kind: 'remote', profileId: 'default', clientId: 'c1' };
+const caller: RemoteCaller = { kind: 'remote', profileId: 'default', clientId: 'c1', registrationId: 'r1' };
 
 describe('checkArgs（遠隔から届いた引数の形）', () => {
   it('形が合えば、届いた数のまま返す', () => {
@@ -49,6 +49,17 @@ describe('checkArgs（遠隔から届いた引数の形）', () => {
     for (let i = 0; i < 20; i++) deep = { a: deep };
     expect(checkArgs(['object'], [deep])).toBe(t('main.error.remoteArg.tooDeep', { index: 1 }));
     expect(checkArgs(['array'], [Array.from({ length: 10001 }, () => 0)])).toBe(t('main.error.remoteArg.tooManyEntries', { index: 1 }));
+  });
+
+  it('bytes の位置の { $bytes } は Uint8Array に戻す。ほかの位置の同じ形のオブジェクトは、そのまま', () => {
+    expect(checkArgs(['string', 'bytes'], ['a.png', { $bytes: Buffer.from('abc').toString('base64') }])).toEqual(['a.png', new Uint8Array(Buffer.from('abc'))]);
+    expect(checkArgs(['object'], [{ $bytes: 'YWJj' }])).toEqual([{ $bytes: 'YWJj' }]);
+    expect(checkArgs(['bytes'], [{ $bytes: '***' }])).toBe(t('main.error.remoteArg.wrongType', { index: 1, shape: 'bytes' }));
+  });
+
+  it('オブジェクトのキーが多すぎても断る', () => {
+    const many = Object.fromEntries(Array.from({ length: 10001 }, (_, i) => [`k${i}`, i]));
+    expect(checkArgs(['object'], [many])).toBe(t('main.error.remoteArg.tooManyEntries', { index: 1 }));
   });
 
   it('ふつうのオブジェクトでないもの（Date など）を断る', () => {

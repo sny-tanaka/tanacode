@@ -28,7 +28,10 @@
         "tooManyEntries": "{index} つ目の引数の要素が多すぎます",
         "forbiddenKey": "{index} つ目の引数に、使えないキー（{key}）があります",
         "notPlain": "{index} つ目の引数が、ふつうのオブジェクトではありません"
-      }
+      },
+      "remotePort": "ポートは 1024〜65535 の数で決めてください",
+      "remotePublicUrl": "公開する URL は、https で始まり、パスの無いもの（例: https://mac.example.ts.net）にしてください",
+      "remoteProfileNotAllowed": "この接続には許していないプロファイルです"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",
@@ -86,6 +89,16 @@
         "closeTab": "タブを閉じる",
         "toggleTerminal": "ターミナルを開く・閉じる",
         "focusQuestion": "待っている質問・許可"
+      },
+      "remote": "遠隔操作",
+      "remoteEnabled": "遠隔操作を使う",
+      "remoteSettings": "遠隔操作の設定…",
+      "remoteStatus": {
+        "off": "止まっています",
+        "starting": "始めています…",
+        "listening": "127.0.0.1:{port} で待ち受けています（つながっているもの {count}）",
+        "inUse": "ポート {port} が使われているため、待ち受けられません",
+        "failed": "待ち受けられませんでした"
       }
     },
     "notification": {
@@ -2542,5 +2555,17 @@
         "option": "選択肢から選んでください"
       }
     }
+  },
+  "remote": {
+    "title": "遠隔操作の設定",
+    "description": "スマホなどから、この Mac の tanacode を操作するための待ち受けの設定です。tanacode はこの Mac の中（127.0.0.1）だけで待ち受けるので、外から届かせるには、tailscale serve などの転送を前に置きます。入り・切りは、メニューバーの「遠隔操作を使う」で行います。",
+    "warning": "遠隔操作を使うと、本人確認を通った相手は、この Mac の前に座っているのと同じことができます（ターミナルでのコマンドの実行も含む）。",
+    "publicUrl": "公開する URL",
+    "publicUrlHint": "スマホで開く URL。転送が出す https の URL をそのまま入れます（例: tailscale serve なら https://<Mac の名前>.<tailnet の名前>.ts.net）。",
+    "port": "待ち受けるポート",
+    "portHint": "転送の先にするポート（127.0.0.1 のこのポート）。使われていたら、待ち受けずに止まります。",
+    "status": "いまの様子",
+    "loadFailed": "遠隔操作の設定を読めませんでした: {error}",
+    "saveFailed": "遠隔操作の設定を保存できませんでした: {error}"
   }
 }

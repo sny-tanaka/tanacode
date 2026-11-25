@@ -6,6 +6,7 @@ import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
 import { cleanLinks, type CredentialLink } from '@shared/credential-links';
 import { customPromptsOf, type CustomPrompts } from '@shared/prompts';
 import { toolPermissionsOf, type ToolPermission } from '@shared/tool-permissions';
+import { DEFAULT_REMOTE_SETTINGS, remoteSettingsOf, type RemoteSettings } from '@shared/remote-settings';
 
 // 登録した Claude Code の設定ファイル。覚えるのは名前とパスだけ（中身は預からない）
 export type StoredSettingsFile = { id: string; name: string; path: string };
@@ -32,7 +33,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
 // prompts: tanacode が人の代わりに Claude に送る文のうち、利用者が変えた欄（アプリ全体で 1 つ。既定のプロファイルの設定のファイルに置く。shared/prompts.ts）/
 // language: 画面の言語（system は Mac の言語の設定に合わせる）/
-// profilesMerged: 足したプロファイルの設定を、アプリ全体の設定に移し替えたか（mergeProfiles。一度だけ）
+// profilesMerged: 足したプロファイルの設定を、アプリ全体の設定に移し替えたか（mergeProfiles。一度だけ）/
+// remote: 遠隔操作（スマホから）の待ち受けの設定（shared/remote-settings.ts）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -54,6 +56,7 @@ type Values = {
   prompts: CustomPrompts;
   language: LanguageSetting;
   profilesMerged: boolean;
+  remote: RemoteSettings;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -190,6 +193,14 @@ export class AppSettings {
     this.update({ terminalControl: on });
   }
 
+  remote(): RemoteSettings {
+    return { ...this.values.remote };
+  }
+
+  setRemote(remote: RemoteSettings): void {
+    this.update({ remote: { ...remote } });
+  }
+
   usageLimitResumeEnabled(): boolean {
     return this.values.usageLimitResume;
   }
@@ -294,6 +305,7 @@ function load(file: string): Values {
       prompts?: unknown;
       language?: unknown;
       profilesMerged?: unknown;
+      remote?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -316,9 +328,10 @@ function load(file: string): Values {
       prompts: customPromptsOf(data.prompts),
       language: isLanguageSetting(data.language) ? data.language : 'system',
       profilesMerged: data.profilesMerged === true,
+      remote: remoteSettingsOf(data.remote),
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], credentialLinks: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, parentAskRules: false, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], credentialLinks: [], sessionsControl: true, sessionsStartConfirm: true, toolPermissions: {}, parentAskRules: false, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, awayWaitMinutes: DEFAULT_AWAY_WAIT_MINUTES, usageLimitResume: true, prompts: {}, language: 'system', profilesMerged: false, remote: { ...DEFAULT_REMOTE_SETTINGS } };
   }
 }
 

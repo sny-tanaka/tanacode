@@ -200,6 +200,7 @@ export type MenuItem = {
 
 function freshState() {
   return {
+    utilityProcesses: [] as (Emitter & { modulePath: string; posted: unknown[]; killed: boolean })[],
     root: '',
     userData: '',
     downloads: '',
@@ -358,6 +359,15 @@ export const electronModule = {
     sendActionToFirstResponder: (action: string) => state.firstResponderActions.push(action),
   },
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
+  // 遠隔サーバー（remote-server.js）の起動。作った子のプロセスを state.utilityProcesses に控える（送った伝文・止めたか）
+  utilityProcess: {
+    fork: (modulePath: string, args: string[], options: unknown) => {
+      const child = Object.assign(new Emitter(), { modulePath, args, options, posted: [] as unknown[], killed: false });
+      Object.assign(child, { postMessage: (message: unknown) => child.posted.push(message), kill: () => (child.killed = true) });
+      state.utilityProcesses.push(child);
+      return child;
+    },
+  },
   Notification: FakeNotification,
   powerMonitor: { on: (event: string, listener: Listener) => state.powerMonitor.on(event, listener) },
   screen: {
@@ -774,7 +784,7 @@ export async function invokeWith(event: { sender: unknown; senderFrame: FakeFram
 // 遠隔の接続（スマホ）からの頼み。Mac の画面と同じ受け口を、IpcDispatcher の fromRemote で呼ぶ
 export async function invokeRemote(profileId: string, channel: string, ...args: unknown[]): Promise<unknown> {
   if (!mainModule) throw new Error('boot() の前です');
-  return await mainModule.remoteDispatcher.fromRemote({ kind: 'remote', profileId, clientId: 'test' }, channel, args);
+  return await mainModule.remoteDispatcher.fromRemote({ kind: 'remote', profileId, clientId: 'test', registrationId: 'test' }, channel, args);
 }
 
 // 遠隔の接続から呼べる受け口のチャンネル

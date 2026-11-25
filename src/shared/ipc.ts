@@ -28,6 +28,7 @@ import type { Language } from './i18n';
 import type { CustomPrompts, PromptChanges } from './prompts';
 import type { McpEnabled, ToolPermission } from './tool-permissions';
 import type { McpToolGroup } from './mcp-tools';
+import type { RemoteSettingsInput, RemoteSettingsState } from './remote-settings';
 import type { SessionMcp } from './mcp-status';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 import type { NetworkPresetName } from './browser-tools';
@@ -202,6 +203,10 @@ export const IpcChannel = {
   ToolPermissionsSet: 'tool-permissions:set',
   ParentAskRulesSet: 'mcp-settings:set-parent-ask-rules',
   McpSettingsOpen: 'mcp-settings:open',
+  // 遠隔操作（スマホから。Issue #464）の設定。メニューバーの「遠隔操作の設定…」で開くダイアログが読む・変える / ダイアログを開かせる
+  RemoteSettingsGet: 'remote:settings-get',
+  RemoteSettingsSet: 'remote:settings-set',
+  RemoteSettingsOpen: 'remote:settings-open',
   ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
@@ -813,6 +818,13 @@ export type TanacodeApi = {
     setParentAskRules(on: boolean): Promise<boolean>;
     onOpen(listener: () => void): () => void;
   };
+  // 遠隔操作の設定（メニューバーから開くダイアログ。スマホからは呼べない）。settings: 今の設定と待ち受けの様子 /
+  // setSettings: ポートと公開する URL を変える（形が違えば理由を添えて失敗する）/ onOpen: メニューバーから開かせる
+  remote: {
+    settings(): Promise<RemoteSettingsState>;
+    setSettings(input: RemoteSettingsInput): Promise<RemoteSettingsState>;
+    onOpen(listener: () => void): () => void;
+  };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
   shortcuts: {
@@ -1184,6 +1196,8 @@ export type IpcInvoke = {
   [IpcChannel.McpEnabledSet]: Api['mcpSettings']['setEnabled'];
   [IpcChannel.ToolPermissionsSet]: Api['mcpSettings']['setPermission'];
   [IpcChannel.ParentAskRulesSet]: Api['mcpSettings']['setParentAskRules'];
+  [IpcChannel.RemoteSettingsGet]: Api['remote']['settings'];
+  [IpcChannel.RemoteSettingsSet]: Api['remote']['setSettings'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
@@ -1341,6 +1355,7 @@ export type IpcEvent = {
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
   [IpcChannel.PromptsOpen]: undefined;
   [IpcChannel.McpSettingsOpen]: undefined;
+  [IpcChannel.RemoteSettingsOpen]: undefined;
   [IpcChannel.ShortcutRun]: Payload<Api['shortcuts']['onRun']>;
   [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
   [IpcChannel.BrowserLogin]: Payload<Api['browser']['onLogin']>;

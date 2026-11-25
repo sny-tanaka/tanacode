@@ -526,9 +526,12 @@ describe('TerminalPanel: フォーカス', () => {
     Element.prototype.releasePointerCapture ??= () => {};
     const { rerender } = render(<Switchable sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
-    expect(termOf(0).focused).toBeGreaterThan(0);
+    // CI（カバレッジを測る unit）で、ここが 1 度だけ 0 のまま落ちた（2026-11-25。手元の 3 回では再現せず）。
+    // 次に落ちたときに原因を読めるよう、落ちた時点の様子を失敗の文に残す
+    const where = () => JSON.stringify({ active: `${document.activeElement?.tagName}.${document.activeElement?.className}`, focused: focusCount(), tabs: tabNames() });
+    expect(termOf(0).focused, where()).toBeGreaterThan(0);
     await newShell();
-    expect(termOf(1).focused).toBeGreaterThan(0);
+    expect(termOf(1).focused, where()).toBeGreaterThan(0);
 
     let before = focusCount();
     fireEvent.click(tabs()[0]);

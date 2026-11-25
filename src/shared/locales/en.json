@@ -28,7 +28,10 @@
         "tooManyEntries": "Argument {index} has too many entries",
         "forbiddenKey": "Argument {index} has a key that cannot be used ({key})",
         "notPlain": "Argument {index} is not a plain object"
-      }
+      },
+      "remotePort": "Choose a port number from 1024 to 65535",
+      "remotePublicUrl": "The public URL must start with https and have no path (for example, https://mac.example.ts.net)",
+      "remoteProfileNotAllowed": "This profile is not allowed for this connection"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
@@ -86,6 +89,16 @@
         "closeTab": "Close Tab",
         "toggleTerminal": "Toggle Terminal",
         "focusQuestion": "Pending Question or Permission"
+      },
+      "remote": "Remote Access",
+      "remoteEnabled": "Use Remote Access",
+      "remoteSettings": "Remote Access Settings…",
+      "remoteStatus": {
+        "off": "Stopped",
+        "starting": "Starting…",
+        "listening": "Listening on 127.0.0.1:{port} ({count} connected)",
+        "inUse": "Cannot listen because port {port} is in use",
+        "failed": "Could not start listening"
       }
     },
     "notification": {
@@ -2622,5 +2635,17 @@
         "option": "Choose from the options"
       }
     }
+  },
+  "remote": {
+    "title": "Remote Access Settings",
+    "description": "Settings for operating tanacode on this Mac from a phone or another device. tanacode listens only inside this Mac (127.0.0.1), so put a forwarder such as tailscale serve in front of it to reach it from outside. Turn it on or off with Use Remote Access in the menu bar.",
+    "warning": "With remote access, anyone who passes the identity check can do everything you can do in front of this Mac, including running commands in the terminal.",
+    "publicUrl": "Public URL",
+    "publicUrlHint": "The URL you open on your phone. Enter the https URL your forwarder gives (for example, with tailscale serve: https://<Mac name>.<tailnet name>.ts.net).",
+    "port": "Port to listen on",
+    "portHint": "The port the forwarder sends to (this port on 127.0.0.1). If it is in use, tanacode stops instead of listening.",
+    "status": "Status",
+    "loadFailed": "Could not read the remote access settings: {error}",
+    "saveFailed": "Could not save the remote access settings: {error}"
   }
 }

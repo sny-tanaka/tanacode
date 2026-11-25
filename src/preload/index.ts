@@ -141,6 +141,11 @@ const api: TanacodeApi = {
     setParentAskRules: (on) => invoke(IpcChannel.ParentAskRulesSet, on),
     onOpen: (listener) => subscribe(IpcChannel.McpSettingsOpen, () => listener()),
   },
+  remote: {
+    settings: () => invoke(IpcChannel.RemoteSettingsGet),
+    setSettings: (input) => invoke(IpcChannel.RemoteSettingsSet, input),
+    onOpen: (listener) => subscribe(IpcChannel.RemoteSettingsOpen, () => listener()),
+  },
   shortcuts: {
     onRun: (listener) => subscribe(IpcChannel.ShortcutRun, listener),
   },

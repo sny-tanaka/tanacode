@@ -1344,6 +1344,87 @@ describe('メニュー', () => {
     expect(rest.map((i) => i.role ?? i.id)).toEqual(['editMenu', 'viewMenu', 'go', 'windowMenu']);
   });
 
+  // 遠隔操作は、作っている間（Issue #464 の段階 1 が揃うまで）、TANACODE_REMOTE_ACCESS=1 で起動したときだけ出す
+  const remoteAccess = { before: () => (process.env.TANACODE_REMOTE_ACCESS = '1') };
+
+  it('「遠隔操作」: TANACODE_REMOTE_ACCESS=1 でなければ、メニューに出さず、設定でオンでも待ち受けない', async () => {
+    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    expect(state.menu![0].submenu!.some((i) => i.id === 'remote')).toBe(false);
+    expect(state.utilityProcesses).toEqual([]);
+  });
+
+  it('「遠隔操作」: MCP の設定のすぐ下に置く。公開する URL を決めるまでは入れられない。設定…で、見ているプロファイルの画面にダイアログを開かせる', async () => {
+    await boot(remoteAccess);
+    const ids = state.menu![0].submenu!.map((i) => i.id ?? i.type);
+    expect(ids.indexOf('remote')).toBe(ids.indexOf('mcpSettings') + 1);
+    const remote = menuItem('remote');
+    expect(shape(remote.submenu!)).toEqual(['remoteEnabled', 'remoteSettings', 'separator', 'remoteStatus']);
+    expect(menuItem('remoteEnabled')).toMatchObject({ checked: false, enabled: false });
+    expect(menuItem('remoteStatus')).toMatchObject({ label: '止まっています', enabled: false });
+    menuItem('remoteSettings').click?.({});
+    expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteSettingsOpen, undefined]);
+    // 待ち受けていないので、遠隔サーバーは起動しない
+    expect(state.utilityProcesses).toEqual([]);
+  });
+
+  it('「遠隔操作」: 設定でオンなら、起動したときに遠隔サーバーを起動して待ち受けを頼み、待ち受けたらメニューに出す。オフにしたら止める', async () => {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    const [child] = state.utilityProcesses;
+    expect(child.modulePath).toMatch(/remote-server\.js$/);
+    expect(child.posted).toEqual([{ type: 'listen', config: { port: 50123, publicOrigin: 'https://mac.example.ts.net' } }]);
+    child.emit('message', { type: 'listening', port: 50123 });
+    expect(menuItem('remoteStatus').label).toBe('127.0.0.1:50123 で待ち受けています（つながっているもの 0）');
+    expect(menuItem('remoteEnabled')).toMatchObject({ checked: true, enabled: true });
+    menuItem('remoteEnabled').click?.({ checked: false });
+    expect(child.killed).toBe(true);
+    expect(savedSettings()).toMatchObject({ remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } });
+    expect(menuItem('remoteStatus').label).toBe('止まっています');
+  });
+
+  it('「遠隔操作」: 待ち受けの様子をメニューに出す（始めている・ポートが使われている・始められない）。落ちたら、起動し直さない', async () => {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    const [child] = state.utilityProcesses;
+    expect(menuItem('remoteStatus').label).toBe('始めています…');
+    child.emit('message', { type: 'listen-failed', reason: 'in-use', message: 'EADDRINUSE' });
+    expect(menuItem('remoteStatus').label).toBe('ポート 50123 が使われているため、待ち受けられません');
+    child.emit('message', { type: 'listen-failed', reason: 'other', message: 'boom' });
+    expect(menuItem('remoteStatus').label).toBe('待ち受けられませんでした');
+    child.emit('exit', 1);
+    expect(menuItem('remoteStatus').label).toBe('待ち受けられませんでした');
+    expect(state.utilityProcesses).toHaveLength(1);
+  });
+
+  it('遠隔操作の設定のダイアログ: 今の設定と様子を返す。ポートと公開する URL を確かめて保存し、待ち受けている間なら始め直す', async () => {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    const [child] = state.utilityProcesses;
+    await expect(invoke(IpcChannel.RemoteSettingsGet)).resolves.toEqual({
+      settings: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' },
+      status: { state: 'starting' },
+      connections: 0,
+    });
+    await expect(invoke(IpcChannel.RemoteSettingsSet, { port: 80, publicUrl: 'https://mac.example.ts.net' })).rejects.toThrow('ポートは 1024〜65535 の数で決めてください');
+    await expect(invoke(IpcChannel.RemoteSettingsSet, { port: 50124, publicUrl: 'http://mac.example.ts.net' })).rejects.toThrow('公開する URL は、https で始まり');
+    await expect(invoke(IpcChannel.RemoteSettingsSet, null)).rejects.toThrow('ポートは');
+    await invoke(IpcChannel.RemoteSettingsSet, { port: 50124, publicUrl: ' https://other.example.ts.net ' });
+    expect(savedSettings()).toMatchObject({ remote: { enabled: true, port: 50124, publicUrl: 'https://other.example.ts.net' } });
+    expect(child.posted.at(-1)).toEqual({ type: 'listen', config: { port: 50124, publicOrigin: 'https://other.example.ts.net' } });
+    // 公開する URL を消したら、待ち受けもやめる
+    await invoke(IpcChannel.RemoteSettingsSet, { port: 50124, publicUrl: '' });
+    expect(savedSettings()).toMatchObject({ remote: { enabled: false, port: 50124, publicUrl: '' } });
+    expect(child.killed).toBe(true);
+    expect(menuItem('remoteEnabled')).toMatchObject({ checked: false, enabled: false });
+  });
+
+  it('「遠隔操作を使う」: 保存できなかったら、チェックを元に戻し、待ち受けは変えない', async () => {
+    await boot({ ...remoteAccess, settings: { remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    mkdirSync(join(state.userData, 'settings.json.tmp'));
+    const item = menuItem('remoteEnabled');
+    item.checked = true;
+    item.click?.(item);
+    expect(item.checked).toBe(false);
+    expect(state.utilityProcesses).toEqual([]);
+  });
+
   it('「移動」: ショートカットを区切りごとに並べ、キーを右に出す。押したら、見ているプロファイルの画面に知らせる', async () => {
     await boot();
     const go = state.menu!.find((i) => i.id === 'go')!;

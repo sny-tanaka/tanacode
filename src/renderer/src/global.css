@@ -2996,6 +2996,43 @@ button.session-ref:hover {
 .settings-files-dialog .browser-hosts-input:focus {
   border-color: var(--border-focus);
 }
+/* 遠隔操作の設定（公開する URL・待ち受けるポート・いまの様子） */
+.remote-dialog {
+  width: min(560px, 92vw);
+  outline: none;
+}
+.remote-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 16px 12px;
+}
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.remote-field-label {
+  font-weight: 600;
+}
+.remote-field-hint {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.remote-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+}
+.remote-field input:focus {
+  border-color: var(--border-focus);
+}
 /* Claude に送る文（左に文の種類、右にその文の欄） */
 .prompts-dialog {
   width: min(920px, 92vw);
