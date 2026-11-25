@@ -97,6 +97,26 @@ export class RemoteRegistrations {
     this.write(this.list.map((r) => (r.id === id ? { ...r, lastUsedAt: at, passkey: { ...r.passkey, counter: Math.max(r.passkey.counter, counter) } } : r)));
   }
 
+  // 読めなかった一覧を捨てて、空から始め直す（Mac のダイアログで、持ち主が確かめてから）。通し番号は、控えとファイルの大きいほうより上にする。
+  // 暗号化が使えないときは、書けないので何もしない
+  reset(): void {
+    if (this.trouble === 'unavailable') return;
+    this.seq = Math.max(this.seq, this.seqStore.get(), this.fileSeq());
+    this.trouble = null;
+    this.list = [];
+    this.write([]);
+  }
+
+  // ファイルの通し番号（読めなければ 0）
+  private fileSeq(): number {
+    try {
+      const data = JSON.parse(this.encryptor.decrypt(readFileSync(this.file))) as unknown;
+      return isRecord(data) && typeof data.seq === 'number' ? data.seq : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   private load(): void {
     if (!this.encryptor.available()) {
       this.trouble = 'unavailable';

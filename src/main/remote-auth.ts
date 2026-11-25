@@ -4,10 +4,12 @@ import type { RemoteSession } from '@shared/remote-protocol';
 import type { Registration, RemoteRegistrations } from './remote-registrations';
 
 // 遠隔操作の本人確認のうち、main が持つもの（Issue #464。分け方は shared/remote-auth.ts）。
-// 登録: Mac の「端末を追加」で、登録のコード（8 桁）を作る（10 分。打ち間違いは 5 回まで。正しいコードが 2 回来たら、横取りの試みとして全部を捨てる）→
+// 登録: Mac の「端末を追加」で、登録のコード（8 桁）を作る（10 分。打ち間違いは 5 回まで。パスキーの登録が届いたあとに正しいコードがまた来たら、横取りの試みとして全部を捨てる）→
 //   スマホの PWA がコードを打つ（pair-begin）→ 遠隔サーバーがパスキーの登録を検証し、束縛の鍵の署名と一緒に渡す（pair-finish）→
 //   main が、自分の乱数と公開鍵から確認の数字（6 桁）を作り、スマホに出させる → 持ち主が Mac で数字を打って承認する（approve）→ 登録の一覧に書く
 // ログイン: 遠隔サーバーがパスキーを検証した登録について、main が作った乱数（challenge）への束縛の鍵の署名を確かめ、セッションを作る
+//   乱数は控えずに、期限と main の鍵の HMAC を付けて出す（認証の前の誰かが乱数をたくさん頼んでも、本人の分を押し出せないように）。
+//   使い終えた乱数だけを、期限まで控える（ログインできた本人の分だけなので、増えすぎない）
 
 export const PAIRING_MS = 10 * 60 * 1000;
 export const PAIRING_ATTEMPTS = 5;
@@ -23,7 +25,7 @@ export type PendingPairing = { requestId: string; name: string };
 export type PairingState = { code: string; until: number; pending: PendingPairing[] } | null;
 
 type Pending = PendingPairing & { number: string; credential: Registration['passkey']; bindingJwk: BindingJwk; state: 'pending' | 'approved' | 'rejected' };
-type Pairing = { pairingId: string; code: string; until: number; attempts: number; correct: number; secret: Buffer; userId: string; bindingChallenge: string | null; pending: Map<string, Pending> };
+type Pairing = { pairingId: string; code: string; until: number; attempts: number; secret: Buffer; userId: string; bindingChallenge: string | null; pending: Map<string, Pending> };
 
 export type RemoteAuthDeps = {
   registrations: RemoteRegistrations;
@@ -57,7 +59,9 @@ function sameText(a: string, b: string): boolean {
 
 export class RemoteAuth {
   private pairing: Pairing | null = null;
-  private readonly challenges = new Map<string, { challenge: string; until: number }>();
+  // ログインの乱数に付ける HMAC の鍵 / 使い終えた乱数（期限まで）
+  private readonly challengeKey = randomBytes(32);
+  private readonly usedChallenges = new Map<string, number>();
   private readonly now: () => number;
 
   constructor(private readonly deps: RemoteAuthDeps) {
@@ -72,7 +76,6 @@ export class RemoteAuth {
       code,
       until: this.now() + PAIRING_MS,
       attempts: 0,
-      correct: 0,
       secret: randomBytes(32),
       userId: b64url(randomBytes(16)),
       bindingChallenge: null,
@@ -101,10 +104,10 @@ export class RemoteAuth {
     if (!p || !pending || pending.state !== 'pending') return false;
     if (!sameText(pending.number, number.trim())) {
       pending.state = 'rejected';
-      this.deps.onPairingChange();
+      this.closeAnswered(p);
       return false;
     }
-    pending.state = 'approved';
+    // 書けてから承認の印を付ける（書けなければ、スマホには承認と出さない）
     this.deps.registrations.add({
       id: b64url(randomBytes(16)),
       name: pending.name,
@@ -114,18 +117,24 @@ export class RemoteAuth {
       passkey: { ...pending.credential },
       bindingJwk: { ...pending.bindingJwk },
     });
+    pending.state = 'approved';
     this.deps.onRegistrationsChange();
-    // 承認した結果は、スマホが pair-status で読むまで残す（受付は、これ以上の登録を受けない）
-    p.until = Math.min(p.until, this.now() + 60 * 1000);
-    p.attempts = PAIRING_ATTEMPTS;
-    this.deps.onPairingChange();
+    this.closeAnswered(p);
     return true;
   }
 
   reject(requestId: string): void {
-    const pending = this.openPairing()?.pending.get(requestId);
-    if (!pending || pending.state !== 'pending') return;
+    const p = this.openPairing();
+    const pending = p?.pending.get(requestId);
+    if (!p || !pending || pending.state !== 'pending') return;
     pending.state = 'rejected';
+    this.closeAnswered(p);
+  }
+
+  // 承認・断ったあと。結果は、スマホが pair-status で読むまで残し、受付は、これ以上の登録を受けない（やり直すときは、Mac で受付を始め直す）
+  private closeAnswered(p: Pairing): void {
+    p.until = Math.min(p.until, this.now() + 60 * 1000);
+    p.attempts = PAIRING_ATTEMPTS;
     this.deps.onPairingChange();
   }
 
@@ -161,14 +170,15 @@ export class RemoteAuth {
       p.attempts += 1;
       throw new Error('wrong code');
     }
-    p.correct += 1;
-    if (p.correct > 1) {
-      // 正しいコードが 2 回来た（QR やコードを盗み見られた）。全部を捨てて、Mac に知らせる
+    if (p.pending.size > 0) {
+      // パスキーの登録が届いたあとに、正しいコードがまた来た（QR やコードを盗み見られた）。全部を捨てて、Mac に知らせる
       this.pairing = null;
       this.deps.onPairingChange();
       this.deps.notify({ kind: 'pairing-hijack' });
       throw new Error('pairing was cancelled');
     }
+    // まだ登録が届いていなければ、前の頼みを捨てて入れ替える（Face ID を取りやめて押し直したときなど、本人のやり直し）
+    p.pairingId = b64url(randomBytes(16));
     p.bindingChallenge = b64url(randomBytes(32));
     return { pairingId: p.pairingId, userId: p.userId, bindingChallenge: p.bindingChallenge };
   }
@@ -200,26 +210,38 @@ export class RemoteAuth {
     return { state: pending.state };
   }
 
+  private challengeMac(body: string): string {
+    return b64url(createHmac('sha256', this.challengeKey).update(body).digest());
+  }
+
+  // 乱数は「期限.乱数.HMAC」。challengeId も同じ値（控えずに、届いたものを確かめる）
   private challenge(): AuthReplies['challenge'] {
+    const body = `${this.now() + CHALLENGE_MS}.${b64url(randomBytes(32))}`;
+    const challenge = `${body}.${this.challengeMac(body)}`;
+    return { challengeId: challenge, challenge };
+  }
+
+  // main が出した、期限の内の、まだ使っていない乱数なら true
+  private validChallenge(challenge: string): boolean {
     const now = this.now();
-    for (const [id, entry] of this.challenges) if (entry.until <= now) this.challenges.delete(id);
-    // 同時に出す乱数の数に上限を置く（古いものから捨てる）
-    while (this.challenges.size >= 64) this.challenges.delete(this.challenges.keys().next().value!);
-    const challengeId = b64url(randomBytes(16));
-    const challenge = b64url(randomBytes(32));
-    this.challenges.set(challengeId, { challenge, until: now + CHALLENGE_MS });
-    return { challengeId, challenge };
+    for (const [used, until] of this.usedChallenges) if (until <= now) this.usedChallenges.delete(used);
+    const parts = challenge.split('.');
+    if (parts.length !== 3 || this.usedChallenges.has(challenge)) return false;
+    const until = Number(parts[0]);
+    return Number.isFinite(until) && until > now && sameText(parts[2], this.challengeMac(`${parts[0]}.${parts[1]}`));
   }
 
   private login(request: Extract<AuthRequest, { op: 'login' }>): AuthReplies['login'] {
-    const entry = this.challenges.get(request.challengeId);
-    this.challenges.delete(request.challengeId);
-    if (!entry || entry.until <= this.now()) throw new Error('unknown challenge');
+    const challenge = request.challengeId;
+    if (!this.validChallenge(challenge)) throw new Error('unknown challenge');
     const registration = this.deps.registrations.get(request.registrationId);
     if (!registration) throw new Error('unknown registration');
-    if (!verifyBinding(registration.bindingJwk, entry.challenge, request.bindingSignature)) throw new Error('bad binding signature');
+    if (!verifyBinding(registration.bindingJwk, challenge, request.bindingSignature)) throw new Error('bad binding signature');
     const now = this.now();
+    this.usedChallenges.set(challenge, Number(challenge.split('.')[0]));
     this.deps.registrations.touch(registration.id, request.counter, now);
+    // 遠隔サーバーのパスキーの数え（counter）と、Mac のダイアログの最後に使った時刻を新しくする
+    this.deps.onRegistrationsChange();
     const token = b64url(randomBytes(32));
     this.deps.addSession({
       sessionId: b64url(randomBytes(16)),

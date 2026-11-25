@@ -92,14 +92,16 @@ const SCRIPT = String.raw`(() => {
     });
   }
 
-  // 束縛の鍵（取り出せない P-256 の鍵）。登録のたびに作り直す
+  // 束縛の鍵（取り出せない P-256 の鍵）。登録のたびに作り直す。
+  // 承認されるまでは別の名前（pending）に置き、承認されてから binding に移す（やり直しが断られても、今の登録でログインできるように）
   async function newBindingKey() {
     const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
     const jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
     const key = { privateKey: pair.privateKey, jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y } };
-    await store('readwrite', (s) => s.put(key, 'binding'));
+    await store('readwrite', (s) => s.put(key, 'pending'));
     return key;
   }
+  const adoptBindingKey = (key) => store('readwrite', (s) => { s.put(key, 'binding'); return s.delete('pending'); });
   const bindingKey = () => store('readonly', (s) => s.get('binding'));
   const sign = async (key, text) => b64u(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.privateKey, new TextEncoder().encode(text)));
 
@@ -119,7 +121,10 @@ const SCRIPT = String.raw`(() => {
     for (;;) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const { state } = await post('/api/pair/status', { requestId: finished.requestId });
-      if (state === 'approved') return status(M.approved);
+      if (state === 'approved') {
+        await adoptBindingKey(key);
+        return status(M.approved);
+      }
       if (state === 'rejected') return status(M.rejected);
     }
   }
@@ -135,7 +140,7 @@ const SCRIPT = String.raw`(() => {
       id: cred.id, rawId: b64u(cred.rawId), type: cred.type, clientExtensionResults: cred.getClientExtensionResults(), authenticatorAttachment: cred.authenticatorAttachment || undefined,
       response: { clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature), userHandle: r.userHandle ? b64u(r.userHandle) : undefined },
     };
-    await post('/api/login/finish', { loginId: begun.loginId, response, challengeId: begun.challengeId, bindingSignature: await sign(key, begun.bindingChallenge) });
+    await post('/api/login/finish', { response, challengeId: begun.challengeId, bindingSignature: await sign(key, begun.bindingChallenge) });
     status(M.loggedIn);
   }
 
@@ -143,6 +148,9 @@ const SCRIPT = String.raw`(() => {
   $('title').textContent = M.title;
   $('add-to-home').textContent = M.addToHome;
   $('add-to-home').hidden = standalone;
+  // iPhone・iPad の Safari のままでは、登録もログインもさせない（束縛の鍵が Safari の側にでき、ホーム画面の PWA から使えないため）
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  $('login').disabled = $('pair').disabled = ios && !standalone;
   $('login-title').textContent = M.loginTitle;
   $('login').textContent = M.login;
   $('pair-title').textContent = M.pairTitle;

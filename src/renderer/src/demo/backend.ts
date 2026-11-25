@@ -520,6 +520,7 @@ export class DemoBackend {
         approvePairing: () => ok(false),
         rejectPairing: () => ok({ devices: [], pairing: null, problem: null }),
         removeDevice: () => ok({ devices: [], pairing: null, problem: null }),
+        resetDevices: () => ok({ devices: [], pairing: null, problem: null }),
         onDevicesChanged: () => () => {},
       },
       shortcuts: {

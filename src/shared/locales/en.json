@@ -2672,6 +2672,8 @@
       "approve": "Approve",
       "reject": "Reject",
       "wrongNumber": "The number does not match, so this registration was rejected. Start again from Add Device.",
+      "reset": "Remove all registrations and start over",
+      "confirmReset": "Remove all registered devices and start over with an empty list?\nYou will need to register your phone again.",
       "problem": {
         "unreadable": "Remote access is stopped because the list of registered devices cannot be read.",
         "rolled-back": "Remote access is stopped because the list of registered devices was replaced with an older one."

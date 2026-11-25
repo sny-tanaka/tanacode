@@ -1489,16 +1489,37 @@ describe('メニュー', () => {
     expect(child.posted.at(-1)).toEqual({ type: 'credentials', credentials: [] });
   });
 
-  it('遠隔操作の端末: 断る・受付をやめる。正しいコードが 2 回来たら、受付を捨てて Mac に知らせる', async () => {
+  it('遠隔操作の端末: 断る・受付をやめる。パスキーの登録が届いたあとに正しいコードがまた来たら、受付を捨てて Mac に知らせる', async () => {
     const { authOf } = await listening();
     const { pairing } = (await invoke(IpcChannel.RemotePairingStart)) as { pairing: { code: string } };
     await invoke(IpcChannel.RemotePairingReject, 'nope');
     await invoke(IpcChannel.RemotePairingReject, 1);
-    expect(authOf({ op: 'pair-begin', code: pairing.code }).ok).toBe(true);
+    const binding = new SoftBindingKey();
+    const begun = authOf({ op: 'pair-begin', code: pairing.code }).value!;
+    authOf({ op: 'pair-finish', pairingId: begun.pairingId, credential: { id: 'Y3JlZA', publicKey: 'cHVi', counter: 0 }, bindingJwk: binding.jwk, bindingSignature: binding.sign(String(begun.bindingChallenge)), name: '' });
     expect(authOf({ op: 'pair-begin', code: pairing.code })).toMatchObject({ ok: false });
     expect(state.notifications.at(-1)?.options.body).toContain('端末の登録を取りやめました');
     await invoke(IpcChannel.RemotePairingStart);
     await expect(invoke(IpcChannel.RemotePairingCancel)).resolves.toMatchObject({ pairing: null });
+  });
+
+  it('遠隔操作の端末: 登録の一覧を読めなければ待ち受けず、「やり直す」で空の一覧から始め直して待ち受ける', async () => {
+    await boot({
+      before: (s) => {
+        remoteAccess.before();
+        mkdirSync(s.userData, { recursive: true });
+        writeFileSync(join(s.userData, 'remote-registrations.bin'), 'broken');
+      },
+      settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' }, remoteRegistrationsSeq: 3 },
+    });
+    expect(state.utilityProcesses).toEqual([]);
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toMatchObject({ problem: 'unreadable' });
+    await expect(invoke(IpcChannel.RemoteDevicesReset)).resolves.toMatchObject({ problem: null, devices: [] });
+    expect(state.utilityProcesses).toHaveLength(1);
+    expect(savedSettings()).toMatchObject({ remoteRegistrationsSeq: 4 });
+    // 読めているときは、何もしない
+    await expect(invoke(IpcChannel.RemoteDevicesReset)).resolves.toMatchObject({ problem: null });
+    expect(savedSettings()).toMatchObject({ remoteRegistrationsSeq: 4 });
   });
 
   it('遠隔操作の端末: 暗号化が使えない Mac では、待ち受けない', async () => {

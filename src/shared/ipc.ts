@@ -207,13 +207,14 @@ export const IpcChannel = {
   RemoteSettingsGet: 'remote:settings-get',
   RemoteSettingsSet: 'remote:settings-set',
   RemoteSettingsOpen: 'remote:settings-open',
-  // 遠隔操作で登録した端末（同じダイアログ）。一覧を読む・登録を受け付ける・やめる・確認の数字で承認する・断る・取り消す / 一覧と受付が変わった
+  // 遠隔操作で登録した端末（同じダイアログ）。一覧を読む・登録を受け付ける・やめる・確認の数字で承認する・断る・取り消す・読めない一覧を消してやり直す / 一覧と受付が変わった
   RemoteDevicesGet: 'remote:devices-get',
   RemotePairingStart: 'remote:pairing-start',
   RemotePairingCancel: 'remote:pairing-cancel',
   RemotePairingApprove: 'remote:pairing-approve',
   RemotePairingReject: 'remote:pairing-reject',
   RemoteDeviceRemove: 'remote:device-remove',
+  RemoteDevicesReset: 'remote:devices-reset',
   RemoteDevicesChanged: 'remote:devices-changed',
   ShortcutRun: 'shortcut:run',
   StatusLineGet: 'statusline:get',
@@ -839,6 +840,8 @@ export type TanacodeApi = {
     approvePairing(requestId: string, number: string): Promise<boolean>;
     rejectPairing(requestId: string): Promise<RemoteDevicesState>;
     removeDevice(id: string): Promise<RemoteDevicesState>;
+    // 読めなくなった（壊れた・古いものに戻された）登録の一覧を消して、空から始め直す
+    resetDevices(): Promise<RemoteDevicesState>;
     onDevicesChanged(listener: (state: RemoteDevicesState) => void): () => void;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
@@ -1220,6 +1223,7 @@ export type IpcInvoke = {
   [IpcChannel.RemotePairingApprove]: Api['remote']['approvePairing'];
   [IpcChannel.RemotePairingReject]: Api['remote']['rejectPairing'];
   [IpcChannel.RemoteDeviceRemove]: Api['remote']['removeDevice'];
+  [IpcChannel.RemoteDevicesReset]: Api['remote']['resetDevices'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.ClaudeVerifiedGet]: Api['claudeVersion']['getVerified'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];

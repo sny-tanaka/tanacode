@@ -59,6 +59,12 @@ describe('RemoteHost', () => {
     t.toHost({ type: 'call', id: 1 });
     expect(t.log).toHaveBeenCalledTimes(2);
     expect(t.host.current()).toEqual({ state: 'starting' });
+    // 本人確認の頼みの中身が違えば、待たせずに断る。番号の読めないもの・形の違う伝文には返さない
+    const before = t.posted.length;
+    t.toHost({ type: 'auth', id: 7, request: { op: 'pair-status', requestId: '' } });
+    expect(t.posted.at(-1)).toEqual({ type: 'auth-result', id: 7, ok: false, error: 'malformed request' });
+    for (const raw of [{ type: 'auth', id: 0 }, { type: 'auth', id: 1.5 }, { type: 'auth', id: '1' }, null, 'x']) t.toHost(raw);
+    expect(t.posted.length).toBe(before + 1);
   });
 
   it('知らないセッションの接続は、切らせる', () => {
@@ -237,6 +243,8 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([
       { type: 'auth-result', id: 1, ok: true, value: { challengeId: 'c', challenge: 'x' } },
       { type: 'auth-result', id: 2, ok: false, error: 'wrong code' },
+      // 知らない頼みは、auth に渡さずに断る
+      { type: 'auth-result', id: 3, ok: false, error: 'malformed request' },
     ]);
   });
 

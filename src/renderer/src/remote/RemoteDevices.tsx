@@ -66,7 +66,20 @@ export function RemoteDevices() {
   return (
     <section className="remote-devices" aria-label={t('remote.devices.title')}>
       <div className="remote-field-label">{t('remote.devices.title')}</div>
-      {state.problem && state.problem !== 'unavailable' && <p className="prompts-warning">{t(`remote.devices.problem.${state.problem}`)}</p>}
+      {state.problem && state.problem !== 'unavailable' && (
+        <>
+          <p className="prompts-warning">{t(`remote.devices.problem.${state.problem}`)}</p>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              if (window.confirm(t('remote.devices.confirmReset'))) void run(() => window.tanacode.remote.resetDevices());
+            }}
+          >
+            {t('remote.devices.reset')}
+          </button>
+        </>
+      )}
       {state.devices.length === 0 ? (
         <p className="remote-field-hint">{t('remote.devices.empty')}</p>
       ) : (

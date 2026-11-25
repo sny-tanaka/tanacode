@@ -91,6 +91,18 @@ describe('RemoteDevices', () => {
     expect(screen.getByText('iPhone')).toBeTruthy();
   });
 
+  it('一覧を読めないときは、確かめてから全部を消してやり直す（断ったら何もしない）', async () => {
+    await open({ ...none, problem: 'unreadable' }, { 'remote.resetDevices': () => Promise.resolve(none) });
+    expect(screen.getByText(/一覧を読めないため/)).toBeTruthy();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    fireEvent.click(button('登録を全部消して、やり直す'));
+    expect(api.argsOf('remote.resetDevices')).toEqual([]);
+    fireEvent.click(button('登録を全部消して、やり直す'));
+    await waitFor(() => expect(screen.queryByText(/一覧を読めないため/)).toBeNull());
+    expect(api.argsOf('remote.resetDevices')).toEqual([[]]);
+    expect(confirm).toHaveBeenLastCalledWith('登録した端末を全部消して、空の一覧から始め直しますか？\nスマホは、もう一度登録し直します。');
+  });
+
   it('読めなければ、理由だけを出す', async () => {
     api = mockApi({ 'remote.devices': () => Promise.reject(new Error('EACCES')) });
     api.install();

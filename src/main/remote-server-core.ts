@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -37,8 +37,11 @@ export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const MAX_TICKETS_PER_SESSION = 4;
 // 断った接続を、相手が閉じるのを待たずに切るまで
 const REFUSE_GRACE_MS = 1000;
-// 本人確認の口（登録・ログイン）の頼みの数の上限（1 分あたり。待ち受け全体で数える）
-export const MAX_AUTH_PER_MINUTE = 60;
+// ログインに続けて失敗したら、そのパスキーを待たせる（この回数から。待つ時間は 1 分から倍にしていき、15 分まで）。
+// 待ち受け全体では数えない（転送の後ろでは相手を見分けられず、認証の前の誰かが本人の分まで使い切れるため）
+export const LOGIN_FAILURES_BEFORE_WAIT = 5;
+const LOGIN_WAIT_MS = 60 * 1000;
+const LOGIN_WAIT_MAX_MS = 15 * 60 * 1000;
 // 本人確認の口が受ける本文の大きさの上限
 const MAX_AUTH_BODY = 64 * 1024;
 // main が本人確認の頼みに答えるまで待つ時間
@@ -93,10 +96,14 @@ export class RemoteServerCore {
   // main に頼んだ本人確認の返事を待っているもの
   private readonly authWaits = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private nextAuthId = 1;
-  // パスキーの登録・ログインの途中のもの（WebAuthn の challenge は遠隔サーバーが作って確かめる）
+  // パスキーの登録の途中のもの（WebAuthn の challenge は遠隔サーバーが作って確かめる。登録のコードを通ったものだけなので、増えすぎない）
   private readonly registrationsInFlight = new Map<string, { challenge: string; until: number }>();
-  private readonly loginsInFlight = new Map<string, { challenge: string; until: number }>();
-  private authCalls: number[] = [];
+  // ログインの challenge は控えずに、期限と HMAC を付けて出す（認証の前の誰かが始めるだけの頼みを重ねても、本人の分を押し出せないように）。
+  // 使い終えたものだけを期限まで控える
+  private readonly ceremonyKey = randomBytes(32);
+  private readonly usedLogins = new Map<string, number>();
+  // パスキーごとの、続けて失敗した回数と、次に受ける時刻
+  private readonly loginFailures = new Map<string, { count: number; until: number }>();
 
   constructor(
     private readonly post: (message: ServerMessage) => void,
@@ -201,7 +208,7 @@ export class RemoteServerCore {
     this.clients.clear();
     this.tickets.clear();
     this.registrationsInFlight.clear();
-    this.loginsInFlight.clear();
+    this.usedLogins.clear();
     this.wss?.close();
     this.server?.close();
     this.server?.closeAllConnections();
@@ -323,14 +330,12 @@ export class RemoteServerCore {
   // 登録・ログインの口。どれも JSON を受けて JSON を返す。断るときは 400（理由は出さない。どこで断ったかを相手に教えない）
   private async authRoute(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const now = this.now();
-    this.authCalls = this.authCalls.filter((at) => now - at < 60 * 1000);
-    this.authCalls.push(now);
-    if (this.authCalls.length > MAX_AUTH_PER_MINUTE) return this.reply(res, 429, { error: 'too many requests' });
     const body = await this.readJson(req);
     if (!body || !this.config) return this.reply(res, 400, { error: 'bad request' });
     const origin = this.config.publicOrigin;
     const rpID = new URL(origin).hostname;
-    for (const map of [this.registrationsInFlight, this.loginsInFlight]) for (const [key, entry] of map) if (entry.until <= now) map.delete(key);
+    for (const [key, entry] of this.registrationsInFlight) if (entry.until <= now) this.registrationsInFlight.delete(key);
+    for (const [key, until] of this.usedLogins) if (until <= now) this.usedLogins.delete(key);
     try {
       switch (path) {
         case '/api/pair/begin': {
@@ -374,28 +379,32 @@ export class RemoteServerCore {
         case '/api/pair/status':
           return this.reply(res, 200, await this.auth({ op: 'pair-status', requestId: String(body.requestId ?? '') }));
         case '/api/login/begin': {
-          const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: [] });
-          const loginId = randomBytes(16).toString('base64url');
-          this.loginsInFlight.set(loginId, { challenge: options.challenge, until: now + CEREMONY_MS });
+          const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: [], challenge: this.loginChallenge(now + CEREMONY_MS) });
           const binding = await this.auth({ op: 'challenge' });
-          return this.reply(res, 200, { loginId, options, challengeId: binding.challengeId, bindingChallenge: binding.challenge });
+          return this.reply(res, 200, { options, challengeId: binding.challengeId, bindingChallenge: binding.challenge });
         }
         case '/api/login/finish': {
-          const loginId = String(body.loginId ?? '');
-          const inFlight = this.loginsInFlight.get(loginId);
-          this.loginsInFlight.delete(loginId);
           const response = body.response as Parameters<typeof verifyAuthenticationResponse>[0]['response'];
           const credential = this.credentials.find((c) => c.credentialId === response?.id);
-          if (!inFlight || !credential) throw new Error('unknown login');
+          if (!credential) throw new Error('unknown login');
+          const failures = this.loginFailures.get(credential.credentialId);
+          if (failures && failures.until > now) return this.reply(res, 429, { error: 'too many requests' });
+          // 失敗として先に数え、通ったら消す（途中で投げても数えたまま）
+          this.loginFailed(credential.credentialId, now);
+          let usedChallenge = '';
           const verified = await verifyAuthenticationResponse({
             response,
-            expectedChallenge: inFlight.challenge,
+            expectedChallenge: (challenge) => {
+              usedChallenge = challenge;
+              return this.validLoginChallenge(challenge, now);
+            },
             expectedOrigin: origin,
             expectedRPID: rpID,
             credential: { id: credential.credentialId, publicKey: new Uint8Array(Buffer.from(credential.publicKey, 'base64url')), counter: credential.counter },
             requireUserVerification: true,
           });
           if (!verified.verified) throw new Error('not verified');
+          this.usedLogins.set(usedChallenge, this.challengeUntil(usedChallenge));
           const login = await this.auth({
             op: 'login',
             registrationId: credential.registrationId,
@@ -403,6 +412,7 @@ export class RemoteServerCore {
             challengeId: String(body.challengeId ?? ''),
             bindingSignature: String(body.bindingSignature ?? ''),
           });
+          this.loginFailures.delete(credential.credentialId);
           res.setHeader('set-cookie', `${SESSION_COOKIE}=${login.token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${login.maxAgeSeconds}`);
           return this.reply(res, 200, { ok: true });
         }
@@ -412,6 +422,32 @@ export class RemoteServerCore {
     } catch {
       return this.reply(res, 400, { error: 'bad request' });
     }
+  }
+
+  // ログインの challenge（「期限.乱数.HMAC」。generateAuthenticationOptions が UTF-8 の base64url にして渡し、届いたものも base64url のまま確かめる）
+  private loginChallenge(until: number): string {
+    const body = `${until}.${randomBytes(32).toString('base64url')}`;
+    return `${body}.${createHmac('sha256', this.ceremonyKey).update(body).digest('base64url')}`;
+  }
+
+  private challengeUntil(challenge: string): number {
+    return Number(Buffer.from(challenge, 'base64url').toString('utf8').split('.')[0]);
+  }
+
+  // 自分が出した、期限の内の、まだ使っていない challenge なら true
+  private validLoginChallenge(challenge: string, now: number): boolean {
+    const parts = Buffer.from(challenge, 'base64url').toString('utf8').split('.');
+    if (parts.length !== 3 || this.usedLogins.has(challenge)) return false;
+    const until = Number(parts[0]);
+    const mac = createHmac('sha256', this.ceremonyKey).update(`${parts[0]}.${parts[1]}`).digest();
+    const given = Buffer.from(parts[2], 'base64url');
+    return Number.isFinite(until) && until > now && given.length === mac.length && timingSafeEqual(given, mac);
+  }
+
+  private loginFailed(credentialId: string, now: number): void {
+    const count = (this.loginFailures.get(credentialId)?.count ?? 0) + 1;
+    const wait = count < LOGIN_FAILURES_BEFORE_WAIT ? 0 : Math.min(LOGIN_WAIT_MAX_MS, LOGIN_WAIT_MS * 2 ** (count - LOGIN_FAILURES_BEFORE_WAIT));
+    this.loginFailures.set(credentialId, { count, until: now + wait });
   }
 
   private reply(res: ServerResponse, status: number, body: unknown): void {

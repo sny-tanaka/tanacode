@@ -8,7 +8,7 @@ import type { HostMessage } from '@shared/remote-protocol';
 import { RemoteAuth } from '../src/main/remote-auth';
 import { RemoteHost } from '../src/main/remote-host';
 import { RemoteRegistrations } from '../src/main/remote-registrations';
-import { MAX_AUTH_PER_MINUTE, RemoteServerCore, SESSION_COOKIE } from '../src/main/remote-server-core';
+import { LOGIN_FAILURES_BEFORE_WAIT, RemoteServerCore, SESSION_COOKIE } from '../src/main/remote-server-core';
 import { SoftAuthenticator, SoftBindingKey } from './helpers/soft-authenticator';
 
 // 遠隔操作の登録とログインを、通しで動かす。遠隔サーバーの中身（RemoteServerCore）・main の持ち手（RemoteHost）・
@@ -106,7 +106,6 @@ async function pairUntilNumber(w: World, passkey: SoftAuthenticator, binding: So
 async function login(w: World, passkey: SoftAuthenticator, binding: SoftBindingKey, over: { origin?: string } = {}) {
   const begun = await post(w.port, '/api/login/begin', {});
   return post(w.port, '/api/login/finish', {
-    loginId: begun.body.loginId,
     response: passkey.login(begun.body.options as { challenge: string }, over),
     challengeId: begun.body.challengeId,
     bindingSignature: binding.sign(String(begun.body.bindingChallenge)),
@@ -192,13 +191,45 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect((await post(w.port, '/api/pair/begin', { code })).status).toBe(400);
   });
 
-  it('正しいコードが 2 回来たら、受付を捨てて Mac に知らせる（横取りの試み）', async () => {
+  it('パスキーの登録が届いたあとに正しいコードがまた来たら、受付を捨てて Mac に知らせる（横取りの試み）', async () => {
     const w = await world();
-    const { code } = w.auth.startPairing();
-    expect((await post(w.port, '/api/pair/begin', { code })).status).toBe(200);
-    expect((await post(w.port, '/api/pair/begin', { code })).status).toBe(400);
+    const { finished } = await pairUntilNumber(w, new SoftAuthenticator(ORIGIN), new SoftBindingKey());
+    expect(finished.status).toBe(200);
+    expect((await post(w.port, '/api/pair/begin', { code: w.auth.pairingState()?.code ?? 'gone' })).status).toBe(400);
     expect(w.auth.pairingState()).toBeNull();
     expect(w.notices).toEqual([{ kind: 'pairing-hijack' }]);
+  });
+
+  it('登録が届く前のやり直し（Face ID を取りやめて押し直す）は、前の頼みを捨てて入れ替える。知らせない', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { code } = w.auth.startPairing();
+    const first = await post(w.port, '/api/pair/begin', { code });
+    const second = await post(w.port, '/api/pair/begin', { code });
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect(second.body.pairingId).not.toBe(first.body.pairingId);
+    const finish = (begun: typeof first) =>
+      post(w.port, '/api/pair/finish', {
+        pairingId: begun.body.pairingId,
+        response: passkey.register(begun.body.options as { challenge: string; rp: { id: string } }),
+        bindingJwk: binding.jwk,
+        bindingSignature: binding.sign(String(begun.body.bindingChallenge)),
+        name: 'iPhone',
+      });
+    expect((await finish(first)).status).toBe(400);
+    expect((await finish(second)).status).toBe(200);
+    expect(w.notices).toEqual([]);
+  });
+
+  it('Mac で数字を打ち間違えたら、その受付は閉じる（同じコードでのやり直しは断り、知らせない）', async () => {
+    const w = await world();
+    const { finished } = await pairUntilNumber(w, new SoftAuthenticator(ORIGIN), new SoftBindingKey());
+    const code = w.auth.pairingState()!.code;
+    expect(w.auth.approve(String(finished.body.requestId), '000000' === finished.body.number ? '111111' : '000000', ['default'])).toBe(false);
+    expect((await post(w.port, '/api/pair/status', { requestId: finished.body.requestId })).body).toEqual({ state: 'rejected' });
+    expect((await post(w.port, '/api/pair/begin', { code })).status).toBe(400);
+    expect(w.notices).toEqual([]);
   });
 
   it('ログイン: 束縛の鍵が違う（パスキーだけを持つ別のブラウザ）・Origin が違う・知らないパスキーなら、セッションを作らない', async () => {
@@ -228,10 +259,47 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect((await login(w, passkey, binding)).status).toBe(400);
   });
 
-  it('本人確認の口の頼みが多すぎたら、429 で断る', async () => {
+  it('ログインに続けて失敗したパスキーは待たせる（429）。待ち受け全体では数えない', async () => {
     const w = await world();
-    let last = 0;
-    for (let i = 0; i <= MAX_AUTH_PER_MINUTE; i++) last = (await post(w.port, '/api/pair/status', { requestId: 'x' })).status ?? 0;
-    expect(last).toBe(429);
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    // 認証の前の誰かが、始めるだけの頼み・知らないパスキーの頼みを重ねても、本人のログインは止まらない
+    for (let i = 0; i < 100; i++) await post(w.port, '/api/login/begin', {});
+    for (let i = 0; i < 10; i++) await post(w.port, '/api/login/finish', { response: { id: 'nope' } });
+    expect((await post(w.port, '/api/pair/status', { requestId: 'x' })).status).toBe(400);
+    expect((await login(w, passkey, binding)).status).toBe(200);
+    // 束縛の鍵の違う失敗が続いたら、そのパスキーは待たせる
+    for (let i = 0; i < LOGIN_FAILURES_BEFORE_WAIT; i++) expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
+    expect((await login(w, passkey, binding)).status).toBe(429);
+  });
+
+  it('欠けた本文の頼みは、どの口でも 400', async () => {
+    const w = await world();
+    w.auth.startPairing();
+    for (const path of ['/api/pair/begin', '/api/pair/finish', '/api/pair/status', '/api/login/finish']) expect((await post(w.port, path, {})).status).toBe(400);
+    // 開いている受付でも、欠けた本文の登録は断る
+    const begun = await post(w.port, '/api/pair/begin', { code: w.auth.pairingState()!.code });
+    expect((await post(w.port, '/api/pair/finish', { pairingId: begun.body.pairingId })).status).toBe(400);
+  });
+
+  it('ログインの challenge は 1 回だけ。同じ答えを送り直しても、改ざんしても通らない', async () => {
+    const w = await world();
+    const passkey = new SoftAuthenticator(ORIGIN);
+    const binding = new SoftBindingKey();
+    const { finished } = await pairUntilNumber(w, passkey, binding);
+    w.auth.approve(String(finished.body.requestId), String(finished.body.number), ['default']);
+    const begun = await post(w.port, '/api/login/begin', {});
+    const body = {
+      response: passkey.login(begun.body.options as { challenge: string }),
+      challengeId: begun.body.challengeId,
+      bindingSignature: binding.sign(String(begun.body.bindingChallenge)),
+    };
+    expect((await post(w.port, '/api/login/finish', body)).status).toBe(200);
+    expect((await post(w.port, '/api/login/finish', body)).status).toBe(400);
+    // 遠隔サーバーが出していない challenge（HMAC が合わない）
+    const forged = Buffer.from(`${Date.now() + 60_000}.abc.def`).toString('base64url');
+    expect((await post(w.port, '/api/login/finish', { ...body, response: passkey.login({ challenge: forged }) })).status).toBe(400);
   });
 });

@@ -1171,6 +1171,17 @@ function registerIpc(): void {
     if (typeof requestId === 'string') remoteAuth?.reject(requestId);
     return remoteDevicesState();
   });
+  handle(IpcChannel.RemoteDevicesReset, (e) => {
+    P(e);
+    if (remoteRegistrations?.problem() && remoteRegistrations.problem() !== 'unavailable') {
+      remoteRegistrations.reset();
+      remoteHost.setCredentials(remoteRegistrations.credentials());
+      // 読めるようになったので、オンなら待ち受けを始める
+      applyRemote();
+      send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
+    }
+    return remoteDevicesState();
+  });
   handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
     P(e);
     if (typeof id === 'string' && remoteRegistrations?.remove(id)) {

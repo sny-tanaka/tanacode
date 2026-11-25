@@ -93,11 +93,51 @@ describe('RemoteAuth', () => {
     expect(() => t.auth.handle({ op: 'login', registrationId: 'nope', counter: 0, challengeId: another.challengeId, bindingSignature: binding.sign(another.challenge) })).toThrow();
   });
 
-  it('同時に出す乱数は 64 まで（古いものから捨てる）', () => {
+  it('乱数は控えずに出す（いくつ出しても前のものは使える）。main が出していないもの・形の違うものは受けない', () => {
     const t = setup();
-    const first = t.auth.handle({ op: 'challenge' }) as { challengeId: string };
-    for (let i = 0; i < 64; i++) t.auth.handle({ op: 'challenge' });
-    expect(() => t.auth.handle({ op: 'login', registrationId: 'r1', counter: 0, challengeId: first.challengeId, bindingSignature: 'AA' })).toThrow('unknown challenge');
+    const binding = new SoftBindingKey();
+    t.list.push({ id: 'r1', name: '', createdAt: 0, lastUsedAt: null, profileIds: [], passkey: { credentialId: 'c', publicKey: 'p', counter: 0 }, bindingJwk: binding.jwk });
+    const first = t.auth.handle({ op: 'challenge' }) as { challengeId: string; challenge: string };
+    for (let i = 0; i < 200; i++) t.auth.handle({ op: 'challenge' });
+    const login = (challengeId: string, signed = challengeId) => t.auth.handle({ op: 'login', registrationId: 'r1', counter: 0, challengeId, bindingSignature: binding.sign(signed) });
+    const [until, nonce, mac] = first.challenge.split('.');
+    expect(() => login(`${until}.${nonce}.${mac.slice(1)}A`)).toThrow('unknown challenge');
+    expect(() => login(`${Number(until) + 1}.${nonce}.${mac}`)).toThrow('unknown challenge');
+    expect(() => login('a.b')).toThrow('unknown challenge');
+    expect(() => login(`x.${nonce}.${mac}`)).toThrow('unknown challenge');
+    expect(login(first.challengeId)).toMatchObject({ token: expect.any(String) });
+    // ログインしたら、Mac のダイアログと遠隔サーバーのパスキーの数えを新しくする
+    expect(t.deps.onRegistrationsChange).toHaveBeenCalled();
+    // 使い終えたものは、期限が過ぎて控えを捨てたあとも、期限切れで受けない
+    t.clock.now += CHALLENGE_MS;
+    t.auth.handle({ op: 'challenge' });
+    expect(() => login(first.challengeId)).toThrow('unknown challenge');
+  });
+
+  it('断ったら、その受付は閉じる。書き込みに失敗したら、承認の印を付けない', () => {
+    const t = setup();
+    const binding = new SoftBindingKey();
+    const finish = () => {
+      const begun = begin(t);
+      return t.auth.handle({ op: 'pair-finish', pairingId: begun.pairingId, credential, bindingJwk: binding.jwk, bindingSignature: binding.sign(begun.bindingChallenge), name: 'x' }) as { requestId: string; number: string };
+    };
+    const rejected = finish();
+    const code = t.auth.pairingState()!.code;
+    t.auth.reject(rejected.requestId);
+    expect(t.auth.handle({ op: 'pair-status', requestId: rejected.requestId })).toEqual({ state: 'rejected' });
+    expect(() => t.auth.handle({ op: 'pair-begin', code })).toThrow('pairing is not open');
+    // 書き込みに失敗（ディスクがいっぱいなど）。スマホには承認と出さず、Mac で打ち直せる
+    t.auth.startPairing();
+    const failing = finish();
+    const add = t.deps.registrations as unknown as { add: (r: Registration) => void };
+    const original = add.add;
+    add.add = () => {
+      throw new Error('disk full');
+    };
+    expect(() => t.auth.approve(failing.requestId, failing.number, [])).toThrow('disk full');
+    expect(t.auth.handle({ op: 'pair-status', requestId: failing.requestId })).toEqual({ state: 'pending' });
+    add.add = original;
+    expect(t.auth.approve(failing.requestId, failing.number, [])).toBe(true);
   });
 
   it('束縛の鍵の形・署名が壊れていれば false', () => {

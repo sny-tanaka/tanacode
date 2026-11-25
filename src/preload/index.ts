@@ -151,6 +151,7 @@ const api: TanacodeApi = {
     approvePairing: (requestId, number) => invoke(IpcChannel.RemotePairingApprove, requestId, number),
     rejectPairing: (requestId) => invoke(IpcChannel.RemotePairingReject, requestId),
     removeDevice: (id) => invoke(IpcChannel.RemoteDeviceRemove, id),
+    resetDevices: () => invoke(IpcChannel.RemoteDevicesReset),
     onDevicesChanged: (listener) => subscribe(IpcChannel.RemoteDevicesChanged, listener),
   },
   shortcuts: {

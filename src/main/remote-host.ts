@@ -188,6 +188,9 @@ export class RemoteHost {
     const message = parseServerMessage(raw);
     if (!message) {
       this.deps.log('遠隔サーバーから、形の違う伝文が届きました');
+      // 本人確認の頼みの中身の形が違う（スマホから届いた値が欠けているなど）。返事を待たせずに断る
+      const { type, id } = (typeof raw === 'object' && raw !== null ? raw : {}) as { type?: unknown; id?: unknown };
+      if (type === 'auth' && typeof id === 'number' && Number.isSafeInteger(id) && id > 0) child.post({ type: 'auth-result', id, ok: false, error: 'malformed request' });
       return;
     }
     this.handle(child, message);
