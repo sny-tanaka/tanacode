@@ -64,6 +64,9 @@ describe('RemoteSettingsDialog', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     fireEvent.mouseDown(document.querySelector('.overlay')!);
     expect(onClose).toHaveBeenCalledTimes(3);
+    // ダイアログの中を押しても閉じない（外を押したときだけ閉じる）
+    fireEvent.mouseDown(screen.getByRole('dialog'));
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 
   it.each([
