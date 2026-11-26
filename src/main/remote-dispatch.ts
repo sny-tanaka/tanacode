@@ -1,6 +1,7 @@
 import type { WebContents } from 'electron';
 import { t } from '@shared/i18n';
 import { REMOTE_CHANNELS, type ArgShape, type RemoteChannel } from '@shared/remote-channels';
+import { REMOTE_MAX_DEPTH } from '@shared/remote-protocol';
 
 // 画面 → main の頼みの呼び出し元（Issue #464）。
 // app: アプリの画面（主ウインドウと、足したプロファイルの画面）。ipcMain から届き、fromApp で確かめたもの
@@ -17,7 +18,7 @@ export class RemoteCallError extends Error {
 }
 
 // オブジェクトの深さ・キーの数の上限。ふつうの頼みは、どれもこれより小さい
-const MAX_DEPTH = 16;
+const MAX_DEPTH = REMOTE_MAX_DEPTH;
 const MAX_KEYS = 10000;
 // プロトタイプを書き換えうるキー（Object.assign などで __proto__ が効くのを避ける）。constructor・prototype は、
 // 質問の答え（キーが質問の文）や MCP サーバーの項目名に入りうるので断らない（受け口は Object.entries で作り直している）

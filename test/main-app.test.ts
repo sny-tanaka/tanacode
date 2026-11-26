@@ -1586,6 +1586,43 @@ describe('メニュー', () => {
     expect(child.posted.at(-1)).toEqual({ type: 'credentials', credentials: [] });
   });
 
+  it('遠隔操作をオフにしている間は、スマホへの通知（Web Push）を送らない（購読は残し、オンに戻すとまた送る）', async () => {
+    const { child, authOf } = await listening();
+    const started = (await invoke(IpcChannel.RemotePairingStart)) as { pairing: { code: string } };
+    const binding = new SoftBindingKey();
+    const begun = authOf({ op: 'pair-begin', code: started.pairing.code }).value!;
+    const finished = authOf({
+      op: 'pair-finish',
+      pairingId: begun.pairingId,
+      credential: { id: 'Y3JlZA', publicKey: 'cHVi', counter: 0 },
+      bindingJwk: binding.jwk,
+      bindingSignature: binding.sign(String(begun.bindingChallenge)),
+      name: 'iPhone',
+    }).value!;
+    await invoke(IpcChannel.RemotePairingApprove, finished.requestId, finished.number, ['default']);
+    const registrationId = ((await invoke(IpcChannel.RemoteDevicesGet)) as { devices: { id: string }[] }).devices[0].id;
+    const challenge = authOf({ op: 'challenge', purpose: 'login' }).value!;
+    authOf({ op: 'login', registrationId, counter: 0, challengeId: challenge.challengeId, bindingSignature: binding.sign(String(challenge.challenge)) });
+    const sessionId = (child.posted.find((m) => (m as { type: string }).type === 'session-add') as { session: { sessionId: string } }).session.sessionId;
+    const ticketChallenge = authOf({ op: 'challenge', purpose: 'ticket' }).value!;
+    const granted = authOf({ op: 'ticket', sessionId, challengeId: ticketChallenge.challengeId, bindingSignature: binding.sign(String(ticketChallenge.challenge)) });
+    child.emit('message', { type: 'connected', clientId: 'c1', sessionId, ticket: granted.value!.ticket });
+    const push = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: createECDH('prime256v1').generateKeys('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
+    child.emit('message', { type: 'call', id: 1, clientId: 'c1', profileId: 'default', kind: 'invoke', channel: IpcChannel.RemotePushSubscribe, args: [push], active: true });
+    await vi.waitFor(() => expect(child.posted).toContainEqual(expect.objectContaining({ type: 'result', id: 1, value: true })));
+    state.netFetch.mockImplementation(async () => new Response(null, { status: 201 }));
+    try {
+      menuItem('remoteEnabled').click?.({ checked: false });
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(state.netFetch).not.toHaveBeenCalled();
+      menuItem('remoteEnabled').click?.({ checked: true });
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(state.netFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      state.netFetch.mockReset();
+    }
+  });
+
   it('遠隔操作の端末: 断る・受付をやめる。パスキーの登録が届いたあとに正しいコードがまた来たら、受付を捨てて Mac に知らせる', async () => {
     const { authOf } = await listening();
     const { pairing } = (await invoke(IpcChannel.RemotePairingStart)) as { pairing: { code: string } };

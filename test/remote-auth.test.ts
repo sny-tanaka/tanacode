@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { deviceNameOf, parseAuthRequest } from '@shared/remote-auth';
-import { CHALLENGE_MS, PAIRING_MS, RemoteAuth, verifyBinding } from '../src/main/remote-auth';
+import { CHALLENGE_MS, PAIRING_ATTEMPT_WINDOW_MS, PAIRING_ATTEMPTS, PAIRING_MS, RemoteAuth, verifyBinding } from '../src/main/remote-auth';
 import type { Registration } from '../src/main/remote-registrations';
 import { SoftBindingKey } from './helpers/soft-authenticator';
 
@@ -38,6 +38,17 @@ describe('RemoteAuth', () => {
     t.auth.cancelPairing();
     expect(t.auth.pairingState()).toBeNull();
     t.auth.cancelPairing();
+  });
+
+  it('間違ったコードが続いたら、受付を閉じずに待たせる（その間は正しいコードも受けない）。時間がたてば、正しいコードで続けられる', () => {
+    const t = setup();
+    const { code } = t.auth.startPairing();
+    const wrong = code === '00000000' ? '11111111' : '00000000';
+    for (let i = 0; i < PAIRING_ATTEMPTS; i += 1) expect(() => t.auth.handle({ op: 'pair-begin', code: wrong })).toThrow('wrong code');
+    expect(() => t.auth.handle({ op: 'pair-begin', code })).toThrow('too many attempts');
+    expect(t.auth.pairingState()).not.toBeNull();
+    t.clock.now += PAIRING_ATTEMPT_WINDOW_MS;
+    expect(t.auth.handle({ op: 'pair-begin', code })).toMatchObject({ pairingId: expect.any(String) });
   });
 
   it('受付が無ければ、コードも承認も受けない', () => {

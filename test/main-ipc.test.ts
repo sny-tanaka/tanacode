@@ -349,6 +349,30 @@ describe('そのまま渡す受け口', () => {
     await expect(invoke(IpcChannel.BrowserMirrorNavigate, 's1', 'tab-1', navigation)).resolves.toBe(false);
   });
 
+  it('遠隔操作の入口の口は、遠隔の頼みの表を書き間違えても、受け口で遠隔からの呼び出しを断る', async () => {
+    const { REMOTE_CHANNELS: table } = await import('@shared/remote-channels');
+    const guarded = [
+      IpcChannel.RemoteSettingsGet,
+      IpcChannel.RemoteSettingsSet,
+      IpcChannel.RemoteDevicesGet,
+      IpcChannel.RemotePairingStart,
+      IpcChannel.RemotePairingCancel,
+      IpcChannel.RemotePairingApprove,
+      IpcChannel.RemotePairingReject,
+      IpcChannel.RemoteDeviceRemove,
+      IpcChannel.RemoteDevicesReset,
+      IpcChannel.RemoteConnectionsGet,
+      IpcChannel.RemoteDisconnectAll,
+    ] as const;
+    const saved = guarded.map((channel) => table[channel]);
+    onTestFinished(() => guarded.forEach((channel, i) => Object.assign(table, { [channel]: saved[i] })));
+    // 表を same に書き換えた（書き間違えた）ことにする。引数は無しで呼ぶ
+    for (const channel of guarded) Object.assign(table, { [channel]: { use: 'same', args: [] } });
+    for (const channel of guarded) await expect(invokeRemote(DEFAULT_PROFILE_ID, channel), channel).rejects.toThrow('この操作は、遠隔の接続からはできません');
+    // Mac の画面からは、そのまま呼べる
+    await expect(invoke(IpcChannel.RemoteConnectionsGet)).resolves.toBeDefined();
+  });
+
   it('スマホが裏に回ったら、スマホの画面からの「止める」が届かなくても、その接続のミラーリングを main で止める', async () => {
     // main は読み込み直されるので、そのときの部品を取る
     const { BrowserMirror } = await import('../src/main/browser-mirror');

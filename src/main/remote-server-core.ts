@@ -14,7 +14,7 @@ import { setLanguage } from '@shared/i18n';
 import type { AuthReplies, AuthRequest, RemoteCredential } from '@shared/remote-auth';
 import { appFile } from './remote-app-files';
 import { loginPage } from './remote-login-page';
-import { REMOTE_IDLE_MS, REMOTE_MAX_MESSAGE_BYTES, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
+import { nestedTooDeep, REMOTE_IDLE_MS, REMOTE_MAX_DEPTH, REMOTE_MAX_MESSAGE_BYTES, REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteListenConfig, type RemoteSession, type ServerMessage } from '@shared/remote-protocol';
 
 // 遠隔サーバーの中身（Issue #464）。utilityProcess（remote-server.ts）が、main との伝文の口につないで動かす。
 // 127.0.0.1 だけで待ち受け、前に置いた転送（tailscale serve など）から届く頼みを受ける。決めたこと:
@@ -103,6 +103,10 @@ const BASE_HEADERS = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
+  // ほかのサイト（同じ tailnet の別のマシンを含む）のページから、ここの応答を読み込ませない
+  // （Strict-Transport-Security は付けない。ホスト名ごとに効くので、同じ名前のほかのポートで http のまま見ている開発サーバーなどまで、
+  // スマホで 1 年開けなくしてしまう。Cookie は __Host- と Secure で http には送られず、公開する URL も https だけなので、得るものが小さい）
+  'cross-origin-resource-policy': 'same-origin',
   'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 };
 
@@ -154,11 +158,24 @@ export class RemoteServerCore {
       case 'result': {
         const client = this.clients.get(message.clientId);
         if (!client) return;
-        this.deliver(client, encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error }));
+        // 文字にできない返事（入れ子が深すぎて溢れるなど）は、失敗として返す（このプロセスを落とさない）
+        let text: string;
+        try {
+          text = encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error });
+        } catch {
+          text = encodeForClient({ id: message.id, ok: false, error: 'the result could not be sent' });
+        }
+        this.deliver(client, text);
         break;
       }
       case 'event': {
-        const text = encodeForClient(message.profileId === undefined ? { event: message.channel, payload: message.payload } : { event: message.channel, profileId: message.profileId, payload: message.payload });
+        // 文字にできない知らせは捨てる（このプロセスを落とさない）
+        let text: string;
+        try {
+          text = encodeForClient(message.profileId === undefined ? { event: message.channel, payload: message.payload } : { event: message.channel, profileId: message.profileId, payload: message.payload });
+        } catch {
+          return;
+        }
         for (const id of message.clientIds) {
           const client = this.clients.get(id);
           if (client) this.deliver(client, text);
@@ -653,7 +670,14 @@ export class RemoteServerCore {
     // 人の操作の頼み（active）でだけ、使わない時間を数え直す（main も、同じ頼みで控え直す）
     const active = m.active === true;
     if (active) session.lastActive = now;
+    // 入れ子の深すぎる引数は、main に渡す前に断る（渡すときの複製でスタックが溢れ、このプロセスごと落ちるため。main でも確かめ直す）
+    if (nestedTooDeep(m.args, REMOTE_MAX_DEPTH + 1)) return refuse(4003);
     // Uint8Array（{ "$bytes": "<base64>" }）は、main が引数の形（bytes）の位置でだけ戻す
-    this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: m.args, active });
+    try {
+      this.post({ type: 'call', id: m.id, clientId: client.id, profileId: m.profileId, kind: m.kind, channel: m.channel, args: m.args, active });
+    } catch {
+      // 渡せなかった頼みは、その接続だけを切る（ほかの接続と待ち受けは続ける）
+      return refuse(4003);
+    }
   }
 }
