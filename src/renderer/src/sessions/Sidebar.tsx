@@ -14,6 +14,7 @@ import { sessionName } from './sessionLinks';
 import { preparingLabel } from './worktree';
 import { AccountPanel } from '../account/AccountPanel';
 import { LogoutButton } from '../remote/LogoutButton';
+import { PushToggle } from '../remote/PushToggle';
 import { isRemoteMode } from '../remote/mode';
 import { keyList, keyRow } from '../layout/keyRow';
 
@@ -325,6 +326,7 @@ export const Sidebar = memo(function Sidebar({
         )}
       </div>
       <AccountPanel />
+      {isRemoteMode() && <PushToggle />}
       {isRemoteMode() && <LogoutButton />}
     </nav>
   );

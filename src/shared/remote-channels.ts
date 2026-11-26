@@ -118,6 +118,10 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.McpEnabledSet]: mac(['string', 'boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ToolPermissionsSet]: mac(['string', 'string'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
   [IpcChannel.ParentAskRulesSet]: mac(['boolean'], 'メニューバーの「MCP の設定…」で開くダイアログ'),
+  // スマホの画面を閉じている間の通知（Web Push）。呼んだ端末の購読だけを置く・外す（main が、接続の登録から決める）
+  [IpcChannel.RemotePushKey]: same([]),
+  [IpcChannel.RemotePushSubscribe]: same(['object']),
+  [IpcChannel.RemotePushUnsubscribe]: same([]),
   [IpcChannel.RemoteSettingsGet]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteSettingsSet]: mac(['object'], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteDevicesGet]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),

@@ -209,6 +209,9 @@ export const IpcChannel = {
   McpSettingsOpen: 'mcp-settings:open',
   // 遠隔操作（スマホから。Issue #464）の設定。メニューバーの「遠隔操作の設定…」で開くダイアログが読む・変える / ダイアログを開かせる
   RemoteSettingsGet: 'remote:settings-get',
+  RemotePushKey: 'remote:push-key',
+  RemotePushSubscribe: 'remote:push-subscribe',
+  RemotePushUnsubscribe: 'remote:push-unsubscribe',
   RemoteSettingsSet: 'remote:settings-set',
   RemoteSettingsOpen: 'remote:settings-open',
   // 遠隔操作で登録した端末（同じダイアログ）。一覧を読む・登録を受け付ける・やめる・確認の数字で承認する・断る・取り消す・読めない一覧を消してやり直す / 一覧と受付が変わった
@@ -862,6 +865,12 @@ export type TanacodeApi = {
     connections(): Promise<RemoteConnection[]>;
     disconnectAll(): Promise<RemoteConnection[]>;
     onConnectionsChanged(listener: (connections: RemoteConnection[]) => void): () => void;
+    // スマホの画面を閉じている間の通知（Web Push）。スマホの画面からだけ呼べる（Mac の画面からは null・false）。
+    // pushKey: 送り主の公開鍵（applicationServerKey）/ pushSubscribe: この端末の購読を置く（送り先が push.apple.com の下でなければ false）/
+    // pushUnsubscribe: この端末の購読を外す
+    pushKey(): Promise<string | null>;
+    pushSubscribe(subscription: object): Promise<boolean>;
+    pushUnsubscribe(): Promise<void>;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
@@ -1242,6 +1251,9 @@ export type IpcInvoke = {
   [IpcChannel.ToolPermissionsSet]: Api['mcpSettings']['setPermission'];
   [IpcChannel.ParentAskRulesSet]: Api['mcpSettings']['setParentAskRules'];
   [IpcChannel.RemoteSettingsGet]: Api['remote']['settings'];
+  [IpcChannel.RemotePushKey]: Api['remote']['pushKey'];
+  [IpcChannel.RemotePushSubscribe]: Api['remote']['pushSubscribe'];
+  [IpcChannel.RemotePushUnsubscribe]: Api['remote']['pushUnsubscribe'];
   [IpcChannel.RemoteSettingsSet]: Api['remote']['setSettings'];
   [IpcChannel.RemoteDevicesGet]: Api['remote']['devices'];
   [IpcChannel.RemotePairingStart]: Api['remote']['startPairing'];

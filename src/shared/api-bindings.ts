@@ -150,6 +150,9 @@ export function createApi({ invoke, send, subscribe, pathForFile, language }: Ap
       connections: () => invoke(IpcChannel.RemoteConnectionsGet),
       disconnectAll: () => invoke(IpcChannel.RemoteDisconnectAll),
       onConnectionsChanged: (listener) => subscribe(IpcChannel.RemoteConnectionsChanged, listener),
+      pushKey: () => invoke(IpcChannel.RemotePushKey),
+      pushSubscribe: (subscription) => invoke(IpcChannel.RemotePushSubscribe, subscription),
+      pushUnsubscribe: () => invoke(IpcChannel.RemotePushUnsubscribe),
     },
     shortcuts: {
       onRun: (listener) => subscribe(IpcChannel.ShortcutRun, listener),

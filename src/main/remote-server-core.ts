@@ -1,3 +1,4 @@
+import { SERVICE_WORKER } from './remote-service-worker';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -312,6 +313,12 @@ export class RemoteServerCore {
         return;
       }
       return this.reply(res, 401, { error: 'unauthorized' });
+    }
+    // Service Worker（通知に要る最小限。キャッシュさせない。/app/ の下だけを受け持つ）
+    if (path === '/app/sw.js') {
+      res.writeHead(200, { ...BASE_HEADERS, 'content-type': 'text/javascript; charset=utf-8', 'content-security-policy': "default-src 'none'" });
+      res.end(req.method === 'HEAD' ? undefined : SERVICE_WORKER);
+      return;
     }
     const file = this.appRoot ? await appFile(this.appRoot, path) : null;
     if (!file || !this.config) return this.reply(res, 404, { error: 'not found' });

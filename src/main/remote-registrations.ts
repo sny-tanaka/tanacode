@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { BindingJwk, RemoteCredential } from '@shared/remote-auth';
+import { createVapidKeys, parseSubscription, type PushSubscriptionJson, type VapidKeys } from './web-push';
 
 // 遠隔操作で登録した端末（ブラウザ）の一覧（Issue #464）。
 // - safeStorage（Keychain の鍵）で暗号化して userData に置く。中身は、パスキーと束縛の鍵の公開の部分と、許したプロファイル
@@ -17,6 +18,8 @@ export type Registration = {
   profileIds: string[];
   passkey: { credentialId: string; publicKey: string; counter: number };
   bindingJwk: BindingJwk;
+  // スマホの画面を閉じている間の通知（Web Push）の購読。受け取ると決めた端末だけ（登録を取り消せば一緒に消える）
+  push?: PushSubscriptionJson;
 };
 
 // 暗号化（Electron の safeStorage の、使う所だけ。テストでは作り物にする）
@@ -28,13 +31,16 @@ export type SeqStore = { get(): number; set(seq: number): void };
 // 読めなかった理由。unavailable: 暗号化が使えない / unreadable: 読めない・形が違う / rolled-back: 古いファイルに戻された
 export type RegistrationsProblem = 'unavailable' | 'unreadable' | 'rolled-back';
 
-type Stored = { seq: number; registrations: Registration[] };
+// vapid: Web Push の送り主の鍵（Mac ごと。はじめて要るときに作る）
+type Stored = { seq: number; registrations: Registration[]; vapid?: VapidKeys };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function registrationOf(value: unknown): Registration | null {
   if (!isRecord(value) || !isRecord(value.passkey) || !isRecord(value.bindingJwk)) return null;
   const { id, name, createdAt, lastUsedAt, profileIds, passkey, bindingJwk } = value;
+  // 購読は、形が違えば捨てる（登録そのものは読む）
+  const push = value.push === undefined ? null : parseSubscription(value.push);
   if (typeof id !== 'string' || typeof name !== 'string' || typeof createdAt !== 'number') return null;
   if (lastUsedAt !== null && typeof lastUsedAt !== 'number') return null;
   if (!Array.isArray(profileIds) || !profileIds.every((p) => typeof p === 'string')) return null;
@@ -48,11 +54,17 @@ function registrationOf(value: unknown): Registration | null {
     profileIds: [...profileIds],
     passkey: { credentialId: passkey.credentialId, publicKey: passkey.publicKey, counter: passkey.counter },
     bindingJwk: { kty: 'EC', crv: 'P-256', x: bindingJwk.x, y: bindingJwk.y },
+    ...(push ? { push } : {}),
   };
+}
+
+function vapidOf(value: unknown): VapidKeys | undefined {
+  return isRecord(value) && typeof value.publicKey === 'string' && typeof value.privateKey === 'string' ? { publicKey: value.publicKey, privateKey: value.privateKey } : undefined;
 }
 
 export class RemoteRegistrations {
   private list: Registration[] = [];
+  private vapid: VapidKeys | undefined;
   private seq = 0;
   private trouble: RegistrationsProblem | null = null;
 
@@ -70,7 +82,13 @@ export class RemoteRegistrations {
   }
 
   all(): Registration[] {
-    return this.list.map((r) => ({ ...r, profileIds: [...r.profileIds], passkey: { ...r.passkey }, bindingJwk: { ...r.bindingJwk } }));
+    return this.list.map((r) => ({
+      ...r,
+      profileIds: [...r.profileIds],
+      passkey: { ...r.passkey },
+      bindingJwk: { ...r.bindingJwk },
+      ...(r.push ? { push: { endpoint: r.push.endpoint, keys: { ...r.push.keys } } } : {}),
+    }));
   }
 
   get(id: string): Registration | null {
@@ -90,6 +108,22 @@ export class RemoteRegistrations {
     if (!this.list.some((r) => r.id === id)) return false;
     this.write(this.list.filter((r) => r.id !== id));
     return true;
+  }
+
+  // 通知の購読を置く・外す（null）。知らない登録なら false
+  setPush(id: string, push: PushSubscriptionJson | null): boolean {
+    if (!this.list.some((r) => r.id === id)) return false;
+    this.write(this.list.map((r) => (r.id !== id ? r : push ? { ...r, push } : (({ push: _old, ...rest }) => rest)(r))));
+    return true;
+  }
+
+  // Web Push の送り主の鍵。無ければ作って書く
+  vapidKeys(): VapidKeys {
+    if (!this.vapid) {
+      this.vapid = createVapidKeys();
+      this.write(this.list);
+    }
+    return { ...this.vapid };
   }
 
   // ログインしたとき。パスキーの数え（counter）と、最後に使った時刻を控える
@@ -134,7 +168,7 @@ export class RemoteRegistrations {
       if (!isRecord(data) || typeof data.seq !== 'number' || !Array.isArray(data.registrations)) throw new Error('shape');
       const registrations = data.registrations.map(registrationOf);
       if (registrations.some((r) => r === null)) throw new Error('shape');
-      stored = { seq: data.seq, registrations: registrations as Registration[] };
+      stored = { seq: data.seq, registrations: registrations as Registration[], vapid: vapidOf(data.vapid) };
     } catch {
       this.trouble = 'unreadable';
       return;
@@ -145,6 +179,7 @@ export class RemoteRegistrations {
     }
     this.seq = stored.seq;
     this.list = stored.registrations;
+    this.vapid = stored.vapid;
   }
 
   // 一時ファイルに書いてから置き換える。通し番号はファイルに書けてから控える（控えだけが進んで、次の起動で読めなくならないように）
@@ -152,7 +187,7 @@ export class RemoteRegistrations {
     if (this.trouble) throw new Error(`the remote registrations cannot be written (${this.trouble})`);
     const seq = this.seq + 1;
     const temp = `${this.file}.tmp`;
-    writeFileSync(temp, this.encryptor.encrypt(JSON.stringify({ seq, registrations: next } satisfies Stored)), { mode: 0o600 });
+    writeFileSync(temp, this.encryptor.encrypt(JSON.stringify({ seq, registrations: next, ...(this.vapid ? { vapid: this.vapid } : {}) } satisfies Stored)), { mode: 0o600 });
     renameSync(temp, this.file);
     this.seq = seq;
     this.list = next;

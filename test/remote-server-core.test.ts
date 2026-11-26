@@ -204,6 +204,18 @@ describe('HTTP の口', () => {
     expect((await send(port, 'GET', '/app/', { host: HOST, cookie })).status).toBe(404);
   });
 
+  it('Service Worker（/app/sw.js）は、セッションの Cookie があるときだけ、キャッシュさせずに配る。HEAD は中身を返さない', async () => {
+    const { port } = await start();
+    expect((await send(port, 'GET', '/app/sw.js', { host: HOST })).status).toBe(401);
+    const sw = await send(port, 'GET', '/app/sw.js', { host: HOST, cookie });
+    expect(sw.status).toBe(200);
+    expect(sw.headers['cache-control']).toBe('no-store');
+    expect(sw.headers['content-type']).toBe('text/javascript; charset=utf-8');
+    expect(sw.body).toContain("addEventListener('push'");
+    expect(sw.body).not.toContain("addEventListener('fetch'");
+    expect((await send(port, 'HEAD', '/app/sw.js', { host: HOST, cookie })).body).toBe('');
+  });
+
   it('置き場所があれば、入口はキャッシュさせずに、assets は長くキャッシュさせて配る。CSP は自分の WebSocket だけにつなぐ。HEAD は中身を返さない', async () => {
     const root = mkdtempSync(join(tmpdir(), 'tanacode-app-core-'));
     mkdirSync(join(root, 'assets'));

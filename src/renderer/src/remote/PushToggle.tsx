@@ -1,0 +1,69 @@
+import { useEffect, useState } from 'react';
+import { t } from '@shared/i18n';
+
+// スマホの画面を閉じている間の通知（Web Push。Issue #464）を受け取るかのボタン（セッションの一覧の下）。
+// iPhone では、ホーム画面に置いた PWA でだけ使える（Safari のタブでは PushManager が無い）。許可を聞くのは、押したときだけ
+type State = 'unsupported' | 'off' | 'on' | 'denied' | 'busy';
+
+async function currentSubscription(): Promise<PushSubscription | null> {
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+
+// 送り主の公開鍵（base64url）を、バイト列にする（文字のまま渡すと受けないブラウザがある）
+function keyBytes(key: string): Uint8Array<ArrayBuffer> {
+  const text = atob(key.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(text, (c) => c.charCodeAt(0));
+}
+
+export function PushToggle() {
+  const supported = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const [state, setState] = useState<State>(supported ? 'busy' : 'unsupported');
+  useEffect(() => {
+    if (!supported) return;
+    let alive = true;
+    void currentSubscription()
+      .then((subscription) => alive && setState(Notification.permission === 'denied' ? 'denied' : subscription ? 'on' : 'off'))
+      .catch(() => alive && setState('off'));
+    return () => {
+      alive = false;
+    };
+  }, [supported]);
+  if (state === 'unsupported') return null;
+
+  const turnOn = async () => {
+    setState('busy');
+    try {
+      if ((await Notification.requestPermission()) !== 'granted') return setState('denied');
+      const key = await window.tanacode.remote.pushKey();
+      if (!key) return setState('off');
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = (await registration.pushManager.getSubscription()) ?? (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
+      setState((await window.tanacode.remote.pushSubscribe(subscription.toJSON())) ? 'on' : 'off');
+    } catch {
+      setState('off');
+    }
+  };
+  const turnOff = async () => {
+    setState('busy');
+    try {
+      await window.tanacode.remote.pushUnsubscribe();
+      await (await currentSubscription())?.unsubscribe();
+    } finally {
+      setState('off');
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`ghost-button remote-push${state === 'on' ? ' on' : ''}`}
+      disabled={state === 'busy' || state === 'denied'}
+      aria-pressed={state === 'on'}
+      title={state === 'denied' ? t('mobile.push.deniedTip') : undefined}
+      onClick={() => void (state === 'on' ? turnOff() : turnOn())}
+    >
+      {state === 'on' ? t('mobile.push.on') : state === 'denied' ? t('mobile.push.denied') : t('mobile.push.off')}
+    </button>
+  );
+}

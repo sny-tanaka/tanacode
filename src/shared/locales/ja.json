@@ -2626,6 +2626,12 @@
     "reconnecting": "Mac につなぎ直しています",
     "waiting": "ほかの {count} 件が答えを待っています",
     "logout": "ログアウト",
+    "push": {
+      "off": "通知を受け取る",
+      "on": "通知を受け取っています（押すと止める）",
+      "denied": "通知が許可されていません",
+      "deniedTip": "iPhone の設定の「通知」で、tanacode を許可してください"
+    },
     "logoutConfirm": "この端末からログアウトしますか？ 次に使うときは、Face ID でログインし直します。",
     "pickOnMac": "ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）",
     "tab": {
