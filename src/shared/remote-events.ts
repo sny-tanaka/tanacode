@@ -60,6 +60,10 @@ export const REMOTE_EVENTS: { readonly [C in keyof IpcEvent]: RemoteEventUse } =
   [IpcChannel.BrowserPopupFrame]: 'subscribe',
   [IpcChannel.BrowserPopupCursor]: 'mac',
   [IpcChannel.BrowserActivity]: 'send',
+  // ミラーリングの絵。頼んだ接続にだけ送る（RemoteHost.emitToClient。ほかの接続・Mac の画面には送らない）
+  [IpcChannel.BrowserMirrorFrame]: 'mac',
+  // Mac の画面に、スマホが映しているタブを描かせ続けさせる
+  [IpcChannel.BrowserMirroring]: 'mac',
   [IpcChannel.BrowserViewport]: 'mac',
   [IpcChannel.BrowserThrottle]: 'mac',
   // メニューバーから開くダイアログ・Mac のキーボードの操作

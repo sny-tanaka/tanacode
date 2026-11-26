@@ -261,6 +261,14 @@ export const IpcChannel = {
   BrowserPopupView: 'browser:popup-view',
   BrowserPopupFrameDone: 'browser:popup-frame-done',
   BrowserPopupInput: 'browser:popup-input',
+  BrowserMirrorTabs: 'browser:mirror-tabs',
+  BrowserMirrorStart: 'browser:mirror-start',
+  BrowserMirrorStop: 'browser:mirror-stop',
+  BrowserMirrorDone: 'browser:mirror-done',
+  BrowserMirrorInput: 'browser:mirror-input',
+  BrowserMirrorNavigate: 'browser:mirror-navigate',
+  BrowserMirrorFrame: 'browser:mirror-frame',
+  BrowserMirroring: 'browser:mirroring',
   // 画面 → main: ポップアップの実物の別ウインドウを出す（映しきれないものを、人が実物で操作するため）
   BrowserPopupReveal: 'browser:popup-reveal',
   // 画面 → main: 人がポップアップのタブを閉じた（別ウインドウを閉じる）
@@ -313,6 +321,22 @@ export type BrowserRect = { x: number; y: number; width: number; height: number 
 // Claude がアプリ内ブラウザを操作している様子。active: 「Claude が操作中」の帯を出す / label: 今の操作（終わったら null）/
 // box: これから押す要素（枠を出す）/ touches: タッチしている指の位置（丸を出す。無ければ出さない）
 export type BrowserActivity = { sessionId: string; active: boolean; label: string | null; box: BrowserRect | null; touches?: BrowserPoint[] };
+// スマホの画面に映すタブ（ミラーリング。Issue #464）。active: Mac の画面で選んでいるタブ
+export type BrowserMirrorTab = { tabId: string; url: string; title: string; active: boolean };
+// 映し方。width・height: スマホの画面の画素の数（送る絵の大きさの上限）/ saver: 節約モード（枚数と画質を下げる）
+export type BrowserMirrorOptions = { width: number; height: number; saver: boolean };
+// 映した絵。data: JPEG の base64 / width・height: ページの CSS の大きさ。stopped: Mac の側の都合で止めた（タブが閉じた・DevTools を開いた など）
+export type BrowserMirrorFrame = { data: string; width: number; height: number } | { stopped: true };
+// スマホの操作。x・y は絵の中の位置（0〜1）。deltaX・deltaY は絵の大きさに対する割合
+export type BrowserMirrorInput =
+  | { type: 'tap'; x: number; y: number }
+  | { type: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
+  | { type: 'text'; text: string }
+  | { type: 'key'; key: 'Enter' | 'Backspace' | 'Tab' | 'Escape' | 'ArrowLeft' | 'ArrowUp' | 'ArrowRight' | 'ArrowDown' };
+// 映しているタブでの移動（url: http(s) だけ）
+export type BrowserMirrorNavigation = { kind: 'back' | 'forward' | 'reload' } | { kind: 'open'; url: string };
+// Mac の画面に、スマホが映しているタブを描かせ続けさせる知らせ（tabId が null なら、やめる）
+export type BrowserMirroring = { sessionId: string; tabId: string; on: boolean };
 export type BrowserPoint = { x: number; y: number };
 
 // Claude が、まだブラウザを開いていないセッションでページを開いた
@@ -1144,6 +1168,18 @@ export type TanacodeApi = {
     // ふだんのブラウザで開く（http(s) だけ）
     openExternal(url: string): Promise<void>;
     onActivity(listener: (activity: BrowserActivity) => void): () => void;
+    // スマホの画面のミラーリング（Issue #464。スマホの画面からだけ呼べる。Mac の画面からは空・false）。
+    // mirrorTabs: セッションのタブ / mirrorStart: そのタブを映し始める（絵は onMirrorFrame）/ mirrorStop: やめる /
+    // mirrorDone: 絵を描き終えた / mirrorInput: 操作 / mirrorNavigate: 映しているタブで移動する
+    mirrorTabs(sessionId: string): Promise<BrowserMirrorTab[]>;
+    mirrorStart(sessionId: string, tabId: string, options: BrowserMirrorOptions): Promise<boolean>;
+    mirrorStop(): Promise<void>;
+    mirrorDone(): void;
+    mirrorInput(input: BrowserMirrorInput): void;
+    mirrorNavigate(sessionId: string, tabId: string, navigation: BrowserMirrorNavigation): Promise<boolean>;
+    onMirrorFrame(listener: (frame: BrowserMirrorFrame) => void): () => void;
+    // Mac の画面: スマホが映しているタブを、見ていなくても描かせ続ける
+    onMirroring(listener: (mirroring: BrowserMirroring) => void): () => void;
     onViewport(listener: (change: BrowserViewportChange) => void): () => void;
     // 人がツールバーで表示幅を選んだ（Claude が set_viewport で決めた大きさ・画素密度・タッチをやめる）
     resetViewport(sessionId: string): void;
@@ -1345,6 +1381,10 @@ export type IpcInvoke = {
   [IpcChannel.BrowserLoginsGet]: Api['browser']['logins'];
   [IpcChannel.BrowserRemembersGet]: Api['browser']['remembers'];
   [IpcChannel.BrowserPopupsGet]: Api['browser']['popups'];
+  [IpcChannel.BrowserMirrorTabs]: Api['browser']['mirrorTabs'];
+  [IpcChannel.BrowserMirrorStart]: Api['browser']['mirrorStart'];
+  [IpcChannel.BrowserMirrorStop]: Api['browser']['mirrorStop'];
+  [IpcChannel.BrowserMirrorNavigate]: Api['browser']['mirrorNavigate'];
 };
 
 // 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
@@ -1370,6 +1410,8 @@ export type IpcSend = {
   [IpcChannel.BrowserPopupView]: Api['browser']['viewPopup'];
   [IpcChannel.BrowserPopupFrameDone]: Api['browser']['popupFrameDone'];
   [IpcChannel.BrowserPopupInput]: Api['browser']['popupInput'];
+  [IpcChannel.BrowserMirrorDone]: Api['browser']['mirrorDone'];
+  [IpcChannel.BrowserMirrorInput]: Api['browser']['mirrorInput'];
   [IpcChannel.BrowserPopupReveal]: Api['browser']['revealPopup'];
   [IpcChannel.BrowserPopupClose]: Api['browser']['closePopup'];
   [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
@@ -1425,6 +1467,8 @@ export type IpcEvent = {
   [IpcChannel.BrowserPopupFrame]: Payload<Api['browser']['onPopupFrame']>;
   [IpcChannel.BrowserPopupCursor]: Payload<Api['browser']['onPopupCursor']>;
   [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
+  [IpcChannel.BrowserMirrorFrame]: Payload<Api['browser']['onMirrorFrame']>;
+  [IpcChannel.BrowserMirroring]: Payload<Api['browser']['onMirroring']>;
   [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
   [IpcChannel.BrowserThrottle]: Payload<Api['browser']['onThrottle']>;
   [IpcChannel.PromptsOpen]: undefined;

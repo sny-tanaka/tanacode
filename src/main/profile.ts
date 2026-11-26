@@ -11,6 +11,7 @@ import { t } from '@shared/i18n';
 import type { CustomPrompts } from '@shared/prompts';
 import type { AppSettings } from './app-settings';
 import type { BrowserMcpLaunch } from './browser-bridge';
+import { BrowserMirror } from './browser-mirror';
 import { BrowserControl } from './browser-control';
 import { sdkSource, type SdkModule } from './browser-credentials';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
@@ -101,6 +102,8 @@ export class Profile {
   readonly statusLines: StatusLineWatcher;
   readonly settingsFiles: SettingsFiles;
   readonly browser: BrowserControl;
+  // スマホの画面に、アプリ内ブラウザのタブを映す（ミラーリング。Issue #464）
+  readonly mirror: BrowserMirror;
   // アプリ内ブラウザ（プレビューの webview）のセッション。ページが HTTP の認証を求めたとき、どのプロファイルのものかを見分ける
   get previewSession(): Session {
     return this.options.preview;
@@ -200,11 +203,17 @@ export class Profile {
         closeTab: IpcChannel.BrowserCloseTab,
         popups: IpcChannel.BrowserPopups,
         popupFrame: IpcChannel.BrowserPopupFrame,
+        mirroring: IpcChannel.BrowserMirroring,
         popupCursor: IpcChannel.BrowserPopupCursor,
         ask: IpcChannel.BrowserAsk,
         login: IpcChannel.BrowserLogin,
         remember: IpcChannel.BrowserRemember,
       },
+    });
+    this.mirror = new BrowserMirror({
+      guest: (sessionId, tabId) => this.browser.mirrorGuest(sessionId, tabId),
+      connect: (sessionId, tabId) => this.browser.mirrorConnect(sessionId, tabId),
+      keepDrawing: (sessionId, tabId, on) => this.browser.mirrorDraw(sessionId, tabId, on),
     });
     this.browser.watchNetwork(options.preview);
     this.checklists = new ChecklistStore(join(dataDir, 'checklists'), (id, lists) => send(IpcChannel.ChecklistChanged, { sessionId: id, lists }));

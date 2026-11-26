@@ -115,6 +115,7 @@ export function setup(options: { credentials?: BrowserControlDeps['credentials']
       popups: IpcChannel.BrowserPopups,
       popupFrame: IpcChannel.BrowserPopupFrame,
       popupCursor: IpcChannel.BrowserPopupCursor,
+      mirroring: IpcChannel.BrowserMirroring,
       ask: IpcChannel.BrowserAsk,
       login: IpcChannel.BrowserLogin,
       remember: IpcChannel.BrowserRemember,

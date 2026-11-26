@@ -34,7 +34,8 @@ export type RemoteSettingsInput = { port: number; publicUrl: string };
 export type RemoteDevice = { id: string; name: string; createdAt: number; lastUsedAt: number | null; profileIds: string[] };
 
 // 遠隔でつながっている端末（Mac の上の帯に出す）。count: その端末の接続の数
-export type RemoteConnection = { registrationId: string; name: string; count: number };
+// mirroring: その端末が、アプリ内ブラウザを映している（ミラーリング中）
+export type RemoteConnection = { registrationId: string; name: string; count: number; mirroring?: boolean };
 
 // 承認のときに選べるプロファイル（今開いているもの）
 export type RemoteProfileChoice = { id: string; name: string };

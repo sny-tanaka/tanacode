@@ -22,6 +22,7 @@ import { t } from '@shared/i18n';
 import type {
   BrowserActivity,
   BrowserAsk,
+  BrowserMirrorTab,
   BrowserAskChange,
   BrowserLoginChange,
   BrowserPoint,
@@ -396,6 +397,7 @@ type Deps = {
     popups: typeof IpcChannel.BrowserPopups;
     popupFrame: typeof IpcChannel.BrowserPopupFrame;
     popupCursor: typeof IpcChannel.BrowserPopupCursor;
+    mirroring: typeof IpcChannel.BrowserMirroring;
     ask: typeof IpcChannel.BrowserAsk;
     login: typeof IpcChannel.BrowserLogin;
     remember: typeof IpcChannel.BrowserRemember;
@@ -418,6 +420,8 @@ export class BrowserControl {
   private readonly logs = new Map<number, Logs>();
   private readonly waiters = new Map<string, ((guest: Guest) => void)[]>();
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
+  // スマホが映しているタブを描かせ続けている間の、戻す関数（セッションとタブごと）
+  private readonly mirrorDrawing = new Map<string, () => void>();
   // 動いている呼び出しの数（セッションごと）。0 になって少したったら、帯を消す
   private readonly running = new Map<string, number>();
   // 最後の呼び出しが終わった時刻（セッションごと）
@@ -1668,6 +1672,83 @@ export class BrowserControl {
     if (failed > 0) lines.push(`${count(failed, 'request')} failed (read them with get_failed_requests).`);
     lines.push(...this.logins.notes(guest.contents));
     return textResult(lines.join('\n'));
+  }
+
+  // ---- スマホの画面のミラーリング（browser-mirror.ts が使う。Issue #464） ----
+
+  // セッションのタブ（ポップアップは除く）。active: Mac の画面で選んでいるタブ
+  mirrorTabs(sessionId: string): BrowserMirrorTab[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) return [];
+    return [...session.tabs.values()]
+      .filter((guest) => !guest.popup && !guest.contents.isDestroyed())
+      .map((guest) => ({ tabId: guest.tabId, url: guest.contents.getURL(), title: guest.contents.getTitle(), active: guest.tabId === session.shown }));
+  }
+
+  mirrorGuest(sessionId: string, tabId: string): WebContents | null {
+    const guest = this.sessions.get(sessionId)?.tabs.get(tabId);
+    return guest && !guest.popup && !guest.contents.isDestroyed() ? guest.contents : null;
+  }
+
+  // CDP をつなぐ（Claude のツールと同じ debugger を使う）
+  async mirrorConnect(sessionId: string, tabId: string): Promise<void> {
+    const guest = this.sessions.get(sessionId)?.tabs.get(tabId);
+    if (guest) await this.connect(guest, false);
+  }
+
+  // 映している間、Mac の画面とそのタブを描かせ続ける（見ていない・ロック中でも。drawHost・unthrottle と同じ）。
+  // Mac の画面には、見ていないタブでも透明にして描かせるよう知らせる（BrowserMirroring）
+  mirrorDraw(sessionId: string, tabId: string, on: boolean): void {
+    const key = `${sessionId}\n${tabId}`;
+    const release = this.mirrorDrawing.get(key);
+    if (on && !release) {
+      const guest = this.sessions.get(sessionId)?.tabs.get(tabId);
+      const hide = this.drawHost();
+      const tab = this.unthrottle(guest?.contents);
+      this.mirrorDrawing.set(key, () => {
+        tab();
+        hide();
+      });
+    } else if (!on && release) {
+      this.mirrorDrawing.delete(key);
+      release();
+    } else return;
+    this.deps.send(this.deps.channels.mirroring, { sessionId, tabId, on });
+  }
+
+  // 映しているタブで移動する（人がスマホで押したもの。開く先は http(s) だけ）。できなければ false
+  mirrorNavigate(sessionId: string, tabId: string, navigation: unknown): boolean {
+    const contents = this.mirrorGuest(sessionId, tabId);
+    if (!contents || !navigation || typeof navigation !== 'object') return false;
+    const { kind, url } = navigation as { kind?: unknown; url?: unknown };
+    const history = contents.navigationHistory;
+    switch (kind) {
+      case 'back':
+        if (!history.canGoBack()) return false;
+        history.goBack();
+        return true;
+      case 'forward':
+        if (!history.canGoForward()) return false;
+        history.goForward();
+        return true;
+      case 'reload':
+        contents.reload();
+        return true;
+      case 'open': {
+        if (typeof url !== 'string') return false;
+        let target: URL;
+        try {
+          target = new URL(url);
+        } catch {
+          return false;
+        }
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+        void contents.loadURL(target.toString()).catch(() => undefined);
+        return true;
+      }
+      default:
+        return false;
+    }
   }
 
   // ---- 読む ----
