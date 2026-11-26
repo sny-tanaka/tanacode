@@ -313,6 +313,15 @@ input[type='checkbox'] {
   border-radius: 50%;
   background: var(--warn);
 }
+/* スマホがアプリ内ブラウザを映している間の印 */
+.remote-banner-mirroring {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 11px;
+}
 .remote-banner .ghost-button {
   color: var(--text-primary);
 }
@@ -6591,6 +6600,118 @@ button.menu-tab:disabled {
 }
 .preview-pane[hidden] {
   display: none;
+}
+/* スマホの画面のブラウザ（ミラーリング。Mac のアプリ内ブラウザのタブを映す） */
+.remote-browser {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.remote-browser-bar,
+.remote-browser-nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.remote-browser-bar select {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.remote-browser-nav input,
+.remote-browser-input input:not([type='checkbox']) {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-heading);
+  font: inherit;
+  font-size: 16px;
+}
+.remote-browser-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-chrome);
+}
+.remote-browser-screen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.remote-browser-start {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+.remote-browser-start .send-button {
+  min-width: 160px;
+  min-height: 48px;
+  font-size: 16px;
+}
+.remote-browser-input {
+  flex: none;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.remote-browser-input form {
+  display: flex;
+  gap: 6px;
+}
+.remote-browser-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  overflow-x: auto;
+}
+.remote-browser-keys button {
+  flex: none;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.remote-browser-saver {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.remote-browser-traffic {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 /* ブラウザのタブ（エディタのタブと同じ形。グラデーションの上端は付けない） */
 .preview-tabs {

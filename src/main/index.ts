@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, safeStorage, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
-import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type BrowserMirrorOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
 import { instructionDirs, instructionFiles } from './project-instructions';
@@ -24,6 +24,7 @@ import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
 import { parseSubscription, sendPush, type VapidKeys } from './web-push';
+import { sanitizeMirrorInput } from './browser-mirror';
 import { publicOriginOf } from '@shared/remote-protocol';
 import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
@@ -246,6 +247,7 @@ const remoteHost = new RemoteHost({
     // 切れた接続の、開いているファイルと見ている所を捨てる
     const live = new Set(remoteHost.clientIds());
     for (const p of profiles()) {
+      p.mirror.keep(live);
       p.openFiles.keep(live);
       p.walkthroughControl?.keep(live);
     }
@@ -310,7 +312,19 @@ function remoteDevicesState(): RemoteDevicesState {
 function remoteConnections(): RemoteConnection[] {
   const counts = new Map<string, number>();
   for (const id of remoteHost.connectedRegistrations()) counts.set(id, (counts.get(id) ?? 0) + 1);
-  return [...counts].map(([registrationId, count]) => ({ registrationId, name: remoteRegistrations?.get(registrationId)?.name ?? '', count }));
+  // ミラーリングしている端末（Mac の上の帯に「ブラウザを送信中」と出す）
+  const mirroring = new Set(remoteHost.clientIds().filter((clientId) => profiles().some((p) => p.mirror.watching(clientId))).map((clientId) => remoteHost.registrationOf(clientId)));
+  return [...counts].map(([registrationId, count]) => ({
+    registrationId,
+    name: remoteRegistrations?.get(registrationId)?.name ?? '',
+    count,
+    ...(mirroring.has(registrationId) ? { mirroring: true } : {}),
+  }));
+}
+
+// ミラーリングを始めた・やめたときに、Mac の上の帯を出し直す
+function mirroringChanged(): void {
+  send(IpcChannel.RemoteConnectionsChanged, remoteConnections());
 }
 
 // 設定のダイアログに出すもの
@@ -1260,8 +1274,47 @@ function registerIpc(): void {
     if (e.kind === 'remote') remoteRegistrations?.setPush(e.registrationId, null);
   });
   listen(IpcChannel.RemoteVisible, (e, visible: unknown) => {
-    if (e.kind === 'remote') remoteHost.setVisible(e.clientId, visible === true);
+    if (e.kind !== 'remote') return;
+    remoteHost.setVisible(e.clientId, visible === true);
+    // 裏に回ったら、スマホの画面からの「止める」が届かなくても、映すのを止める（iOS が画面を凍らせることがあるため）。
+    // 映し始める途中（CDP をつないでいる最中）のものも止まるように、映しているかを見ずに stop を呼ぶ
+    if (visible !== true) {
+      const was = profiles().some((p) => p.mirror.watching(e.clientId));
+      for (const p of profiles()) p.mirror.stop(e.clientId);
+      if (was) mirroringChanged();
+    }
   });
+  // ミラーリング（スマホの画面に、アプリ内ブラウザのタブを映す）。呼んだ接続にだけ映す。Mac の画面からは何もしない
+  handle(IpcChannel.BrowserMirrorTabs, (e, id: string) => (e.kind === 'remote' ? P(e).browser.mirrorTabs(String(id)) : []));
+  handle(IpcChannel.BrowserMirrorStart, async (e, id: string, tabId: string, options: unknown) => {
+    if (e.kind !== 'remote') return false;
+    const clientId = e.clientId;
+    const p = P(e);
+    const opts = mirrorOptionsOf(options);
+    if (!opts) return false;
+    for (const other of profiles()) if (other !== p) other.mirror.stop(clientId);
+    const started = await p.mirror.start(clientId, String(id), String(tabId), opts, (frame) => {
+      remoteHost.emitToClient(clientId, p.id, IpcChannel.BrowserMirrorFrame, frame);
+      if ('stopped' in frame) mirroringChanged();
+    });
+    mirroringChanged();
+    return started;
+  });
+  handle(IpcChannel.BrowserMirrorStop, (e) => {
+    if (e.kind !== 'remote') return;
+    for (const p of profiles()) p.mirror.stop(e.clientId);
+    mirroringChanged();
+  });
+  listen(IpcChannel.BrowserMirrorDone, (e) => {
+    if (e.kind === 'remote') for (const p of profiles()) p.mirror.done(e.clientId);
+  });
+  listen(IpcChannel.BrowserMirrorInput, (e, input: unknown) => {
+    const clean = e.kind === 'remote' ? sanitizeMirrorInput(input) : null;
+    if (e.kind === 'remote' && clean) for (const p of profiles()) void p.mirror.input(e.clientId, clean);
+  });
+  handle(IpcChannel.BrowserMirrorNavigate, (e, id: string, tabId: string, navigation: unknown) =>
+    e.kind === 'remote' ? P(e).browser.mirrorNavigate(String(id), String(tabId), navigation) : false,
+  );
 }
 
 // 文を UTF-8 のバイト数で切る（文字の途中では切らない）。切ったら … を付ける
@@ -1273,6 +1326,14 @@ function cutBytes(text: string, max: number): string {
     out += char;
   }
   return `${out}…`;
+}
+
+// スマホが渡すミラーリングの映し方の形を確かめる（壊れていれば null）。大きさは 1〜4000 の画素
+function mirrorOptionsOf(value: unknown): BrowserMirrorOptions | null {
+  if (!value || typeof value !== 'object') return null;
+  const { width, height, saver } = value as Record<string, unknown>;
+  const size = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 1 && n <= 4000;
+  return size(width) && size(height) ? { width: width as number, height: height as number, saver: saver === true } : null;
 }
 
 // スマホの画面を閉じている間の通知（Web Push）を、そのプロファイルを許した端末のうち、受け取ると決めたものに送る（Mac の通知と同じ文。決めたこと）。

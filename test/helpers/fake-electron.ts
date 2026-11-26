@@ -157,6 +157,8 @@ export class FakeContents extends EventEmitter {
     getActiveIndex: () => this.history.index,
     length: () => this.history.entries.length,
     getEntryAtIndex: (index: number) => ({ url: this.history.entries[index], title: '' }),
+    canGoBack: () => this.history.index > 0,
+    canGoForward: () => this.history.index < this.history.entries.length - 1,
     goBack: () => {
       this.calls.push('goBack');
       this.history.index--;

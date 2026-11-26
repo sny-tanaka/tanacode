@@ -214,6 +214,13 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.BrowserLoginsGet]: same([]),
   [IpcChannel.BrowserRemembersGet]: same([]),
   [IpcChannel.BrowserPopupsGet]: same([]),
+  // ミラーリング。映すのは呼んだ接続にだけ（main が接続で決める）
+  [IpcChannel.BrowserMirrorTabs]: same(['string']),
+  [IpcChannel.BrowserMirrorStart]: same(['string', 'string', 'object']),
+  [IpcChannel.BrowserMirrorStop]: same([]),
+  [IpcChannel.BrowserMirrorDone]: same([]),
+  [IpcChannel.BrowserMirrorInput]: same(['object']),
+  [IpcChannel.BrowserMirrorNavigate]: same(['string', 'string', 'object']),
   // 遠隔の接続は、その接続が開いているセッションとして覚える（Mac の画面の分は変えない）
   [IpcChannel.SessionsFocus]: same(['nullable-string']),
   [IpcChannel.SessionsInterrupt]: same(['string']),

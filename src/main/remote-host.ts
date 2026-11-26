@@ -285,6 +285,25 @@ export class RemoteHost {
     return [...this.clients.values()].some((client) => client.visible && client.focus === sessionId && this.sessions.get(client.sessionId)?.registrationId === registrationId);
   }
 
+  // 1 つの接続にだけ送る知らせ（ミラーリングの絵など。REMOTE_EVENTS の扱いは見ない）。その接続が切れている・そのプロファイルを許していなければ送らない
+  emitToClient<C extends keyof IpcEvent>(clientId: string, profileId: string, channel: C, payload: IpcEvent[C]): boolean {
+    const client = this.clients.get(clientId);
+    if (!this.child || !client || !this.sessions.get(client.sessionId)?.profileIds.includes(profileId)) return false;
+    try {
+      this.child.post({ type: 'event', clientIds: [clientId], channel, payload, profileId });
+      return true;
+    } catch (error) {
+      this.deps.log(`遠隔の接続に知らせを送れませんでした（${channel}）: ${String(error)}`);
+      return false;
+    }
+  }
+
+  // その接続の登録（知らない接続なら空の文字）
+  registrationOf(clientId: string): string {
+    const client = this.clients.get(clientId);
+    return (client && this.sessions.get(client.sessionId)?.registrationId) ?? '';
+  }
+
   // つながっている接続の id
   clientIds(): string[] {
     return [...this.clients.keys()];

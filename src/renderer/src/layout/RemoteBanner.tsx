@@ -27,6 +27,8 @@ export function RemoteBanner() {
     <div className="remote-banner" role="status">
       <span className="remote-banner-dot" />
       <span className="remote-banner-text">{t('remote.banner.active', { names })}</span>
+      {/* スマホがアプリ内ブラウザを映している間（ミラーリング）。見ているページの絵がスマホへ送られていることを示す */}
+      {connections.some((c) => c.mirroring) && <span className="remote-banner-mirroring">{t('remote.banner.mirroring')}</span>}
       <button
         className="ghost-button"
         title={t('remote.banner.disconnectTip')}

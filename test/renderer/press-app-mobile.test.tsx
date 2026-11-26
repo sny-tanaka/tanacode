@@ -206,7 +206,15 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('browser');
-    expect(document.querySelector('.center .preview-toolbar')).not.toBeNull();
+    // スマホの画面では、Mac のアプリ内ブラウザを映す部品（開いただけでは映さない）
+    expect(document.querySelector('.center .remote-browser')).not.toBeNull();
+    expect(api.argsOf('browser.mirrorTabs')).toHaveLength(1);
+    // 下のタブをチャットに替えると、真ん中の列がブラウザのままでも見ていない扱い（映していれば止める）。戻ると読み直す
+    fireEvent.click(screen.getByRole('tab', { name: 'チャット' }));
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
+    await flush();
+    expect(api.argsOf('browser.mirrorTabs')).toHaveLength(2);
     fireEvent.click(screen.getByRole('tab', { name: 'エディタ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('editor');
@@ -215,8 +223,8 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('browser');
-    fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
-    fireEvent.click(document.querySelector('.center [aria-label="ブラウザを閉じる"]')!);
+    // ブラウザを閉じた（パネルの列のブラウザを押し直した）ら、エディタのタブへ移る
+    fireEvent.click(screen.getByRole('button', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('editor');
     fireEvent.click(screen.getByRole('tab', { name: 'パネル' }));

@@ -511,6 +511,12 @@ const modules: Record<string, Record<string, unknown>> = {
       pendingLogins: echo('browser.pendingLogins'),
       answerLogin: echo('browser.answerLogin'),
       turnOff: () => undefined,
+      mirrorTabs: echo('browser.mirrorTabs'),
+      // 映すタブ（webContents）は無い（BrowserMirror は始められずに false を返す）
+      mirrorGuest: () => null,
+      mirrorConnect: async () => undefined,
+      mirrorDraw: () => undefined,
+      mirrorNavigate: echo('browser.mirrorNavigate'),
     }),
   },
   'sessions-control': {

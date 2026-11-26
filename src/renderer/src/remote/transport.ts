@@ -1,3 +1,4 @@
+import { addTraffic } from './mode';
 import { IpcChannel, type IpcEvent, type IpcInvoke, type IpcSend } from '@shared/ipc';
 import type { ApiTransport } from '@shared/api-bindings';
 import { REMOTE_CHANNELS } from '@shared/remote-channels';
@@ -221,7 +222,11 @@ export class RemoteTransport {
     const socket = new this.Socket(url.toString());
     this.socket = socket;
     socket.onopen = () => socket.send(JSON.stringify({ type: 'hello', ticket }));
-    socket.onmessage = (event) => this.received(String(event.data));
+    socket.onmessage = (event) => {
+      const text = String(event.data);
+      addTraffic(text.length);
+      this.received(text);
+    };
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = null;
