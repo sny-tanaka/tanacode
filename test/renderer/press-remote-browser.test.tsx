@@ -82,7 +82,7 @@ describe('RemoteBrowser', () => {
     fireEvent.click(screen.getByRole('button', { name: '改行' }));
     expect(api.argsOf('browser.mirrorInput').map((args) => args[0])).toEqual([
       { type: 'tap', x: 0.5, y: 0.25 },
-      { type: 'scroll', x: 0.5, y: 0.25, deltaX: -0, deltaY: -0.1 },
+      { type: 'scroll', x: 0.5, y: 0.25, deltaX: 0, deltaY: -0.1 },
       { type: 'text', text: 'こんにちは' },
       { type: 'key', key: 'Enter' },
     ]);
@@ -149,13 +149,56 @@ describe('RemoteBrowser', () => {
     expect(none.container.innerHTML).toBe('');
   });
 
-  it('使った通信量を、この接続と今日の分で出す（日が変われば今日の分は 0 から）', () => {
-    localStorage.clear();
-    const day = new Date(2026, 10, 26, 9);
-    addTraffic(1024 * 1024, day);
-    expect(traffic(day).today).toBe(1024 * 1024);
-    expect(traffic(new Date(2026, 10, 27, 9)).today).toBe(0);
-    localStorage.setItem('tanacode.remote.traffic', '{broken');
-    expect(traffic(day).today).toBe(0);
+  it('なぞった動きはためて、決めた間隔に 1 回まとめて送る（1 つずつ送ると遠隔サーバーの頻度の上限を超えて切れる）。離したら残りを送る', async () => {
+    placeImage();
+    render(<RemoteBrowser sessionId="s1" visible />);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'ミラーリング' }));
+    await settle();
+    act(() => api.emit('browser.onMirrorFrame', frame('AAAA')));
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerDown(image(), { clientX: 100, clientY: 100 });
+      for (let y = 110; y <= 200; y += 10) fireEvent.pointerMove(image(), { clientX: 100, clientY: y });
+      expect(api.argsOf('browser.mirrorInput')).toEqual([]);
+      act(() => vi.advanceTimersByTime(150));
+      expect(api.argsOf('browser.mirrorInput').map((args) => args[0])).toEqual([{ type: 'scroll', x: 0.5, y: 0.25, deltaX: 0, deltaY: expect.closeTo(-0.25) }]);
+      fireEvent.pointerMove(image(), { clientX: 100, clientY: 240 });
+      fireEvent.pointerCancel(image());
+      expect(api.argsOf('browser.mirrorInput').map((args) => args[0])).toHaveLength(2);
+      expect(api.argsOf('browser.mirrorInput')[1][0]).toEqual({ type: 'scroll', x: 0.5, y: 0.5, deltaX: 0, deltaY: -0.1 });
+      // 一度に大きく動かしても、main で受ける範囲（絵の 10 倍まで）に収める
+      fireEvent.pointerDown(image(), { clientX: 100, clientY: 0 });
+      fireEvent.pointerMove(image(), { clientX: 100, clientY: 5000 });
+      fireEvent.pointerUp(image(), { clientX: 100, clientY: 5000 });
+      expect(api.argsOf('browser.mirrorInput')[2][0]).toMatchObject({ type: 'scroll', deltaY: -10 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('使った通信量を、この接続と今日の分で出す。控えに書くのは 1 秒に 1 回まとめて（日が変われば今日の分は 0 から）', () => {
+    vi.useFakeTimers({ now: new Date(2026, 10, 26, 9) });
+    try {
+      localStorage.clear();
+      const before = traffic().session;
+      addTraffic(512 * 1024);
+      addTraffic(512 * 1024);
+      expect(localStorage.getItem('tanacode.remote.traffic')).toBeNull();
+      expect(traffic().today).toBe(1024 * 1024);
+      expect(traffic().session - before).toBe(1024 * 1024);
+      vi.advanceTimersByTime(1000);
+      expect(JSON.parse(localStorage.getItem('tanacode.remote.traffic') ?? 'null')).toEqual({ day: '2026-11-26', bytes: 1024 * 1024 });
+      expect(traffic(new Date(2026, 10, 27, 9)).today).toBe(0);
+      localStorage.setItem('tanacode.remote.traffic', '{broken');
+      expect(traffic().today).toBe(0);
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('full');
+      });
+      addTraffic(1);
+      expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

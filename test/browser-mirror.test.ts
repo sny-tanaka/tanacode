@@ -131,6 +131,31 @@ describe('BrowserMirror', () => {
     expect(t.mirror.count()).toBe(0);
   });
 
+  it('CDP をつなぐのを待っている間に止められた・次を頼まれたら、前のものは何も付けずにやめる（あとから映し始めない）', async () => {
+    const t = setup();
+    const first = t.mirror.start('c1', 's1', 'tab-1', { width: 390, height: 844, saver: false }, t.sendTo('c1'));
+    t.mirror.stop('c1');
+    expect(await first).toBe(false);
+    expect(t.tab('tab-1').debugger.methods()).toEqual([]);
+    expect(t.drawing).toEqual([]);
+    expect(t.mirror.count()).toBe(0);
+    const a = t.mirror.start('c1', 's1', 'tab-1', { width: 390, height: 844, saver: false }, t.sendTo('c1'));
+    const b = t.mirror.start('c1', 's1', 'tab-2', { width: 390, height: 844, saver: false }, t.sendTo('c1'));
+    expect(await a).toBe(false);
+    expect(await b).toBe(true);
+    expect(t.mirror.watching('c1')).toEqual({ sessionId: 's1', tabId: 'tab-2' });
+    expect(t.drawing).toEqual([['s1', 'tab-2', true]]);
+    // 待っている間に切れた接続も、映し始めない
+    const c = t.mirror.start('c2', 's1', 'tab-1', { width: 390, height: 844, saver: false }, t.sendTo('c2'));
+    t.mirror.keep(new Set(['c1']));
+    expect(await c).toBe(false);
+    // 待っている間にタブが閉じたら、映し始めない
+    const d = t.mirror.start('c3', 's1', 'tab-1', { width: 390, height: 844, saver: false }, t.sendTo('c3'));
+    t.tab('tab-1').destroyed = true;
+    expect(await d).toBe(false);
+    expect(t.mirror.count()).toBe(1);
+  });
+
   it('タブが無い・screencast を始められないときは false。タブが閉じた・CDP が外れた（DevTools を開いた）ら止めて知らせる', async () => {
     const t = setup();
     await expect(t.mirror.start('c1', 's1', 'tab-9', { width: 390, height: 844, saver: false }, t.sendTo('c1'))).resolves.toBe(false);

@@ -71,8 +71,17 @@ function readToday(now: Date): number {
   }
 }
 
-export function addTraffic(bytes: number, now = new Date()): void {
-  sessionBytes += bytes;
+// 届くたびに書くと、絵やチャットの途中の文が続くときに同期の書き込みが重なるので、手元で数えて 1 秒に 1 回まとめて書く
+const TRAFFIC_SAVE_MS = 1000;
+let unsaved = 0;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveTraffic(now = new Date()): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  const bytes = unsaved;
+  unsaved = 0;
+  if (bytes === 0) return;
   try {
     localStorage.setItem(TRAFFIC_KEY, JSON.stringify({ day: todayKey(now), bytes: readToday(now) + bytes }));
   } catch {
@@ -80,6 +89,12 @@ export function addTraffic(bytes: number, now = new Date()): void {
   }
 }
 
+export function addTraffic(bytes: number): void {
+  sessionBytes += bytes;
+  unsaved += bytes;
+  saveTimer ??= setTimeout(() => saveTraffic(), TRAFFIC_SAVE_MS);
+}
+
 export function traffic(now = new Date()): { session: number; today: number } {
-  return { session: sessionBytes, today: readToday(now) };
+  return { session: sessionBytes, today: readToday(now) + unsaved };
 }

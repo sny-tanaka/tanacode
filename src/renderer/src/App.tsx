@@ -1472,7 +1472,8 @@ export function App() {
           {/* スマホの画面には <webview> が無いので、Mac のアプリ内ブラウザのタブを映す（ミラーリング。Issue #464） */}
           {isRemoteMode() ? (
             <div className="preview-pane remote" hidden={!(diffView?.source === 'preview' && !!toolId)}>
-              <RemoteBrowser sessionId={toolId} visible={diffView?.source === 'preview' && !!toolId} />
+              {/* スマホの配置では、下のタブがブラウザのときだけ見ている（ほかのタブでは、真ん中の列がブラウザのままでも映さない） */}
+              <RemoteBrowser sessionId={toolId} visible={diffView?.source === 'preview' && !!toolId && (!mobile || mobileTab === 'browser')} />
             </div>
           ) : (
             <PreviewPane

@@ -19,6 +19,8 @@ type Props = {
 
 // なぞったと見なす動き（CSS の px）。これより小さければ押した
 const TAP_SLOP = 8;
+// なぞった動きをためて送る間隔（ms）。指の動きは 1 秒に 60 回以上届くので、1 つずつ送ると遠隔サーバーの頻度の上限を超えて切れる
+const SCROLL_SEND_MS = 150;
 const MB = 1024 * 1024;
 
 export function RemoteBrowser({ sessionId, visible }: Props) {
@@ -34,6 +36,22 @@ export function RemoteBrowser({ sessionId, visible }: Props) {
   const screenRef = useRef<HTMLDivElement>(null);
   // 押し始めた位置と、なぞったか
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  // まだ送っていない、なぞった量（絵の中の割合）と、送る時計
+  const pendingScroll = useRef<{ x: number; y: number; deltaX: number; deltaY: number } | null>(null);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushScroll = useCallback(() => {
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    scrollTimer.current = null;
+    const pending = pendingScroll.current;
+    pendingScroll.current = null;
+    if (!pending) return;
+    // 1 回に送れる量は、絵の 10 倍まで（main で確かめる範囲）
+    const clamp = (n: number) => Math.max(-10, Math.min(10, n));
+    window.tanacode.browser.mirrorInput({ type: 'scroll', x: pending.x, y: pending.y, deltaX: clamp(pending.deltaX), deltaY: clamp(pending.deltaY) });
+  }, []);
+  useEffect(() => () => {
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+  }, []);
 
   const loadTabs = useCallback(() => {
     if (!sessionId) return;
@@ -181,18 +199,22 @@ export function RemoteBrowser({ sessionId, visible }: Props) {
               const at = position(start.x, start.y);
               if (!at) return;
               // なぞった向きと逆に送る（指で下へなぞると、ページは上へ戻る）
-              send({ type: 'scroll', x: at.x, y: at.y, deltaX: -dx / at.width, deltaY: -dy / at.height });
+              const pending = pendingScroll.current;
+              pendingScroll.current = { x: pending?.x ?? at.x, y: pending?.y ?? at.y, deltaX: (pending?.deltaX ?? 0) - dx / at.width, deltaY: (pending?.deltaY ?? 0) - dy / at.height };
+              scrollTimer.current ??= setTimeout(flushScroll, SCROLL_SEND_MS);
               drag.current = { x: e.clientX, y: e.clientY, moved: true };
             }}
             onPointerUp={(e) => {
               const start = drag.current;
               drag.current = null;
+              flushScroll();
               if (!start || start.moved) return;
               const at = position(e.clientX, e.clientY);
               if (at) send({ type: 'tap', x: at.x, y: at.y });
             }}
             onPointerCancel={() => {
               drag.current = null;
+              flushScroll();
             }}
           />
         )}

@@ -45,6 +45,8 @@ type Mirror = {
 
 export class BrowserMirror {
   private readonly mirrors = new Map<string, Mirror>();
+  // 接続ごとの通し番号。start が CDP をつなぐのを待つ間に、止められた・次の start が来たら、待ったあとで分かるように
+  private readonly turns = new Map<string, number>();
 
   constructor(
     private readonly host: MirrorHost,
@@ -54,12 +56,15 @@ export class BrowserMirror {
   // 映し始める。前に同じ接続が映していたものは止める。同じタブを別の接続が映していたら、そちらは止める。始められなければ false
   async start(clientId: string, sessionId: string, tabId: string, options: BrowserMirrorOptions, send: (frame: BrowserMirrorFrame) => void): Promise<boolean> {
     this.stop(clientId);
-    for (const other of [...this.mirrors.values()]) {
-      if (other.sessionId === sessionId && other.tabId === tabId) this.stop(other.clientId, true, true);
-    }
+    const turn = this.turns.get(clientId) ?? 0;
     const contents = this.host.guest(sessionId, tabId);
     if (!contents) return false;
     await this.host.connect(sessionId, tabId);
+    // 待っている間に止められた・次を頼まれた・タブが消えたら、何も付けずにやめる
+    if (this.turns.get(clientId) !== turn || contents.isDestroyed()) return false;
+    for (const other of [...this.mirrors.values()]) {
+      if (other.sessionId === sessionId && other.tabId === tabId) this.stop(other.clientId, true, true);
+    }
     const mode = MIRROR_MODES[options.saver ? 'saver' : 'normal'];
     const mirror: Mirror = {
       clientId,
@@ -100,6 +105,7 @@ export class BrowserMirror {
   // 映すのをやめる。notify: スマホに、止まったことを知らせる（Mac の側の都合で止めたとき）/
   // handover: 同じタブを別の接続が引き継ぐ（描かせ続けるのを、切らずにそのまま渡す）
   stop(clientId: string, notify = false, handover = false): void {
+    this.turns.set(clientId, (this.turns.get(clientId) ?? 0) + 1);
     const mirror = this.mirrors.get(clientId);
     if (!mirror) return;
     this.mirrors.delete(clientId);
@@ -118,6 +124,7 @@ export class BrowserMirror {
   // 切れた接続のものを止める（live: つながっている接続の id）
   keep(live: ReadonlySet<string>): void {
     for (const clientId of [...this.mirrors.keys()]) if (!live.has(clientId)) this.stop(clientId);
+    for (const clientId of [...this.turns.keys()]) if (!live.has(clientId) && !this.mirrors.has(clientId)) this.turns.delete(clientId);
   }
 
   // スマホが絵を描き終えた。決めた間隔がたったら、次を受け取る
