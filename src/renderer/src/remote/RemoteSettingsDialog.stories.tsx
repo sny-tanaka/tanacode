@@ -15,7 +15,7 @@ const profiles = [
   { id: 'work', name: '仕事' },
 ];
 
-const noDevices: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles };
+const noDevices: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles, log: [] };
 
 // スマホに出たことにする確認の数字（ストーリーで承認するときは、これを打つ）
 const DEMO_NUMBER = '123456';
@@ -137,6 +137,13 @@ export const 登録した端末あり: Story = {
       ],
       pairing: null,
       problem: null,
+      // 遠隔操作の記録（新しいものから）
+      log: [
+        { at: day(5), kind: 'login', name: 'iPhone' },
+        { at: day(4), kind: 'ticket-failures', name: 'iPhone' },
+        { at: day(1), kind: 'pairing-approved', name: 'iPad' },
+        { at: day(0), kind: 'pairing-approved', name: 'iPhone' },
+      ],
       profiles,
     }),
 };
@@ -148,11 +155,12 @@ export const 端末を追加中: Story = {
       devices: [],
       pairing: { code: '48203917', url: 'https://mac.example.ts.net/#pair=48203917', until: Date.now() + 9 * 60 * 1000, pending: [{ requestId: 'q1', name: 'iPhone' }] },
       problem: null,
+      log: [],
       profiles,
     }),
 };
 
 // 登録した端末の一覧が、前のものに戻されていた（遠隔操作は止めている）
 export const 一覧が戻されていた: Story = {
-  beforeEach: () => registry(stateOf('https://mac.example.ts.net', { state: 'off' }), undefined, { devices: [], pairing: null, problem: 'rolled-back', profiles }),
+  beforeEach: () => registry(stateOf('https://mac.example.ts.net', { state: 'off' }), undefined, { devices: [], pairing: null, problem: 'rolled-back', profiles, log: [] }),
 };

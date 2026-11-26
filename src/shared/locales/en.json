@@ -388,6 +388,7 @@
     "notice": {
       "remoteLogin": "A remote access login: {name}",
       "remoteLoginFailures": "Logging in as “{name}” for remote access failed several times in a row. If this wasn’t you, remove the registration.",
+      "remoteTicketFailures": "Reconnecting as “{name}” for remote access failed several times in a row. The login cookie may have leaked. If this wasn’t you, remove the registration.",
       "remoteUnnamed": "Unnamed device",
       "remotePairingHijack": "Device registration was cancelled because the same registration code was used twice. Start again from Add Device."
     }
@@ -2655,6 +2656,7 @@
     "title": "Remote Access Settings",
     "description": "Settings for operating tanacode on this Mac from a phone or another device. tanacode listens only inside this Mac (127.0.0.1), so put a forwarder such as tailscale serve in front of it to reach it from outside. Turn it on or off with Use Remote Access in the menu bar.",
     "warning": "With remote access, anyone who passes the identity check can do everything you can do in front of this Mac, including running commands in the terminal.",
+    "lockNote": "Remote access works even while the Mac’s screen is locked. It does not work while the Mac itself is asleep.",
     "publicUrl": "Public URL",
     "publicUrlHint": "The URL you open on your phone. Enter the https URL your forwarder gives (for example, with tailscale serve: https://<Mac name>.<tailnet name>.ts.net).",
     "port": "Port to listen on",
@@ -2696,6 +2698,21 @@
       "problem": {
         "unreadable": "Remote access is stopped because the list of registered devices cannot be read.",
         "rolled-back": "Remote access is stopped because the list of registered devices was replaced with an older one."
+      }
+    },
+    "log": {
+      "title": "Recent events ({count})",
+      "hint": "The log is in remote.log in userData and cannot be deleted from the phone.",
+      "kind": {
+        "login": "“{name}” logged in",
+        "login-failures": "Logging in as “{name}” failed several times in a row",
+        "ticket-failures": "Reconnecting as “{name}” failed several times in a row",
+        "pairing-approved": "Approved the registration of “{name}”",
+        "pairing-rejected": "Rejected the registration of “{name}”",
+        "pairing-hijack": "Cancelled a registration because the same code was used twice",
+        "device-removed": "Removed the registration of “{name}”",
+        "devices-reset": "Removed the unreadable list of registrations",
+        "disconnect-all": "Disconnected everything with Disconnect on the Mac"
       }
     }
   },

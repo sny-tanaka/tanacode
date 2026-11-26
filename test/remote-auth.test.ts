@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { deviceNameOf, parseAuthRequest } from '@shared/remote-auth';
-import { CHALLENGE_MS, PAIRING_ATTEMPT_WINDOW_MS, PAIRING_ATTEMPTS, PAIRING_MS, RemoteAuth, verifyBinding } from '../src/main/remote-auth';
+import { CHALLENGE_MS, TICKET_FAILURE_WINDOW_MS, TICKET_FAILURES_BEFORE_NOTICE, PAIRING_ATTEMPT_WINDOW_MS, PAIRING_ATTEMPTS, PAIRING_MS, RemoteAuth, verifyBinding } from '../src/main/remote-auth';
 import type { Registration } from '../src/main/remote-registrations';
 import { SoftBindingKey } from './helpers/soft-authenticator';
 
@@ -173,6 +173,50 @@ describe('RemoteAuth', () => {
     // 登録が消えていれば断る
     t.deps.sessionRegistration.mockImplementation(() => 'gone');
     expect(ticketOf('ticket')).toThrow('unknown session');
+  });
+
+  it('券の署名が決めた長さの間に続けて違ったら、Mac に知らせる（知らせたら数え直す）。通れば数え直す。古い失敗は数えない', () => {
+    const t = setup();
+    const binding = new SoftBindingKey();
+    const other = new SoftBindingKey();
+    t.list.push({ id: 'r1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [], passkey: { credentialId: 'c', publicKey: 'p', counter: 0 }, bindingJwk: binding.jwk });
+    t.deps.sessionRegistration.mockImplementation(() => 'r1');
+    const ticket = (key: SoftBindingKey) => {
+      const c = t.auth.handle({ op: 'challenge', purpose: 'ticket' }) as { challengeId: string; challenge: string };
+      return () => t.auth.handle({ op: 'ticket', sessionId: 's1', challengeId: c.challengeId, bindingSignature: key.sign(c.challenge) });
+    };
+    const failures = () => t.deps.notify.mock.calls.filter(([e]) => (e as { kind: string }).kind === 'ticket-failures');
+    for (let i = 0; i < TICKET_FAILURES_BEFORE_NOTICE - 1; i += 1) expect(ticket(other)).toThrow('bad binding signature');
+    // 通ったら数え直す
+    ticket(binding)();
+    for (let i = 0; i < TICKET_FAILURES_BEFORE_NOTICE - 1; i += 1) expect(ticket(other)).toThrow('bad binding signature');
+    expect(failures()).toEqual([]);
+    // 古い失敗は数えない
+    t.clock.now += TICKET_FAILURE_WINDOW_MS;
+    expect(ticket(other)).toThrow('bad binding signature');
+    expect(failures()).toEqual([]);
+    for (let i = 0; i < TICKET_FAILURES_BEFORE_NOTICE - 1; i += 1) expect(ticket(other)).toThrow('bad binding signature');
+    expect(failures()).toEqual([[{ kind: 'ticket-failures', name: 'iPhone' }]]);
+  });
+
+  it('登録を承認した・断った（数字が違ったときも）ことを、端末の名前で Mac に知らせる', () => {
+    const t = setup();
+    const finish = () => {
+      const binding = new SoftBindingKey();
+      const begun = begin(t);
+      return t.auth.handle({ op: 'pair-finish', pairingId: begun.pairingId, credential, bindingJwk: binding.jwk, bindingSignature: binding.sign(begun.bindingChallenge), name: 'iPhone' }) as { requestId: string; number: string };
+    };
+    const first = finish();
+    expect(t.auth.approve(first.requestId, first.number, ['default'])).toBe(true);
+    const second = finish();
+    expect(t.auth.approve(second.requestId, second.number === '000000' ? '111111' : '000000', ['default'])).toBe(false);
+    const third = finish();
+    t.auth.reject(third.requestId);
+    expect(t.deps.notify.mock.calls.map(([e]) => e)).toEqual([
+      { kind: 'pairing-approved', name: 'iPhone' },
+      { kind: 'pairing-rejected', name: 'iPhone' },
+      { kind: 'pairing-rejected', name: 'iPhone' },
+    ]);
   });
 
   it('束縛の鍵の形・署名が壊れていれば false', () => {

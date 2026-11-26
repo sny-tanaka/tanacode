@@ -20,6 +20,10 @@ export const PAIRING_ATTEMPT_WINDOW_MS = 60 * 1000;
 export const CHALLENGE_MS = 60 * 1000;
 // セッションの長い方の期限
 export const SESSION_MS = 12 * 60 * 60 * 1000;
+// つなぐとき（券）の束縛の鍵の署名が、この長さの間にこの回数だけ続けて違ったら、Mac に知らせる
+// （Cookie だけを得た誰かが、つなごうとしているかもしれない）
+export const TICKET_FAILURES_BEFORE_NOTICE = 3;
+export const TICKET_FAILURE_WINDOW_MS = 10 * 60 * 1000;
 
 // 承認を待っている登録の頼み（Mac のダイアログに出す。確認の数字は出さない。スマホに出た数字を、人が打つ）
 export type PendingPairing = { requestId: string; name: string };
@@ -37,8 +41,8 @@ export type RemoteAuthDeps = {
   // 登録の受付・承認待ちが変わった（Mac のダイアログを作り直す）/ 登録の一覧が変わった（遠隔サーバーにパスキーを送り直す）
   onPairingChange: () => void;
   onRegistrationsChange: () => void;
-  // Mac に知らせること（横取りの試み・新しいログイン）
-  notify: (event: { kind: 'pairing-hijack' } | { kind: 'login'; name: string }) => void;
+  // Mac に知らせ、記録に残すこと（横取りの試み・新しいログイン・登録を承認した・断った・つなぐときの署名に続けて失敗した）
+  notify: (event: { kind: 'pairing-hijack' } | { kind: 'login' | 'pairing-approved' | 'pairing-rejected' | 'ticket-failures'; name: string }) => void;
   // 生きているセッションの登録（無い・切れていれば null）/ そのセッションに WebSocket の券を出す（RemoteHost が控える）
   sessionRegistration: (sessionId: string) => string | null;
   grantTicket: (sessionId: string) => string;
@@ -68,6 +72,8 @@ export class RemoteAuth {
   // ログインの乱数に付ける HMAC の鍵 / 使い終えた乱数（期限まで）
   private readonly challengeKey = randomBytes(32);
   private readonly usedChallenges = new Map<string, number>();
+  // 登録ごとの、券の署名が違った時刻
+  private readonly ticketFailures = new Map<string, number[]>();
   private readonly now: () => number;
 
   constructor(private readonly deps: RemoteAuthDeps) {
@@ -112,6 +118,7 @@ export class RemoteAuth {
     if (!sameText(pending.number, number.trim())) {
       pending.state = 'rejected';
       this.closeAnswered(p);
+      this.deps.notify({ kind: 'pairing-rejected', name: pending.name });
       return false;
     }
     // 書けてから承認の印を付ける（書けなければ、スマホには承認と出さない）
@@ -127,6 +134,7 @@ export class RemoteAuth {
     pending.state = 'approved';
     this.deps.onRegistrationsChange();
     this.closeAnswered(p);
+    this.deps.notify({ kind: 'pairing-approved', name: pending.name });
     return true;
   }
 
@@ -136,6 +144,7 @@ export class RemoteAuth {
     if (!p || !pending || pending.state !== 'pending') return;
     pending.state = 'rejected';
     this.closeAnswered(p);
+    this.deps.notify({ kind: 'pairing-rejected', name: pending.name });
   }
 
   // 承認・断ったあと。結果は、スマホが pair-status で読むまで残し、受付は、これ以上の登録を受けない（やり直すときは、Mac で受付を始め直す）
@@ -275,9 +284,25 @@ export class RemoteAuth {
     const registrationId = this.deps.sessionRegistration(request.sessionId);
     const registration = registrationId ? this.deps.registrations.get(registrationId) : null;
     if (!registration) throw new Error('unknown session');
-    if (!verifyBinding(registration.bindingJwk, challenge, request.bindingSignature)) throw new Error('bad binding signature');
+    if (!verifyBinding(registration.bindingJwk, challenge, request.bindingSignature)) {
+      this.ticketFailed(registration);
+      throw new Error('bad binding signature');
+    }
+    this.ticketFailures.delete(registration.id);
     this.usedChallenges.set(challenge, Number(challenge.split('.')[0]));
     return { ticket: this.deps.grantTicket(request.sessionId) };
+  }
+
+  private ticketFailed(registration: Registration): void {
+    const now = this.now();
+    const recent = [...(this.ticketFailures.get(registration.id) ?? []).filter((at) => now - at < TICKET_FAILURE_WINDOW_MS), now];
+    if (recent.length < TICKET_FAILURES_BEFORE_NOTICE) {
+      this.ticketFailures.set(registration.id, recent);
+      return;
+    }
+    // 知らせたら数え直す（続けば、また知らせる）
+    this.ticketFailures.delete(registration.id);
+    this.deps.notify({ kind: 'ticket-failures', name: registration.name });
   }
 
 }

@@ -107,6 +107,7 @@ export function RemoteSettingsDialog({ onClose }: { onClose: () => void }) {
           <h2>{t('remote.title')}</h2>
           <p>{t('remote.description')}</p>
           <p className="prompts-warning">{t('remote.warning')}</p>
+          <p>{t('remote.lockNote')}</p>
         </div>
         {state !== null && (
           <div className="remote-dialog-body">

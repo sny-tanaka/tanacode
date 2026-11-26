@@ -383,6 +383,7 @@
     "notice": {
       "remoteLogin": "遠隔操作でログインがありました: {name}",
       "remoteLoginFailures": "遠隔操作で「{name}」のログインに続けて失敗しました。心当たりが無ければ、登録を取り消してください。",
+      "remoteTicketFailures": "遠隔操作で「{name}」のつなぎ直しに続けて失敗しました。ログインの記録（Cookie）が漏れたのかもしれません。心当たりが無ければ、登録を取り消してください。",
       "remoteUnnamed": "名前の無い端末",
       "remotePairingHijack": "端末の登録を取りやめました。同じ登録のコードが 2 回使われたためです。もう一度「端末を追加」から始めてください。"
     }
@@ -2575,6 +2576,7 @@
     "title": "遠隔操作の設定",
     "description": "スマホなどから、この Mac の tanacode を操作するための待ち受けの設定です。tanacode はこの Mac の中（127.0.0.1）だけで待ち受けるので、外から届かせるには、tailscale serve などの転送を前に置きます。入り・切りは、メニューバーの「遠隔操作を使う」で行います。",
     "warning": "遠隔操作を使うと、本人確認を通った相手は、この Mac の前に座っているのと同じことができます（ターミナルでのコマンドの実行も含む）。",
+    "lockNote": "Mac の画面がロックされていても、遠隔操作は効きます。Mac 本体がスリープすると、遠隔操作はできません。",
     "publicUrl": "公開する URL",
     "publicUrlHint": "スマホで開く URL。転送が出す https の URL をそのまま入れます（例: tailscale serve なら https://<Mac の名前>.<tailnet の名前>.ts.net）。",
     "port": "待ち受けるポート",
@@ -2616,6 +2618,21 @@
       "problem": {
         "unreadable": "登録した端末の一覧を読めないため、遠隔操作は止めています。",
         "rolled-back": "登録した端末の一覧が、前のものに戻されていたため、遠隔操作は止めています。"
+      }
+    },
+    "log": {
+      "title": "最近の出来事（{count} 件）",
+      "hint": "記録は userData の remote.log にあり、スマホからは消せません。",
+      "kind": {
+        "login": "「{name}」がログインしました",
+        "login-failures": "「{name}」のログインに続けて失敗しました",
+        "ticket-failures": "「{name}」のつなぎ直しに続けて失敗しました",
+        "pairing-approved": "「{name}」の登録を承認しました",
+        "pairing-rejected": "「{name}」の登録を断りました",
+        "pairing-hijack": "登録のコードが 2 回使われたため、登録を取りやめました",
+        "device-removed": "「{name}」の登録を取り消しました",
+        "devices-reset": "読めなくなった登録の一覧を消しました",
+        "disconnect-all": "Mac の「切断」で、全部の接続を切りました"
       }
     }
   },

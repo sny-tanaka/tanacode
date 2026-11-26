@@ -45,4 +45,11 @@ export type RemotePairing = { code: string; url: string; until: number; pending:
 
 // 端末の一覧と登録の受付。problem: 登録の一覧を読めなかった理由（unavailable: 暗号化が使えない・unreadable: 読めない・rolled-back: 古いファイルに戻された）
 // profiles: 承認のときに選べるプロファイル
-export type RemoteDevicesState = { devices: RemoteDevice[]; pairing: RemotePairing | null; problem: 'unavailable' | 'unreadable' | 'rolled-back' | null; profiles: RemoteProfileChoice[] };
+// 遠隔操作の記録（userData/remote.log。Mac のダイアログに新しいものから出す）。at: 時刻（エポックのミリ秒）/ name: 端末の名前（制御文字を除いたもの）。
+// login: ログイン / login-failures: ログインに続けて失敗 / ticket-failures: つなぐときの署名に続けて失敗（Cookie が漏れたかもしれない）/
+// pairing-approved・pairing-rejected: 登録を承認した・断った / pairing-hijack: 登録のコードが 2 回使われて登録を取りやめた /
+// device-removed: 登録を取り消した / devices-reset: 読めなくなった登録の一覧を消した / disconnect-all: Mac の「切断」で全部を切った
+export type RemoteLogKind = 'login' | 'login-failures' | 'ticket-failures' | 'pairing-approved' | 'pairing-rejected' | 'pairing-hijack' | 'device-removed' | 'devices-reset' | 'disconnect-all';
+export type RemoteLogEntry = { at: number; kind: RemoteLogKind; name?: string };
+
+export type RemoteDevicesState = { devices: RemoteDevice[]; pairing: RemotePairing | null; problem: 'unavailable' | 'unreadable' | 'rolled-back' | null; profiles: RemoteProfileChoice[]; log: RemoteLogEntry[] };

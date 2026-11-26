@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, safeStorage, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, powerSaveBlocker, screen, session, shell, safeStorage, utilityProcess, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type BrowserMirrorOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions, type SubmitOptions } from '@shared/ipc';
 import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { matchShortcut, REPEATING, SHORTCUTS, type Shortcut } from '@shared/shortcuts';
@@ -20,13 +20,14 @@ import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { IpcDispatcher, RemoteCallError, type Caller } from './remote-dispatch';
+import { cleanName, RemoteLog } from './remote-log';
 import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
 import { parseSubscription, pushPayload, sendPush, type VapidKeys } from './web-push';
 import { sanitizeMirrorInput } from './browser-mirror';
 import { publicOriginOf } from '@shared/remote-protocol';
-import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
+import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteLogKind, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
 import { MCP_GROUPS, permissionToolDefaults, type McpEnabled, type ToolPermission } from '@shared/tool-permissions';
 import type { McpToolGroup } from '@shared/mcp-tools';
@@ -242,7 +243,7 @@ const remoteHost = new RemoteHost({
   call: (caller, channel, args) => dispatcher.fromRemote(caller, channel, args),
   // 待ち受けの様子・つながっている数を、メニューバーの様子の文に出し直す（どちらも、起動して設定を読んだあとにしか届かない）
   onStatus: () => buildMenu(),
-  onLoginFailures: (registrationId) => remoteNotice(t('main.notice.remoteLoginFailures', { name: remoteRegistrations?.get(registrationId)?.name || t('main.notice.remoteUnnamed') })),
+  onLoginFailures: (registrationId) => remoteEvent('login-failures', remoteRegistrations?.get(registrationId)?.name ?? ''),
   onConnections: () => {
     // 切れた接続の、開いているファイルと見ている所を捨てる
     const live = new Set(remoteHost.clientIds());
@@ -264,8 +265,11 @@ const remoteHost = new RemoteHost({
 // 遠隔操作で登録した端末の一覧と、本人確認のうち main が持つもの（起動して設定を読んだあとに作る。startRemoteAuth）
 let remoteRegistrations: RemoteRegistrations | null = null;
 let remoteAuth: RemoteAuth | null = null;
+// 遠隔操作の記録（userData/remote.log。startRemoteAuth で作る）
+let remoteLog: RemoteLog | null = null;
 
 function startRemoteAuth(): void {
+  remoteLog = new RemoteLog(join(app.getPath('userData'), 'remote.log'), Date.now, (error) => console.error(`[remote] 記録に書けませんでした: ${String(error)}`));
   remoteRegistrations = new RemoteRegistrations(
     join(app.getPath('userData'), 'remote-registrations.bin'),
     { available: () => safeStorage.isEncryptionAvailable(), encrypt: (text) => safeStorage.encryptString(text), decrypt: (data) => safeStorage.decryptString(data) },
@@ -280,11 +284,26 @@ function startRemoteAuth(): void {
       remoteHost.setCredentials(registrations.credentials());
       send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
     },
-    notify: (event) => remoteNotice(event.kind === 'login' ? t('main.notice.remoteLogin', { name: event.name || t('main.notice.remoteUnnamed') }) : t('main.notice.remotePairingHijack')),
+    notify: (event) => remoteEvent(event.kind, 'name' in event ? event.name : undefined),
     sessionRegistration: (sessionId) => remoteHost.sessionRegistration(sessionId),
     grantTicket: (sessionId) => remoteHost.grantTicket(sessionId),
   });
   remoteHost.setCredentials(registrations.credentials());
+}
+
+// 遠隔操作で起きたことを記録に残し（Mac のダイアログの一覧も出し直す）、気づいてほしいものは Mac に通知する
+function remoteEvent(kind: RemoteLogKind, name?: string): void {
+  remoteLog?.add(kind, name);
+  const shown = (name && cleanName(name)) || t('main.notice.remoteUnnamed');
+  const notices: Partial<Record<RemoteLogKind, string>> = {
+    login: t('main.notice.remoteLogin', { name: shown }),
+    'login-failures': t('main.notice.remoteLoginFailures', { name: shown }),
+    'ticket-failures': t('main.notice.remoteTicketFailures', { name: shown }),
+    'pairing-hijack': t('main.notice.remotePairingHijack'),
+  };
+  const body = notices[kind];
+  if (body) remoteNotice(body);
+  send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
 }
 
 // 遠隔操作のことを Mac に知らせる（通知を切っていても出す。知らない接続に気づけるように）
@@ -305,6 +324,7 @@ function remoteDevicesState(): RemoteDevicesState {
     // 登録の一覧をまだ作っていない（起動の途中）ときは、使えないものとして出す。読めたら null
     problem: registrations ? registrations.problem() : 'unavailable',
     profiles: [...opened.keys()].map((id) => ({ id, name: registry.get(id)?.name ?? id })),
+    log: remoteLog?.recent() ?? [],
   };
 }
 
@@ -379,16 +399,33 @@ function remoteStatusLabel(status: RemoteStatus): string {
 // （本人確認ができるまでは、誰もつなげない待ち受けになるため。リリースに未完成の項目を出さない）
 const remoteAccessAvailable = () => process.env.TANACODE_REMOTE_ACCESS === '1';
 
+// 遠隔操作がオンの間、アプリが止められないようにする（powerSaveBlocker の id。オフなら null）。Mac 本体のスリープは止めない
+let remoteSuspensionBlocker: number | null = null;
+
+function keepAwakeForRemote(on: boolean): void {
+  if (on && remoteSuspensionBlocker === null) remoteSuspensionBlocker = powerSaveBlocker.start('prevent-app-suspension');
+  else if (!on && remoteSuspensionBlocker !== null) {
+    powerSaveBlocker.stop(remoteSuspensionBlocker);
+    remoteSuspensionBlocker = null;
+  }
+}
+
 // 遠隔操作の設定に合わせて、待ち受けを始める・やめる
 function applyRemote(): void {
-  if (!remoteAccessAvailable()) return remoteHost.stop();
+  if (!remoteAccessAvailable()) {
+    keepAwakeForRemote(false);
+    return remoteHost.stop();
+  }
   const remote = settings.remote();
   const publicOrigin = publicOriginOf(remote.publicUrl);
   // 登録の一覧を読めない（暗号化が使えない・古いファイルに戻された）ときは、待ち受けない（失敗したら閉じる）
-  if (remote.enabled && publicOrigin && remoteRegistrations && !remoteRegistrations.problem()) remoteHost.start({ port: remote.port, publicOrigin, language: language() });
-  else {
+  if (remote.enabled && publicOrigin && remoteRegistrations && !remoteRegistrations.problem()) {
+    remoteHost.start({ port: remote.port, publicOrigin, language: language() });
+    keepAwakeForRemote(true);
+  } else {
     remoteHost.stop();
     remoteAuth?.cancelPairing();
+    keepAwakeForRemote(false);
   }
 }
 
@@ -1246,7 +1283,7 @@ function registerIpc(): void {
       remoteHost.setCredentials(remoteRegistrations.credentials());
       // 読めるようになったので、オンなら待ち受けを始める
       applyRemote();
-      send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
+      remoteEvent('devices-reset');
     }
     return remoteDevicesState();
   });
@@ -1257,15 +1294,17 @@ function registerIpc(): void {
   handle(IpcChannel.RemoteDisconnectAll, (e) => {
     macOnly(e, IpcChannel.RemoteDisconnectAll);
     remoteHost.removeAllSessions();
+    remoteEvent('disconnect-all');
     return remoteConnections();
   });
   handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
     macOnly(e, IpcChannel.RemoteDeviceRemove);
+    const name = typeof id === 'string' ? remoteRegistrations?.get(id)?.name : undefined;
     if (typeof id === 'string' && remoteRegistrations?.remove(id)) {
       // 取り消した登録のセッションと接続を、すぐに切る
       remoteHost.removeRegistration(id);
       remoteHost.setCredentials(remoteRegistrations.credentials());
-      send(IpcChannel.RemoteDevicesChanged, remoteDevicesState());
+      remoteEvent('device-removed', name ?? '');
     }
     return remoteDevicesState();
   });

@@ -233,6 +233,8 @@ function freshState() {
     defaultSession: new FakeSession(),
     partitions: new Map<string, FakeSession>(),
     powerMonitor: new Emitter(),
+    // powerSaveBlocker で止めているもの（id → 種類）
+    powerSaveBlocks: new Map<number, string>(),
     notifications: [] as FakeNotification[],
     notificationSupported: true,
     dialog: {
@@ -377,6 +379,14 @@ export const electronModule = {
   },
   Notification: FakeNotification,
   powerMonitor: { on: (event: string, listener: Listener) => state.powerMonitor.on(event, listener) },
+  powerSaveBlocker: {
+    start: (type: string) => {
+      const id = state.powerSaveBlocks.size + 1 + Math.max(0, ...state.powerSaveBlocks.keys());
+      state.powerSaveBlocks.set(id, type);
+      return id;
+    },
+    stop: (id: number) => state.powerSaveBlocks.delete(id),
+  },
   screen: {
     getAllDisplays: () => state.displays,
     // rect の真ん中がある画面（無ければ 1 つめ）

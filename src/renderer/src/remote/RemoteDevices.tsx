@@ -72,6 +72,8 @@ export function RemoteDevices() {
   if (!state) return error ? <div className="browser-hosts-error">{error}</div> : null;
   const date = (at: number) => new Date(at).toLocaleString(locale());
   const pairing = state.pairing;
+  // 遠隔操作の記録（新しいものから。記録はスマホからは消せない）
+  const log = state.log ?? [];
 
   return (
     <section className="remote-devices" aria-label={t('remote.devices.title')}>
@@ -168,6 +170,20 @@ export function RemoteDevices() {
         <button className="ghost-button" onClick={() => void run(() => window.tanacode.remote.startPairing())}>
           {t('remote.devices.add')}
         </button>
+      )}
+      {log.length > 0 && (
+        <details className="remote-log">
+          <summary className="remote-field-label">{t('remote.log.title', { count: log.length })}</summary>
+          <ul className="remote-log-list">
+            {log.map((entry, i) => (
+              <li key={`${entry.at}-${i}`}>
+                <span className="remote-field-hint">{date(entry.at)}</span>
+                <span>{t(`remote.log.kind.${entry.kind}`, { name: entry.name || t('main.notice.remoteUnnamed') })}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="remote-field-hint">{t('remote.log.hint')}</p>
+        </details>
       )}
       {error && <div className="browser-hosts-error">{error}</div>}
     </section>
