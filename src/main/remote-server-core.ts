@@ -1,6 +1,7 @@
 import { SERVICE_WORKER } from './remote-service-worker';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
@@ -82,6 +83,17 @@ const LOGIN_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-
 const appCsp = (origin: string) =>
   `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src blob:; connect-src 'self' ${origin.replace(/^http/, 'ws')}; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
 
+// 圧縮して送る種類（文字のもの。フォントの woff2・画像の png は、もう縮んでいる）
+const COMPRESSIBLE = /^(text\/|application\/(json|wasm)|image\/svg)/;
+
+// 相手が受けられる圧縮の方式（br を先に）。どちらも受けなければ null
+function acceptedEncoding(req: IncomingMessage): 'br' | 'gzip' | null {
+  const accepted = String(req.headers['accept-encoding'] ?? '')
+    .split(',')
+    .map((part) => part.trim().split(';')[0].toLowerCase());
+  return accepted.includes('br') ? 'br' : accepted.includes('gzip') ? 'gzip' : null;
+}
+
 // どの応答にも付けるヘッダー
 const BASE_HEADERS = {
   'cache-control': 'no-store',
@@ -95,6 +107,7 @@ export class RemoteServerCore {
   private wss: WebSocketServer | null = null;
   private config: RemoteListenConfig | null = null;
   private readonly sessions = new Map<string, RemoteSession>();
+  private readonly compressedFiles = new Map<string, Buffer>();
   private readonly tickets = new Map<string, Ticket>();
   private readonly clients = new Map<string, Client>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
@@ -322,13 +335,29 @@ export class RemoteServerCore {
     }
     const file = this.appRoot ? await appFile(this.appRoot, path) : null;
     if (!file || !this.config) return this.reply(res, 404, { error: 'not found' });
+    // 名前に中身の印が付いた静的なファイル（assets）だけを圧縮して送る（スマホの通信量を減らす）。秘密を含む動的な応答は圧縮しない（設計の決まり）
+    const encoding = file.immutable && COMPRESSIBLE.test(file.type) ? acceptedEncoding(req) : null;
+    const body = encoding ? this.compressed(path, encoding, file.body) : file.body;
     res.writeHead(200, {
       ...BASE_HEADERS,
       'cache-control': file.immutable ? 'private, max-age=31536000, immutable' : 'no-store',
       'content-security-policy': appCsp(this.config.publicOrigin),
       'content-type': file.type,
+      ...(file.immutable ? { vary: 'Accept-Encoding' } : {}),
+      ...(encoding ? { 'content-encoding': encoding } : {}),
     });
-    res.end(req.method === 'HEAD' ? undefined : file.body);
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
+  // 圧縮したもの（assets は名前が中身で決まるので、パスと方式で覚えておく。待ち受けを止めるまで）
+  private compressed(path: string, encoding: 'br' | 'gzip', body: Buffer): Buffer {
+    const key = `${encoding}:${path}`;
+    let packed = this.compressedFiles.get(key);
+    if (!packed) {
+      packed = encoding === 'br' ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 } }) : gzipSync(body, { level: 9 });
+      this.compressedFiles.set(key, packed);
+    }
+    return packed;
   }
 
   // ログアウト。そのセッションを消して（接続も切る）main にも消させ、Cookie を消す。スマホに残す鍵（束縛の鍵。IndexedDB）は消さない
