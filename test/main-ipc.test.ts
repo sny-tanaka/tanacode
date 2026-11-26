@@ -358,9 +358,12 @@ describe('そのまま渡す受け口', () => {
       watching.mockRestore();
       stop.mockRestore();
     });
-    // 映していなければ、何もしない
+    // 映していなくても止める（映し始める途中のものも止まるように）。帯は出し直さない
+    mainWindow().webContents.sent.length = 0;
     await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.RemoteVisible, false);
-    expect(stop).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledWith('test');
+    expect(mainWindow().webContents.sent.some(([channel]) => channel === IpcChannel.RemoteConnectionsChanged)).toBe(false);
+    stop.mockClear();
     watching.mockReturnValue({ sessionId: 's1', tabId: 'tab-1' });
     // 前に出ている間は止めない
     await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.RemoteVisible, true);

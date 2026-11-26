@@ -1276,10 +1276,12 @@ function registerIpc(): void {
   listen(IpcChannel.RemoteVisible, (e, visible: unknown) => {
     if (e.kind !== 'remote') return;
     remoteHost.setVisible(e.clientId, visible === true);
-    // 裏に回ったら、スマホの画面からの「止める」が届かなくても、映すのを止める（iOS が画面を凍らせることがあるため）
-    if (visible !== true && profiles().some((p) => p.mirror.watching(e.clientId))) {
+    // 裏に回ったら、スマホの画面からの「止める」が届かなくても、映すのを止める（iOS が画面を凍らせることがあるため）。
+    // 映し始める途中（CDP をつないでいる最中）のものも止まるように、映しているかを見ずに stop を呼ぶ
+    if (visible !== true) {
+      const was = profiles().some((p) => p.mirror.watching(e.clientId));
       for (const p of profiles()) p.mirror.stop(e.clientId);
-      mirroringChanged();
+      if (was) mirroringChanged();
     }
   });
   // ミラーリング（スマホの画面に、アプリ内ブラウザのタブを映す）。呼んだ接続にだけ映す。Mac の画面からは何もしない
