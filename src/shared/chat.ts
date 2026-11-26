@@ -657,9 +657,13 @@ function blockedByHook(toolUseId: string, text: string | undefined): HookRun | n
 
 // Stop の hooks の要約。出力の無かった hooks もコマンドと所要時間が載る（callback は Claude Code の内部の hooks、目印の付いたものはアプリが足した hooks なので出さない）
 function stopHookEvents(entry: TranscriptEntry): ChatEvent[] {
-  const errors = (entry.hookErrors ?? []).map(String);
-  return (entry.hookInfos ?? [])
-    .filter((h) => h.command && h.command !== 'callback' && !isAppHook(h.command))
+  const infos = entry.hookInfos ?? [];
+  const users = infos.filter((h) => h.command && h.command !== 'callback' && !isAppHook(h.command));
+  // 要約の hookErrors には、どのフックの失敗かが残らない（failedHookErrorIndexes も hookErrors の中の番号。2.1.331 で確かめた）。
+  // アプリのフック・内部の callback と並んでいれば、そちらの失敗かもしれないので、ここでは失敗と決めない。ユーザーのフックの失敗は、
+  // 先に届くコマンド付きの記録（hook_non_blocking_error。hookRunOf）で失敗と出し、同じフックのこの行は画面でまとめられる
+  const errors = users.length === infos.length ? (entry.hookErrors ?? []).map(String) : [];
+  return users
     .map((h, i) => ({
       type: 'hook' as const,
       id: `${entry.uuid ?? ''}:${i}`,

@@ -131,6 +131,16 @@ describe('チャットの行', () => {
     ]);
   });
 
+  it('hooks: Stop のフックの失敗は、先に届くコマンド付きの記録のまま残す（あとから届く要約の行の「成功」で上書きしない）', () => {
+    const chat = run([
+      { type: 'hook', id: 'a1', run: hook({ command: 'cat > /dev/null', outcome: 'error', exitCode: 1, toolUseId: 'x' } as Partial<HookRun>) },
+      { type: 'hook', id: 's1:0', run: hook({ command: 'cat > /dev/null', outcome: 'success', exitCode: null, toolUseId: 'x' } as Partial<HookRun>) },
+      { type: 'hook', id: 's1:1', run: hook({ command: 'lint', outcome: 'success', exitCode: null, toolUseId: 'x' } as Partial<HookRun>) },
+    ]);
+    const rows = chat.items.filter((i) => i.kind === 'hook');
+    expect(rows.flatMap((i) => (i.kind === 'hook' ? i.runs.map((r) => `${r.command}:${r.outcome}`) : []))).toEqual(['cat > /dev/null:error', 'lint:success']);
+  });
+
   it('hooks: 何も出力しなかったフック（hook_id のあるもの）は、1 回ずつ別の実行なので重ねない（カードに付けるものも、ツールに付かない行も）', () => {
     const quiet = (hookId: string, toolUseId: string | null) => hook({ event: 'PreToolUse', name: 'PreToolUse:Read', command: null, toolUseId, hookId } as Partial<HookRun>);
     const chat = run([

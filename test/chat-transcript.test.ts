@@ -128,6 +128,12 @@ describe('toChatEvents: system の行', () => {
     // アプリが足したフック（チェックリストを使い続けさせるもの）は出さない。ユーザーのフックと並んでいれば、ユーザーのものだけを出す
     const withApp = events({ ...summary, hookInfos: [{ command: CHECKLIST_HOOK_COMMAND, durationMs: 40 }, { command: 'npm test', durationMs: 900 }] });
     expect(withApp).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'npm test', durationMs: 900 }) }]);
+    // アプリのフックと並んでいるときの失敗は、どのフックのものか分からない（アプリのフックの失敗かもしれない）ので、ユーザーのフックを失敗にしない。
+    // ユーザーのフックの失敗は、コマンド付きの記録（hook_non_blocking_error）で出る
+    const appFailed = events({ ...summary, hookInfos: [{ command: CHECKLIST_HOOK_COMMAND }, { command: 'cat > /dev/null' }], hookErrors: ['Exit code 1'] });
+    expect(appFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'cat > /dev/null', outcome: 'success', stderr: '' }) }]);
+    const callbackFailed = events({ ...summary, hookInfos: [{ command: 'callback' }, { command: 'lint' }], hookErrors: ['x'] });
+    expect(callbackFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'lint', outcome: 'success' }) }]);
   });
 
   it('API エラーの再試行中の行は、回数を添えて出す（今の Claude Code は会話ログに残さない）', () => {
