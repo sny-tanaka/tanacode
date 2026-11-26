@@ -39,11 +39,16 @@ export type RemoteHostDeps = {
 // focus: その接続（スマホの画面）が開いているセッション（チャットの知らせは、これの分だけ送る。通信量を増やさない）
 type Client = { sessionId: string; subscriptions: Set<string>; focus: string | null };
 
+// 書いている途中の文だけの知らせを、スマホに送る間隔（セッションごと。Mac の画面には 50ms ごと）
+export const REMOTE_PARTIAL_MS = 300;
+
 export class RemoteHost {
   private child: ServerProcess | null = null;
   private config: RemoteListenConfig | null = null;
   private readonly sessions = new Map<string, RemoteSession>();
   private readonly clients = new Map<string, Client>();
+  // 書いている途中の文の知らせの、間を置いている間に残している最新の 1 つ（プロファイルとセッションごと）
+  private readonly partials = new Map<string, { pending: IpcEvent[typeof IpcChannel.ChatEvents] | null; timer: ReturnType<typeof setTimeout> }>();
   // main が出した WebSocket の券（SHA-256 → セッションと期限）。接続のときに、ここに無い券の接続は切らせる
   private readonly tickets = new Map<string, { sessionId: string; until: number }>();
   private status: RemoteStatus = { state: 'off' };
@@ -179,11 +184,52 @@ export class RemoteHost {
   // except: 送らない接続の id（その接続が頼んだことの知らせ）
   emit<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C], except?: string): void {
     try {
+      if (channel === IpcChannel.ChatEvents && except === undefined) return this.emitChat(profileId, payload as IpcEvent[typeof IpcChannel.ChatEvents]);
       this.emitTo(profileId, channel, payload, except);
     } catch (error) {
       // 遠隔への送りの失敗で、Mac の画面への知らせ（呼んだ側）を止めない
       this.deps.log(`遠隔の接続に知らせを送れませんでした（${channel}）: ${String(error)}`);
     }
+  }
+
+  // チャットの知らせ。書いている途中の文だけの知らせは、セッションごとに REMOTE_PARTIAL_MS に 1 回までにまとめる（スマホの通信量を減らす。
+  // Mac の画面には 50ms ごとに送っている）。最初の 1 つはすぐ送り、間に届いたものは最新の 1 つだけを残して、間が明けたら送る。
+  // 途中の文は届くたびに今の全部なので、間のものを捨てても欠けない。イベントのある知らせが来たら、残している途中の文を先に送る（順を崩さない）
+  private emitChat(profileId: string, batch: IpcEvent[typeof IpcChannel.ChatEvents]): void {
+    const key = `${profileId}\n${batch.sessionId}`;
+    if (batch.events.length === 0 && batch.partial) {
+      const slot = this.partials.get(key);
+      if (slot) {
+        slot.pending = batch;
+        return;
+      }
+      this.emitTo(profileId, IpcChannel.ChatEvents, batch);
+      this.openPartialWindow(key, profileId);
+      return;
+    }
+    this.flushPartial(key, profileId, false);
+    this.emitTo(profileId, IpcChannel.ChatEvents, batch);
+  }
+
+  private openPartialWindow(key: string, profileId: string): void {
+    const timer = setTimeout(() => this.flushPartial(key, profileId, true), REMOTE_PARTIAL_MS);
+    timer.unref?.();
+    this.partials.set(key, { pending: null, timer });
+  }
+
+  // 残している途中の文を送る。again: 送ったら、また間を置く（間が明けたとき）
+  private flushPartial(key: string, profileId: string, again: boolean): void {
+    const slot = this.partials.get(key);
+    if (!slot) return;
+    clearTimeout(slot.timer);
+    this.partials.delete(key);
+    if (!slot.pending) return;
+    try {
+      this.emitTo(profileId, IpcChannel.ChatEvents, slot.pending);
+    } catch (error) {
+      this.deps.log(`遠隔の接続に知らせを送れませんでした（${IpcChannel.ChatEvents}）: ${String(error)}`);
+    }
+    if (again) this.openPartialWindow(key, profileId);
   }
 
   private emitTo<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C], except?: string): void {
