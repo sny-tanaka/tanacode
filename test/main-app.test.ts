@@ -1325,6 +1325,7 @@ describe('メニュー', () => {
       'updateOnQuit',
       'separator',
       'mcpSettings',
+      'remote',
       'separator',
       'usageLimitResume',
       'autoCompactPercent',
@@ -1352,17 +1353,8 @@ describe('メニュー', () => {
     expect(rest.map((i) => i.role ?? i.id)).toEqual(['editMenu', 'viewMenu', 'go', 'windowMenu']);
   });
 
-  // 遠隔操作は、作っている間（Issue #464 の段階 1 が揃うまで）、TANACODE_REMOTE_ACCESS=1 で起動したときだけ出す
-  const remoteAccess = { before: () => (process.env.TANACODE_REMOTE_ACCESS = '1') };
-
-  it('「遠隔操作」: TANACODE_REMOTE_ACCESS=1 でなければ、メニューに出さず、設定でオンでも待ち受けない', async () => {
-    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
-    expect(state.menu![0].submenu!.some((i) => i.id === 'remote')).toBe(false);
-    expect(state.utilityProcesses).toEqual([]);
-  });
-
   it('「遠隔操作」: MCP の設定のすぐ下に置く。公開する URL を決めるまでは入れられない。設定…で、見ているプロファイルの画面にダイアログを開かせる', async () => {
-    await boot(remoteAccess);
+    await boot();
     const ids = state.menu![0].submenu!.map((i) => i.id ?? i.type);
     expect(ids.indexOf('remote')).toBe(ids.indexOf('mcpSettings') + 1);
     const remote = menuItem('remote');
@@ -1376,7 +1368,7 @@ describe('メニュー', () => {
   });
 
   it('「遠隔操作」: 設定でオンなら、起動したときに遠隔サーバーを起動して待ち受けを頼み、待ち受けたらメニューに出す。オフにしたら止める', async () => {
-    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     const [child] = state.utilityProcesses;
     expect(child.modulePath).toMatch(/remote-server\.js$/);
     expect(child.posted).toEqual([
@@ -1396,7 +1388,7 @@ describe('メニュー', () => {
   });
 
   it('「遠隔操作」: 待ち受けの様子をメニューに出す（始めている・ポートが使われている・始められない）。落ちたら、起動し直さない', async () => {
-    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     const [child] = state.utilityProcesses;
     expect(menuItem('remoteStatus').label).toBe('始めています…');
     child.emit('message', { type: 'listen-failed', reason: 'in-use', message: 'EADDRINUSE' });
@@ -1409,7 +1401,7 @@ describe('メニュー', () => {
   });
 
   it('遠隔操作の設定のダイアログ: 今の設定と様子を返す。ポートと公開する URL を確かめて保存し、待ち受けている間なら始め直す', async () => {
-    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     const [child] = state.utilityProcesses;
     await expect(invoke(IpcChannel.RemoteSettingsGet)).resolves.toEqual({
       settings: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' },
@@ -1430,7 +1422,7 @@ describe('メニュー', () => {
   });
 
   it('「遠隔操作を使う」: 保存できなかったら、チェックを元に戻し、待ち受けは変えない', async () => {
-    await boot({ ...remoteAccess, settings: { remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ settings: { remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     mkdirSync(join(state.userData, 'settings.json.tmp'));
     const item = menuItem('remoteEnabled');
     item.checked = true;
@@ -1441,7 +1433,7 @@ describe('メニュー', () => {
 
   // 遠隔操作の端末の登録とログイン（main の側）。遠隔サーバーの作り物に、本人確認の頼みを届けさせる
   async function listening() {
-    await boot({ ...remoteAccess, settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     const [child] = state.utilityProcesses;
     child.emit('message', { type: 'listening', port: 50123 });
     let id = 0;
@@ -1654,7 +1646,6 @@ describe('メニュー', () => {
   it('遠隔操作の端末: 登録の一覧を読めなければ待ち受けず、「やり直す」で空の一覧から始め直して待ち受ける', async () => {
     await boot({
       before: (s) => {
-        remoteAccess.before();
         mkdirSync(s.userData, { recursive: true });
         writeFileSync(join(s.userData, 'remote-registrations.bin'), 'broken');
       },
@@ -1671,7 +1662,7 @@ describe('メニュー', () => {
   });
 
   it('遠隔操作の端末: 暗号化が使えない Mac では、待ち受けない', async () => {
-    await boot({ ...remoteAccess, before: (s) => (s.safeStorageAvailable = false), settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
+    await boot({ before: (s) => (s.safeStorageAvailable = false), settings: { remote: { enabled: true, port: 50123, publicUrl: 'https://mac.example.ts.net' } } });
     expect(state.utilityProcesses).toEqual([]);
     await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toMatchObject({ problem: 'unavailable' });
   });
@@ -1760,6 +1751,7 @@ describe('メニュー', () => {
       '新しいバージョンが出たら通知する',
       '終了するときに新しいバージョンを入れる（Homebrew）',
       'MCP の設定…',
+      '遠隔操作',
       '利用枠で止まったら、戻ったときに自動で再開する',
       '自動で最適化圧縮する大きさ',
       '離席モードで答えを待つ時間',
@@ -1771,6 +1763,7 @@ describe('メニュー', () => {
       'Notify When Updates Are Available',
       'Install Updates on Quit (Homebrew)',
       'MCP Settings…',
+      'Remote Access',
       'Resume Automatically When the Usage Limit Resets',
       'Auto Optimized Compact At',
       'Away Mode Wait Time',
