@@ -9,6 +9,21 @@ import type { Language } from './i18n';
 export const REMOTE_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 // スマホから送る添付の大きさの上限。伝文ではバイト列を base64 にする（4/3 倍になる）ので、伝文の上限に収まる大きさ
 export const REMOTE_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// 頼みの引数のオブジェクト・配列の入れ子の深さの上限（ふつうの頼みは、どれもこれより浅い）。遠隔サーバーと main の両方で確かめる
+export const REMOTE_MAX_DEPTH = 16;
+
+// 値の入れ子が max より深いか。深すぎる値は、プロセスの間で渡す（postMessage の複製）ときにスタックが溢れて投げるので、
+// 確かめる側も再帰を使わずに数える
+export function nestedTooDeep(value: unknown, max: number): boolean {
+  const stack: [unknown, number][] = [[value, 0]];
+  while (stack.length > 0) {
+    const [v, depth] = stack.pop()!;
+    if (v === null || typeof v !== 'object' || v instanceof Uint8Array) continue;
+    if (depth > max) return true;
+    for (const item of Array.isArray(v) ? v : Object.values(v)) stack.push([item, depth + 1]);
+  }
+  return false;
+}
 
 // 待ち受けの設定。port: 127.0.0.1 で待ち受けるポート / publicOrigin: スマホが開く URL の origin（例: https://mac.example.ts.net）。
 // Host と Origin は、これと完全に一致しなければ断る
@@ -95,7 +110,7 @@ export function parseServerMessage(value: unknown): ServerMessage | null {
     case 'session-expired':
       return isId(value.sessionId) ? { type: 'session-expired', sessionId: value.sessionId } : null;
     case 'call':
-      return isSeq(value.id) && isId(value.clientId) && isId(value.profileId) && (value.kind === 'invoke' || value.kind === 'send') && isId(value.channel) && Array.isArray(value.args)
+      return isSeq(value.id) && isId(value.clientId) && isId(value.profileId) && (value.kind === 'invoke' || value.kind === 'send') && isId(value.channel) && Array.isArray(value.args) && !nestedTooDeep(value.args, REMOTE_MAX_DEPTH + 1)
         ? { type: 'call', id: value.id, clientId: value.clientId, profileId: value.profileId, kind: value.kind, channel: value.channel, args: value.args, active: value.active === true }
         : null;
     case 'subscribe':

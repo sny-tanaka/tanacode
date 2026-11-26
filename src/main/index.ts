@@ -19,11 +19,11 @@ import { SharedPrefStore } from './shared-prefs';
 import { appendFocusLog } from './focus-log';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
-import { IpcDispatcher, type Caller } from './remote-dispatch';
+import { IpcDispatcher, RemoteCallError, type Caller } from './remote-dispatch';
 import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
-import { parseSubscription, sendPush, type VapidKeys } from './web-push';
+import { parseSubscription, pushPayload, sendPush, type VapidKeys } from './web-push';
 import { sanitizeMirrorInput } from './browser-mirror';
 import { publicOriginOf } from '@shared/remote-protocol';
 import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
@@ -1195,32 +1195,38 @@ function registerIpc(): void {
     settings.setParentAskRulesEnabled(on);
     return settings.parentAskRulesEnabled();
   });
-  handle(IpcChannel.RemoteSettingsGet, (e) => {
+  // 遠隔操作の入口の設定（メニューバーの「遠隔操作の設定…」）と Mac の上の帯の口は、遠隔の接続からは呼べない（Issue #464 で守りとして約束するもの）。
+  // 遠隔の頼みの表（REMOTE_CHANNELS で mac）でも断るが、表の書き間違いだけで開かないよう、受け口でも呼び出し元を確かめ直す
+  const macOnly = (e: Caller, channel: string) => {
+    if (e.kind === 'remote') throw new RemoteCallError(t('main.error.remoteNotAvailable', { channel }));
     P(e);
+  };
+  handle(IpcChannel.RemoteSettingsGet, (e) => {
+    macOnly(e, IpcChannel.RemoteSettingsGet);
     return remoteState();
   });
   handle(IpcChannel.RemoteSettingsSet, (e, input: RemoteSettingsInput) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteSettingsSet);
     return setRemoteSettings(input);
   });
   handle(IpcChannel.RemoteDevicesGet, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteDevicesGet);
     return remoteDevicesState();
   });
   handle(IpcChannel.RemotePairingStart, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemotePairingStart);
     // 待ち受けていなければ、受け付けても誰も届かない
     if (remoteHost.current().state !== 'listening' || !remoteAuth) throw new Error(t('main.error.remoteNotListening'));
     remoteAuth.startPairing();
     return remoteDevicesState();
   });
   handle(IpcChannel.RemotePairingCancel, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemotePairingCancel);
     remoteAuth?.cancelPairing();
     return remoteDevicesState();
   });
   handle(IpcChannel.RemotePairingApprove, (e, requestId: unknown, number: unknown, profileIds: unknown) => {
-    P(e);
+    macOnly(e, IpcChannel.RemotePairingApprove);
     if (typeof requestId !== 'string' || typeof number !== 'string' || !Array.isArray(profileIds) || !remoteAuth) return false;
     // 許すのは、選んだもののうち、今開いているプロファイルだけ（あとから開いたものは、自動では入れない）。
     // 1 つも無ければ承認しない（頼みは断らずに残す。false は数字が違うときだけにする）
@@ -1229,12 +1235,12 @@ function registerIpc(): void {
     return remoteAuth.approve(requestId, number, allowed);
   });
   handle(IpcChannel.RemotePairingReject, (e, requestId: unknown) => {
-    P(e);
+    macOnly(e, IpcChannel.RemotePairingReject);
     if (typeof requestId === 'string') remoteAuth?.reject(requestId);
     return remoteDevicesState();
   });
   handle(IpcChannel.RemoteDevicesReset, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteDevicesReset);
     if (remoteRegistrations?.problem() && remoteRegistrations.problem() !== 'unavailable') {
       remoteRegistrations.reset();
       remoteHost.setCredentials(remoteRegistrations.credentials());
@@ -1245,16 +1251,16 @@ function registerIpc(): void {
     return remoteDevicesState();
   });
   handle(IpcChannel.RemoteConnectionsGet, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteConnectionsGet);
     return remoteConnections();
   });
   handle(IpcChannel.RemoteDisconnectAll, (e) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteDisconnectAll);
     remoteHost.removeAllSessions();
     return remoteConnections();
   });
   handle(IpcChannel.RemoteDeviceRemove, (e, id: unknown) => {
-    P(e);
+    macOnly(e, IpcChannel.RemoteDeviceRemove);
     if (typeof id === 'string' && remoteRegistrations?.remove(id)) {
       // 取り消した登録のセッションと接続を、すぐに切る
       remoteHost.removeRegistration(id);
@@ -1317,17 +1323,6 @@ function registerIpc(): void {
   );
 }
 
-// 文を UTF-8 のバイト数で切る（文字の途中では切らない）。切ったら … を付ける
-function cutBytes(text: string, max: number): string {
-  if (Buffer.byteLength(text) <= max) return text;
-  let out = '';
-  for (const char of text) {
-    if (Buffer.byteLength(out + char) > max - 3) break;
-    out += char;
-  }
-  return `${out}…`;
-}
-
 // スマホが渡すミラーリングの映し方の形を確かめる（壊れていれば null）。大きさは 1〜4000 の画素
 function mirrorOptionsOf(value: unknown): BrowserMirrorOptions | null {
   if (!value || typeof value !== 'object') return null;
@@ -1340,7 +1335,8 @@ function mirrorOptionsOf(value: unknown): BrowserMirrorOptions | null {
 // 購読が無くなっていたら（404・410）、登録から外す
 function pushNotify(profileId: string, sessionId: string, title: string, body: string): void {
   const registrations = remoteRegistrations;
-  if (!registrations || registrations.problem()) return;
+  // 遠隔操作をオフにしている間は、スマホへは何も出さない（決めたこと）
+  if (!settings.remote().enabled || !registrations || registrations.problem()) return;
   // Mac の通知と同じく、スマホでそのセッションを見ているなら、その端末には出さない
   const targets = registrations.all().filter((r) => r.push && r.profileIds.includes(profileId) && !remoteHost.viewing(r.id, sessionId));
   if (targets.length === 0) return;
@@ -1351,8 +1347,7 @@ function pushNotify(profileId: string, sessionId: string, title: string, body: s
     console.error(`[remote] 通知の鍵を用意できませんでした: ${String(error)}`);
     return;
   }
-  // 通知は 4KB まで（暗号化の前の 1 レコード。Apple の上限も 4KB）。タイトルと本文をバイト数で切る（日本語は 1 文字 3 バイト）
-  const payload = { title: cutBytes(title, 300), body: cutBytes(body, 2700), sessionId, profileId };
+  const payload = pushPayload(title, body, sessionId, profileId);
   // Chromium の通信（net.fetch）で送る。macOS のプロキシの設定がそのまま効く（ほかの問い合わせと同じ）
   const send = (url: string | URL | Request, init?: RequestInit) => net.fetch(String(url), init);
   for (const r of targets) {

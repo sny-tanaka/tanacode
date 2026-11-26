@@ -12,7 +12,10 @@ import type { Registration, RemoteRegistrations } from './remote-registrations';
 //   使い終えた乱数だけを、期限まで控える（ログインできた本人の分だけなので、増えすぎない）
 
 export const PAIRING_MS = 10 * 60 * 1000;
+// 間違ったコードを試せる回数（PAIRING_ATTEMPT_WINDOW_MS あたり）。超えたら、その間は正しいコードも受けずに待たせる。
+// 受付は閉じない（同じネットワークの誰でも、間違ったコードを送るだけで登録を潰せないように）。8 桁なので、10 分の受付で試せるのは 1 億分の 50
 export const PAIRING_ATTEMPTS = 5;
+export const PAIRING_ATTEMPT_WINDOW_MS = 60 * 1000;
 // 束縛の鍵に署名させる乱数の期限
 export const CHALLENGE_MS = 60 * 1000;
 // セッションの長い方の期限
@@ -25,7 +28,7 @@ export type PendingPairing = { requestId: string; name: string };
 export type PairingState = { code: string; until: number; pending: PendingPairing[] } | null;
 
 type Pending = PendingPairing & { number: string; credential: Registration['passkey']; bindingJwk: BindingJwk; state: 'pending' | 'approved' | 'rejected' };
-type Pairing = { pairingId: string; code: string; until: number; attempts: number; secret: Buffer; userId: string; bindingChallenge: string | null; pending: Map<string, Pending> };
+type Pairing = { pairingId: string; code: string; until: number; closed: boolean; failures: number[]; secret: Buffer; userId: string; bindingChallenge: string | null; pending: Map<string, Pending> };
 
 export type RemoteAuthDeps = {
   registrations: RemoteRegistrations;
@@ -78,7 +81,8 @@ export class RemoteAuth {
       pairingId: b64url(randomBytes(16)),
       code,
       until: this.now() + PAIRING_MS,
-      attempts: 0,
+      closed: false,
+      failures: [],
       secret: randomBytes(32),
       userId: b64url(randomBytes(16)),
       bindingChallenge: null,
@@ -137,7 +141,7 @@ export class RemoteAuth {
   // 承認・断ったあと。結果は、スマホが pair-status で読むまで残し、受付は、これ以上の登録を受けない（やり直すときは、Mac で受付を始め直す）
   private closeAnswered(p: Pairing): void {
     p.until = Math.min(p.until, this.now() + 60 * 1000);
-    p.attempts = PAIRING_ATTEMPTS;
+    p.closed = true;
     this.deps.onPairingChange();
   }
 
@@ -169,10 +173,13 @@ export class RemoteAuth {
 
   private pairBegin(code: string): AuthReplies['pair-begin'] {
     const p = this.openPairing();
-    if (!p || p.attempts >= PAIRING_ATTEMPTS) throw new Error('pairing is not open');
+    if (!p || p.closed) throw new Error('pairing is not open');
+    const now = this.now();
+    p.failures = p.failures.filter((at) => now - at < PAIRING_ATTEMPT_WINDOW_MS);
+    if (p.failures.length >= PAIRING_ATTEMPTS) throw new Error('too many attempts');
     if (!sameText(p.code, code.trim())) {
-      // 間違ったコードは、試せる回数に数えるだけ（同じネットワークの誰でも、登録を潰せないように）
-      p.attempts += 1;
+      // 間違ったコードは、試せる回数に数えるだけ（受付は閉じない）
+      p.failures.push(now);
       throw new Error('wrong code');
     }
     if (p.pending.size > 0) {

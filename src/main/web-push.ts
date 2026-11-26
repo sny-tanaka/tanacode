@@ -96,6 +96,33 @@ export function encryptPayload(
   return Buffer.concat([header, asPublic, body]);
 }
 
+// 通知の中身（JSON にしたもの）の大きさの上限（バイト）。暗号化の前の 1 レコード（4096）と Apple の上限（4KB）に、余裕を持って収める
+export const PUSH_PAYLOAD_MAX_BYTES = 3072;
+
+// 文を UTF-8 のバイト数で切る（文字の途中では切らない）。切ったら … を付ける
+export function cutBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let out = '';
+  for (const char of text) {
+    if (Buffer.byteLength(out + char) > max - 3) break;
+    out += char;
+  }
+  return `${out}…`;
+}
+
+// 通知の中身。タイトルは 300・本文は 2700 バイトで切り、JSON にしたあと（改行・引用符は倍に増える）も上限に収まるまで、本文・タイトルの順に縮める
+export function pushPayload(title: string, body: string, sessionId: string, profileId: string): { title: string; body: string; sessionId: string; profileId: string } {
+  let titleMax = 300;
+  let bodyMax = 2700;
+  for (;;) {
+    const payload = { title: cutBytes(title, titleMax), body: cutBytes(body, bodyMax), sessionId, profileId };
+    const over = Buffer.byteLength(JSON.stringify(payload)) - PUSH_PAYLOAD_MAX_BYTES;
+    if (over <= 0 || (bodyMax === 0 && titleMax === 0)) return payload;
+    if (bodyMax > 0) bodyMax = Math.max(0, bodyMax - over);
+    else titleMax = Math.max(0, titleMax - over);
+  }
+}
+
 // 公開鍵が P-256 の点として正しいか（壊れた鍵で送らない）
 export function isValidP256Point(publicKey: string): boolean {
   try {

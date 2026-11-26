@@ -24,7 +24,7 @@ const session = (over: Partial<RemoteSession> = {}): RemoteSession => ({
   ...over,
 });
 
-type Started = { core: RemoteServerCore; port: number; posted: ServerMessage[]; clock: { now: number }; main: { refuse: boolean } };
+type Started = { core: RemoteServerCore; port: number; posted: ServerMessage[]; clock: { now: number }; main: { refuse: boolean; failCall: boolean } };
 let current: Started | null = null;
 
 afterEach(() => {
@@ -36,8 +36,10 @@ async function start(appRoot: string | null = null): Promise<Started> {
   const posted: ServerMessage[] = [];
   const clock = { now: Date.now() };
   // main の代わりに、本人確認の頼みに答える（券の乱数と券。refuse なら断る）
-  const main = { refuse: false };
+  // failCall: main へ頼みを渡すところで投げる（プロセスの間の複製に失敗したときの代わり）
+  const main = { refuse: false, failCall: false };
   const core: RemoteServerCore = new RemoteServerCore((message) => {
+    if (main.failCall && message.type === 'call') throw new RangeError('Maximum call stack size exceeded');
     posted.push(message);
     if (message.type !== 'auth') return;
     const { id, request } = message;
@@ -155,6 +157,8 @@ describe('HTTP の口', () => {
     expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+    expect(res.headers['strict-transport-security']).toBe('max-age=31536000');
     expect(res.body).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
@@ -523,6 +527,32 @@ describe('WebSocket の口', () => {
     const client = await connect(port);
     client.ws.send(text);
     expect(await client.closed).toBe(4003);
+  });
+
+  it('入れ子の深すぎる引数は、main に渡さずに、その接続だけを切る（4003）。渡すところで投げても、その接続だけを切り、待ち受けは続ける', async () => {
+    const { port, posted, main } = await start();
+    const deep = (depth: number) => {
+      let v: unknown = 1;
+      for (let i = 0; i < depth; i += 1) v = [v];
+      return v;
+    };
+    const client = await connect(port);
+    // 深い入れ子は JSON.stringify も溢れるので、文字列で組み立てる
+    client.ws.send(`{"id":1,"kind":"invoke","profileId":"default","channel":"x","args":[${'['.repeat(10000)}1${']'.repeat(10000)}]}`);
+    expect(await client.closed).toBe(4003);
+    // 上限（16 段）までは渡す
+    const ok = await connect(port);
+    ok.ws.send(JSON.stringify({ id: 2, kind: 'invoke', profileId: 'default', channel: 'x', args: [deep(15)] }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 2));
+    expect(posted.some((m) => m.type === 'call' && m.id === 1)).toBe(false);
+    main.failCall = true;
+    ok.ws.send(JSON.stringify({ id: 3, kind: 'invoke', profileId: 'default', channel: 'x', args: [] }));
+    expect(await ok.closed).toBe(4003);
+    main.failCall = false;
+    const again = await connect(port);
+    again.ws.send(JSON.stringify({ id: 4, kind: 'invoke', profileId: 'default', channel: 'x', args: [] }));
+    await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 4));
+    again.ws.close();
   });
 
   it('バイナリの伝文は切る（4003）', async () => {

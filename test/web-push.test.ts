@@ -6,6 +6,8 @@ import {
   isAllowedEndpoint,
   isValidP256Point,
   parseSubscription,
+  PUSH_PAYLOAD_MAX_BYTES,
+  pushPayload,
   sendPush,
   vapidAuthorization,
   VAPID_SUBJECT,
@@ -46,6 +48,19 @@ function decrypt(body: Buffer, uaPrivate: string, auth: string): string {
 }
 
 describe('encryptPayload', () => {
+  it('通知の中身は、JSON にしたあと（改行・引用符は倍に増える）も上限に収める。短い文はそのまま', () => {
+    expect(pushPayload('題', '本文', 's1', 'default')).toEqual({ title: '題', body: '本文', sessionId: 's1', profileId: 'default' });
+    for (const [title, body] of [
+      ['あ'.repeat(500), 'い'.repeat(2000)],
+      ['t', '\n'.repeat(2700)],
+      ['"'.repeat(300), '\u0001'.repeat(2700)],
+    ]) {
+      const payload = pushPayload(title, body, 's1', 'default');
+      expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(PUSH_PAYLOAD_MAX_BYTES);
+      expect(payload.body.endsWith('…')).toBe(true);
+    }
+  });
+
   it('RFC 8291 の付録の例と同じものを作る', () => {
     const body = encryptPayload(subscription, Buffer.from(RFC.plaintext), { senderPrivate: Buffer.from(RFC.asPrivate, 'base64url'), salt: Buffer.from(RFC.salt, 'base64url') });
     expect(body.toString('base64url')).toBe(RFC.body);

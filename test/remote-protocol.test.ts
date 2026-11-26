@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseServerMessage, publicOriginOf } from '@shared/remote-protocol';
+import { nestedTooDeep, parseServerMessage, publicOriginOf, REMOTE_MAX_DEPTH } from '@shared/remote-protocol';
 import { DEFAULT_REMOTE_SETTINGS, remoteSettingsOf } from '@shared/remote-settings';
 
 describe('parseServerMessage（遠隔サーバーから届いた伝文の形）', () => {
@@ -41,6 +41,20 @@ describe('parseServerMessage（遠隔サーバーから届いた伝文の形）'
 
   it('余分な値は捨てる', () => {
     expect(parseServerMessage({ type: 'disconnected', clientId: 'c', extra: 1 })).toEqual({ type: 'disconnected', clientId: 'c' });
+  });
+
+  it('頼みの引数の入れ子が深すぎれば null（遠隔サーバーが確かめ損ねても、main で断る）。深さは再帰を使わずに数える', () => {
+    const deep = (depth: number, wrap: (v: unknown) => unknown) => {
+      let v: unknown = 'x';
+      for (let i = 0; i < depth; i += 1) v = wrap(v);
+      return v;
+    };
+    const call = (arg: unknown) => ({ type: 'call', id: 1, clientId: 'c', profileId: 'p', kind: 'invoke', channel: 'a', args: [arg] });
+    // main の確かめ（remote-dispatch）と同じく、引数の中は REMOTE_MAX_DEPTH + 1 段まで
+    expect(parseServerMessage(call(deep(REMOTE_MAX_DEPTH + 1, (v) => [v])))).not.toBeNull();
+    expect(parseServerMessage(call(deep(REMOTE_MAX_DEPTH + 2, (v) => ({ a: v }))))).toBeNull();
+    expect(nestedTooDeep(deep(100_000, (v) => [v]), REMOTE_MAX_DEPTH)).toBe(true);
+    expect(nestedTooDeep([new Uint8Array(4), null, 1], 0)).toBe(false);
   });
 });
 

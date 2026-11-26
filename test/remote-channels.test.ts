@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { IpcChannel } from '@shared/ipc';
 import { REMOTE_CHANNELS, type RemoteChannel } from '@shared/remote-channels';
 import { arity, invokes, sends } from './helpers/ipc-tables';
 
@@ -20,6 +21,32 @@ describe('遠隔の頼みの表', () => {
       if (spec.use === 'same') expect(spec.reason, channel).toBeUndefined();
       else expect(spec.reason, channel).toMatch(/\S/);
     }
+  });
+
+  // Issue #464 で守りとして約束する「外から入口を開けられない」と、メニューバーから開く Mac の設定。表の書き間違いで開かないよう、名前で押さえる
+  // （遠隔操作の入口の口は、受け口でも呼び出し元を確かめ直す。test/main-ipc.test.ts）
+  it.each([
+    IpcChannel.RemoteSettingsGet,
+    IpcChannel.RemoteSettingsSet,
+    IpcChannel.RemoteDevicesGet,
+    IpcChannel.RemotePairingStart,
+    IpcChannel.RemotePairingCancel,
+    IpcChannel.RemotePairingApprove,
+    IpcChannel.RemotePairingReject,
+    IpcChannel.RemoteDeviceRemove,
+    IpcChannel.RemoteDevicesReset,
+    IpcChannel.RemoteConnectionsGet,
+    IpcChannel.RemoteDisconnectAll,
+    IpcChannel.McpSettingsGet,
+    IpcChannel.McpEnabledSet,
+    IpcChannel.ToolPermissionsSet,
+    IpcChannel.ParentAskRulesSet,
+    IpcChannel.PromptsUpdate,
+    IpcChannel.BrowserHostsSet,
+    IpcChannel.BrowserCredentialLinksSet,
+    IpcChannel.AppUpdateInstall,
+  ])('%s は、スマホから呼べない（mac）', (channel) => {
+    expect(REMOTE_CHANNELS[channel as RemoteChannel].use).toBe('mac');
   });
 
   it('省略できる引数のあとに、省略できない引数が来ない', () => {
