@@ -37,7 +37,8 @@ export type RemoteHostDeps = {
 };
 
 // focus: その接続（スマホの画面）が開いているセッション（チャットの知らせは、これの分だけ送る。通信量を増やさない）
-type Client = { sessionId: string; subscriptions: Set<string>; focus: string | null };
+// visible: その接続の画面が前に出ているか（スマホが知らせる。はじめは出ているとする）
+type Client = { sessionId: string; subscriptions: Set<string>; focus: string | null; visible: boolean };
 
 // 書いている途中の文だけの知らせを、スマホに送る間隔（セッションごと。Mac の画面には 50ms ごと）
 export const REMOTE_PARTIAL_MS = 300;
@@ -273,6 +274,17 @@ export class RemoteHost {
     if (client) client.focus = sessionId;
   }
 
+  // その接続の画面が前に出ているか
+  setVisible(clientId: string, visible: boolean): void {
+    const client = this.clients.get(clientId);
+    if (client) client.visible = visible;
+  }
+
+  // その登録の接続のどれかが、前に出ていて、そのセッションを開いているか（Mac の通知と同じく、見ているなら通知しない）
+  viewing(registrationId: string, sessionId: string): boolean {
+    return [...this.clients.values()].some((client) => client.visible && client.focus === sessionId && this.sessions.get(client.sessionId)?.registrationId === registrationId);
+  }
+
   // つながっている接続の id
   clientIds(): string[] {
     return [...this.clients.keys()];
@@ -329,7 +341,7 @@ export class RemoteHost {
           child.post({ type: 'disconnect', clientId: message.clientId });
           return;
         }
-        this.setClients(() => this.clients.set(message.clientId, { sessionId: message.sessionId, subscriptions: new Set(), focus: null }));
+        this.setClients(() => this.clients.set(message.clientId, { sessionId: message.sessionId, subscriptions: new Set(), focus: null, visible: true }));
         break;
       }
       case 'disconnected':

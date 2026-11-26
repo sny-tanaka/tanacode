@@ -48,7 +48,7 @@ export function parseSubscription(value: unknown): PushSubscriptionJson | null {
   const p256dh = v.keys?.p256dh;
   const auth = v.keys?.auth;
   if (typeof p256dh !== 'string' || typeof auth !== 'string') return null;
-  if (fromB64url(p256dh).length !== 65 || fromB64url(auth).length !== 16) return null;
+  if (!isValidP256Point(p256dh) || fromB64url(auth).length !== 16) return null;
   return { endpoint: v.endpoint, keys: { p256dh, auth } };
 }
 

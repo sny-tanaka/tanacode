@@ -71,6 +71,10 @@ void transport.start().then(async (ready) => {
     }
     transport.local(IpcChannel.SessionsSelect, data.sessionId);
   });
+  // 画面が前に出ているかを Mac に知らせる（見ているセッションの通知は出さない。Mac の通知と同じ）
+  const reportVisible = () => window.tanacode.remote.setVisible(document.visibilityState === 'visible');
+  document.addEventListener('visibilitychange', reportVisible);
+  reportVisible();
   // 通知に要る Service Worker（画面のファイルはキャッシュさせない）
   void navigator.serviceWorker?.register('/app/sw.js', { scope: '/app/' }).catch(() => {});
   createRoot(document.getElementById('root')!).render(<App />);

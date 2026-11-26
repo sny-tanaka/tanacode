@@ -16,6 +16,13 @@ function keyBytes(key: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(text, (c) => c.charCodeAt(0));
 }
 
+// 購読の鍵と、今の送り主の鍵が同じか
+function sameKey(a: ArrayBuffer | null, b: Uint8Array): boolean {
+  if (!a || a.byteLength !== b.length) return false;
+  const view = new Uint8Array(a);
+  return view.every((byte, i) => byte === b[i]);
+}
+
 export function PushToggle() {
   const supported = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const [state, setState] = useState<State>(supported ? 'busy' : 'unsupported');
@@ -23,7 +30,21 @@ export function PushToggle() {
     if (!supported) return;
     let alive = true;
     void currentSubscription()
-      .then((subscription) => alive && setState(Notification.permission === 'denied' ? 'denied' : subscription ? 'on' : 'off'))
+      .then(async (subscription) => {
+        if (Notification.permission === 'denied') return alive && setState('denied');
+        if (!subscription) return alive && setState('off');
+        // 開いたときに、購読を Mac に送り直す（Mac が外した・送り主の鍵が新しくなったときに、「オン」のまま届かなくならないように）。
+        // 鍵が違えば、今の鍵で作り直す
+        const key = await window.tanacode.remote.pushKey();
+        let current: PushSubscription | null = subscription;
+        if (key && !sameKey(subscription.options?.applicationServerKey ?? null, keyBytes(key))) {
+          await subscription.unsubscribe();
+          const registration = await navigator.serviceWorker.ready;
+          current = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+        }
+        const kept = key ? await window.tanacode.remote.pushSubscribe(current.toJSON()) : false;
+        if (alive) setState(kept ? 'on' : 'off');
+      })
       .catch(() => alive && setState('off'));
     return () => {
       alive = false;

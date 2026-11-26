@@ -99,6 +99,8 @@ describe('送り先と購読の確かめ', () => {
     expect(parseSubscription(subscription)).toEqual(subscription);
     expect(parseSubscription({ ...subscription, endpoint: 'https://fcm.googleapis.com/x' })).toBeNull();
     expect(parseSubscription({ ...subscription, keys: { p256dh: 'AAAA', auth: RFC.auth } })).toBeNull();
+    // 長さは合っていても、P-256 の点でなければ受けない（送るたびに失敗し、外れなくなる）
+    expect(parseSubscription({ ...subscription, keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: RFC.auth } })).toBeNull();
     expect(parseSubscription({ ...subscription, keys: { p256dh: RFC.uaPublic, auth: 'AAAA' } })).toBeNull();
     expect(parseSubscription({ endpoint: subscription.endpoint })).toBeNull();
     expect(parseSubscription(null)).toBeNull();

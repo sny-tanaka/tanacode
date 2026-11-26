@@ -1,7 +1,11 @@
 import { SERVICE_WORKER } from './remote-service-worker';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib';
+
+const brotliAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
@@ -107,7 +111,7 @@ export class RemoteServerCore {
   private wss: WebSocketServer | null = null;
   private config: RemoteListenConfig | null = null;
   private readonly sessions = new Map<string, RemoteSession>();
-  private readonly compressedFiles = new Map<string, Buffer>();
+  private readonly compressedFiles = new Map<string, Promise<Buffer>>();
   private readonly tickets = new Map<string, Ticket>();
   private readonly clients = new Map<string, Client>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
@@ -337,7 +341,7 @@ export class RemoteServerCore {
     if (!file || !this.config) return this.reply(res, 404, { error: 'not found' });
     // 名前に中身の印が付いた静的なファイル（assets）だけを圧縮して送る（スマホの通信量を減らす）。秘密を含む動的な応答は圧縮しない（設計の決まり）
     const encoding = file.immutable && COMPRESSIBLE.test(file.type) ? acceptedEncoding(req) : null;
-    const body = encoding ? this.compressed(path, encoding, file.body) : file.body;
+    const body = encoding ? await this.compressed(path, encoding, file.body) : file.body;
     res.writeHead(200, {
       ...BASE_HEADERS,
       'cache-control': file.immutable ? 'private, max-age=31536000, immutable' : 'no-store',
@@ -349,12 +353,14 @@ export class RemoteServerCore {
     res.end(req.method === 'HEAD' ? undefined : body);
   }
 
-  // 圧縮したもの（assets は名前が中身で決まるので、パスと方式で覚えておく。待ち受けを止めるまで）
-  private compressed(path: string, encoding: 'br' | 'gzip', body: Buffer): Buffer {
+  // 圧縮したもの（assets は名前が中身で決まるので、パスと方式で覚えておく。待ち受けを止めるまで）。圧縮は裏の糸で行い、
+  // その間もほかの頼みを受ける（同じものを続けて頼まれたら、同じ圧縮を待つ）。圧縮に失敗したら、覚えずに投げる
+  private compressed(path: string, encoding: 'br' | 'gzip', body: Buffer): Promise<Buffer> {
     const key = `${encoding}:${path}`;
     let packed = this.compressedFiles.get(key);
     if (!packed) {
-      packed = encoding === 'br' ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 } }) : gzipSync(body, { level: 9 });
+      packed = encoding === 'br' ? brotliAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 } }) : gzipAsync(body, { level: 9 });
+      packed.catch(() => this.compressedFiles.delete(key));
       this.compressedFiles.set(key, packed);
     }
     return packed;

@@ -1259,6 +1259,20 @@ function registerIpc(): void {
   handle(IpcChannel.RemotePushUnsubscribe, (e) => {
     if (e.kind === 'remote') remoteRegistrations?.setPush(e.registrationId, null);
   });
+  listen(IpcChannel.RemoteVisible, (e, visible: unknown) => {
+    if (e.kind === 'remote') remoteHost.setVisible(e.clientId, visible === true);
+  });
+}
+
+// 文を UTF-8 のバイト数で切る（文字の途中では切らない）。切ったら … を付ける
+function cutBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let out = '';
+  for (const char of text) {
+    if (Buffer.byteLength(out + char) > max - 3) break;
+    out += char;
+  }
+  return `${out}…`;
 }
 
 // スマホの画面を閉じている間の通知（Web Push）を、そのプロファイルを許した端末のうち、受け取ると決めたものに送る（Mac の通知と同じ文。決めたこと）。
@@ -1266,7 +1280,8 @@ function registerIpc(): void {
 function pushNotify(profileId: string, sessionId: string, title: string, body: string): void {
   const registrations = remoteRegistrations;
   if (!registrations || registrations.problem()) return;
-  const targets = registrations.all().filter((r) => r.push && r.profileIds.includes(profileId));
+  // Mac の通知と同じく、スマホでそのセッションを見ているなら、その端末には出さない
+  const targets = registrations.all().filter((r) => r.push && r.profileIds.includes(profileId) && !remoteHost.viewing(r.id, sessionId));
   if (targets.length === 0) return;
   let keys: VapidKeys;
   try {
@@ -1275,10 +1290,12 @@ function pushNotify(profileId: string, sessionId: string, title: string, body: s
     console.error(`[remote] 通知の鍵を用意できませんでした: ${String(error)}`);
     return;
   }
-  // 通知の本文は 4KB まで（暗号化の前）。長い文は切る
-  const payload = { title, body: body.length > 1000 ? `${body.slice(0, 1000)}…` : body, sessionId, profileId };
+  // 通知は 4KB まで（暗号化の前の 1 レコード。Apple の上限も 4KB）。タイトルと本文をバイト数で切る（日本語は 1 文字 3 バイト）
+  const payload = { title: cutBytes(title, 300), body: cutBytes(body, 2700), sessionId, profileId };
+  // Chromium の通信（net.fetch）で送る。macOS のプロキシの設定がそのまま効く（ほかの問い合わせと同じ）
+  const send = (url: string | URL | Request, init?: RequestInit) => net.fetch(String(url), init);
   for (const r of targets) {
-    void sendPush(r.push!, payload, keys, { fetch, now: Date.now }).then((result) => {
+    void sendPush(r.push!, payload, keys, { fetch: send as typeof fetch, now: Date.now }).then((result) => {
       if (result === 'gone') registrations.setPush(r.id, null);
     });
   }

@@ -196,6 +196,23 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.SessionsChanged, payload: [], profileId: 'default' }]);
   });
 
+  it('その登録の接続のどれかが、前に出ていてそのセッションを開いていれば、見ている（通知を出さない）', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    expect(t.host.viewing('r1', 'chat-a')).toBe(false);
+    t.host.setFocus('c1', 'chat-a');
+    expect(t.host.viewing('r1', 'chat-a')).toBe(true);
+    expect(t.host.viewing('r1', 'chat-b')).toBe(false);
+    expect(t.host.viewing('other', 'chat-a')).toBe(false);
+    t.host.setVisible('c1', false);
+    expect(t.host.viewing('r1', 'chat-a')).toBe(false);
+    t.host.setVisible('ghost', true);
+    t.host.setVisible('c1', true);
+    expect(t.host.viewing('r1', 'chat-a')).toBe(true);
+  });
+
   it('書いている途中の文だけの知らせは、セッションごとに 300ms に 1 回までにまとめる。イベントのある知らせの前に、残しているものを先に送る', () => {
     vi.useFakeTimers();
     try {

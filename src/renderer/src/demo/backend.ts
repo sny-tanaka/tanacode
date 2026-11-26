@@ -517,6 +517,7 @@ export class DemoBackend {
         pushKey: () => ok(null),
         pushSubscribe: () => ok(false),
         pushUnsubscribe: () => ok(undefined),
+        setVisible: () => {},
         devices: () => ok({ devices: [], pairing: null, problem: null, profiles: [] }),
         startPairing: () => ok({ devices: [], pairing: null, problem: null, profiles: [] }),
         cancelPairing: () => ok({ devices: [], pairing: null, problem: null, profiles: [] }),

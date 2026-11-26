@@ -1,3 +1,4 @@
+import { createECDH } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,7 +51,7 @@ describe('RemoteRegistrations', () => {
     const { file, open } = setup();
     const list = open();
     list.add(registration());
-    const push = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
+    const push = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: createECDH('prime256v1').generateKeys('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
     expect(list.setPush('r1', push)).toBe(true);
     expect(list.setPush('ghost', push)).toBe(false);
     expect(open().get('r1')?.push).toEqual(push);

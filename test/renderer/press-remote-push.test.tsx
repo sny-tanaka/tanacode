@@ -9,18 +9,21 @@ import { mockApi } from './mock-api';
 
 type Permission = 'default' | 'granted' | 'denied';
 let permission: Permission;
-let subscription: { toJSON: () => unknown; unsubscribe: ReturnType<typeof vi.fn> } | null;
+type FakeSubscription = { toJSON: () => unknown; unsubscribe: ReturnType<typeof vi.fn>; options: { applicationServerKey: ArrayBuffer | null } };
+let subscription: FakeSubscription | null;
 let subscribe: ReturnType<typeof vi.fn>;
 let requestPermission: ReturnType<typeof vi.fn>;
 
 const KEY = Buffer.alloc(65, 4).toString('base64url');
+const keyBuffer = (key: string) => new Uint8Array(Buffer.from(key, 'base64url')).buffer;
+const fakeSubscription = (key: string | null): FakeSubscription => ({ toJSON: () => JSON_SUB, unsubscribe: vi.fn(async () => true), options: { applicationServerKey: key ? keyBuffer(key) : null } });
 const JSON_SUB = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 beforeEach(() => {
   permission = 'default';
   subscription = null;
-  subscribe = vi.fn(async () => {
-    subscription = { toJSON: () => JSON_SUB, unsubscribe: vi.fn(async () => true) };
+  subscribe = vi.fn(async (options: { applicationServerKey: Uint8Array }) => {
+    subscription = fakeSubscription(Buffer.from(options.applicationServerKey).toString('base64url'));
     return subscription;
   });
   requestPermission = vi.fn(async () => {
@@ -68,12 +71,15 @@ describe('PushToggle', () => {
     expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
   });
 
-  it('購読済みなら「受け取っています」から始める。許可されなければ押せない', async () => {
-    mockApi().install();
-    subscription = { toJSON: () => JSON_SUB, unsubscribe: vi.fn() };
+  it('購読済みなら、開いたときに Mac に送り直して「受け取っています」から始める。許可されなければ押せない', async () => {
+    const api = mockApi({ 'remote.pushKey': () => Promise.resolve(KEY), 'remote.pushSubscribe': () => Promise.resolve(true) });
+    api.install();
+    subscription = fakeSubscription(KEY);
     const view = render(<PushToggle />);
     await settle();
     expect(screen.getByRole('button', { name: '通知を受け取っています（押すと止める）' })).toBeTruthy();
+    expect(api.argsOf('remote.pushSubscribe')).toEqual([[JSON_SUB]]);
+    expect(subscribe).not.toHaveBeenCalled();
     view.unmount();
     subscription = null;
     requestPermission.mockResolvedValueOnce('denied');
@@ -82,6 +88,32 @@ describe('PushToggle', () => {
     fireEvent.click(screen.getByRole('button', { name: '通知を受け取る' }));
     await settle();
     expect((screen.getByRole('button', { name: '通知が許可されていません' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('購読の鍵が今の送り主の鍵と違えば（Mac の登録をやり直した）、作り直して送る。Mac が受けなければ「受け取る」に戻す', async () => {
+    const NEW_KEY = Buffer.alloc(65, 7).toString('base64url');
+    const api = mockApi({ 'remote.pushKey': () => Promise.resolve(NEW_KEY), 'remote.pushSubscribe': () => Promise.resolve(true) });
+    api.install();
+    const old = fakeSubscription(KEY);
+    subscription = old;
+    const view = render(<PushToggle />);
+    await settle();
+    expect(old.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(Buffer.from(subscribe.mock.calls[0][0].applicationServerKey as Uint8Array).toString('base64url')).toBe(NEW_KEY);
+    expect(screen.getByRole('button', { name: '通知を受け取っています（押すと止める）' })).toBeTruthy();
+    view.unmount();
+    // 鍵が読めない・Mac が受けない
+    mockApi({ 'remote.pushKey': () => Promise.resolve(null) }).install();
+    subscription = fakeSubscription(null);
+    const second = render(<PushToggle />);
+    await settle();
+    expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
+    second.unmount();
+    mockApi({ 'remote.pushKey': () => Promise.resolve(KEY), 'remote.pushSubscribe': () => Promise.reject(new Error('切れた')) }).install();
+    subscription = fakeSubscription(KEY);
+    render(<PushToggle />);
+    await settle();
+    expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
   });
 
   it('鍵が無い・Mac が受けない・購読に失敗したら、受け取らないまま', async () => {

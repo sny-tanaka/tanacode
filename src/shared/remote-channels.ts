@@ -122,6 +122,7 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.RemotePushKey]: same([]),
   [IpcChannel.RemotePushSubscribe]: same(['object']),
   [IpcChannel.RemotePushUnsubscribe]: same([]),
+  [IpcChannel.RemoteVisible]: same(['boolean']),
   [IpcChannel.RemoteSettingsGet]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteSettingsSet]: mac(['object'], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),
   [IpcChannel.RemoteDevicesGet]: mac([], 'メニューバーの「遠隔操作の設定…」で開くダイアログ（遠隔操作の入口の設定は、外から変えさせない）'),

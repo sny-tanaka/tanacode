@@ -153,6 +153,7 @@ export function createApi({ invoke, send, subscribe, pathForFile, language }: Ap
       pushKey: () => invoke(IpcChannel.RemotePushKey),
       pushSubscribe: (subscription) => invoke(IpcChannel.RemotePushSubscribe, subscription),
       pushUnsubscribe: () => invoke(IpcChannel.RemotePushUnsubscribe),
+      setVisible: (visible) => send(IpcChannel.RemoteVisible, visible),
     },
     shortcuts: {
       onRun: (listener) => subscribe(IpcChannel.ShortcutRun, listener),

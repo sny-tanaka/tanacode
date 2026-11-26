@@ -212,6 +212,7 @@ export const IpcChannel = {
   RemotePushKey: 'remote:push-key',
   RemotePushSubscribe: 'remote:push-subscribe',
   RemotePushUnsubscribe: 'remote:push-unsubscribe',
+  RemoteVisible: 'remote:visible',
   RemoteSettingsSet: 'remote:settings-set',
   RemoteSettingsOpen: 'remote:settings-open',
   // 遠隔操作で登録した端末（同じダイアログ）。一覧を読む・登録を受け付ける・やめる・確認の数字で承認する・断る・取り消す・読めない一覧を消してやり直す / 一覧と受付が変わった
@@ -871,6 +872,8 @@ export type TanacodeApi = {
     pushKey(): Promise<string | null>;
     pushSubscribe(subscription: object): Promise<boolean>;
     pushUnsubscribe(): Promise<void>;
+    // スマホの画面が前に出ているか（見ているセッションの通知を出さないため。Mac の画面からは何もしない）
+    setVisible(visible: boolean): void;
   };
   // メニューバーの「移動」のショートカット。メニューを押した・アプリ内ブラウザのページで押したとき、main が知らせる
   // （アプリの画面で押したキーは、画面が自分で受ける。shared/shortcuts.ts）
@@ -1353,6 +1356,7 @@ export type IpcSend = {
   [IpcChannel.PrefsSet]: Api['prefs']['set'];
   [IpcChannel.FocusLost]: Api['diagnostics']['focusLost'];
   [IpcChannel.PtyWrite]: Api['pty']['write'];
+  [IpcChannel.RemoteVisible]: Api['remote']['setVisible'];
   [IpcChannel.PtyResize]: Api['pty']['resize'];
   [IpcChannel.PtyResetSize]: Api['pty']['resetSize'];
   [IpcChannel.ShellWrite]: Api['shell']['write'];
