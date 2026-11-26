@@ -150,6 +150,11 @@ describe('toChatEvents: system の行', () => {
       { type: 'hook', id: 'at1', run: expect.objectContaining({ outcome: 'blocked', hidden: true }) },
     ]);
     expect(app('hook_success')).toEqual([]);
+    // 前のバージョンのアプリのチェックリストのフックが止めた記録は、checklist-stop と、その回の出さない印の両方を渡す
+    expect(app('hook_blocking_error', { command: undefined, blockingError: { blockingError: 'x', command: CHECKLIST_HOOK_COMMAND } })).toEqual([
+      { type: 'checklist-stop' },
+      { type: 'hook', id: 'at1', run: expect.objectContaining({ outcome: 'blocked', toolUseId: 't1', hidden: true }) },
+    ]);
     expect(events(attachment({ type: 'hook_non_blocking_error', hookEvent: 'PreToolUse', command: CHECKLIST_HOOK_COMMAND, toolUseID: 't1' }))).toEqual([]);
   });
 
@@ -312,7 +317,10 @@ describe('toChatEvents: attachment の行', () => {
     const reminder = `<${CHECKLIST_REMINDER_TAG}>\n今のチェックリスト\n</${CHECKLIST_REMINDER_TAG}>`;
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);
     // 止めた記録は、フックの一覧には出さず、目印だけを残す（このあとの応答は、チェックリストを直した報告。ほかのセッションに結果を返すときに見分ける）
-    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([{ type: 'checklist-stop' }]);
+    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([
+      { type: 'checklist-stop' },
+      { type: 'hook', id: 'at1', run: expect.objectContaining({ hidden: true }) },
+    ]);
     // ターンの終わりを、止めずに文を渡して続けさせた記録（2.1.302 からのアプリ。コマンドは載らないので、囲みで見分ける）も、目印だけを残す
     const stopReminder = `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched)</${CHECKLIST_REMINDER_TAG}>`;
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'Stop', hookEvent: 'Stop', content: [stopReminder] }))).toEqual([{ type: 'checklist-stop' }]);

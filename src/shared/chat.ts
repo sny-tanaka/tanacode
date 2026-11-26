@@ -337,7 +337,11 @@ function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: bo
     if (handback) return [{ type: 'info', ...handbackView(entry.uuid ?? '', handback) }];
     // 作業中に届いた、ほかの発言でない差し込み（完了通知・別の Claude からの知らせ）は出さない（midTurnPromptOf）
     if (kind === 'queued_command') return [];
-    if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
+    if (isChecklistStop(entry.attachment)) {
+      // 前のバージョンのアプリが止めた記録（hook_blocking_error）は、その回の要約の行の失敗がアプリのフックのものだと分かるよう、出さない印も渡す
+      const run = entry.attachment?.type === 'hook_blocking_error' ? hookRunOf({ ...entry.attachment, command: CHECKLIST_HOOK_ENV }, 'hook_blocking_error') : null;
+      return [{ type: 'checklist-stop' }, ...(run ? [{ type: 'hook' as const, id: entry.uuid ?? '', run }] : [])];
+    }
     // Claude が、発言に関係のありそうなメモリを思い出した（中身は Claude にだけ渡り、画面には数とファイル名を出す。TUI と同じ程度）
     if (entry.attachment?.type === 'relevant_memories') {
       const memories = entry.attachment.memories;
