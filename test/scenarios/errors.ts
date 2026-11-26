@@ -309,7 +309,8 @@ export function checkToolErrors(events: ChatEvent[], cwd: string): void {
   let at = 0;
   for (const event of expected) {
     const found = events.findIndex((e, i) => i >= at && expect.objectContaining(event).asymmetricMatch(e));
-    expect(found, JSON.stringify(event)).not.toBe(-1);
+    // 見つからなければ、届いた hooks の出来事も出す（ときどき Stop の hooks が失敗として届く。次に落ちたときに原因を読むため）
+    expect(found, `${JSON.stringify(event)}\n届いた hooks: ${JSON.stringify(events.filter((e) => e.type === 'hook'))}`).not.toBe(-1);
     at = found + 1;
   }
   // ターンの終わり（result から）は、返事のあとに出る。Stop の hooks の行（会話ログから）とは、どちらが先に届くかが決まらない
