@@ -196,6 +196,23 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.SessionsChanged, payload: [], profileId: 'default' }]);
   });
 
+  it('1 つの接続にだけ送る（ミラーリングの絵）。そのプロファイルを許していない・知らない接続には送らない。接続の登録を読める', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.addSession(session({ sessionId: 's2', registrationId: 'r2', profileIds: ['work'] }));
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's2', ticket: t.host.grantTicket('s2') });
+    t.posted.length = 0;
+    const frame = { data: 'jpeg', width: 390, height: 844 };
+    expect(t.host.emitToClient('c1', 'default', IpcChannel.BrowserMirrorFrame, frame)).toBe(true);
+    expect(t.host.emitToClient('c2', 'default', IpcChannel.BrowserMirrorFrame, frame)).toBe(false);
+    expect(t.host.emitToClient('ghost', 'default', IpcChannel.BrowserMirrorFrame, frame)).toBe(false);
+    expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.BrowserMirrorFrame, payload: frame, profileId: 'default' }]);
+    expect(t.host.registrationOf('c2')).toBe('r2');
+    expect(t.host.registrationOf('ghost')).toBe('');
+  });
+
   it('その登録の接続のどれかが、前に出ていてそのセッションを開いていれば、見ている（通知を出さない）', () => {
     const t = setup();
     t.host.addSession(session());

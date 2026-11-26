@@ -2585,6 +2585,7 @@
     "saveFailed": "遠隔操作の設定を保存できませんでした: {error}",
     "banner": {
       "active": "遠隔操作中（{names}）",
+      "mirroring": "ブラウザを送信中",
       "disconnect": "切断",
       "disconnectTip": "スマホの接続を全部切ります。つなぎ直すには、スマホで Face ID のログインからやり直します。"
     },
@@ -2633,6 +2634,24 @@
       "deniedTip": "iPhone の設定の「通知」で、tanacode を許可してください"
     },
     "logoutConfirm": "この端末からログアウトしますか？ 次に使うときは、Face ID でログインし直します。",
+    "mirror": {
+      "tab": "映すタブ",
+      "untitled": "名前の無いタブ",
+      "start": "ミラーリング",
+      "stop": "やめる",
+      "note": "押すと、Mac のアプリ内ブラウザのこのタブを映します。映している間だけ通信量を使います",
+      "failed": "映せませんでした。Mac でタブが閉じていないか確かめてください",
+      "noTabs": "Mac のアプリ内ブラウザでタブを開くと、ここで映せます",
+      "text": "ページに入れる文字",
+      "saver": "節約",
+      "traffic": "通信量: この接続 {session}MB・今日 {today}MB",
+      "key": {
+        "Enter": "改行",
+        "Backspace": "1 字消す",
+        "Tab": "Tab",
+        "Escape": "Esc"
+      }
+    },
     "pickOnMac": "ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）",
     "tab": {
       "chat": "チャット",

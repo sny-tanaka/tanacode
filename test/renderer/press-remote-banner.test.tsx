@@ -25,6 +25,16 @@ describe('RemoteBanner', () => {
     expect(screen.getByText('遠隔操作中（iPad）')).toBeTruthy();
   });
 
+  it('スマホがアプリ内ブラウザを映している間（ミラーリング）は、「ブラウザを送信中」と出す', async () => {
+    const api = mockApi({ 'remote.connections': () => Promise.resolve([{ registrationId: 'r1', name: 'iPhone', count: 1 }]) });
+    api.install();
+    render(<RemoteBanner />);
+    await screen.findByText('遠隔操作中（iPhone）');
+    expect(screen.queryByText('ブラウザを送信中')).toBeNull();
+    act(() => api.emit('remote.onConnectionsChanged', [{ registrationId: 'r1', name: 'iPhone', count: 1, mirroring: true }]));
+    expect(screen.getByText('ブラウザを送信中')).toBeTruthy();
+  });
+
   it('返事が無い（undefined）ときも、何も出さない', async () => {
     const api = mockApi({ 'remote.connections': () => Promise.resolve(undefined) });
     api.install();

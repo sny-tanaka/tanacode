@@ -121,6 +121,8 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   const [remembers, setRemembers] = useState<Record<string, BrowserRememberOffer>>({});
   // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
   const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
+  // スマホが映しているタブ（ミラーリング。Issue #464）。見ていなくても、透明にして描かせ続ける（「セッション\nタブ」の組）
+  const [mirrored, setMirrored] = useState<ReadonlySet<string>>(() => new Set());
   // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
   const [offstageSize, setOffstageSize] = useState<{ width: number; height: number } | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
@@ -250,6 +252,16 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         setClaude((prev) => ({ ...prev, [id]: rest }));
         if (rest.active) setOperated((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
       }),
+      window.tanacode.browser.onMirroring(({ sessionId: id, tabId, on }) =>
+        setMirrored((prev) => {
+          const key = `${id}\n${tabId}`;
+          if (prev.has(key) === on) return prev;
+          const next = new Set(prev);
+          if (on) next.add(key);
+          else next.delete(key);
+          return next;
+        }),
+      ),
       window.tanacode.browser.onViewport(({ sessionId: id, ...next }) => setViewports((prev) => ({ ...prev, [id]: next }))),
       window.tanacode.browser.onThrottle(({ sessionId: _, tabId, ...next }) =>
         setThrottles((prev) => {
@@ -338,7 +350,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
         const wv = views.current.get(tabId);
         if (!wv) continue;
         const shown = visible && sid === sessionId && tabId === current;
-        const background = !shown && tabId === current && operated.has(sid);
+        const background = !shown && ((tabId === current && operated.has(sid)) || mirrored.has(`${sid}\n${tabId}`));
         const w = viewports[sid]?.width ?? 0;
         const h = viewports[sid]?.custom?.height ?? 0;
         const other = background && sid !== sessionId;
@@ -356,7 +368,7 @@ export const PreviewPane = memo(function PreviewPane({ sessionId, visible, liveS
   });
 
   // 見ていない間の大きさを、ブラウザを開いたときの場所（中央の列）に合わせる
-  const offstage = !visible && [...operated].some((sid) => activeRef.current.has(sid));
+  const offstage = !visible && ([...operated].some((sid) => activeRef.current.has(sid)) || mirrored.size > 0);
   useEffect(() => {
     const parent = paneRef.current?.parentElement;
     if (!offstage || !parent) return;

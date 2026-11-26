@@ -202,6 +202,22 @@ describe('PreviewPane: アドレス欄と表示幅', () => {
 });
 
 describe('PreviewPane: Claude の操作の様子（タッチ・遅くする）', () => {
+  it('スマホが映しているタブ（ミラーリング）は、見ていなくても透明にして描かせ続ける。やめたら隠す', async () => {
+    const view = render(<Pane sessionId="s1" />);
+    await act(async () => {});
+    go('localhost:3000');
+    const tab = activated()[0]![1] as string;
+    const webview = () => document.querySelector('webview') as HTMLElement;
+    view.rerender(<Pane sessionId="s1" visible={false} />);
+    expect(webview().style.display).toBe('none');
+    act(() => api.emit('browser.onMirroring', { sessionId: 's1', tabId: tab, on: true }));
+    act(() => api.emit('browser.onMirroring', { sessionId: 's1', tabId: tab, on: true }));
+    expect([webview().style.display, webview().style.opacity, webview().style.zIndex]).toEqual(['', '0', '-1']);
+    act(() => api.emit('browser.onMirroring', { sessionId: 's1', tabId: tab, on: false }));
+    act(() => api.emit('browser.onMirroring', { sessionId: 's1', tabId: tab, on: false }));
+    expect(webview().style.display).toBe('none');
+  });
+
   it('Claude がタッチしている指の位置に丸を出す', async () => {
     const { container } = render(<Pane sessionId="s1" />);
     await act(async () => {});

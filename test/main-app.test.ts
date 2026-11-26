@@ -537,6 +537,7 @@ describe('部品から画面への知らせ', () => {
       newTab: IpcChannel.BrowserNewTab,
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
+      mirroring: IpcChannel.BrowserMirroring,
       popups: IpcChannel.BrowserPopups,
       popupFrame: IpcChannel.BrowserPopupFrame,
       popupCursor: IpcChannel.BrowserPopupCursor,

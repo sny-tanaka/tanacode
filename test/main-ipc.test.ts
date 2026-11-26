@@ -325,6 +325,30 @@ describe('そのまま渡す受け口', () => {
     expect(the(name)[method].mock.calls).toEqual([expected]);
   });
 
+  it('ミラーリングの口は、スマホの画面からだけ動く（Mac の画面からは空・false）。映し方の形を確かめる', async () => {
+    await expect(invoke(IpcChannel.BrowserMirrorTabs, 's1')).resolves.toEqual([]);
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorTabs, 's1')).resolves.toEqual(call('browser.mirrorTabs', 's1'));
+    await expect(invoke(IpcChannel.BrowserMirrorStart, 's1', 'tab-1', { width: 390, height: 844, saver: false })).resolves.toBe(false);
+    // 形の違う映し方は断る（オブジェクトでなければ、受け口の前で断られる）
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorStart, 's1', 'tab-1', null)).rejects.toThrow('形が違います');
+    for (const bad of [{ width: 0, height: 844 }, { width: 390, height: 99999 }, { width: 'x', height: 844 }])
+      await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorStart, 's1', 'tab-1', bad)).resolves.toBe(false);
+    // タブ（webContents）が無ければ始められない。始めようとしたら、Mac の上の帯を出し直す
+    mainWindow().webContents.sent.length = 0;
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorStart, 's1', 'tab-1', { width: 390, height: 844, saver: true })).resolves.toBe(false);
+    expect(mainWindow().webContents.sent.some(([channel]) => channel === IpcChannel.RemoteConnectionsChanged)).toBe(true);
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorStop)).resolves.toBeUndefined();
+    await expect(invoke(IpcChannel.BrowserMirrorStop)).resolves.toBeUndefined();
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorDone);
+    sendFromRenderer(IpcChannel.BrowserMirrorDone);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorInput, { type: 'tap', x: 0.5, y: 0.5 });
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorInput, { type: 'tap', x: 5, y: 0.5 });
+    sendFromRenderer(IpcChannel.BrowserMirrorInput, { type: 'tap', x: 0.5, y: 0.5 });
+    const navigation = { kind: 'open', url: 'https://example.com/' };
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.BrowserMirrorNavigate, 's1', 'tab-1', navigation)).resolves.toEqual(call('browser.mirrorNavigate', 's1', 'tab-1', navigation));
+    await expect(invoke(IpcChannel.BrowserMirrorNavigate, 's1', 'tab-1', navigation)).resolves.toBe(false);
+  });
+
   it('開いているファイル・ウォークスルーで見ている所は、画面ごと（Mac の画面は mac、スマホは接続の id）に渡す', async () => {
     const tabs = { '/work': ['a.ts', '/outside/memo.md'] };
     sendFromRenderer(IpcChannel.WatchOpenFiles, tabs);

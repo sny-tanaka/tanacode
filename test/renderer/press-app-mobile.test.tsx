@@ -206,7 +206,8 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('browser');
-    expect(document.querySelector('.center .preview-toolbar')).not.toBeNull();
+    // スマホの画面では、Mac のアプリ内ブラウザを映す部品（開いただけでは映さない）
+    expect(document.querySelector('.center .remote-browser')).not.toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'エディタ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('editor');
@@ -215,8 +216,8 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('browser');
-    fireEvent.click(screen.getByRole('tab', { name: 'ブラウザ' }));
-    fireEvent.click(document.querySelector('.center [aria-label="ブラウザを閉じる"]')!);
+    // ブラウザを閉じた（パネルの列のブラウザを押し直した）ら、エディタのタブへ移る
+    fireEvent.click(screen.getByRole('button', { name: 'ブラウザ' }));
     await flush();
     expect(app().dataset.mobileTab).toBe('editor');
     fireEvent.click(screen.getByRole('tab', { name: 'パネル' }));

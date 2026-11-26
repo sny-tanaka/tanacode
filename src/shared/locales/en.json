@@ -2665,6 +2665,7 @@
     "saveFailed": "Could not save the remote access settings: {error}",
     "banner": {
       "active": "Remote access active ({names})",
+      "mirroring": "Sending the browser",
       "disconnect": "Disconnect",
       "disconnectTip": "Disconnects every phone. To reconnect, log in again with Face ID on the phone."
     },
@@ -2713,6 +2714,24 @@
       "deniedTip": "Allow tanacode in Notifications in the iPhone Settings"
     },
     "logoutConfirm": "Log out on this device? You'll sign in again with Face ID next time.",
+    "mirror": {
+      "tab": "Tab to show",
+      "untitled": "Untitled tab",
+      "start": "Mirror",
+      "stop": "Stop",
+      "note": "Tap to show this tab of the in-app browser on the Mac. Data is used only while it is shown",
+      "failed": "Couldn't show it. Check that the tab is still open on the Mac",
+      "noTabs": "Open a tab in the in-app browser on the Mac to show it here",
+      "text": "Text to type into the page",
+      "saver": "Saver",
+      "traffic": "Data: {session} MB this connection · {today} MB today",
+      "key": {
+        "Enter": "Enter",
+        "Backspace": "Delete",
+        "Tab": "Tab",
+        "Escape": "Esc"
+      }
+    },
     "pickOnMac": "Choose files and folders on the Mac (you can't browse the Mac's files from the phone)",
     "tab": {
       "chat": "Chat",

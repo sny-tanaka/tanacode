@@ -79,6 +79,7 @@ import { WalkthroughBand } from './walkthrough/WalkthroughBand';
 import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 import { MobileBar } from './mobile/MobileBar';
+import { RemoteBrowser } from './preview/RemoteBrowser';
 import { ContextMenu } from './explorer/ContextMenu';
 import { isRemoteMode } from './remote/mode';
 import { MobileTabs, MobileWaiting, type MobileTab } from './mobile/MobileTabs';
@@ -1468,13 +1469,20 @@ export function App() {
             </div>
           )}
           {/* 見ていないセッションのブラウザも持っておく（Claude が裏で操作できるように） */}
-          <PreviewPane
-            sessionId={toolId}
-            visible={diffView?.source === 'preview' && !!toolId}
-            liveSessionIds={liveSessionIds}
-            onShow={showPreview}
-            onClose={closeCenter}
-          />
+          {/* スマホの画面には <webview> が無いので、Mac のアプリ内ブラウザのタブを映す（ミラーリング。Issue #464） */}
+          {isRemoteMode() ? (
+            <div className="preview-pane remote" hidden={!(diffView?.source === 'preview' && !!toolId)}>
+              <RemoteBrowser sessionId={toolId} visible={diffView?.source === 'preview' && !!toolId} />
+            </div>
+          ) : (
+            <PreviewPane
+              sessionId={toolId}
+              visible={diffView?.source === 'preview' && !!toolId}
+              liveSessionIds={liveSessionIds}
+              onShow={showPreview}
+              onClose={closeCenter}
+            />
+          )}
           <TerminalPanel
             sessionId={toolId}
             waiting={folderWaitLabel}

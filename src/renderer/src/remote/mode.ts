@@ -54,3 +54,32 @@ export function onRemoteConnected(listener: (on: boolean) => void): () => void {
   connectionListeners.add(listener);
   return () => connectionListeners.delete(listener);
 }
+
+// スマホが受け取った量（バイト。Issue #464 の通信量を見えるように）。session: この画面を開いてから / today: 今日の分（日ごとに手元に控える）。
+// 数えるのは、Mac から届いた伝文の文字の数（ほとんどが ASCII なのでバイトとみなす）
+const TRAFFIC_KEY = 'tanacode.remote.traffic';
+let sessionBytes = 0;
+
+const todayKey = (now: Date) => `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+
+function readToday(now: Date): number {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRAFFIC_KEY) ?? 'null') as { day?: unknown; bytes?: unknown } | null;
+    return saved && saved.day === todayKey(now) && typeof saved.bytes === 'number' ? saved.bytes : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function addTraffic(bytes: number, now = new Date()): void {
+  sessionBytes += bytes;
+  try {
+    localStorage.setItem(TRAFFIC_KEY, JSON.stringify({ day: todayKey(now), bytes: readToday(now) + bytes }));
+  } catch {
+    // 控えられなくても、数えるのは続ける
+  }
+}
+
+export function traffic(now = new Date()): { session: number; today: number } {
+  return { session: sessionBytes, today: readToday(now) };
+}
