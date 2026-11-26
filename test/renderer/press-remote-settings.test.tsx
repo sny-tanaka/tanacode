@@ -37,7 +37,7 @@ describe('RemoteSettingsDialog', () => {
   it('今の設定が入っていて、変えるまでは保存できない。変えて保存すると、ポートと公開する URL を送って閉じる', async () => {
     const onClose = await open(stateOf(''));
     // 画面ロック中も効くことは、ここに書いておく（決めたこと）
-    expect(screen.getByText('Mac の画面がロックされていても、遠隔操作は効きます。Mac 本体がスリープすると、遠隔操作はできません。')).toBeTruthy();
+    expect(screen.getByText('Mac の画面がロックされていても、遠隔操作は効きます。オンの間は、Mac が自動でスリープしません（蓋を閉じる・自分でスリープさせると、遠隔操作はできません）。')).toBeTruthy();
     expect(input(1).value).toBe('47413');
     expect(button('保存').disabled).toBe(true);
     fireEvent.change(input(0), { target: { value: ' https://mac.example.ts.net ' } });

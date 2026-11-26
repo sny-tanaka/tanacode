@@ -2656,7 +2656,7 @@
     "title": "Remote Access Settings",
     "description": "Settings for operating tanacode on this Mac from a phone or another device. tanacode listens only inside this Mac (127.0.0.1), so put a forwarder such as tailscale serve in front of it to reach it from outside. Turn it on or off with Use Remote Access in the menu bar.",
     "warning": "With remote access, anyone who passes the identity check can do everything you can do in front of this Mac, including running commands in the terminal.",
-    "lockNote": "Remote access works even while the Mac’s screen is locked. It does not work while the Mac itself is asleep.",
+    "lockNote": "Remote access works even while the Mac’s screen is locked. While it is on, the Mac does not go to sleep automatically (if you close the lid or put the Mac to sleep yourself, remote access stops working).",
     "publicUrl": "Public URL",
     "publicUrlHint": "The URL you open on your phone. Enter the https URL your forwarder gives (for example, with tailscale serve: https://<Mac name>.<tailnet name>.ts.net).",
     "port": "Port to listen on",

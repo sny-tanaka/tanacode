@@ -399,7 +399,8 @@ function remoteStatusLabel(status: RemoteStatus): string {
 // （本人確認ができるまでは、誰もつなげない待ち受けになるため。リリースに未完成の項目を出さない）
 const remoteAccessAvailable = () => process.env.TANACODE_REMOTE_ACCESS === '1';
 
-// 遠隔操作がオンの間、アプリが止められないようにする（powerSaveBlocker の id。オフなら null）。Mac 本体のスリープは止めない
+// 遠隔操作がオンの間、アプリが止められないようにする（powerSaveBlocker の id。オフなら null）。prevent-app-suspension は Mac の自動のスリープも止める
+// （外出先からつながり続けるため。決めたこと）。画面を消すこと・蓋を閉じる・自分でスリープさせることは止めない
 let remoteSuspensionBlocker: number | null = null;
 
 function keepAwakeForRemote(on: boolean): void {

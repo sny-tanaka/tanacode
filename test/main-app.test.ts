@@ -1386,7 +1386,7 @@ describe('メニュー', () => {
     child.emit('message', { type: 'listening', port: 50123 });
     expect(menuItem('remoteStatus').label).toBe('127.0.0.1:50123 で待ち受けています（つながっているもの 0）');
     expect(menuItem('remoteEnabled')).toMatchObject({ checked: true, enabled: true });
-    // オンの間は、アプリが止められないようにする（Mac 本体のスリープは止めない）。オフにしたらやめる
+    // オンの間は、アプリが止められないようにする（Mac の自動のスリープも止まる）。オフにしたらやめる
     expect([...state.powerSaveBlocks.values()]).toEqual(['prevent-app-suspension']);
     menuItem('remoteEnabled').click?.({ checked: false });
     expect([...state.powerSaveBlocks.values()]).toEqual([]);
