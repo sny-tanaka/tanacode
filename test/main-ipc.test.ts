@@ -237,7 +237,7 @@ describe('そのまま渡す受け口', () => {
       [{ claudeSessionId: 'c1', cwd: '/work/cafe', title: '外の会話', updatedAt: 1 }],
       call('manager.importSession', 'c1', '/work/cafe', '外の会話'),
     ],
-    [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.create', 's1', cwdOf('s1'), 120, 40)],
+    [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.createShared', 's1', cwdOf('s1'), 120, 40, 'mac')],
     [IpcChannel.ShellAttach, [], call('shells.attach')],
     [IpcChannel.PtySnapshot, ['s1'], call('manager.ptySnapshot', 's1')],
     [IpcChannel.TranslateRun, [['こんにちは', 'Hello']], call('translator.translate', ['こんにちは', 'Hello'])],
@@ -249,7 +249,7 @@ describe('そのまま渡す受け口', () => {
 
   // 遠隔の接続（スマホ）から呼んでも、Mac の画面からと同じ相手に同じ引数で渡り、同じ返事が返る（扱いが same のもの）。
   // 遠隔の接続ごとに持つ形にしたもの（REMOTE_OWN）は、Mac の画面の分を上書きしないよう、遠隔では動きを変える（下で別に確かめる）
-  const REMOTE_OWN = new Set<string>([IpcChannel.SessionsFocus, IpcChannel.ShellAttach]);
+  const REMOTE_OWN = new Set<string>([IpcChannel.SessionsFocus, IpcChannel.ShellAttach, IpcChannel.ShellCreate]);
   const isSame = (channel: string) => REMOTE_CHANNELS[channel as RemoteChannel].use === 'same' && !REMOTE_OWN.has(channel);
 
   it('遠隔の接続ごとに持つもの: ShellAttach は今の画面の写しだけを返し、SessionsFocus は新しい応答の印だけを外す（Mac の画面の分は変えない）', async () => {
@@ -259,6 +259,9 @@ describe('そのまま渡す受け口', () => {
     await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.SessionsFocus, null);
     expect(the('SessionManager').markRead.mock.calls).toEqual([['s1'], [null]]);
     expect(the('SessionManager').focus.mock.calls).toEqual([]);
+  });
+  it('シェルを開くと、開いた画面（Mac の画面は mac、スマホは接続の id）には、開いた知らせを送らないよう渡す', async () => {
+    await expect(invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.ShellCreate, 's1', 120, 40)).resolves.toEqual(call('shells.createShared', 's1', cwdOf('s1'), 120, 40, 'test'));
   });
   it.each(cases.filter(([channel]) => isSame(channel)))('遠隔の接続から %s を呼んでも、Mac の画面からと同じ', async (channel, args, expected) => {
     await expect(invokeRemote(DEFAULT_PROFILE_ID, channel, ...args)).resolves.toEqual(expected);
@@ -312,7 +315,6 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ShellResize, ['sh1', 90, 20], 'ShellTerminals', 'resize', ['sh1', 90, 20]],
     [IpcChannel.ShellKill, ['sh1'], 'ShellTerminals', 'kill', ['sh1']],
     [IpcChannel.BrowserAttach, ['s1', 'tab-1', 42], 'BrowserControl', 'attach', ['s1', 'tab-1', 42]],
-    [IpcChannel.WatchOpenFiles, [{ '/work': ['a.ts', '/outside/memo.md'] }], 'OpenFileWatchers', 'set', [{ '/work': ['a.ts', '/outside/memo.md'] }]],
     [IpcChannel.BrowserActivate, ['s1', null], 'BrowserControl', 'activate', ['s1', null]],
     [IpcChannel.BrowserAnswer, ['s1', 'ask-1', { done: false, reason: 'ログインできない' }], 'BrowserControl', 'answerAsk', ['s1', 'ask-1', { done: false, reason: 'ログインできない' }]],
     [IpcChannel.BrowserLoginAnswer, ['s1', 'login-1', { username: 'u', password: 'p' }], 'BrowserControl', 'answerLogin', ['s1', 'login-1', { username: 'u', password: 'p' }]],
@@ -321,6 +323,28 @@ describe('そのまま渡す受け口', () => {
   it.each(listens)('知らせ %s（%j）は、%s の %s に引数をそのまま渡す', (channel, args, name, method, expected) => {
     sendFromRenderer(channel, ...args);
     expect(the(name)[method].mock.calls).toEqual([expected]);
+  });
+
+  it('開いているファイル・ウォークスルーで見ている所は、画面ごと（Mac の画面は mac、スマホは接続の id）に渡す', async () => {
+    const tabs = { '/work': ['a.ts', '/outside/memo.md'] };
+    sendFromRenderer(IpcChannel.WatchOpenFiles, tabs);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.WatchOpenFiles, tabs);
+    expect(the('OpenFileWatchers').set.mock.calls).toEqual([
+      [tabs, 'mac'],
+      [tabs, 'test'],
+    ]);
+    sendFromRenderer(IpcChannel.WalkthroughViewing, 's1', true);
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.WalkthroughViewing, null, false);
+    expect(the('WalkthroughControl').viewing.mock.calls).toEqual([
+      ['s1', true, 'mac'],
+      [null, false, 'test'],
+    ]);
+    sendFromRenderer(IpcChannel.WalkthroughShown, 's1', 'w1', 3, 'moved');
+    await invokeRemote(DEFAULT_PROFILE_ID, IpcChannel.WalkthroughShown, 's1', 'w1', 3, 'unseen');
+    expect(the('WalkthroughControl').shown.mock.calls).toEqual([
+      ['s1', 'w1', 3, 'moved', 'mac'],
+      ['s1', 'w1', 3, 'unseen', 'test'],
+    ]);
   });
 
   it.each(listens.filter(([channel]) => isSame(channel)))('遠隔の接続からの知らせ %s（%j）も、%s の %s に引数をそのまま渡す', async (channel, args, name, method, expected) => {
@@ -517,7 +541,7 @@ describe('フォルダ（新規セッションの画面）', () => {
     // 開いたフォルダの ID で、エクスプローラー・ソース管理・ターミナルが、そのフォルダを使う
     await expect(invoke(IpcChannel.WorkspaceInfo, ids[0])).resolves.toEqual(callIn(picked, 'workspace.info'));
     await expect(invoke(IpcChannel.GitState, ids[1])).resolves.toEqual(callIn(session, 'scm.state'));
-    await expect(invoke(IpcChannel.ShellCreate, ids[2], 80, 24)).resolves.toEqual(call('shells.create', ids[2], worktreeRoot, 80, 24));
+    await expect(invoke(IpcChannel.ShellCreate, ids[2], 80, 24)).resolves.toEqual(call('shells.createShared', ids[2], worktreeRoot, 80, 24, 'mac'));
   });
 
   it('知っているフォルダでも、フォルダでなくなっていたら開かない', async () => {
@@ -592,6 +616,25 @@ describe('画面の読み込み直し（⌘R）', () => {
 });
 
 describe('ワークスペースに追加するフォルダ', () => {
+  it('スマホの画面は、最近使ったフォルダ（このプロファイルのセッションのフォルダ・worktree は元のフォルダ）だけを足せる。ほかは断る', async () => {
+    await boot();
+    const other = join(state.root, 'other');
+    const repo = join(state.root, 'repo');
+    for (const dir of [other, repo]) mkdirSync(dir);
+    manager().addedFoldersOf.mockReturnValue([]);
+    manager().list.mockReturnValue([
+      { id: 's1', cwd: cwdOf('s1'), worktree: null },
+      { id: 's2', cwd: join(repo, '.claude/worktrees/x'), worktree: { root: repo } },
+      { id: 's3', cwd: other, worktree: null },
+    ]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', other)).resolves.toEqual([other]);
+    manager().addedFoldersOf.mockReturnValue([other]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', repo)).resolves.toEqual([other, repo]);
+    await expect(invoke(IpcChannel.WorkspaceAddRecentFolder, 's1', '/etc')).rejects.toThrow('最近使ったフォルダではありません');
+    // ダイアログは出さない
+    expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
+  });
+
   it('追加するフォルダは、セッションのフォルダから始まるダイアログで選ぶ。取りやめたら null で、何も変えない', async () => {
     await boot();
     await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).resolves.toBeNull();

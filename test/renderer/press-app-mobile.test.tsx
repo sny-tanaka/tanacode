@@ -64,11 +64,13 @@ const base: SessionSummary = {
 };
 const S1 = base;
 const S2: SessionSummary = { ...base, id: 's2', title: '米の話', attention: 'question' };
+const S3: SessionSummary = { ...base, id: 's3', title: '塩の話', cwd: '/elsewhere', running: false, state: 'idle' };
 
 let api: ReturnType<typeof mockApi>;
 beforeEach(() => {
   api = mockApi({
-    'sessions.list': () => Promise.resolve([S1, S2]),
+    'sessions.list': () => Promise.resolve([S1, S2, S3]),
+    'workspace.addRecentFolder': (_id: string, folder: string) => Promise.resolve([folder]),
     'sessions.snapshot': () => Promise.resolve({ sessionId: 's1', fromSeq: 0, events: [] }),
     'workspace.info': () => Promise.resolve({ root: '/repo', name: 'repo', branch: 'main' }),
     'workspace.watchOpenFiles': () => () => {},
@@ -160,6 +162,22 @@ describe('スマホの画面の配置（App）', () => {
     fireEvent.click(more());
     fireEvent.click(more());
     expect(header.querySelector('.claude-header-tools')).toBeNull();
+  });
+
+  it('ワークスペースにフォルダを足すときは、Mac のダイアログの代わりに、最近使ったフォルダ（今のフォルダのほか）の一覧から選ぶ', async () => {
+    render(<App />);
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
+    fireEvent.click(screen.getAllByText('パンの話')[0]);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'パネル' }));
+    fireEvent.click(screen.getByRole('button', { name: 'フォルダを追加' }));
+    const items = [...document.querySelectorAll('.context-menu button')].map((b) => b.textContent);
+    expect(items).toEqual(['/elsewhere']);
+    fireEvent.click([...document.querySelectorAll('.context-menu button')].find((b) => b.textContent === '/elsewhere')!);
+    await flush();
+    expect(api.argsOf('workspace.addRecentFolder')).toEqual([['s1', '/elsewhere']]);
+    expect(api.argsOf('workspace.addFolder')).toEqual([]);
   });
 
   it('ほかのセッションの答え待ちは、上の帯に数を出し、チャットのタブの帯を押すとそのセッションへ移る', async () => {

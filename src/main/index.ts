@@ -149,9 +149,9 @@ function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void 
 
 // プロファイル id の画面と、そのプロファイルを許した遠隔の接続への知らせ
 function sendTo(id: string): Send {
-  return (channel, payload) => {
-    deliver(id, channel, payload);
-    remoteHost.emit(id, channel, payload);
+  return (channel, payload, except) => {
+    if (except !== 'mac') deliver(id, channel, payload);
+    remoteHost.emit(id, channel, payload, except);
   };
 }
 
@@ -242,6 +242,12 @@ const remoteHost = new RemoteHost({
   onStatus: () => buildMenu(),
   onLoginFailures: (registrationId) => remoteNotice(t('main.notice.remoteLoginFailures', { name: remoteRegistrations?.get(registrationId)?.name || t('main.notice.remoteUnnamed') })),
   onConnections: () => {
+    // 切れた接続の、開いているファイルと見ている所を捨てる
+    const live = new Set(remoteHost.clientIds());
+    for (const p of profiles()) {
+      p.openFiles.keep(live);
+      p.walkthroughControl?.keep(live);
+    }
     buildMenu();
     send(IpcChannel.RemoteConnectionsChanged, remoteConnections());
   },
@@ -920,8 +926,13 @@ function registerIpc(): void {
   handle(IpcChannel.WalkthroughGet, (e) => P(e).walkthroughControl?.list() ?? []);
   handle(IpcChannel.WalkthroughGo, (e, id: string, index: unknown) => P(e).walkthroughControl?.go(String(id), Number(index)));
   handle(IpcChannel.WalkthroughClose, (e, id: string) => P(e).walkthroughControl?.close(String(id)));
-  listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) => P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown));
-  listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) => P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true));
+  listen(IpcChannel.WalkthroughShown, (e, id: string, walkId: string, seq: number, shown: unknown) =>
+    P(e).walkthroughControl?.shown(String(id), String(walkId), Number(seq), shown, e.kind === 'remote' ? e.clientId : 'mac'),
+  );
+  // 見ている所・開いているファイルは、画面ごと（Mac の画面と、スマホの接続ごと）に持つ
+  listen(IpcChannel.WalkthroughViewing, (e, id: string | null, onWalk: unknown) =>
+    P(e).walkthroughControl?.viewing(typeof id === 'string' ? id : null, onWalk === true, e.kind === 'remote' ? e.clientId : 'mac'),
+  );
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
   handle(IpcChannel.WalkthroughDraftComment, async (e, id: string) => {
@@ -1084,8 +1095,9 @@ function registerIpc(): void {
   listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));
   listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
   handle(IpcChannel.PtySnapshot, (e, id: string) => P(e).manager.ptySnapshot(id));
+  // 開いた知らせは、開いた画面には送らない（返事で受け取る）
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
-    P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
+    P(e).shells.createShared(id, P(e).cwdOf(id), cols, rows, e.kind === 'remote' ? e.clientId : 'mac'),
   );
   // スマホの画面は、今の画面を読むだけ（Mac の画面の「引き継いだ」印には触らない）
   handle(IpcChannel.ShellAttach, (e) => (e.kind === 'remote' ? P(e).shells.snapshot() : P(e).shells.attach()));
@@ -1100,13 +1112,19 @@ function registerIpc(): void {
     const folder = await pickFolder(p, t('main.dialog.addFolder'), p.cwdOf(id));
     return folder ? p.addFolder(id, folder) : null;
   });
+  // スマホの画面は、最近使ったフォルダ（このプロファイルのセッションのフォルダ）からだけ選べる（画面から好きなパスを渡させない。Issue #464）
+  handle(IpcChannel.WorkspaceAddRecentFolder, (e, id: string, folder: string) => {
+    const p = P(e);
+    if (!p.manager.list().some((s) => (s.worktree?.root ?? s.cwd) === folder)) throw new Error(t('main.dialog.notRecentFolder'));
+    return p.addFolder(id, folder);
+  });
   handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
   handle(IpcChannel.WorkspaceKeepReadFolder, (e, id: string, folder: string) => P(e).keepReadFolder(id, folder));
   handle(IpcChannel.WorkspaceDismissRead, (e, id: string, path: string) => P(e).manager.removeOutsideRead(id, path));
   handle(IpcChannel.WorkspaceClaudeSettings, (e, id: string) => P(e).claudeSettingsOf(id));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
-  listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs));
+  listen(IpcChannel.WatchOpenFiles, (e, tabs: Record<string, string[]>) => P(e).openFiles.set(tabs, e.kind === 'remote' ? e.clientId : 'mac'));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
     // Claude が読んだリポジトリも、エクスプローラーから開いた Markdown の画像を出せるよう、追加したフォルダと同じく読む
     new Workspace(P(e).cwdOf(id)).readImage(relPath, [...P(e).addedFoldersOf(id), ...P(e).manager.readFoldersOf(id)]).catch(() => null),

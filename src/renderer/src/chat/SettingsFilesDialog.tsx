@@ -4,6 +4,7 @@ import type { SettingsFile } from '@shared/settings-file';
 import { errorMessage } from '../errorMessage';
 import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 import { useSettingsFiles } from './settingsFiles';
+import { isRemoteMode } from '../remote/mode';
 
 // 登録した設定ファイルの管理。登録・名前の変更・登録から外す（ファイル自体は触らない）
 export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
@@ -37,6 +38,8 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
   };
 
   const add = async () => {
+    // スマホの画面からは、Mac のファイルをたどらない（決めたこと。Issue #464）
+    if (isRemoteMode()) return window.alert(t('mobile.pickOnMac'));
     setPicking(true);
     try {
       const path = await window.tanacode.settingsFiles.pick();

@@ -436,6 +436,8 @@ describe('部品から画面への知らせ', () => {
     shells.onResized('sh1', 100, 30);
     shells.onOpened('s1', 'task-2', 'npm install', true);
     shells.onOpened('s1', 'shell-3', 'zsh', false);
+    // 開いた画面（Mac の画面）には送らない
+    shells.onOpened('s1', 'shell-4', 'zsh', false, undefined, 'mac');
     expect(sentToRenderer()).toEqual([
       [IpcChannel.FilesChanged, { root: '/work', paths: ['a.ts'] }],
       [IpcChannel.FilesChanged, { root: '/outside', paths: ['memo.md'] }],

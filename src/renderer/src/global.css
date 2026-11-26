@@ -6014,6 +6014,22 @@ button.menu-tab:disabled {
   flex: none;
   border-top: 1px solid var(--border-subtle);
 }
+/* スマホの配置のエディタの「編集」（はじめは読むだけ） */
+.editor-mobile-edit {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+}
+.editor-mobile-edit.on {
+  border-color: var(--send-border);
+  color: var(--send-fg);
+}
+/* スマホの画面のログアウト（セッションの一覧のいちばん下） */
+.remote-logout {
+  flex: none;
+  min-height: 44px;
+  margin: 0 10px calc(10px + env(safe-area-inset-bottom));
+}
 .account-summary {
   display: flex;
   flex-direction: column;
@@ -7525,6 +7541,12 @@ body.resizing-rows webview {
   height: 1px;
   margin: 4px 2px;
   background: var(--border-subtle);
+}
+/* スマホの画面で「別のフォルダを選ぶ…」の代わりに出す一言 */
+.folder-menu-note {
+  padding: 6px 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 /* ワークフローの再開（resumeFromRunId） */

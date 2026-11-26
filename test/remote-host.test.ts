@@ -196,6 +196,23 @@ describe('RemoteHost', () => {
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.SessionsChanged, payload: [], profileId: 'default' }]);
   });
 
+  it('その接続が頼んだことの知らせ（except）は、その接続には送らない。つながっている接続の id を返す', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    t.toHost({ type: 'connected', clientId: 'c2', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    expect(t.host.clientIds()).toEqual(['c1', 'c2']);
+    t.posted.length = 0;
+    const opened = { owner: 'x', id: 'shell-1', name: 'zsh', task: false };
+    t.host.emit('default', IpcChannel.ShellOpened, opened, 'c1');
+    t.host.emit('default', IpcChannel.ShellOpened, opened, 'mac');
+    expect(t.posted).toEqual([
+      { type: 'event', clientIds: ['c2'], channel: IpcChannel.ShellOpened, payload: opened, profileId: 'default' },
+      { type: 'event', clientIds: ['c1', 'c2'], channel: IpcChannel.ShellOpened, payload: opened, profileId: 'default' },
+    ]);
+  });
+
   it('チャットの知らせは、その接続が開いているセッションの分だけ送る。知らない接続の開いているセッションは覚えない', () => {
     const t = setup();
     t.host.addSession(session());

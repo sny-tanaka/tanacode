@@ -230,6 +230,8 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
     // 画面に出さずに動かしていたコマンドを出したとき（失敗した・入力を待っているように見える・「ターミナルで見る」）は、それまでの画面（replay）を
     // 前と同じ大きさの xterm に書いてから、このあとの出力をつなぐ（画面を読み込み直して引き継ぐときと同じ）
     const offOpened = window.tanacode.shell.onOpened(({ owner, id, name, task, replay }) => {
+      // この画面が開いて、もうタブに出したシェル（開いた返事のほうが先に届いた）
+      if (xterms.current.has(id)) return;
       if (task) taskIds.current.add(id);
       let x: Xterm | undefined;
       if (replay) {
@@ -333,14 +335,18 @@ export const TerminalPanel = memo(function TerminalPanel({ sessionId, waiting = 
         if (queued.current?.owner === owner) queued.current = null;
         return;
       }
-      attachXterm(id, x);
-      followTitle(owner, id, term);
+      // 開いた知らせが返事より先に届いていたら、タブはもう出ているので、作った xterm は使わない
+      if (xterms.current.has(id)) discard();
+      else {
+        attachXterm(id, x);
+        followTitle(owner, id, term);
+        setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null }] }));
+      }
       if (queued.current?.owner === owner) {
         // 見えない制御文字で、見えているコマンドと違うものが動かないようにする
         window.tanacode.shell.write(id, `${stripControlChars(queued.current.command)}\r`);
         queued.current = null;
       }
-      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null }] }));
       setActive((prev) => ({ ...prev, [owner]: id }));
     } catch {
       // 開けなかった（フォルダが無いなど）。作った xterm を残さない

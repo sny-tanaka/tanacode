@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsFile } from '@shared/settings-file';
 import { SettingsFilesDialog } from '../../src/renderer/src/chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, SettingsFileSelect, useSettingsFilesDialogOpen } from '../../src/renderer/src/chat/settingsFiles';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -195,6 +196,22 @@ describe('設定ファイルの管理（SettingsFilesDialog）', () => {
     await settle();
     expect(api.argsOf('settingsFiles.add')).toHaveLength(1);
     expect(add.disabled).toBe(false);
+  });
+
+  it('スマホの画面では、ファイルを選ばずに、Mac で選ぶよう伝える', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    install({});
+    setRemoteMode(true);
+    try {
+      render(<SettingsFilesDialog onClose={() => {}} />);
+      await nameInput('LiteLLM');
+      fireEvent.click(screen.getByRole('button', { name: '追加' }));
+      expect(alert).toHaveBeenCalledWith('ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）');
+      expect(api.argsOf('settingsFiles.pick')).toEqual([]);
+    } finally {
+      setRemoteMode(false);
+      alert.mockRestore();
+    }
   });
 
   it('登録できなかったら、わけを出す', async () => {

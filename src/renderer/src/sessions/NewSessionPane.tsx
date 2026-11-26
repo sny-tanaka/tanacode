@@ -16,6 +16,7 @@ import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/ses
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
 import { BranchIcon, ChevronDownIcon, CloseIcon, DefaultBranchIcon, FolderIcon, IconButton, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
+import { isRemoteMode } from '../remote/mode';
 
 // 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control・worktree（このマシンだけの好みなので localStorage に置く）
 const OPTIONS_KEY = 'tanacode.newSessionOptions';
@@ -400,7 +401,8 @@ function FolderPicker({
     <div className="folder-picker" ref={ref}>
       <button
         className={`new-session-chip${cwd ? '' : ' empty'}`}
-        onClick={() => (folders.length > 0 ? setOpen((v) => !v) : void pick())}
+        // スマホの画面は Mac のダイアログが無いので、いつも最近のフォルダの一覧を開く（Issue #464）
+        onClick={() => (folders.length > 0 || isRemoteMode() ? setOpen((v) => !v) : void pick())}
         title={cwd ?? t('sessions.folderPicker.pickTip')}
       >
         <FolderIcon size={14} />
@@ -439,9 +441,13 @@ function FolderPicker({
               <div className="folder-menu-sep" />
             </>
           )}
-          <button className="folder-menu-item" onClick={() => void pick()}>
-            <span className="folder-menu-name">{t('sessions.folderPicker.pickOther')}</span>
-          </button>
+          {isRemoteMode() ? (
+            <div className="folder-menu-note">{t('sessions.folderPicker.openOnMac')}</div>
+          ) : (
+            <button className="folder-menu-item" onClick={() => void pick()}>
+              <span className="folder-menu-name">{t('sessions.folderPicker.pickOther')}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

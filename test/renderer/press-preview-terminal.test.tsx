@@ -189,6 +189,28 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect([shown(termOf(0)), shown(termOf(1))]).toEqual([true, false]);
   });
 
+  it('ほかの画面（Mac とスマホ）で開いたシェルも、開いた知らせでタブに出す。この画面で開いて、知らせが返事より先に届いても、タブは 1 つ', async () => {
+    api = mockApi({
+      // main は、開いた知らせを返事より先に送る
+      'shell.create': () => {
+        const id = `sh${++seq}`;
+        api.emit('shell.onOpened', { owner: 's1', id, name: 'zsh', task: false });
+        return Promise.resolve({ id, name: 'zsh' });
+      },
+    });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    await newShell();
+    expect(tabNames()).toEqual(['zsh 1', 'zsh 2']);
+    expect(selectedTab()).toBe(1);
+    // ほかの画面で開いたシェル
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'sh9', name: 'zsh', task: false }));
+    expect(tabNames()).toEqual(['zsh 1', 'zsh 2', 'zsh 3']);
+    act(() => api.emit('shell.onData', { id: 'sh9', data: 'ほかの画面の出力' }));
+    expect(xterm.FakeTerminal.all.some((term) => term.written.includes('ほかの画面の出力'))).toBe(true);
+  });
+
   it('× はタブを選ばずに、そのシェルを止める（終わったという知らせでタブを閉じる）', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));

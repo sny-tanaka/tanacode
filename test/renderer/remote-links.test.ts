@@ -35,6 +35,14 @@ describe('guardLinks', () => {
     ]);
   });
 
+  it('画面が作ったファイルのダウンロード（download の付いた blob: のリンク）は止めない。download の無い blob: や、download の付いた外のリンクは止める', () => {
+    const { opened, click } = setup();
+    expect(click({ href: 'blob:https://mac.example.ts.net/1234', download: '作業.html' }).preventDefault).not.toHaveBeenCalled();
+    expect(click({ href: 'blob:https://mac.example.ts.net/1234' }).preventDefault).toHaveBeenCalled();
+    expect(click({ href: 'https://example.com/x.zip', download: 'x.zip' }).preventDefault).toHaveBeenCalled();
+    expect(opened.mock.calls).toEqual([['https://example.com/x.zip', '_blank', 'noopener,noreferrer']]);
+  });
+
   it('押したリンクは、画面そのものを移らせない。拾われなかったものだけ新しいタブに開く。# とリンクでないものは触らない', () => {
     const { opened, click } = setup();
     expect(click({ href: 'https://example.com/' }).preventDefault).toHaveBeenCalled();

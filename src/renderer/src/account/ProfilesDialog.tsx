@@ -5,6 +5,7 @@ import { errorMessage } from '../errorMessage';
 import { tx } from '../i18n';
 import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 import { defaultClaudeDir, useProfiles, type ProfilesDialogMode } from './profiles';
+import { isRemoteMode } from '../remote/mode';
 
 // プロファイル（Claude Code のアカウントごとの環境）の管理。名前と色を変える・登録から外す・足す。
 // 足すと、そのプロファイルに切り替えて閉じる（ログインはアカウント欄のメニューから）
@@ -149,6 +150,8 @@ function NewProfileForm({ profiles, onCancel, onAdded }: { profiles: ProfileInfo
   useEffect(() => nameInput.current?.focus(), []);
 
   const pick = async () => {
+    // スマホの画面からは、Mac のフォルダをたどらない（決めたこと。Issue #464）
+    if (isRemoteMode()) return window.alert(t('mobile.pickOnMac'));
     const picked = await window.tanacode.profiles.pickDir();
     if (picked) setDir(picked);
   };

@@ -5,6 +5,7 @@ import type { SessionSummary } from '@shared/ipc';
 import { chatFromEvents, todoSteps, type ChatItem } from '../chat/chatState';
 import { errorMessage } from '../errorMessage';
 import { tx } from '../i18n';
+import { isRemoteMode } from '../remote/mode';
 import {
   countContents,
   DEFAULT_EXPORT_OPTIONS,
@@ -130,9 +131,12 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
             </div>
             <div className="export-dialog-foot">
               <div className="spacer" />
-              <button className="ghost-button" onClick={() => window.tanacode.sessions.revealExport(phase.path)}>
-                {t('export.dialog.revealInFinder')}
-              </button>
+              {/* スマホの画面では、スマホにダウンロードしたので、Finder では見せない */}
+              {!isRemoteMode() && (
+                <button className="ghost-button" onClick={() => window.tanacode.sessions.revealExport(phase.path)}>
+                  {t('export.dialog.revealInFinder')}
+                </button>
+              )}
               <button className="send-button" onClick={onClose} autoFocus>
                 {t('common.close')}
               </button>

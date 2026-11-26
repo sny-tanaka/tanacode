@@ -76,7 +76,8 @@ type Listeners = {
   onResized?: (id: string, cols: number, rows: number) => void;
   // アプリがターミナルを開いた。task: コマンドのタブ（run）/ false: Claude が打つために開いたシェル（openShell）。
   // replay: 画面に出さずに動かしていたコマンドを出したときの、それまでの画面（reveal）
-  onOpened?: (owner: string, id: string, name: string, task: boolean, replay?: ShellReplay) => void;
+  // except: 知らせない画面（そのシェルを開いた画面。返事で受け取る）
+  onOpened?: (owner: string, id: string, name: string, task: boolean, replay?: ShellReplay, except?: string) => void;
 };
 
 // ユーザーが自分で使うターミナル。セッション（owner）ごとに、そのフォルダでログインシェルを開く。
@@ -108,11 +109,17 @@ export class ShellTerminals {
     return { id, name: basename(shell) };
   }
 
+  // 人が画面で開いたシェル。開いた画面のほか（Mac の画面とスマホの画面）にも、タブを出すよう知らせる（どちらも同じタブを見る。Issue #464）。
+  // except: 開いた画面（返事で受け取るので、知らせない）。Claude が開いたものは、どの画面にも知らせる
+  createShared(owner: string, cwd: string, cols: number, rows: number, except?: string): { id: string; name: string } {
+    const opened = this.create(owner, cwd, cols, rows);
+    if (!this.detached) this.listeners.onOpened?.(owner, opened.id, opened.name, false, undefined, except);
+    return opened;
+  }
+
   // Claude が打つために、新しいシェルのタブを開く（type_in_terminal の new_tab）。画面には、人が開いたシェルと同じタブとして出す
   openShell(owner: string, cwd: string): { id: string; name: string } {
-    const opened = this.create(owner, cwd, OPEN_COLS, OPEN_ROWS);
-    if (!this.detached) this.listeners.onOpened?.(owner, opened.id, opened.name, false);
-    return opened;
+    return this.createShared(owner, cwd, OPEN_COLS, OPEN_ROWS);
   }
 
   // アプリが実行するコマンド（worktree の npm install・yarn install など）を、画面に出さずに実行する。終了コードを返す。

@@ -12,6 +12,8 @@ import { PdfView } from './PdfView';
 import { SvgPreview } from './SvgPreview';
 import { editorTheme, languageFor, monaco } from './monaco';
 import { focusByKey, focusedPane, isHidden, stepIn, useShortcuts } from '../layout/shortcuts';
+import { useMobileLayout } from '../mobile/useMobileLayout';
+import { isRemoteMode } from '../remote/mode';
 
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
@@ -125,6 +127,10 @@ export const EditorPane = memo(function EditorPane({
   const [previewModes, setPreviewModes] = useState<ReadonlyMap<string, PreviewMode>>(new Map());
   const setPreviewMode = (path: string, mode: PreviewMode) =>
     setPreviewModes((prev) => new Map(prev).set(path, mode));
+  // スマホの配置では、はじめは読むだけにする（触るたびにキーボードが出て、画面が半分になるため）。「編集」を押すと書ける（Issue #464）
+  const mobile = useMobileLayout();
+  const [editing, setEditing] = useState(false);
+  const readOnly = mobile && !editing;
 
   useEffect(() => {
     const editor = monaco.editor.create(containerRef.current!, {
@@ -155,6 +161,10 @@ export const EditorPane = memo(function EditorPane({
       models.clear();
     };
   }, []);
+  useEffect(() => {
+    // domReadOnly: 押しても、見えない入力欄にフォーカスを置かない（キーボードを出さない）
+    editorInstance?.updateOptions({ readOnly, domReadOnly: readOnly });
+  }, [editorInstance, readOnly]);
 
   const active = files.find((f) => f.path === activePath);
   const activeText = active?.content.kind === 'text' ? active.content.text : null;
@@ -448,7 +458,13 @@ export const EditorPane = memo(function EditorPane({
             ))}
           </div>
         )}
-        {active && <IconButton size="sm" icon={ExternalLinkIcon} label={t('editor.openInFinder')} onClick={openInFinder} />}
+        {mobile && activeText !== null && previewMode !== 'preview' && (
+          <button type="button" className={`ghost-button editor-mobile-edit${editing ? ' on' : ''}`} aria-pressed={editing} onClick={() => setEditing(!editing)}>
+            {editing ? t('editor.mobileDone') : t('editor.mobileEdit')}
+          </button>
+        )}
+        {/* Finder はスマホの画面には無い */}
+        {active && !isRemoteMode() && <IconButton size="sm" icon={ExternalLinkIcon} label={t('editor.openInFinder')} onClick={openInFinder} />}
       </div>
       {activePath && conflicts.has(activePath) && (
         <div className="pending-banner">

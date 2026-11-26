@@ -8,6 +8,7 @@ import { NewSessionPane } from '../../src/renderer/src/sessions/NewSessionPane';
 import { SESSION_COLLAPSED_KEY, SESSION_LOCK_KEY, Sidebar } from '../../src/renderer/src/sessions/Sidebar';
 import { WorktreeCleanupDialog } from '../../src/renderer/src/sessions/WorktreeCleanupDialog';
 import { WorktreeDialog } from '../../src/renderer/src/sessions/WorktreeDialog';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { focusByTab, key, pressTab, tabStops } from './keys';
 import { mockApi } from './mock-api';
@@ -553,6 +554,21 @@ describe('NewSessionPane（新規セッションの画面）', () => {
       await settle();
       expect(api.argsOf('folders.pick')).toHaveLength(2);
       expect(p.onCwdChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('スマホの画面では「別のフォルダを選ぶ…」の代わりに、新しいフォルダは Mac で開くよう出す（Mac のフォルダはたどらない）', async () => {
+      setRemoteMode(true);
+      try {
+        const api = mockApi({ 'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }) });
+        api.install();
+        await mount(props());
+        fireEvent.click(chip());
+        expect(screen.queryByRole('button', { name: '別のフォルダを選ぶ…' })).toBeNull();
+        expect(screen.getByText('新しいフォルダは Mac で開いてください')).toBeTruthy();
+        expect(api.argsOf('folders.pick')).toEqual([]);
+      } finally {
+        setRemoteMode(false);
+      }
     });
 
     it('最近のフォルダが無ければ、押すとすぐダイアログで選ぶ', async () => {

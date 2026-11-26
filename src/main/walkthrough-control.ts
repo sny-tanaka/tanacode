@@ -52,7 +52,8 @@ export class WalkthroughControl {
   // 画面の返事を待っているもの（セッション・ウォークスルー・seq → 受け取る関数）
   private readonly waiting = new Map<string, (shown: WalkthroughShown | null) => void>();
   // 人が見ているセッションと、そこで Claude の示している場所を見ているか（画面から。まだ届いていなければ null）
-  private view: { sessionId: string | null; onWalkthrough: boolean } | null = null;
+  // 画面ごと（Mac の画面は 'mac'、スマホの画面は接続の id）の、見ているセッションと、ウォークスルーを見ているか（Issue #464）
+  private readonly views = new Map<string, { sessionId: string | null; onWalkthrough: boolean }>();
 
   constructor(private readonly deps: Deps) {}
 
@@ -90,13 +91,22 @@ export class WalkthroughControl {
   }
 
   // Claude が示した場所を、画面がどう扱ったか。待っているもの（同じウォークスルーの同じ seq）にだけ渡す
-  shown(sessionId: string, walkthroughId: string, seq: number, shown: unknown): void {
+  // 画面が複数（Mac とスマホ）あれば、そのセッションを見ている画面の返事だけを使う（見ていない画面の「見ていない」が先に届いても、
+  // 見ている画面の返事を待つ）。どの画面も見ていなければ、先に届いたものを使う。source: 返事をした画面（'mac' か接続の id）
+  shown(sessionId: string, walkthroughId: string, seq: number, shown: unknown, source = 'mac'): void {
     if (typeof shown !== 'string' || !SHOWN.has(shown)) return;
+    const viewers = [...this.views].filter(([, view]) => view.sessionId === sessionId).map(([id]) => id);
+    if (viewers.length > 0 && !viewers.includes(source)) return;
     this.waiting.get(waitKey(sessionId, walkthroughId, seq))?.(shown as WalkthroughShown);
   }
 
-  viewing(sessionId: string | null, onWalkthrough: boolean): void {
-    this.view = { sessionId, onWalkthrough };
+  viewing(sessionId: string | null, onWalkthrough: boolean, source = 'mac'): void {
+    this.views.set(source, { sessionId, onWalkthrough });
+  }
+
+  // 切れたスマホの画面のものを捨てる（live: つながっている接続の id。Mac の画面のものは残す）
+  keep(live: ReadonlySet<string>): void {
+    for (const source of [...this.views.keys()]) if (source !== 'mac' && !live.has(source)) this.views.delete(source);
   }
 
   postedUrl(walkthroughId: string): string | null {
@@ -235,10 +245,13 @@ export class WalkthroughControl {
   }
 
   // 人がこのセッションの示している場所を見ていなければ、その一文（画面から届いていなければ null）
+  // どれか 1 つの画面（Mac とスマホ）で見ていれば、見ている
   private elsewhere(sessionId: string): string | null {
-    if (!this.view) return null;
-    if (this.view.sessionId !== sessionId) return 'The user is viewing another session in tanacode now.';
-    if (!this.view.onWalkthrough) return 'The user has opened another file or view in the editor instead (a band above the editor offers to go back).';
+    const views = [...this.views.values()];
+    if (views.length === 0) return null;
+    const here = views.filter((view) => view.sessionId === sessionId);
+    if (here.length === 0) return 'The user is viewing another session in tanacode now.';
+    if (!here.some((view) => view.onWalkthrough)) return 'The user has opened another file or view in the editor instead (a band above the editor offers to go back).';
     return null;
   }
 }

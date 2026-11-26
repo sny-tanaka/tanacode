@@ -8,6 +8,7 @@ import { saveForLeaving, UnsavedDialog } from '../../src/renderer/src/editor/Uns
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
 import { runShortcut } from '../../src/renderer/src/layout/shortcuts';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -60,7 +61,13 @@ const fake = vi.hoisted(() => {
   function codeEditor() {
     let model: FakeModel | null = null;
     const onModel = new Set<Listener>();
+    // 変えた設定（読むだけかなど）を控える
+    const options: Record<string, unknown>[] = [];
     return lenient({
+      options,
+      updateOptions(next: Record<string, unknown>) {
+        options.push(next);
+      },
       getModel: () => model,
       setModel(next: FakeModel | null) {
         model = next;
@@ -105,13 +112,18 @@ const fake = vi.hoisted(() => {
     });
   }
   const made = {
+    editors: [] as ReturnType<typeof codeEditor>[],
     models: [] as FakeModel[],
     diffEditors: [] as ReturnType<typeof diffEditor>[],
     commands: [] as { keybinding: number; handler: () => void }[],
   };
   const monaco = {
     editor: {
-      create: () => codeEditor(),
+      create: () => {
+        const editor = codeEditor();
+        made.editors.push(editor);
+        return editor;
+      },
       createDiffEditor: () => {
         const editor = diffEditor();
         made.diffEditors.push(editor);
@@ -216,6 +228,32 @@ describe('EditorPane（エディタ）', () => {
     });
     return { files, onSave };
   }
+
+  it('スマホの配置では、はじめは読むだけ（キーボードを出さない）。「編集」で書けるようにし、「編集を終える」で戻す。Finder で開くは出さない', () => {
+    mockApi().install();
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+    setRemoteMode(true);
+    try {
+      render(<EditorPane {...props()} />);
+      const editor = fake.made.editors.at(-1)!;
+      expect(editor.options.at(-1)).toEqual({ readOnly: true, domReadOnly: true });
+      expect(screen.queryByRole('button', { name: 'Finder で開く' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '編集' }));
+      expect(editor.options.at(-1)).toEqual({ readOnly: false, domReadOnly: false });
+      fireEvent.click(screen.getByRole('button', { name: '編集を終える' }));
+      expect(editor.options.at(-1)).toEqual({ readOnly: true, domReadOnly: true });
+    } finally {
+      setRemoteMode(false);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('Mac の画面では、いつも書ける（「編集」は出さない）', () => {
+    mockApi().install();
+    render(<EditorPane {...props()} />);
+    expect(fake.made.editors.at(-1)!.options.at(-1)).toEqual({ readOnly: false, domReadOnly: false });
+    expect(screen.queryByRole('button', { name: '編集' })).toBeNull();
+  });
 
   it('タブを押すと、そのファイルに切り替える', () => {
     mockApi().install();

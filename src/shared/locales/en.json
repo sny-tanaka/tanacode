@@ -63,7 +63,8 @@
       "languageRestartDetail": "The language changes when tanacode restarts. If you choose Later, tanacode will use English the next time it starts.",
       "restartNow": "Restart Now",
       "restartLater": "Later",
-      "addFolder": "Choose a Folder to Add to the Workspace"
+      "addFolder": "Choose a Folder to Add to the Workspace",
+      "notRecentFolder": "This is not a recently used folder"
     },
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
@@ -1049,6 +1050,8 @@
       "suggestTag": "suggest",
       "remove": "Remove",
       "image": "Image: {name}",
+      "tooLarge": "{name} is too large to send from the phone (up to {size} MB)",
+      "attach": "Attach photos or files",
       "schedule": "Schedule message",
       "scheduleTip": "Schedule message (send at a set time)",
       "interrupt": "Interrupt",
@@ -1385,7 +1388,8 @@
       "addFolder": "Add Folder",
       "addFolderTip": "Add folder\nShows it in the Explorer and lets Claude Code work in it too",
       "addFolderFailed": "Couldn't add the folder: {error}",
-      "removeFolderFailed": "Couldn't remove the folder: {error}"
+      "removeFolderFailed": "Couldn't remove the folder: {error}",
+      "noRecentFolder": "No recent folder to add. Add new folders on the Mac"
     },
     "session": {
       "openFailed": "Couldn't open the session: {error}",
@@ -1622,7 +1626,8 @@
       "recent": "Recent Folders",
       "forget": "Remove {name} from recent folders",
       "forgetTip": "Remove from recent folders (sessions aren't deleted; the folder comes back when you start a new session in it)",
-      "pickOther": "Choose Another Folder…"
+      "pickOther": "Choose Another Folder…",
+      "openOnMac": "Open new folders on the Mac"
     },
     "import": {
       "placeholder": "Search existing Claude Code conversations (title, folder)",
@@ -1810,6 +1815,8 @@
       "invalid": "Can't load this as an SVG (it may be unfinished)"
     },
     "openInFinder": "Open in Finder",
+    "mobileEdit": "Edit",
+    "mobileDone": "Done",
     "tabs": {
       "closeConfirm": "Close “{name}” without saving your changes?",
       "unsaved": "Unsaved changes (⌘S to save)",
@@ -2698,6 +2705,9 @@
     "connected": "Connected to the Mac",
     "reconnecting": "Reconnecting to the Mac",
     "waiting": "{count} other sessions are waiting for an answer",
+    "logout": "Log out",
+    "logoutConfirm": "Log out on this device? You'll sign in again with Face ID next time.",
+    "pickOnMac": "Choose files and folders on the Mac (you can't browse the Mac's files from the phone)",
     "tab": {
       "chat": "Chat",
       "panel": "Panel",

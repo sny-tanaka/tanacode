@@ -165,6 +165,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.FolderOpen]: same(['string']),
   [IpcChannel.WorkspaceInfo]: same(['string']),
   [IpcChannel.WorkspaceAddFolder]: replace(['string'], 'フォルダを選ぶ Mac のダイアログ'),
+  // スマホの画面は、最近使ったフォルダの一覧から選ぶ（main が、一覧にあるかを確かめる）
+  [IpcChannel.WorkspaceAddRecentFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceRemoveFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceKeepReadFolder]: same(['string', 'string']),
   [IpcChannel.WorkspaceDismissRead]: same(['string', 'string']),
@@ -222,7 +224,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.ShellKill]: same(['string']),
   [IpcChannel.ShellReveal]: same(['string']),
   [IpcChannel.FolderClose]: same(['string']),
-  [IpcChannel.WatchOpenFiles]: replace(['object'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 画面ごと（Mac の画面と、スマホの接続ごと）に持つ
+  [IpcChannel.WatchOpenFiles]: same(['object']),
   [IpcChannel.BrowserAttach]: mac(['string', 'string', 'number'], 'Mac の画面が作った webview を main に知らせる（スマホには webview が無い）'),
   [IpcChannel.BrowserActivate]: mac(['string', 'nullable-string'], 'Mac の画面の今のタブを main に知らせる（スマホには webview が無い）'),
   [IpcChannel.BrowserPopupView]: replace(['string', 'string', 'nullable-object'], 'ポップアップの絵を Mac の画面の位置に映す（段階 3 で置き換える）'),
@@ -236,7 +239,8 @@ const TABLE: { readonly [C in RemoteChannel]: SpecOf<C> } = {
   [IpcChannel.BrowserViewportReset]: same(['string']),
   [IpcChannel.BrowserThrottleClear]: same(['string', 'string']),
   [IpcChannel.WalkthroughShown]: same(['string', 'string', 'number', 'string']),
-  [IpcChannel.WalkthroughViewing]: replace(['nullable-string', 'boolean'], '画面は 1 つという前提で、プロファイルに 1 つの状態を上書きする（遠隔の接続ごとに持つ形にするまで）'),
+  // 画面ごと（Mac の画面と、スマホの接続ごと）に持つ
+  [IpcChannel.WalkthroughViewing]: same(['nullable-string', 'boolean']),
 };
 
 export const REMOTE_CHANNELS: { readonly [C in RemoteChannel]: RemoteChannelSpec } = TABLE;

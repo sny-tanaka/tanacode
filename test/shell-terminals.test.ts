@@ -276,6 +276,13 @@ describe('ShellTerminals', () => {
     expect(since()).toEqual(['$ echo half 0123456789012345678901234567890', 'half 0123456789012345678901234567890', '$']);
   });
 
+  it('createShared: 人が画面で開いたシェルも、開いた画面のほか（Mac とスマホ）に知らせる。渡した大きさで開く', async () => {
+    const { id, name } = shells.createShared('session-1', dir, 90, 20);
+    expect(opened).toEqual([{ owner: 'session-1', id, name, task: false }]);
+    shells.write(id, 'stty size\r');
+    await waitFor('大きさ', () => (data.get(id) ?? '').includes('20 90'));
+  });
+
   it('openShell: Claude が打つために、新しいシェルを開いて画面に知らせる（コマンドのタブではない）', async () => {
     const { id, name } = shells.openShell('session-1', dir);
     expect(opened).toEqual([{ owner: 'session-1', id, name, task: false }]);

@@ -3,11 +3,13 @@ import { t } from '@shared/i18n';
 import type { SessionSummary, SlashCommand, SubmitOptions } from '@shared/ipc';
 import { isLongPaste, stripControlChars } from '@shared/paste';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
-import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
+import { AddIcon, CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
 import { sessionName } from '../sessions/sessionLinks';
 import { PastedChips } from './PastedChips';
 import { SchedulePicker } from './SchedulePicker';
+import { isRemoteMode } from '../remote/mode';
+import { REMOTE_MAX_ATTACHMENT_BYTES } from '@shared/remote-protocol';
 
 const MAX_SUGGESTIONS = 40;
 // @ の候補に、ファイルより先に出すセッションの数
@@ -313,16 +315,22 @@ export function ChatInput({
   // 画像を保存し終えたときの、入力欄の持ち主と中身（保存している間に打った文字・足した添付を、古い中身で上書きしない）
   const latest = useRef({ owner, value, attachments, onChange, onAttachmentsChange });
   latest.current = { owner, value, attachments, onChange, onAttachmentsChange };
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const addFiles = async (list: FileList | File[]) => {
     const startedFor = latest.current.owner;
     const paths: string[] = [];
     const texts: string[] = [];
     for (const file of Array.from(list)) {
+      // スマホの画面からは、伝文の上限を超える大きさのファイルは送らない（超えると接続が切れる）
+      if (isRemoteMode() && file.size > REMOTE_MAX_ATTACHMENT_BYTES) {
+        window.alert(t('composer.input.tooLarge', { name: file.name, size: Math.round(REMOTE_MAX_ATTACHMENT_BYTES / 1024 / 1024) }));
+        continue;
+      }
       if (file.type.startsWith('image/')) {
         paths.push(await window.tanacode.attachments.save(file.name || 'image.png', new Uint8Array(await file.arrayBuffer())));
       } else {
-        // 画像以外はパスをそのまま入れる（Claude が必要なら読む）
-        const path = window.tanacode.pathForFile(file);
+        // 画像以外はパスをそのまま入れる（Claude が必要なら読む）。スマホの画面のファイルは Mac の上に無いので、Mac に送って保存した先のパスを入れる
+        const path = window.tanacode.pathForFile(file) || (isRemoteMode() ? await window.tanacode.attachments.save(file.name || 'file', new Uint8Array(await file.arrayBuffer())) : '');
         if (path) texts.push(path);
       }
     }
@@ -463,6 +471,23 @@ export function ChatInput({
             onSend();
           }}
         />
+        {/* スマホの画面には、ドロップが無いので、写真やファイルを選んで添付する入口を置く（Issue #464） */}
+        {isRemoteMode() && (
+          <>
+            <IconButton icon={AddIcon} label={t('composer.input.attach')} onClick={() => fileInputRef.current?.click()} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = e.currentTarget.files;
+                if (files && files.length > 0) void addFiles(Array.from(files));
+                e.currentTarget.value = '';
+              }}
+            />
+          </>
+        )}
         {onSchedule && <SchedulePicker label={t('composer.input.schedule')} tip={t('composer.input.scheduleTip')} disabled={!canSchedule} onPick={onSchedule} />}
         {showInterrupt ? (
           <IconButton icon={StopIcon} danger label={t('composer.input.interrupt')} onClick={onInterrupt} />

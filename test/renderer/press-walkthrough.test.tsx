@@ -9,6 +9,7 @@ import { SAMPLE_BRANCHES, SAMPLE_CWD, SAMPLE_EVENTS, SAMPLE_HOME, SAMPLE_IMAGES 
 import { CommentDialog } from '../../src/renderer/src/walkthrough/CommentDialog';
 import { WalkthroughList } from '../../src/renderer/src/walkthrough/WalkthroughList';
 import { WalkthroughBox, type WalkthroughControls } from '../../src/renderer/src/walkthrough/WalkthroughZone';
+import { setRemoteMode } from '../../src/renderer/src/remote/mode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -465,6 +466,19 @@ describe('ExportDialog（作業を書き出す前の確認）', () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('閉じる'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('スマホの画面では、保存した（ダウンロードした）名前を出すだけで、「Finder で表示」は出さない', async () => {
+    setRemoteMode(true);
+    try {
+      render(<ExportDialog session={S1} onClose={() => {}} />);
+      await screen.findByText(/発言 3 · 応答/);
+      await exportHtml();
+      expect(screen.getByText('~/Downloads/季節限定のバッジ.html')).toBeTruthy();
+      expect(screen.queryByText('Finder で表示')).toBeNull();
+    } finally {
+      setRemoteMode(false);
+    }
   });
 
   it('「キャンセル」・Esc・幕を押すと閉じる。変換中の Esc・ダイアログの中を押したときは閉じない', async () => {

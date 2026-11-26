@@ -534,6 +534,9 @@ const modules: Record<string, Record<string, unknown>> = {
       markPosted: () => undefined,
       forget: () => undefined,
       discard: () => undefined,
+      viewing: () => undefined,
+      keep: () => undefined,
+      shown: () => undefined,
       handle: echo('walkthrough.handle'),
     }),
   },
@@ -592,6 +595,7 @@ const modules: Record<string, Record<string, unknown>> = {
   'shell-terminals': {
     ShellTerminals: fakeClass('ShellTerminals', {
       create: echo('shells.create'),
+      createShared: echo('shells.createShared'),
       write: echo('shells.write'),
       resize: echo('shells.resize'),
       kill: echo('shells.kill'),
@@ -634,7 +638,7 @@ const modules: Record<string, Record<string, unknown>> = {
     }),
   },
   'workspace-watcher': { WorkspaceWatchers: fakeClass('WorkspaceWatchers', { retain: () => undefined, release: () => undefined, roots: () => [] }) },
-  'open-file-watcher': { OpenFileWatchers: fakeClass('OpenFileWatchers', { set: () => undefined, rootsChanged: () => undefined, closeAll: () => undefined }) },
+  'open-file-watcher': { OpenFileWatchers: fakeClass('OpenFileWatchers', { set: () => undefined, keep: () => undefined, rootsChanged: () => undefined, closeAll: () => undefined }) },
 };
 
 vi.mock('electron', () => electronModule);

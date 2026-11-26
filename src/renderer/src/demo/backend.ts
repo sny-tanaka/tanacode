@@ -658,6 +658,7 @@ export class DemoBackend {
         search: () => ok({ files: [], truncated: false }),
         // デモにはフォルダ選択のダイアログが無いので、追加は取りやめと同じ
         addFolder: () => ok(null),
+        addRecentFolder: () => ok([]),
         removeFolder: () => ok([]),
         keepReadFolder: () => ok([]),
         dismissRead: () => ok(undefined),

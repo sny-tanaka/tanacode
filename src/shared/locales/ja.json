@@ -63,7 +63,8 @@
       "languageRestartDetail": "言語は、tanacode を起動し直したときに切り替わります。「あとで」を選んだときは、次に起動したときから日本語になります。",
       "restartNow": "今すぐ再起動",
       "restartLater": "あとで",
-      "addFolder": "ワークスペースに追加するフォルダを選択"
+      "addFolder": "ワークスペースに追加するフォルダを選択",
+      "notRecentFolder": "最近使ったフォルダではありません"
     },
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
@@ -1012,6 +1013,8 @@
       "suggestTag": "suggest",
       "remove": "外す",
       "image": "画像 {name}",
+      "tooLarge": "{name} は大きすぎて、スマホから送れません（{size}MB まで）",
+      "attach": "写真やファイルを添付",
       "schedule": "時刻を指定して送信",
       "scheduleTip": "時刻を指定して送信（予約）",
       "interrupt": "中断",
@@ -1345,7 +1348,8 @@
       "addFolder": "フォルダを追加",
       "addFolderTip": "フォルダを追加\nエクスプローラーに並べ、Claude Code にも作業できるフォルダとして渡します",
       "addFolderFailed": "フォルダを追加できませんでした: {error}",
-      "removeFolderFailed": "フォルダを外せませんでした: {error}"
+      "removeFolderFailed": "フォルダを外せませんでした: {error}",
+      "noRecentFolder": "足せる最近のフォルダがありません。新しいフォルダは Mac で足してください"
     },
     "session": {
       "openFailed": "セッションを開けませんでした: {error}",
@@ -1568,7 +1572,8 @@
       "recent": "最近のフォルダ",
       "forget": "{name} を最近のフォルダから外す",
       "forgetTip": "最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）",
-      "pickOther": "別のフォルダを選ぶ…"
+      "pickOther": "別のフォルダを選ぶ…",
+      "openOnMac": "新しいフォルダは Mac で開いてください"
     },
     "import": {
       "placeholder": "既存の Claude Code の会話を探す（タイトル・フォルダ）",
@@ -1755,6 +1760,8 @@
       "invalid": "SVG として読み込めません（書きかけの可能性があります）"
     },
     "openInFinder": "Finder で開く",
+    "mobileEdit": "編集",
+    "mobileDone": "編集を終える",
     "tabs": {
       "closeConfirm": "{name} の変更を保存せずに閉じますか？",
       "unsaved": "未保存の変更があります（⌘S で保存）",
@@ -2618,6 +2625,9 @@
     "connected": "Mac とつながっています",
     "reconnecting": "Mac につなぎ直しています",
     "waiting": "ほかの {count} 件が答えを待っています",
+    "logout": "ログアウト",
+    "logoutConfirm": "この端末からログアウトしますか？ 次に使うときは、Face ID でログインし直します。",
+    "pickOnMac": "ファイルやフォルダは、Mac で選んでください（スマホからは Mac のファイルをたどれません）",
     "tab": {
       "chat": "チャット",
       "panel": "パネル",

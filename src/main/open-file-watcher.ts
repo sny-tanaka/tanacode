@@ -18,8 +18,9 @@ type Watch = { watcher: FSWatcher; files: Map<string, Tab[]> };
 // 途中にリンクのあるもの（フォルダの監視の知らせは実体のパスで来る）。ファイルそのものではなく、実体の親フォルダを recursive なしで
 // 見張る（Claude Code は一時ファイルに書いてから rename で置き換えるので、ファイルを見張ると、置き換えたあとの知らせが来ない）
 export class OpenFileWatchers {
-  // エディタのフォルダ → 開いているタブのパス（画面から届いたもの）
-  private tabs: Record<string, string[]> = {};
+  // 画面ごと（Mac の画面は 'mac'、スマホの画面は接続の id）の、エディタのフォルダ → 開いているタブのパス（画面から届いたもの）。
+  // 見張るのは、全部の画面のタブを合わせたもの（Issue #464）
+  private readonly sources = new Map<string, Record<string, string[]>>();
   private readonly dirs = new Map<string, Watch>();
   private pending = new Map<string, Set<string>>();
   private timer: NodeJS.Timeout | null = null;
@@ -33,16 +34,34 @@ export class OpenFileWatchers {
     private readonly onChange: (root: string, relPaths: string[]) => void,
   ) {}
 
-  // 画面のエディタで開いているタブ（エディタのフォルダ → タブのパス）。届くたびに、前のものと置き換える
-  set(tabs: unknown): void {
+  // 画面のエディタで開いているタブ（エディタのフォルダ → タブのパス）。届くたびに、その画面の前のものと置き換える
+  set(tabs: unknown, source = 'mac'): void {
     const next: Record<string, string[]> = {};
     if (tabs && typeof tabs === 'object') {
       for (const [dir, paths] of Object.entries(tabs)) {
         if (isAbsolute(dir) && Array.isArray(paths)) next[dir] = paths.filter((p): p is string => typeof p === 'string' && p !== '');
       }
     }
-    this.tabs = next;
+    this.sources.set(source, next);
     void this.refresh();
+  }
+
+  // 切れたスマホの画面のタブを捨てる（live: つながっている接続の id。Mac の画面のものは残す）
+  keep(live: ReadonlySet<string>): void {
+    let changed = false;
+    for (const source of [...this.sources.keys()]) {
+      if (source === 'mac' || live.has(source)) continue;
+      this.sources.delete(source);
+      changed = true;
+    }
+    if (changed) void this.refresh();
+  }
+
+  // 全部の画面のタブを合わせたもの
+  private get tabs(): Record<string, string[]> {
+    const merged: Record<string, string[]> = {};
+    for (const tabs of this.sources.values()) for (const [dir, paths] of Object.entries(tabs)) merged[dir] = [...new Set([...(merged[dir] ?? []), ...paths])];
+    return merged;
   }
 
   // フォルダの監視が始まった・終わった（タブがフォルダの監視で読み直せるかが変わる）

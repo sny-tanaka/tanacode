@@ -176,21 +176,23 @@ export class RemoteHost {
   }
 
   // プロファイル profileId の画面への知らせを、遠隔の接続にも送る（index.ts の sendTo から呼ぶ）
-  emit<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C]): void {
+  // except: 送らない接続の id（その接続が頼んだことの知らせ）
+  emit<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C], except?: string): void {
     try {
-      this.emitTo(profileId, channel, payload);
+      this.emitTo(profileId, channel, payload, except);
     } catch (error) {
       // 遠隔への送りの失敗で、Mac の画面への知らせ（呼んだ側）を止めない
       this.deps.log(`遠隔の接続に知らせを送れませんでした（${channel}）: ${String(error)}`);
     }
   }
 
-  private emitTo<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C]): void {
+  private emitTo<C extends keyof IpcEvent>(profileId: string, channel: C, payload: IpcEvent[C], except?: string): void {
     if (!this.child || this.clients.size === 0) return;
     const use = REMOTE_EVENTS[channel];
     if (use === 'mac') return;
     const clientIds: string[] = [];
     for (const [clientId, client] of this.clients) {
+      if (clientId === except) continue;
       if (!this.sessions.get(client.sessionId)?.profileIds.includes(profileId)) continue;
       if (use === 'subscribe' && !client.subscriptions.has(channel)) continue;
       // チャットの知らせは、その接続が開いているセッションの分だけ（ほかのセッションは、開いたときに頼んで読み直す）
@@ -223,6 +225,11 @@ export class RemoteHost {
   setFocus(clientId: string, sessionId: string | null): void {
     const client = this.clients.get(clientId);
     if (client) client.focus = sessionId;
+  }
+
+  // つながっている接続の id
+  clientIds(): string[] {
+    return [...this.clients.keys()];
   }
 
   // つながっている接続の数（Mac の上の帯に出す）
