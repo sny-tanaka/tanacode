@@ -5,9 +5,13 @@ import { t } from '@shared/i18n';
 // iPhone では、ホーム画面に置いた PWA でだけ使える（Safari のタブでは PushManager が無い）。許可を聞くのは、押したときだけ
 type State = 'unsupported' | 'off' | 'on' | 'denied' | 'busy';
 
+// Service Worker の登録（無ければ null。ready は、登録が無いといつまでも返らないので使わない）
+async function workerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  return (await navigator.serviceWorker.getRegistration('/app/')) ?? null;
+}
+
 async function currentSubscription(): Promise<PushSubscription | null> {
-  const registration = await navigator.serviceWorker.ready;
-  return registration.pushManager.getSubscription();
+  return (await (await workerRegistration())?.pushManager.getSubscription()) ?? null;
 }
 
 // 送り主の公開鍵（base64url）を、バイト列にする（文字のまま渡すと受けないブラウザがある）
@@ -39,7 +43,8 @@ export function PushToggle() {
         let current: PushSubscription | null = subscription;
         if (key && !sameKey(subscription.options?.applicationServerKey ?? null, keyBytes(key))) {
           await subscription.unsubscribe();
-          const registration = await navigator.serviceWorker.ready;
+          const registration = await workerRegistration();
+          if (!registration) return alive && setState('off');
           current = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
         }
         const kept = key ? await window.tanacode.remote.pushSubscribe(current.toJSON()) : false;
@@ -58,7 +63,8 @@ export function PushToggle() {
       if ((await Notification.requestPermission()) !== 'granted') return setState('denied');
       const key = await window.tanacode.remote.pushKey();
       if (!key) return setState('off');
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await workerRegistration();
+      if (!registration) return setState('off');
       const subscription = (await registration.pushManager.getSubscription()) ?? (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
       setState((await window.tanacode.remote.pushSubscribe(subscription.toJSON())) ? 'on' : 'off');
     } catch {

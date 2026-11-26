@@ -13,6 +13,7 @@ type FakeSubscription = { toJSON: () => unknown; unsubscribe: ReturnType<typeof 
 let subscription: FakeSubscription | null;
 let subscribe: ReturnType<typeof vi.fn>;
 let requestPermission: ReturnType<typeof vi.fn>;
+let workerInstalled: boolean;
 
 const KEY = Buffer.alloc(65, 4).toString('base64url');
 const keyBuffer = (key: string) => new Uint8Array(Buffer.from(key, 'base64url')).buffer;
@@ -20,6 +21,7 @@ const fakeSubscription = (key: string | null): FakeSubscription => ({ toJSON: ()
 const JSON_SUB = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 beforeEach(() => {
+  workerInstalled = true;
   permission = 'default';
   subscription = null;
   subscribe = vi.fn(async (options: { applicationServerKey: Uint8Array }) => {
@@ -31,7 +33,7 @@ beforeEach(() => {
     return permission;
   });
   const registration = { pushManager: { getSubscription: async () => subscription, subscribe } };
-  vi.stubGlobal('navigator', { ...navigator, serviceWorker: { ready: Promise.resolve(registration) } });
+  vi.stubGlobal('navigator', { ...navigator, serviceWorker: { getRegistration: async (scope: string) => (scope === '/app/' && workerInstalled ? registration : undefined) } });
   vi.stubGlobal('PushManager', class {});
   vi.stubGlobal('Notification', {
     get permission() {
@@ -139,6 +141,31 @@ describe('PushToggle', () => {
     await settle();
     fireEvent.click(screen.getByRole('button', { name: '通知を受け取る' }));
     await settle();
+    expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
+  });
+
+  it('Service Worker が入っていなければ、待ち続けずに「受け取る」にする（押しても購読しない）', async () => {
+    workerInstalled = false;
+    mockApi({ 'remote.pushKey': () => Promise.resolve(KEY) }).install();
+    render(<PushToggle />);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: '通知を受け取る' }));
+    await settle();
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
+  });
+
+  it('購読の鍵が違って作り直すときに、Service Worker が無くなっていれば「受け取る」にする', async () => {
+    mockApi({ 'remote.pushKey': () => Promise.resolve(Buffer.alloc(65, 7).toString('base64url')) }).install();
+    const old = fakeSubscription(KEY);
+    subscription = old;
+    old.unsubscribe.mockImplementation(async () => {
+      workerInstalled = false;
+      return true;
+    });
+    render(<PushToggle />);
+    await settle();
+    expect(subscribe).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '通知を受け取る' })).toBeTruthy();
   });
 
