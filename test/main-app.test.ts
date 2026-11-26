@@ -1,3 +1,4 @@
+import { createECDH } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -1511,6 +1512,63 @@ describe('メニュー', () => {
     expect(profiles.value.profiles.map((p) => p.id)).toEqual(['default']);
     expect(profiles.value.current).toBe('default');
     expect(mainWindow().webContents.sent).toContainEqual([IpcChannel.RemoteConnectionsChanged, [{ registrationId, name: 'iPhone', count: 1 }]]);
+    // スマホの画面を閉じている間の通知（Web Push）: その端末の購読を置き、Mac の通知と同じ文を送る。購読が無くなっていたら外す
+    let callId = 100;
+    const remoteCall = async (channel: string, ...args: unknown[]) => {
+      const id = ++callId;
+      child.emit('message', { type: 'call', id, clientId: 'c1', profileId: 'default', kind: 'invoke', channel, args, active: true });
+      await vi.waitFor(() => expect(child.posted).toContainEqual(expect.objectContaining({ type: 'result', id })));
+      return (child.posted.find((m) => (m as { type: string; id?: number }).type === 'result' && (m as { id: number }).id === id) as { value: unknown }).value;
+    };
+    const key = (await remoteCall(IpcChannel.RemotePushKey)) as string;
+    expect(Buffer.from(key, 'base64url')).toHaveLength(65);
+    const push = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: createECDH('prime256v1').generateKeys('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
+    await expect(remoteCall(IpcChannel.RemotePushSubscribe, { ...push, endpoint: 'https://example.com/x' })).resolves.toBe(false);
+    await expect(remoteCall(IpcChannel.RemotePushSubscribe, push)).resolves.toBe(true);
+    // Mac の画面からは置けない
+    await expect(invoke(IpcChannel.RemotePushKey)).resolves.toBeNull();
+    await expect(invoke(IpcChannel.RemotePushSubscribe, push)).resolves.toBe(false);
+    await invoke(IpcChannel.RemotePushUnsubscribe);
+    const pushed: { url: string; init: RequestInit }[] = [];
+    let status = 201;
+    // 送るのは Chromium の通信（net.fetch。macOS のプロキシの設定が効く）
+    state.netFetch.mockImplementation(async (url: unknown, init: unknown) => {
+      pushed.push({ url: String(url), init: init as RequestInit });
+      return new Response(null, { status });
+    });
+    try {
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(pushed.map((p) => p.url)).toEqual([push.endpoint]);
+      expect(pushed[0].init.headers).toMatchObject({ 'content-encoding': 'aes128gcm' });
+      // スマホでそのセッションを見ている間（前に出ていて開いている）は、その端末には送らない（Mac の通知と同じ）
+      child.emit('message', { type: 'call', id: 90, clientId: 'c1', profileId: 'default', kind: 'send', channel: IpcChannel.SessionsFocus, args: ['s1'], active: true });
+      await new Promise((done) => setTimeout(done, 0));
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(pushed).toHaveLength(1);
+      // 裏に回ったら送る
+      child.emit('message', { type: 'call', id: 91, clientId: 'c1', profileId: 'default', kind: 'send', channel: IpcChannel.RemoteVisible, args: [false], active: false });
+      await new Promise((done) => setTimeout(done, 0));
+      // 長いセッション名は、バイト数で切って送る（4KB を超えると届かない）
+      callbacks().onTurnCompleted({ id: 's1', title: 'あ'.repeat(500) });
+      expect(pushed).toHaveLength(2);
+      expect(pushed[1].init.body).toBeInstanceOf(Uint8Array);
+      expect((pushed[1].init.body as Uint8Array).length).toBeLessThan(4096);
+      pushed.splice(1);
+      // 購読が無くなっていたら（410）、外す。次からは送らない
+      status = 410;
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      // 外すのは、送った返事を受けたあと（約束の続きが済むまで進める）
+      await new Promise((done) => setTimeout(done, 0));
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(pushed).toHaveLength(2);
+      // 置き直して、外す
+      await expect(remoteCall(IpcChannel.RemotePushSubscribe, push)).resolves.toBe(true);
+      await remoteCall(IpcChannel.RemotePushUnsubscribe);
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' });
+      expect(pushed).toHaveLength(2);
+    } finally {
+      state.netFetch.mockReset();
+    }
     await expect(invoke(IpcChannel.RemoteDisconnectAll)).resolves.toEqual([]);
     // ログインに続けて失敗した知らせは、端末の名前で Mac に通知する
     child.emit('message', { type: 'login-failures', registrationId });

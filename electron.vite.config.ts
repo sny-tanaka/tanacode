@@ -6,6 +6,7 @@ import type { Plugin } from 'vite';
 import license from 'rollup-plugin-license';
 import { backgroundElectron } from './scripts/background-electron';
 import { isAllowedDependency, thirdPartyNotices } from './scripts/third-party-notices';
+import { addIntegrity } from './scripts/remote-integrity';
 
 // TANACODE_SOURCEMAP=1 でビルドすると、ソースマップ（.map）も書き出す。E2E のカバレッジを src の行に戻すのに使う
 // （npm run coverage:e2e。.map はアプリには入れない）
@@ -28,6 +29,25 @@ const virtualChunkSourcemap: Plugin = {
       const map = { version: 3, file: basename(chunk.fileName), sources: [], names: [], mappings: '' };
       this.emitFile({ type: 'asset', fileName: `${chunk.fileName}.map`, source: JSON.stringify(map) });
     }
+  },
+};
+
+// スマホの画面の入口（remote.html）のスクリプトとスタイルに、完全性の検査（integrity）を付ける（scripts/remote-integrity.ts）。
+// HTML を書き出すほかの部品のあとで動かす
+const remoteIntegrity: Plugin = {
+  name: 'tanacode:remote-integrity',
+  enforce: 'post',
+  generateBundle: {
+    order: 'post',
+    handler(_options, bundle) {
+      const html = bundle['remote.html'];
+      if (!html || html.type !== 'asset') return;
+      html.source = addIntegrity(String(html.source), (file) => {
+        const item = bundle[file];
+        if (!item) return null;
+        return item.type === 'chunk' ? item.code : item.source;
+      });
+    },
   },
 };
 
@@ -81,6 +101,7 @@ export default defineConfig({
     build: { sourcemap, rolldownOptions: { output, input: { index: resolve('src/renderer/index.html'), remote: resolve('src/renderer/remote.html') } } },
     plugins: [
       virtualChunkSourcemap,
+      remoteIntegrity,
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。
       // GPL 系のライセンスや、ライセンスの分からない依存が混ざったらビルドを止める（例外は scripts/third-party-notices.ts の ALLOWED_EXCEPTIONS）

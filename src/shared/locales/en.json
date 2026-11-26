@@ -2706,6 +2706,12 @@
     "reconnecting": "Reconnecting to the Mac",
     "waiting": "{count} other sessions are waiting for an answer",
     "logout": "Log out",
+    "push": {
+      "off": "Get notifications",
+      "on": "Getting notifications (tap to stop)",
+      "denied": "Notifications are not allowed",
+      "deniedTip": "Allow tanacode in Notifications in the iPhone Settings"
+    },
     "logoutConfirm": "Log out on this device? You'll sign in again with Face ID next time.",
     "pickOnMac": "Choose files and folders on the Mac (you can't browse the Mac's files from the phone)",
     "tab": {

@@ -6024,6 +6024,16 @@ button.menu-tab:disabled {
   border-color: var(--send-border);
   color: var(--send-fg);
 }
+/* スマホの画面の通知を受け取るボタン（ログアウトの上） */
+.remote-push {
+  flex: none;
+  min-height: 44px;
+  margin: 10px 10px 0;
+}
+.remote-push.on {
+  border-color: var(--send-border);
+  color: var(--send-fg);
+}
 /* スマホの画面のログアウト（セッションの一覧のいちばん下） */
 .remote-logout {
   flex: none;

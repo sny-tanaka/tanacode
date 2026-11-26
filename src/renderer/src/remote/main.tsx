@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import { createApi } from '@shared/api-bindings';
+import { IpcChannel } from '@shared/ipc';
 import { setLanguage } from '@shared/i18n';
 import { App } from '../App';
 import { syncSharedPrefs } from '../sharedPrefs';
@@ -36,9 +37,16 @@ guardLinks(window);
 // 押す・打つを覚えて、そのあと少しの間の頼みに、人の操作の印を付ける（使わない時間は、印のある頼みでだけ数え直される）
 for (const type of ['pointerdown', 'keydown'] as const) addEventListener(type, () => transport.markInput(), true);
 
+// 通知を押して開いたとき（/app/?session=…&profile=…）は、そのプロファイルのそのセッションを開く。URL からは消しておく
+const opened = new URLSearchParams(location.search);
+const openSession = opened.get('session');
+const openProfile = opened.get('profile');
+if (openSession || openProfile) history.replaceState(null, '', location.pathname);
+
 void transport.start().then(async (ready) => {
   const saved = localStorage.getItem(PROFILE_KEY);
-  const profileId = saved && ready.profileIds.includes(saved) ? saved : ready.profileIds[0];
+  const wanted = openProfile && ready.profileIds.includes(openProfile) ? openProfile : saved;
+  const profileId = wanted && ready.profileIds.includes(wanted) ? wanted : ready.profileIds[0];
   if (!profileId) return location.replace('/');
   localStorage.setItem(PROFILE_KEY, profileId);
   transport.useProfile(profileId);
@@ -52,5 +60,22 @@ void transport.start().then(async (ready) => {
   document.documentElement.lang = ready.language;
   // 共有の表示設定（カラムの幅など）は、スマホでは手元だけ（遠隔では呼べないので、すぐに手元の値で始まる）
   await syncSharedPrefs();
+  if (openSession) transport.local(IpcChannel.SessionsSelect, openSession);
+  // 画面を開いている間に通知を押したら、Service Worker が知らせる。別のプロファイルなら、そのプロファイルで開き直す
+  navigator.serviceWorker?.addEventListener('message', (event: MessageEvent) => {
+    const data = event.data as { type?: unknown; sessionId?: unknown; profileId?: unknown } | null;
+    if (data?.type !== 'tanacode:open-session' || typeof data.sessionId !== 'string') return;
+    if (typeof data.profileId === 'string' && data.profileId !== profileId && ready.profileIds.includes(data.profileId)) {
+      location.replace(`/app/?session=${encodeURIComponent(data.sessionId)}&profile=${encodeURIComponent(data.profileId)}`);
+      return;
+    }
+    transport.local(IpcChannel.SessionsSelect, data.sessionId);
+  });
+  // 画面が前に出ているかを Mac に知らせる（見ているセッションの通知は出さない。Mac の通知と同じ）
+  const reportVisible = () => window.tanacode.remote.setVisible(document.visibilityState === 'visible');
+  document.addEventListener('visibilitychange', reportVisible);
+  reportVisible();
+  // 通知に要る Service Worker（画面のファイルはキャッシュさせない）
+  void navigator.serviceWorker?.register('/app/sw.js', { scope: '/app/' }).catch(() => {});
   createRoot(document.getElementById('root')!).render(<App />);
 });

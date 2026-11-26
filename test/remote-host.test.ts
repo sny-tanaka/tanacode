@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { REMOTE_TICKET_MS, REMOTE_TICKETS_PER_SESSION, type HostMessage, type RemoteSession } from '@shared/remote-protocol';
-import { RemoteHost, type ServerProcess } from '../src/main/remote-host';
+import { RemoteHost, REMOTE_PARTIAL_MS, type ServerProcess } from '../src/main/remote-host';
 
 // main の側の、遠隔サーバーの持ち手（src/main/remote-host.ts）。遠隔サーバーを作り物にして、伝文を送り合う
 
@@ -194,6 +194,59 @@ describe('RemoteHost', () => {
     t.host.emit('default', IpcChannel.SessionsChanged, []);
     t.host.emit('default', IpcChannel.McpSettingsOpen, undefined);
     expect(t.posted).toEqual([{ type: 'event', clientIds: ['c1'], channel: IpcChannel.SessionsChanged, payload: [], profileId: 'default' }]);
+  });
+
+  it('その登録の接続のどれかが、前に出ていてそのセッションを開いていれば、見ている（通知を出さない）', () => {
+    const t = setup();
+    t.host.addSession(session());
+    t.host.start(CONFIG);
+    t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+    expect(t.host.viewing('r1', 'chat-a')).toBe(false);
+    t.host.setFocus('c1', 'chat-a');
+    expect(t.host.viewing('r1', 'chat-a')).toBe(true);
+    expect(t.host.viewing('r1', 'chat-b')).toBe(false);
+    expect(t.host.viewing('other', 'chat-a')).toBe(false);
+    t.host.setVisible('c1', false);
+    expect(t.host.viewing('r1', 'chat-a')).toBe(false);
+    t.host.setVisible('ghost', true);
+    t.host.setVisible('c1', true);
+    expect(t.host.viewing('r1', 'chat-a')).toBe(true);
+  });
+
+  it('書いている途中の文だけの知らせは、セッションごとに 300ms に 1 回までにまとめる。イベントのある知らせの前に、残しているものを先に送る', () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      t.host.addSession(session());
+      t.host.start(CONFIG);
+      t.toHost({ type: 'connected', clientId: 'c1', sessionId: 's1', ticket: t.host.grantTicket('s1') });
+      t.host.setFocus('c1', 'chat-a');
+      t.posted.length = 0;
+      const partial = (text: string, sessionId = 'chat-a') => ({ sessionId, fromSeq: 5, events: [], live: true, partial: [{ id: 'p', kind: 'text', text }] }) as never;
+      const sent = () => t.posted.map((m) => ((m as { payload: { partial?: { text: string }[]; events: unknown[] } }).payload.partial?.[0]?.text ?? `events:${(m as { payload: { events: unknown[] } }).payload.events.length}`));
+      t.host.emit('default', IpcChannel.ChatEvents, partial('あ'));
+      t.host.emit('default', IpcChannel.ChatEvents, partial('あい'));
+      t.host.emit('default', IpcChannel.ChatEvents, partial('あいう'));
+      // ほかのセッションは、別に数える（開いていないので送らない）
+      t.host.emit('default', IpcChannel.ChatEvents, partial('別', 'chat-b'));
+      expect(sent()).toEqual(['あ']);
+      vi.advanceTimersByTime(REMOTE_PARTIAL_MS);
+      expect(sent()).toEqual(['あ', 'あいう']);
+      // 間が明けたあとも、続けて届けば、また間を置く
+      t.host.emit('default', IpcChannel.ChatEvents, partial('あいうえ'));
+      expect(sent()).toEqual(['あ', 'あいう']);
+      // イベントのある知らせが来たら、残しているものを先に送ってから送る
+      t.host.emit('default', IpcChannel.ChatEvents, { sessionId: 'chat-a', fromSeq: 5, events: [{ type: 'assistant-text', text: 'あいうえお' }], live: true } as never);
+      expect(sent()).toEqual(['あ', 'あいう', 'あいうえ', 'events:1']);
+      // 残しているものが無ければ、そのまま送る。間も解く
+      vi.advanceTimersByTime(REMOTE_PARTIAL_MS);
+      t.host.emit('default', IpcChannel.ChatEvents, partial('次'));
+      expect(sent()).toEqual(['あ', 'あいう', 'あいうえ', 'events:1', '次']);
+      vi.advanceTimersByTime(REMOTE_PARTIAL_MS);
+      expect(sent()).toHaveLength(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('その接続が頼んだことの知らせ（except）は、その接続には送らない。つながっている接続の id を返す', () => {

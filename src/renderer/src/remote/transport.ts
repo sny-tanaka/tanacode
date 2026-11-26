@@ -61,6 +61,8 @@ export class RemoteTransport {
   private lastInput = -Infinity;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
+  // 受け手が付く前に local で渡された知らせ（チャンネルごとに最後の 1 つ）
+  private readonly held = new Map<string, unknown>();
   private readonly queue: { id: number | null; text: string; at: number }[] = [];
   private readonly resend = new Map<string, unknown[]>();
   private everReady = false;
@@ -135,12 +137,28 @@ export class RemoteTransport {
     return result;
   }
 
+  // スマホの画面の中だけで、知らせを受け手に渡す（通知を押したときに、そのセッションを開かせるなど）。まだ受け手がいなければ、
+  // 受け手が付いたときに渡す（画面を描く前に届いたとき）
+  local(channel: keyof IpcEvent, payload: unknown): void {
+    const set = this.listeners.get(channel);
+    if (set && set.size > 0) {
+      for (const listener of [...set]) listener(payload);
+      return;
+    }
+    this.held.set(channel, payload);
+  }
+
   private on(channel: string, listener: (payload: unknown) => void): () => void {
     const set = this.listeners.get(channel) ?? new Set();
     const added = set.size === 0;
     set.add(listener);
     this.listeners.set(channel, set);
     if (added && REMOTE_EVENTS[channel as keyof typeof REMOTE_EVENTS] === 'subscribe') this.sendSubscriptions();
+    if (this.held.has(channel)) {
+      const payload = this.held.get(channel);
+      this.held.delete(channel);
+      listener(payload);
+    }
     return () => {
       set.delete(listener);
       if (set.size === 0) {

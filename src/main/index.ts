@@ -23,6 +23,7 @@ import { IpcDispatcher, type Caller } from './remote-dispatch';
 import { RemoteAuth } from './remote-auth';
 import { RemoteHost } from './remote-host';
 import { RemoteRegistrations } from './remote-registrations';
+import { parseSubscription, sendPush, type VapidKeys } from './web-push';
 import { publicOriginOf } from '@shared/remote-protocol';
 import { isRemotePort, type RemoteConnection, type RemoteDevicesState, type RemoteSettingsInput, type RemoteSettingsState, type RemoteStatus } from '@shared/remote-settings';
 import { TOOL_PERMISSIONS_DIR, writeToolPermissionFiles } from './tool-permissions';
@@ -703,10 +704,12 @@ function notify(
   if (p.manager?.parentOf(sessionId)) return;
   const windowActive = mainWindow?.isFocused() ?? false;
   if (windowActive && p.id === activeId && p.manager.isFocused(sessionId)) return;
-  if (!Notification.isSupported()) return;
   // プロファイルが 2 つ以上あれば、どのプロファイルのセッションかをサブタイトルの頭に付ける
   const title = sessionTitle ?? t('main.session.untitled');
   const subtitle = opened.size > 1 ? `${registry.get(p.id)?.name ?? ''} · ${title}` : title;
+  // スマホにも、同じ文で送る（スマホの通知には、アプリの名前が上に出るので、タイトルにセッション名を入れる）
+  pushNotify(p.id, sessionId, subtitle, message);
+  if (!Notification.isSupported()) return;
   // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
   const notification = new Notification({ title: 'tanacode', subtitle, body: message, sound: 'Glass' });
   const release = () => liveNotifications.delete(notification);
@@ -1246,6 +1249,56 @@ function registerIpc(): void {
     }
     return remoteDevicesState();
   });
+  // スマホの画面を閉じている間の通知（Web Push）。呼んだ端末の登録にだけ置く・外す（Mac の画面からは何もしない）
+  handle(IpcChannel.RemotePushKey, (e) => (e.kind === 'remote' && remoteRegistrations ? remoteRegistrations.vapidKeys().publicKey : null));
+  handle(IpcChannel.RemotePushSubscribe, (e, subscription: unknown) => {
+    if (e.kind !== 'remote' || !remoteRegistrations) return false;
+    const push = parseSubscription(subscription);
+    return push ? remoteRegistrations.setPush(e.registrationId, push) : false;
+  });
+  handle(IpcChannel.RemotePushUnsubscribe, (e) => {
+    if (e.kind === 'remote') remoteRegistrations?.setPush(e.registrationId, null);
+  });
+  listen(IpcChannel.RemoteVisible, (e, visible: unknown) => {
+    if (e.kind === 'remote') remoteHost.setVisible(e.clientId, visible === true);
+  });
+}
+
+// 文を UTF-8 のバイト数で切る（文字の途中では切らない）。切ったら … を付ける
+function cutBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let out = '';
+  for (const char of text) {
+    if (Buffer.byteLength(out + char) > max - 3) break;
+    out += char;
+  }
+  return `${out}…`;
+}
+
+// スマホの画面を閉じている間の通知（Web Push）を、そのプロファイルを許した端末のうち、受け取ると決めたものに送る（Mac の通知と同じ文。決めたこと）。
+// 購読が無くなっていたら（404・410）、登録から外す
+function pushNotify(profileId: string, sessionId: string, title: string, body: string): void {
+  const registrations = remoteRegistrations;
+  if (!registrations || registrations.problem()) return;
+  // Mac の通知と同じく、スマホでそのセッションを見ているなら、その端末には出さない
+  const targets = registrations.all().filter((r) => r.push && r.profileIds.includes(profileId) && !remoteHost.viewing(r.id, sessionId));
+  if (targets.length === 0) return;
+  let keys: VapidKeys;
+  try {
+    keys = registrations.vapidKeys();
+  } catch (error) {
+    console.error(`[remote] 通知の鍵を用意できませんでした: ${String(error)}`);
+    return;
+  }
+  // 通知は 4KB まで（暗号化の前の 1 レコード。Apple の上限も 4KB）。タイトルと本文をバイト数で切る（日本語は 1 文字 3 バイト）
+  const payload = { title: cutBytes(title, 300), body: cutBytes(body, 2700), sessionId, profileId };
+  // Chromium の通信（net.fetch）で送る。macOS のプロキシの設定がそのまま効く（ほかの問い合わせと同じ）
+  const send = (url: string | URL | Request, init?: RequestInit) => net.fetch(String(url), init);
+  for (const r of targets) {
+    void sendPush(r.push!, payload, keys, { fetch: send as typeof fetch, now: Date.now }).then((result) => {
+      if (result === 'gone') registrations.setPush(r.id, null);
+    });
+  }
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {

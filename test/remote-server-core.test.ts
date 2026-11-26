@@ -1,3 +1,4 @@
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -77,6 +78,19 @@ function send(port: number, method: string, path: string, headers: Record<string
     });
     req.on('error', () => resolve({ status: null, headers: {}, body: '' }));
     req.end(payload);
+  });
+}
+
+// 中身をバイト列のまま受ける（圧縮した応答を読む）
+function sendRaw(port: number, path: string, headers: Record<string, string>): Promise<{ headers: IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, method: 'GET', path, headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -202,6 +216,49 @@ describe('HTTP の口', () => {
     expect((await send(port, 'GET', '/app/assets/remote.js', { host: HOST })).status).toBe(401);
     // テストの遠隔サーバーには、画面のファイルの置き場所が無い
     expect((await send(port, 'GET', '/app/', { host: HOST, cookie })).status).toBe(404);
+  });
+
+  it('Service Worker（/app/sw.js）は、セッションの Cookie があるときだけ、キャッシュさせずに配る。HEAD は中身を返さない', async () => {
+    const { port } = await start();
+    expect((await send(port, 'GET', '/app/sw.js', { host: HOST })).status).toBe(401);
+    const sw = await send(port, 'GET', '/app/sw.js', { host: HOST, cookie });
+    expect(sw.status).toBe(200);
+    expect(sw.headers['cache-control']).toBe('no-store');
+    expect(sw.headers['content-type']).toBe('text/javascript; charset=utf-8');
+    expect(sw.body).toContain("addEventListener('push'");
+    expect(sw.body).not.toContain("addEventListener('fetch'");
+    expect((await send(port, 'HEAD', '/app/sw.js', { host: HOST, cookie })).body).toBe('');
+  });
+
+  it('assets の文字のファイルは、相手が受ける方式（br を先に）で圧縮して送る。入口の HTML・フォントは圧縮しない', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tanacode-app-zip-'));
+    mkdirSync(join(root, 'assets'));
+    const js = 'export const 長い = "'.concat('あいうえお'.repeat(2000), '";');
+    writeFileSync(join(root, 'remote.html'), '<html>app</html>');
+    writeFileSync(join(root, 'assets', 'a.js'), js);
+    writeFileSync(join(root, 'assets', 'f.woff2'), Buffer.from([1, 2, 3]));
+    try {
+      const { port } = await start(root);
+      const br = await sendRaw(port, '/app/assets/a.js', { host: HOST, cookie, 'accept-encoding': 'gzip, deflate, br' });
+      expect(br.headers['content-encoding']).toBe('br');
+      expect(br.headers.vary).toBe('Accept-Encoding');
+      expect(brotliDecompressSync(br.body).toString()).toBe(js);
+      expect(br.body.length).toBeLessThan(Buffer.byteLength(js) / 10);
+      // 2 回目は、覚えておいたものを送る
+      expect((await sendRaw(port, '/app/assets/a.js', { host: HOST, cookie, 'accept-encoding': 'br' })).body.equals(br.body)).toBe(true);
+      const gz = await sendRaw(port, '/app/assets/a.js', { host: HOST, cookie, 'accept-encoding': 'gzip;q=1.0' });
+      expect(gz.headers['content-encoding']).toBe('gzip');
+      expect(gunzipSync(gz.body).toString()).toBe(js);
+      const plain = await sendRaw(port, '/app/assets/a.js', { host: HOST, cookie });
+      expect(plain.headers['content-encoding']).toBeUndefined();
+      expect(plain.body.toString()).toBe(js);
+      expect((await sendRaw(port, '/app/assets/f.woff2', { host: HOST, cookie, 'accept-encoding': 'br' })).headers['content-encoding']).toBeUndefined();
+      const page = await sendRaw(port, '/app/', { host: HOST, cookie, 'accept-encoding': 'br' });
+      expect(page.headers['content-encoding']).toBeUndefined();
+      expect(page.headers.vary).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('置き場所があれば、入口はキャッシュさせずに、assets は長くキャッシュさせて配る。CSP は自分の WebSocket だけにつなぐ。HEAD は中身を返さない', async () => {

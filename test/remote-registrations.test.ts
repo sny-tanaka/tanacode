@@ -1,3 +1,4 @@
+import { createECDH } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,6 +45,39 @@ describe('RemoteRegistrations', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(open().all()).toEqual([registration()]);
     expect(open().credentials()).toEqual([{ registrationId: 'r1', credentialId: 'cred', publicKey: 'pub', counter: 0 }]);
+  });
+
+  it('通知の購読を置く・外す。取り消せば一緒に消える。形の違う購読は、読むときに捨てる（登録は読む）', () => {
+    const { file, open } = setup();
+    const list = open();
+    list.add(registration());
+    const push = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: createECDH('prime256v1').generateKeys('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
+    expect(list.setPush('r1', push)).toBe(true);
+    expect(list.setPush('ghost', push)).toBe(false);
+    expect(open().get('r1')?.push).toEqual(push);
+    expect(list.setPush('r1', null)).toBe(true);
+    expect(open().get('r1')).toEqual(registration());
+    // 書き換えられた購読（送り先が push.apple.com の下でない）は読まない
+    list.setPush('r1', push);
+    const stored = JSON.parse(Buffer.from(readFileSync(file)).reverse().toString()) as { registrations: Registration[] };
+    stored.registrations[0].push = { ...push, endpoint: 'https://example.com/x' };
+    writeFileSync(file, Buffer.from(JSON.stringify(stored)).reverse());
+    expect(open().get('r1')).toEqual(registration());
+    list.remove('r1');
+    expect(open().all()).toEqual([]);
+  });
+
+  it('通知の送り主の鍵は、はじめて要るときに作って書き、開き直しても同じものを使う', () => {
+    const { open } = setup();
+    const list = open();
+    const keys = list.vapidKeys();
+    expect(Buffer.from(keys.publicKey, 'base64url')).toHaveLength(65);
+    expect(Buffer.from(keys.privateKey, 'base64url')).toHaveLength(32);
+    expect(list.vapidKeys()).toEqual(keys);
+    expect(open().vapidKeys()).toEqual(keys);
+    // 登録を書き換えても残る
+    list.add(registration());
+    expect(open().vapidKeys()).toEqual(keys);
   });
 
   it('使った時刻と数えを控え、数えは小さくしない。取り消せる', () => {

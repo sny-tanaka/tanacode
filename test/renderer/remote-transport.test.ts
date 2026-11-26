@@ -129,6 +129,22 @@ describe('RemoteTransport', () => {
     expect(t.socket().sent).toHaveLength(3);
   });
 
+  it('local は、画面の中だけで受け手に渡す。まだ受け手がいなければ、受け手が付いたときに渡す', () => {
+    const t = setup();
+    const api = t.transport.api(() => '', () => 'ja');
+    t.transport.local(IpcChannel.SessionsSelect, 'early');
+    const select = vi.fn();
+    const off = api.subscribe(IpcChannel.SessionsSelect, select);
+    expect(select.mock.calls).toEqual([['early']]);
+    t.transport.local(IpcChannel.SessionsSelect, 'now');
+    expect(select.mock.calls).toEqual([['early'], ['now']]);
+    // 渡したものは、次に付いた受け手には渡さない
+    off();
+    const again = vi.fn();
+    api.subscribe(IpcChannel.SessionsSelect, again);
+    expect(again).not.toHaveBeenCalled();
+  });
+
   it('切れたら、待っていた頼みを断り、券を取り直してつなぎ直す（多い知らせも頼み直す）', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const t = setup();
