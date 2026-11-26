@@ -146,7 +146,7 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     const loggedIn = await login(w, passkey, binding);
     expect(loggedIn.status).toBe(200);
     expect(loggedIn.cookie).toMatch(new RegExp(`^${SESSION_COOKIE}=[A-Za-z0-9_-]+; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=43200$`));
-    expect(w.notices).toEqual([{ kind: 'login', name: 'iPhone' }]);
+    expect(w.notices).toEqual([{ kind: 'pairing-approved', name: 'iPhone' }, { kind: 'login', name: 'iPhone' }]);
     expect(w.registrations.all()[0].lastUsedAt).not.toBeNull();
 
     const cookie = loggedIn.cookie!.split(';')[0];
@@ -277,7 +277,8 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect(w.auth.approve(String(finished.body.requestId), '000000' === finished.body.number ? '111111' : '000000', ['default'])).toBe(false);
     expect((await post(w.port, '/api/pair/status', { requestId: finished.body.requestId })).body).toEqual({ state: 'rejected' });
     expect((await post(w.port, '/api/pair/begin', { code })).status).toBe(400);
-    expect(w.notices).toEqual([]);
+    // 断ったことは記録に残す（横取りとしては知らせない）
+    expect(w.notices).toEqual([{ kind: 'pairing-rejected', name: 'iPhone' }]);
   });
 
   it('ログイン: 束縛の鍵が違う（パスキーだけを持つ別のブラウザ）・Origin が違う・知らないパスキーなら、セッションを作らない', async () => {
@@ -289,7 +290,8 @@ describe('遠隔操作の登録とログイン（通し）', () => {
     expect((await login(w, passkey, new SoftBindingKey())).status).toBe(400);
     expect((await login(w, passkey, binding, { origin: 'https://evil.example.ts.net' })).status).toBe(400);
     expect((await login(w, new SoftAuthenticator(ORIGIN), binding)).status).toBe(400);
-    expect(w.notices).toEqual([]);
+    // 承認したことだけが残り、ログインは知らせない
+    expect(w.notices).toEqual([{ kind: 'pairing-approved', name: 'iPhone' }]);
   });
 
   it('登録を取り消したら、そのセッションの券は出ず、ログインもできない', async () => {

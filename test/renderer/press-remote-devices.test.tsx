@@ -19,13 +19,14 @@ const profiles = [
   { id: 'default', name: '個人' },
   { id: 'work', name: '仕事' },
 ];
-const none: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles };
+const none: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles, log: [] };
 const device = { id: 'd1', name: 'iPhone', createdAt: Date.UTC(2026, 10, 25, 1), lastUsedAt: null, profileIds: ['default', 'gone'] };
 const pairing = (pending: { requestId: string; name: string }[] = []): RemoteDevicesState => ({
   devices: [],
   pairing: { code: '12345678', url: 'https://mac.example.ts.net/#pair=12345678', until: Date.now() + 600_000, pending },
   problem: null,
   profiles,
+  log: [],
 });
 
 async function open(initial: RemoteDevicesState, responses: Record<string, (...args: never[]) => unknown> = {}) {
@@ -38,6 +39,24 @@ async function open(initial: RemoteDevicesState, responses: Record<string, (...a
 const button = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 
 describe('RemoteDevices', () => {
+  it('遠隔操作の記録を、新しいものから「最近の出来事」に出す（名前の無い端末はそう出す）。記録が無ければ出さない', async () => {
+    await open({
+      ...none,
+      log: [
+        { at: Date.UTC(2026, 10, 26, 3), kind: 'ticket-failures', name: 'iPhone' },
+        { at: Date.UTC(2026, 10, 26, 2), kind: 'login' },
+        { at: Date.UTC(2026, 10, 26, 1), kind: 'disconnect-all' },
+      ],
+    });
+    expect(screen.getByText('最近の出来事（3 件）')).toBeTruthy();
+    const items = [...document.querySelectorAll('.remote-log-list li')].map((li) => li.lastElementChild?.textContent);
+    expect(items).toEqual(['「iPhone」のつなぎ直しに続けて失敗しました', '「名前の無い端末」がログインしました', 'Mac の「切断」で、全部の接続を切りました']);
+    expect(screen.getByText('記録は userData の remote.log にあり、スマホからは消せません。')).toBeTruthy();
+    cleanup();
+    await open(none);
+    expect(document.querySelector('.remote-log')).toBeNull();
+  });
+
   it('登録した端末が無ければそう出し、「端末を追加」で受付を始め、QR とコードを出す', async () => {
     await open(none, { 'remote.startPairing': () => Promise.resolve(pairing()) });
     expect(screen.getByText('まだ登録した端末はありません。')).toBeTruthy();

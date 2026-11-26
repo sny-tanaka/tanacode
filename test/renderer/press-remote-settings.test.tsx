@@ -20,7 +20,7 @@ const stateOf = (publicUrl: string, status: RemoteStatus = { state: 'off' }): Re
 async function open(
   initial: RemoteSettingsState,
   set: (input: RemoteSettingsInput) => Promise<RemoteSettingsState> = (input) => Promise.resolve({ ...initial, settings: { ...initial.settings, ...input } }),
-  devices: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles: [] },
+  devices: RemoteDevicesState = { devices: [], pairing: null, problem: null, profiles: [], log: [] },
 ) {
   const onClose = vi.fn();
   api = mockApi({ 'remote.settings': () => Promise.resolve(initial), 'remote.setSettings': set as never, 'remote.devices': () => Promise.resolve(devices) });
@@ -36,6 +36,8 @@ const button = (name: string) => screen.getByRole('button', { name }) as HTMLBut
 describe('RemoteSettingsDialog', () => {
   it('今の設定が入っていて、変えるまでは保存できない。変えて保存すると、ポートと公開する URL を送って閉じる', async () => {
     const onClose = await open(stateOf(''));
+    // 画面ロック中も効くことは、ここに書いておく（決めたこと）
+    expect(screen.getByText('Mac の画面がロックされていても、遠隔操作は効きます。オンの間は、Mac が自動でスリープしません（蓋を閉じる・自分でスリープさせると、遠隔操作はできません）。')).toBeTruthy();
     expect(input(1).value).toBe('47413');
     expect(button('保存').disabled).toBe(true);
     fireEvent.change(input(0), { target: { value: ' https://mac.example.ts.net ' } });
@@ -46,7 +48,7 @@ describe('RemoteSettingsDialog', () => {
   });
 
   it('公開する URL のホスト名を変えるときは、登録した端末があれば先に確かめる（断れば保存しない）。ホスト名が同じ・端末が無いなら聞かない', async () => {
-    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: ['default'] }], pairing: null, problem: null, profiles: [] };
+    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: ['default'] }], pairing: null, problem: null, profiles: [], log: [] };
     const onClose = await open(stateOf('https://mac.example.ts.net'), undefined, devices);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
     fireEvent.change(input(0), { target: { value: 'https://other.example.ts.net' } });
@@ -62,7 +64,7 @@ describe('RemoteSettingsDialog', () => {
 
   it('ホスト名が同じなら、登録した端末があっても聞かない。もとの URL が無い（読めない）ときも聞かない', async () => {
     const confirm = vi.spyOn(window, 'confirm');
-    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [] }], pairing: null, problem: null, profiles: [] };
+    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [] }], pairing: null, problem: null, profiles: [], log: [] };
     const onClose = await open(stateOf('https://mac.example.ts.net'), undefined, devices);
     fireEvent.change(input(1), { target: { value: '50000' } });
     fireEvent.click(button('保存'));
@@ -76,7 +78,7 @@ describe('RemoteSettingsDialog', () => {
   });
 
   it('公開する URL のポートだけを変えても、登録した端末があれば確かめる（origin が変わると、ログインに使う鍵の保存先が変わる）', async () => {
-    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [] }], pairing: null, problem: null, profiles: [] };
+    const devices: RemoteDevicesState = { devices: [{ id: 'd1', name: 'iPhone', createdAt: 0, lastUsedAt: null, profileIds: [] }], pairing: null, problem: null, profiles: [], log: [] };
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onClose = await open(stateOf('https://mac.example.ts.net'), undefined, devices);
     fireEvent.change(input(0), { target: { value: 'https://mac.example.ts.net:8443' } });

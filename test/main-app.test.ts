@@ -1386,7 +1386,10 @@ describe('メニュー', () => {
     child.emit('message', { type: 'listening', port: 50123 });
     expect(menuItem('remoteStatus').label).toBe('127.0.0.1:50123 で待ち受けています（つながっているもの 0）');
     expect(menuItem('remoteEnabled')).toMatchObject({ checked: true, enabled: true });
+    // オンの間は、アプリが止められないようにする（Mac の自動のスリープも止まる）。オフにしたらやめる
+    expect([...state.powerSaveBlocks.values()]).toEqual(['prevent-app-suspension']);
     menuItem('remoteEnabled').click?.({ checked: false });
+    expect([...state.powerSaveBlocks.values()]).toEqual([]);
     expect(child.killed).toBe(true);
     expect(savedSettings()).toMatchObject({ remote: { enabled: false, port: 50123, publicUrl: 'https://mac.example.ts.net' } });
     expect(menuItem('remoteStatus').label).toBe('止まっています');
@@ -1455,7 +1458,7 @@ describe('メニュー', () => {
   it('遠隔操作の端末: 待ち受けていなければ、登録を受け付けない', async () => {
     await boot();
     await expect(invoke(IpcChannel.RemotePairingStart)).rejects.toThrow('遠隔操作が待ち受けていません');
-    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null, profiles: [{ id: 'default', name: expect.any(String) }] });
+    await expect(invoke(IpcChannel.RemoteDevicesGet)).resolves.toEqual({ devices: [], pairing: null, problem: null, profiles: [{ id: 'default', name: expect.any(String) }], log: [] });
   });
 
   it('遠隔操作の端末: 登録を受け付け、スマホに出た数字で承認すると一覧に載り、パスキーを遠隔サーバーに渡す。ログインで Mac に知らせ、取り消せる', async () => {
@@ -1491,6 +1494,11 @@ describe('メニュー', () => {
     expect(authOf({ op: 'login', registrationId, counter: 0, challengeId: challenge.challengeId, bindingSignature: binding.sign(String(challenge.challenge)) }).ok).toBe(true);
     expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-add', session: expect.objectContaining({ registrationId, profileIds: ['default'] }) }));
     expect(state.notifications.at(-1)?.options.body).toBe('遠隔操作でログインがありました: iPhone');
+    // 承認とログインは、記録に残し、Mac のダイアログの一覧にも出す（新しいものから）
+    expect(((await invoke(IpcChannel.RemoteDevicesGet)) as { log: unknown[] }).log).toEqual([
+      { at: expect.any(Number), kind: 'login', name: 'iPhone' },
+      { at: expect.any(Number), kind: 'pairing-approved', name: 'iPhone' },
+    ]);
 
     // 券は、束縛の鍵の署名を確かめて main が出し、その券の接続だけを受ける。つながっている端末は上の帯に出し、「切断」で全部を切る
     const added = child.posted.find((m) => (m as { type: string }).type === 'session-add') as { session: { sessionId: string } };
@@ -1584,6 +1592,12 @@ describe('メニュー', () => {
     expect(((await invoke(IpcChannel.RemoteDevicesGet)) as { devices: unknown[] }).devices).toEqual([]);
     expect(child.posted).toContainEqual(expect.objectContaining({ type: 'session-remove' }));
     expect(child.posted.at(-1)).toEqual({ type: 'credentials', credentials: [] });
+    // 切断・ログインの失敗・取り消しも記録に残る。記録は userData の remote.log に書き、スマホから消す口は無い
+    const kinds = ((await invoke(IpcChannel.RemoteDevicesGet)) as { log: { kind: string }[] }).log.map((e) => e.kind);
+    expect(kinds.slice(0, 3)).toEqual(['device-removed', 'login-failures', 'login-failures']);
+    expect(kinds).toContain('disconnect-all');
+    await vi.waitFor(() => expect(readFileSync(join(state.userData, 'remote.log'), 'utf8')).toContain('"kind":"device-removed"'));
+    expect(readFileSync(join(state.userData, 'remote.log'), 'utf8')).not.toContain(registrationId);
   });
 
   it('遠隔操作をオフにしている間は、スマホへの通知（Web Push）を送らない（購読は残し、オンに戻すとまた送る）', async () => {

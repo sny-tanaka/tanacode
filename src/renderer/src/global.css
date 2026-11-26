@@ -3078,6 +3078,24 @@ button.session-ref:hover {
   gap: 8px;
   font-size: 12px;
 }
+.remote-log {
+  align-self: stretch;
+}
+.remote-log summary {
+  cursor: pointer;
+}
+.remote-log-list {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.remote-log-list li {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
 .remote-device-list {
   align-self: stretch;
   margin: 0;

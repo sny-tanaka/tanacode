@@ -591,7 +591,10 @@ export class ClaudeRun {
       for (const entry of entries) {
         const a = entry.attachment;
         if (entry.type !== 'attachment' || (a?.type !== 'hook_non_blocking_error' && a?.type !== 'hook_error_during_execution')) continue;
-        hookErrors.push(`${String(a.type)} ${String(a.hookEvent)}（${String(a.hookName)}・終了コード ${String(a.exitCode)}）: ${String(a.stderr ?? a.content ?? '').slice(0, 500)}`);
+        // どの hooks が落ちたかを、次に CI で落ちたときに読めるように、コマンド・出力・かかった時間も出す
+        hookErrors.push(
+          `${String(a.type)} ${String(a.hookEvent)}（${String(a.hookName)}・終了コード ${String(a.exitCode)}・${String(a.durationMs ?? '?')}ms）: ${String(a.stderr ?? a.content ?? '').slice(0, 500)}\n  コマンド: ${String(a.command ?? '').slice(0, 500)}\n  stdout: ${String(a.stdout ?? '').slice(0, 500)}`,
+        );
       }
     }
     if (hookErrors.length > 0) console.warn(`フックの失敗が会話ログに書かれました:\n${hookErrors.join('\n')}`);
