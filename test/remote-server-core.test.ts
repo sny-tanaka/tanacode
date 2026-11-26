@@ -158,7 +158,8 @@ describe('HTTP の口', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
     expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
-    expect(res.headers['strict-transport-security']).toBe('max-age=31536000');
+    // HSTS は付けない（同じ名前のほかのポートの http まで巻き込むため）
+    expect(res.headers['strict-transport-security']).toBeUndefined();
     expect(res.body).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
@@ -553,6 +554,19 @@ describe('WebSocket の口', () => {
     again.ws.send(JSON.stringify({ id: 4, kind: 'invoke', profileId: 'default', channel: 'x', args: [] }));
     await waitFor(() => posted.find((m) => m.type === 'call' && m.id === 4));
     again.ws.close();
+  });
+
+  it('main の返事・知らせが文字にできない（入れ子が深すぎる）ときは、返事は失敗として返し、知らせは捨てる。このプロセスは落ちない', async () => {
+    const { port, posted, core } = await start();
+    const client = await connect(port);
+    const clientId = (posted.find((m) => m.type === 'connected') as { clientId: string }).clientId;
+    let deep: unknown = 1;
+    for (let i = 0; i < 100_000; i += 1) deep = [deep];
+    expect(() => core.handle({ type: 'event', clientIds: [clientId], channel: 'sessions:changed', payload: deep })).not.toThrow();
+    expect(() => core.handle({ type: 'result', id: 5, clientId, ok: true, value: deep })).not.toThrow();
+    await waitFor(() => (client.messages.length >= 2 ? true : undefined));
+    expect(client.messages[1]).toEqual({ id: 5, ok: false, error: 'the result could not be sent' });
+    client.ws.close();
   });
 
   it('バイナリの伝文は切る（4003）', async () => {

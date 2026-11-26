@@ -104,9 +104,9 @@ const BASE_HEADERS = {
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   // ほかのサイト（同じ tailnet の別のマシンを含む）のページから、ここの応答を読み込ませない
+  // （Strict-Transport-Security は付けない。ホスト名ごとに効くので、同じ名前のほかのポートで http のまま見ている開発サーバーなどまで、
+  // スマホで 1 年開けなくしてしまう。Cookie は __Host- と Secure で http には送られず、公開する URL も https だけなので、得るものが小さい）
   'cross-origin-resource-policy': 'same-origin',
-  // https でだけ開かせる（公開する URL は https だけ。転送の手前で https が終わっていても、スマホには https で届く）
-  'strict-transport-security': 'max-age=31536000',
   'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 };
 
@@ -158,11 +158,24 @@ export class RemoteServerCore {
       case 'result': {
         const client = this.clients.get(message.clientId);
         if (!client) return;
-        this.deliver(client, encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error }));
+        // 文字にできない返事（入れ子が深すぎて溢れるなど）は、失敗として返す（このプロセスを落とさない）
+        let text: string;
+        try {
+          text = encodeForClient(message.ok ? { id: message.id, ok: true, value: message.value } : { id: message.id, ok: false, error: message.error });
+        } catch {
+          text = encodeForClient({ id: message.id, ok: false, error: 'the result could not be sent' });
+        }
+        this.deliver(client, text);
         break;
       }
       case 'event': {
-        const text = encodeForClient(message.profileId === undefined ? { event: message.channel, payload: message.payload } : { event: message.channel, profileId: message.profileId, payload: message.payload });
+        // 文字にできない知らせは捨てる（このプロセスを落とさない）
+        let text: string;
+        try {
+          text = encodeForClient(message.profileId === undefined ? { event: message.channel, payload: message.payload } : { event: message.channel, profileId: message.profileId, payload: message.payload });
+        } catch {
+          return;
+        }
         for (const id of message.clientIds) {
           const client = this.clients.get(id);
           if (client) this.deliver(client, text);
