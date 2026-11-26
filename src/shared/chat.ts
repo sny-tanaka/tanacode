@@ -157,6 +157,11 @@ export type HookRun = {
   // 何も出力しなかったフック（stream の hook_response から作ったもの）の、Claude Code の hook_id。1 回の実行ごとに違うので、
   // 画面はこれで同じ実行の重なりを見分ける（コマンドが無いので、ほかの欄では見分けられない）
   hookId?: string;
+  // 画面に出さない、アプリが足したフックの Stop の失敗・止めた記録。その回（toolUseId）に、どのフックのものかが分かる記録があったという印にだけ使う
+  hidden?: true;
+  // Stop の要約の行（stop_hook_summary）の、どのフックのものか分からない失敗の文。画面は、同じ回にどのフックのものかが分かる記録が
+  // 無ければ（その記録を残さない古い Claude Code の会話ログ）、この文を添えて失敗として出す
+  unattributed?: string[];
 };
 
 // チャットに載せる出力の上限（全文はデバッグ用ターミナルか会話ログで見る）
@@ -574,6 +579,9 @@ function isAppText(text: string): boolean {
   return text.includes(`<${CHECKLIST_REMINDER_TAG}>`) || text.includes(`<${INSTRUCTIONS_TAG} `);
 }
 
+// Stop の失敗・止めた記録の種類
+const STOP_FAILURES: ReadonlySet<string> = new Set(['hook_non_blocking_error', 'hook_error_during_execution', 'hook_blocking_error']);
+
 // type: hook_ で始まる attachment の種類
 function hookRunOf(a: Record<string, unknown>, type: string): HookRun | null {
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -586,7 +594,12 @@ function hookRunOf(a: Record<string, unknown>, type: string): HookRun | null {
   const content = users ? users.join('\n') : str(a.content);
   // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
   // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせと TANACODE.md は囲みで見分ける）
-  if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || (users ? users.length === 0 : isAppText(content))) return null;
+  const appCommand = isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '');
+  // ただし Stop の失敗・止めた記録は、出さない印として渡す（要約の行の失敗が、アプリのフックのものだと画面が分かるように）
+  if (appCommand && str(a.hookEvent) === 'Stop' && STOP_FAILURES.has(type)) {
+    return { event: 'Stop', name: 'Stop', command: null, outcome: HOOK_OUTCOME[type] ?? 'error', exitCode: null, durationMs: null, stdout: '', stderr: '', message: '', toolUseId: str(a.toolUseID) || null, hidden: true };
+  }
+  if (appCommand || (users ? users.length === 0 : isAppText(content))) return null;
   // 自動の最適化圧縮が、ツールのあとのフックでターンを止めた記録（hook_stopped_continuation）。コマンドが載らないので、止めた理由の文で
   // 見分ける。前のバージョンのアプリ（suppressOutput を書かなかった頃）の成功の記録は、標準出力の JSON の stopReason に入る
   if (isAutoCompactStop(str(a.message)) || isAutoCompactStop(content) || isAutoCompactStop(stopReasonOf(str(a.stdout)))) return null;
@@ -660,9 +673,11 @@ function stopHookEvents(entry: TranscriptEntry): ChatEvent[] {
   const infos = entry.hookInfos ?? [];
   const users = infos.filter((h) => h.command && h.command !== 'callback' && !isAppHook(h.command));
   // 要約の hookErrors には、どのフックの失敗かが残らない（failedHookErrorIndexes も hookErrors の中の番号。2.1.331 で確かめた）。
-  // アプリのフック・内部の callback と並んでいれば、そちらの失敗かもしれないので、ここでは失敗と決めない。ユーザーのフックの失敗は、
-  // 先に届くコマンド付きの記録（hook_non_blocking_error。hookRunOf）で失敗と出し、同じフックのこの行は画面でまとめられる
-  const errors = users.length === infos.length ? (entry.hookErrors ?? []).map(String) : [];
+  // アプリのフック・内部の callback（実際の会話ログでは、いつも並んでいる）と並んでいれば、そちらの失敗かもしれないので、ここでは決めずに
+  // unattributed として渡す。画面が、同じ回に先に届いた、どのフックのものかが分かる記録（ユーザーのフックの記録と、アプリのフックの印）を見て決める
+  const errors = (entry.hookErrors ?? []).map(String);
+  const ambiguous = users.length !== infos.length;
+  const prevented = entry.preventedContinuation === true;
   return users
     .map((h, i) => ({
       type: 'hook' as const,
@@ -671,13 +686,14 @@ function stopHookEvents(entry: TranscriptEntry): ChatEvent[] {
         event: 'Stop',
         name: 'Stop',
         command: h.command ?? null,
-        outcome: entry.preventedContinuation ? ('blocked' as const) : errors.length > 0 ? ('error' as const) : ('success' as const),
+        outcome: prevented ? ('blocked' as const) : errors.length > 0 && !ambiguous ? ('error' as const) : ('success' as const),
         exitCode: null,
         durationMs: h.durationMs ?? null,
         stdout: '',
-        stderr: errors.join('\n'),
+        stderr: ambiguous ? '' : errors.join('\n'),
         message: entry.stopReason ?? '',
         toolUseId: entry.toolUseID ?? null,
+        ...(ambiguous && !prevented && errors.length > 0 ? { unattributed: errors } : {}),
       },
     }));
 }

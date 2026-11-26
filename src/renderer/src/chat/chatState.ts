@@ -89,6 +89,9 @@ export type ChatState = {
   inTurn: boolean;
   // 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追う）
   unsent: UnsentPrompt[];
+  // Stop のフックの、どのフックのものかが分かる失敗・止めた記録（アプリのフックの印を含む）が届いた回（toolUseId。新しいものを後ろに、少しだけ持つ）。
+  // 要約の行の、どのフックのものか分からない失敗（unattributed）を、失敗として出すかを決めるのに使う
+  stopHookRecords: string[];
 };
 
 // Claude が書いている途中の応答の文と思考（main が配信に載せる今の全部。会話ログに出たら、その応答と同じ配信で外れる）。
@@ -107,6 +110,7 @@ export const EMPTY_CHAT: ChatState = {
   pendingTasks: {},
   inTurn: false,
   unsent: [],
+  stopHookRecords: [],
 };
 
 // TaskUpdate を一覧に当てる（deleted は消す）
@@ -297,6 +301,10 @@ class Rows {
 
 // hooks はツールのカードに付ける。ツールに付かないものは、直前の同じきっかけの hooks とまとめる。
 // Stop の要約と出力のあった記録は同じ実行なので、重ねない（出力のある方を残す）
+// 同じきっかけの hooks の行を、何行前まで探してまとめるか（回の分かるものだけ）/ Stop のフックの記録を覚えておく回の数
+const HOOK_MERGE_REACH = 8;
+const STOP_HOOK_RECORDS = 20;
+
 function addHook(rows: Rows, id: string, run: HookRun): void {
   const merge = (runs: HookRun[]) => (runs.some((r) => sameRun(r, run)) ? runs : [...runs, run]);
   const tool = run.toolUseId ? (rows.tools(run.toolUseId)[0] ?? -1) : -1;
@@ -308,10 +316,14 @@ function addHook(rows: Rows, id: string, run: HookRun): void {
     rows.set(tool, { ...target, hooks: merge(target.hooks ?? []) });
     return;
   }
-  const last = rows.last;
-  if (last?.kind === 'hook' && last.runs[0].toolUseId === run.toolUseId && last.runs[0].event === run.event) {
-    rows.set(rows.length - 1, { ...last, runs: merge(last.runs) });
-    return;
+  // 同じきっかけの hooks の行にまとめる（直前の行のほか、回の分かる行は少し前まで探す。会話ログでは、Stop の記録と要約の行の間に別の行が入ることがある）
+  const reach = run.toolUseId ? HOOK_MERGE_REACH : 1;
+  for (let at = rows.length - 1; at >= Math.max(0, rows.length - reach); at--) {
+    const row = rows.at(at);
+    if (row?.kind === 'hook' && row.runs[0].toolUseId === run.toolUseId && row.runs[0].event === run.event) {
+      rows.set(at, { ...row, runs: merge(row.runs) });
+      return;
+    }
   }
   rows.push({ kind: 'hook', id, runs: [run] });
 }
@@ -485,9 +497,24 @@ function apply(state: ChatState, event: ChatEvent, rows: Rows): ChatState {
       for (const e of event.events) next = apply(next, e, rows);
       return next;
     }
-    case 'hook':
-      addHook(rows, event.id, event.run);
-      return state;
+    case 'hook': {
+      const run = event.run;
+      // どのフックのものかが分かる Stop の失敗・止めた記録（会話ログでは、要約の行より先に書かれる）を、回ごとに覚えておく
+      const recorded = run.event === 'Stop' && run.toolUseId !== null && !run.unattributed && (run.hidden === true || run.outcome === 'error' || run.outcome === 'blocked');
+      const next = recorded ? { ...state, stopHookRecords: [...state.stopHookRecords.filter((id) => id !== run.toolUseId), run.toolUseId!].slice(-STOP_HOOK_RECORDS) } : state;
+      // アプリのフックの印は、行に出さない
+      if (run.hidden) return next;
+      if (!run.unattributed) {
+        addHook(rows, event.id, run);
+        return next;
+      }
+      // 要約の行の、どのフックのものか分からない失敗。同じ回に記録があれば、失敗はそちらで出ているので成功のまま。
+      // 無ければ（その記録を残さない古い Claude Code の会話ログ）、どれかが失敗したことが分かるよう、失敗の文を添えて失敗と出す
+      const { unattributed, ...rest } = run;
+      const known = run.toolUseId !== null && next.stopHookRecords.includes(run.toolUseId);
+      addHook(rows, event.id, known ? rest : { ...rest, outcome: 'error', stderr: unattributed.join('\n') });
+      return next;
+    }
     case 'remote-control':
       return { ...state, remoteControlUrl: event.url };
     case 'queue':

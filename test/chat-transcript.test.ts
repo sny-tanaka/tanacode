@@ -130,10 +130,27 @@ describe('toChatEvents: system の行', () => {
     expect(withApp).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'npm test', durationMs: 900 }) }]);
     // アプリのフックと並んでいるときの失敗は、どのフックのものか分からない（アプリのフックの失敗かもしれない）ので、ユーザーのフックを失敗にしない。
     // ユーザーのフックの失敗は、コマンド付きの記録（hook_non_blocking_error）で出る
+    // どのフックのものか分からない失敗の文として渡し、画面が、同じ回の記録を見て決める（chatState）
     const appFailed = events({ ...summary, hookInfos: [{ command: CHECKLIST_HOOK_COMMAND }, { command: 'cat > /dev/null' }], hookErrors: ['Exit code 1'] });
-    expect(appFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'cat > /dev/null', outcome: 'success', stderr: '' }) }]);
+    expect(appFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'cat > /dev/null', outcome: 'success', stderr: '', unattributed: ['Exit code 1'] }) }]);
     const callbackFailed = events({ ...summary, hookInfos: [{ command: 'callback' }, { command: 'lint' }], hookErrors: ['x'] });
-    expect(callbackFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'lint', outcome: 'success' }) }]);
+    expect(callbackFailed).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'lint', outcome: 'success', unattributed: ['x'] }) }]);
+    // 止めたときは、止めたと出す（どのフックか分からない失敗の文は付けない）
+    expect(events({ ...summary, hookInfos: [{ command: 'callback' }, { command: 'lint' }], hookErrors: ['x'], preventedContinuation: true })[0]).toMatchObject({ run: { outcome: 'blocked' } });
+    expect((events({ ...summary, hookInfos: [{ command: 'callback' }, { command: 'lint' }], hookErrors: ['x'], preventedContinuation: true })[0] as { run: object }).run).not.toHaveProperty('unattributed');
+  });
+
+  it('アプリのフックの Stop の失敗・止めた記録は、画面に出さない印として渡す（ほかの出来事・成功の記録は出さない）', () => {
+    const app = (type: string, extra: Record<string, unknown> = {}) => events(attachment({ type, hookEvent: 'Stop', hookName: 'Stop', command: CHECKLIST_HOOK_COMMAND, toolUseID: 't1', exitCode: 1, ...extra }));
+    for (const type of ['hook_non_blocking_error', 'hook_error_during_execution']) {
+      expect(app(type)).toEqual([{ type: 'hook', id: 'at1', run: expect.objectContaining({ event: 'Stop', command: null, outcome: 'error', toolUseId: 't1', hidden: true }) }]);
+    }
+    // チェックリストのフックが止めた記録は、checklist-stop として別に読む。ほかのアプリのフック（ターンの終わりを知らせるもの）で確かめる
+    expect(app('hook_blocking_error', { command: undefined, blockingError: { blockingError: 'x', command: 'cat > "${TANACODE_ASK_FILE%.ask.json}.idle.json"' } })).toEqual([
+      { type: 'hook', id: 'at1', run: expect.objectContaining({ outcome: 'blocked', hidden: true }) },
+    ]);
+    expect(app('hook_success')).toEqual([]);
+    expect(events(attachment({ type: 'hook_non_blocking_error', hookEvent: 'PreToolUse', command: CHECKLIST_HOOK_COMMAND, toolUseID: 't1' }))).toEqual([]);
   });
 
   it('API エラーの再試行中の行は、回数を添えて出す（今の Claude Code は会話ログに残さない）', () => {
