@@ -23,6 +23,11 @@ describe('addIntegrity', () => {
     );
   });
 
+  it('タグと属性の名前の大文字・小文字は区別しない', () => {
+    const out = addIntegrity('<SCRIPT SRC="./assets/a.js" CROSSORIGIN></SCRIPT>\n<LINK HREF="./assets/b.css" INTEGRITY="sha384-old">', (file) => (file === 'assets/a.js' ? 'a' : 'b'));
+    expect(out).toBe(`<SCRIPT SRC="./assets/a.js" CROSSORIGIN integrity="${sri('a')}"></SCRIPT>\n<LINK HREF="./assets/b.css" INTEGRITY="sha384-old">`);
+  });
+
   it('成果物に無いもの・assets の外・もう付いているものは触らない。バイト列の中身でも付ける', () => {
     const html = [
       '<link rel="manifest" href="/manifest.webmanifest" />',

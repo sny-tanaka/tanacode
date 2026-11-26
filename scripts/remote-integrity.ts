@@ -5,14 +5,15 @@ import { createHash } from 'node:crypto';
 // ./assets/ の下で、ビルドの成果物にあるものだけに付ける（ほかのもの・もう付いているものは触らない）。
 // 使うときに読み込むもの（Monaco など）は、HTML に名前が出ないので、ここでは付けない
 export function addIntegrity(html: string, contentOf: (file: string) => string | Uint8Array | null): string {
-  return html.replace(/<(script|link)\b([^>]*)>/g, (tag, name: string, attrs: string) => {
-    if (/\sintegrity=/.test(attrs)) return tag;
-    const ref = /\s(?:src|href)="\.\/(assets\/[^"]+)"/.exec(attrs);
+  // タグと属性の名前は、大文字・小文字を区別しない（HTML の決まり）
+  return html.replace(/<(script|link)\b([^>]*)>/gi, (tag, name: string, attrs: string) => {
+    if (/\sintegrity=/i.test(attrs)) return tag;
+    const ref = /\s(?:src|href)="\.\/(assets\/[^"]+)"/i.exec(attrs);
     if (!ref) return tag;
     const content = contentOf(ref[1]);
     if (content === null) return tag;
     const digest = createHash('sha384').update(content).digest('base64');
-    const crossorigin = /\scrossorigin\b/.test(attrs) ? '' : ' crossorigin';
+    const crossorigin = /\scrossorigin\b/i.test(attrs) ? '' : ' crossorigin';
     return `<${name}${attrs} integrity="sha384-${digest}"${crossorigin}>`;
   });
 }
