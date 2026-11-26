@@ -131,6 +131,46 @@ describe('チャットの行', () => {
     ]);
   });
 
+  it('hooks: Stop のフックの失敗は、先に届くコマンド付きの記録のまま残す（あとから届く要約の行の「成功」で上書きしない）', () => {
+    const chat = run([
+      { type: 'hook', id: 'a1', run: hook({ command: 'cat > /dev/null', outcome: 'error', exitCode: 1, toolUseId: 'x' } as Partial<HookRun>) },
+      { type: 'hook', id: 's1:0', run: hook({ command: 'cat > /dev/null', outcome: 'success', exitCode: null, toolUseId: 'x' } as Partial<HookRun>) },
+      { type: 'hook', id: 's1:1', run: hook({ command: 'lint', outcome: 'success', exitCode: null, toolUseId: 'x' } as Partial<HookRun>) },
+    ]);
+    const rows = chat.items.filter((i) => i.kind === 'hook');
+    expect(rows.flatMap((i) => (i.kind === 'hook' ? i.runs.map((r) => `${r.command}:${r.outcome}`) : []))).toEqual(['cat > /dev/null:error', 'lint:success']);
+  });
+
+  it('hooks: 要約の行のどのフックのものか分からない失敗は、同じ回に記録（アプリのフックの印を含む）があれば成功のまま、無ければ（古い会話ログ）失敗と出す', () => {
+    const summary = (toolUseId: string | null) => hook({ command: 'cat > /dev/null', outcome: 'success', exitCode: null, toolUseId, unattributed: ['Exit code 1'] } as Partial<HookRun>);
+    const outcomes = (chat: ReturnType<typeof run>) => chat.items.flatMap((i) => (i.kind === 'hook' ? i.runs.map((r) => `${r.command}:${r.outcome}:${r.stderr ?? ''}`) : []));
+    // アプリのフックだけが失敗した（印は行に出さない）
+    const appOnly = run([
+      { type: 'hook', id: 'a1', run: hook({ command: null, outcome: 'error', toolUseId: 'x', hidden: true } as Partial<HookRun>) },
+      { type: 'hook', id: 's1:0', run: summary('x') },
+    ]);
+    expect(outcomes(appOnly)).toEqual(['cat > /dev/null:success:']);
+    expect(appOnly.items.flatMap((i) => (i.kind === 'hook' ? i.runs : [])).some((r) => 'unattributed' in r || r.hidden)).toBe(false);
+    // 記録の無い古い会話ログ・回の分からない要約は、どれかが失敗したことが分かるよう、失敗の文を添えて失敗と出す
+    expect(outcomes(run([{ type: 'hook', id: 's1:0', run: summary('y') }]))).toEqual(['cat > /dev/null:error:Exit code 1']);
+    expect(outcomes(run([{ type: 'hook', id: 's1:0', run: summary(null) }]))).toEqual(['cat > /dev/null:error:Exit code 1']);
+    // 別の回の記録では決めない
+    expect(outcomes(run([{ type: 'hook', id: 'a1', run: hook({ command: null, outcome: 'error', toolUseId: 'other', hidden: true } as Partial<HookRun>) }, { type: 'hook', id: 's1:0', run: summary('y') }]))).toEqual([
+      'cat > /dev/null:error:Exit code 1',
+    ]);
+  });
+
+  it('hooks: 同じ回の Stop のフックの記録と要約の行の間に別の行があっても、1 つの行にまとめる（先に届いた止めた記録を残す）', () => {
+    const chat = run([
+      { type: 'hook', id: 'b1', run: hook({ command: 'lint', outcome: 'blocked', toolUseId: 'x' } as Partial<HookRun>) },
+      { type: 'assistant-text', id: 'm1', text: '直します' },
+      { type: 'hook', id: 's1:0', run: hook({ command: 'lint', outcome: 'success', exitCode: null, toolUseId: 'x', unattributed: ['x'] } as Partial<HookRun>) },
+    ] as ChatEvent[]);
+    const hooks = chat.items.filter((i) => i.kind === 'hook');
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].kind === 'hook' && hooks[0].runs.map((r) => `${r.command}:${r.outcome}`)).toEqual(['lint:blocked']);
+  });
+
   it('hooks: 何も出力しなかったフック（hook_id のあるもの）は、1 回ずつ別の実行なので重ねない（カードに付けるものも、ツールに付かない行も）', () => {
     const quiet = (hookId: string, toolUseId: string | null) => hook({ event: 'PreToolUse', name: 'PreToolUse:Read', command: null, toolUseId, hookId } as Partial<HookRun>);
     const chat = run([
