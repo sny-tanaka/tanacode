@@ -395,10 +395,6 @@ function remoteStatusLabel(status: RemoteStatus): string {
   }
 }
 
-// 遠隔操作を作っている間（Issue #464 の段階 1 が揃うまで）は、TANACODE_REMOTE_ACCESS=1 で起動したときだけ、メニューに出して待ち受ける
-// （本人確認ができるまでは、誰もつなげない待ち受けになるため。リリースに未完成の項目を出さない）
-const remoteAccessAvailable = () => process.env.TANACODE_REMOTE_ACCESS === '1';
-
 // 遠隔操作がオンの間、アプリが止められないようにする（powerSaveBlocker の id。オフなら null）。prevent-app-suspension は Mac の自動のスリープも止める
 // （外出先からつながり続けるため。決めたこと）。画面を消すこと・蓋を閉じる・自分でスリープさせることは止めない
 let remoteSuspensionBlocker: number | null = null;
@@ -413,10 +409,6 @@ function keepAwakeForRemote(on: boolean): void {
 
 // 遠隔操作の設定に合わせて、待ち受けを始める・やめる
 function applyRemote(): void {
-  if (!remoteAccessAvailable()) {
-    keepAwakeForRemote(false);
-    return remoteHost.stop();
-  }
   const remote = settings.remote();
   const publicOrigin = publicOriginOf(remote.publicUrl);
   // 登録の一覧を読めない（暗号化が使えない・古いファイルに戻された）ときは、待ち受けない（失敗したら閉じる）
@@ -1494,7 +1486,7 @@ function buildMenu(): void {
               sendTo(activeId)(IpcChannel.McpSettingsOpen, undefined);
             },
           },
-          ...(remoteAccessAvailable() ? [remoteMenu()] : []),
+          remoteMenu(),
           { type: 'separator' },
           { id: 'usageLimitResume', label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
           {
