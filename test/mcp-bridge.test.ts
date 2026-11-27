@@ -365,6 +365,26 @@ describe('中継の JSON-RPC', () => {
     expect(closed).toBe(true);
   });
 
+  it('runRelay: 行は改行だけで分ける。U+2028・U+2029 を含む引数（JSON.stringify はそのまま書く）も 1 つの頼みとして読む。CRLF の行も読む', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.setEncoding('utf8');
+    let text = '';
+    output.on('data', (chunk: string) => (text += chunk));
+    runRelay(input, output, deps, () => {});
+    const line = JSON.stringify({ jsonrpc: '2.0', id: 'sep', method: 'tools/call', params: { name: 'look', arguments: { text: 'a\u2028b\u2029c' } } });
+    // readline で読むと、ここで行が切れて読めず、Claude Code は返事を待ち続けていた
+    expect(line).toContain('\u2028');
+    input.write(`${line}\n`);
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'crlf', method: 'ping' })}\r\n`);
+    for (let i = 0; i < 50 && text.split('\n').filter(Boolean).length < 2; i++) await sleep(10);
+    const replies = text.split('\n').filter(Boolean).map((l) => JSON.parse(l) as { id: string | null; error?: unknown });
+    expect(replies.map((r) => r.id).sort()).toEqual(['crlf', 'sep']);
+    expect(replies.some((r) => r.error)).toBe(false);
+    expect(calls.at(-1)).toEqual({ tool: 'look', args: { text: 'a\u2028b\u2029c' } });
+    input.end();
+  });
+
   it('runRelay: tools/list のツールの短い名前（title）は、アプリが env で渡した言語にする。無い・知らない値なら変えない（中継のプロセスでは既定の言語）', async () => {
     const labeled: McpServerDef = { ...def, tools: [{ ...def.tools[0], name: 'screenshot' }] };
     // 中継を動かし、tools/list の title を返す

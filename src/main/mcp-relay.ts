@@ -1,8 +1,8 @@
-import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { isLanguage, setLanguage } from '@shared/i18n';
 import { findTool, mcpToolLabel, type McpServerDef } from '@shared/mcp-tools';
 import { MCP_LANGUAGE_ENV, textResult, type ToolResult } from './mcp-bridge';
+import { splitLines } from './split-lines';
 
 // tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
 // ツールの呼び出しをアプリへ中継する。MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く。
@@ -73,10 +73,13 @@ export function runRelay(input: Readable, output: Writable, deps: RelayDeps, onC
   const lang = process.env[MCP_LANGUAGE_ENV];
   if (isLanguage(lang)) setLanguage(lang);
   const write = (message: Outgoing) => output.write(`${JSON.stringify(message)}\n`);
-  const lines = createInterface({ input, crlfDelay: Infinity });
+  // 行は改行（\n）だけで分ける。readline は U+2028・U+2029 も行の区切りにするが、JSON.stringify はこの 2 つを逃がさずにそのまま書くので、
+  // 本文にこれを含む頼み（Claude がツールの引数に書いたもの）が途中で切れて読めず、Claude Code は返事を待ち続けていた
+  input.setEncoding('utf8');
   // 答えている途中の呼び出し（id → 取り消し）
   const running = new Map<Id, AbortController>();
-  lines.on('line', (line) => {
+  input.on('data', splitLines((raw) => {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
     if (!line.trim()) return;
     let message: Incoming;
     try {
@@ -101,6 +104,6 @@ export function runRelay(input: Readable, output: Writable, deps: RelayDeps, onC
       .finally(() => {
         if (id !== undefined && running.get(id) === cancel) running.delete(id);
       });
-  });
-  lines.on('close', onClose);
+  }));
+  input.once('end', onClose);
 }
