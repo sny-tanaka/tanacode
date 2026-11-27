@@ -54,8 +54,13 @@ describe(`Claude Code ${version} の作業中の表示（判定待ち・圧縮�
     await bridge.start();
     api = new MockApi();
     baseUrl = await api.start();
-    // auto モードの判定（ツールの一覧の無い呼び出し。1 段目は <severity>N</severity> だけを答えさせる）を 5 秒待たせて、害が無いと答える
-    api.plainReplies = [{ match: 'Respond with <severity>N</severity>', text: '<severity>0', delayMs: 5000 }];
+    // auto モードの判定（ツールの一覧の無い呼び出し。1 段目は <severity>N</severity> だけを答えさせる）を 5 秒待たせて、害が無いと答える。
+    // 2.1.332 から、1 段目のあとに 2 段目（考えてから <severity>N</severity> を答えさせる）も届くので、そちらにも害が無いと答える
+    // （答えられないと、Claude Code は判定できなかったとして止める）
+    api.plainReplies = [
+      { match: 'Respond with <severity>N</severity>', text: '<severity>0', delayMs: 5000 },
+      { match: 'then respond with <severity>N</severity>', text: '<severity>0</severity>' },
+    ];
     api.intercept = (prompt, results) => {
       // 要約の頼み。答えたら、コンテキストの量を小さく戻す（圧縮のあとも埋まったままにしない）
       if (prompt.includes(SUMMARY_REQUEST)) {
