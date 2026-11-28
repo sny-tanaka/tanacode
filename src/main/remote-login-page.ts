@@ -48,9 +48,10 @@ function html(): string {
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<!-- ステータスバーは default（ページはステータスバーの下から始まる）。端から端まで描く指定にすると、iOS 27 がステータスバーの下の約 35pt にぼかしをかけ、上の帯がぼやける（WebKit bug 324438）。ホーム画面に追加したときに読まれるので、ここが本体 -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#111111">
 <meta name="referrer" content="no-referrer">
 <link rel="manifest" href="/manifest.webmanifest">

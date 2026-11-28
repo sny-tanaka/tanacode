@@ -37,6 +37,26 @@ export function takeDrafts(): Record<string, Draft> {
   }
 }
 
+// スマホで見ているセッション。画面を読み込み直したとき（つなぎ直したとき・iOS が裏に回した画面を閉じて開き直したとき）に、
+// 一覧の先頭ではなく、見ていたセッションに戻すために、手元に控える（localStorage。画面を閉じても残す）
+const SELECTED_KEY = 'tanacode.remote.selected';
+
+export function rememberSelected(sessionId: string): void {
+  try {
+    localStorage.setItem(SELECTED_KEY, sessionId);
+  } catch {
+    // 控えられなくても、選ぶのは止めない
+  }
+}
+
+export function rememberedSelected(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_KEY);
+  } catch {
+    return null;
+  }
+}
+
 // Mac とつながっているか（スマホの画面の上の帯に出す）。運び役が変わるたびに知らせる
 let connected = true;
 const connectionListeners = new Set<(on: boolean) => void>();

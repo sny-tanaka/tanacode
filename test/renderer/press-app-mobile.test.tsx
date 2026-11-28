@@ -91,6 +91,8 @@ beforeEach(() => {
   vi.stubGlobal('__APP_VERSION__', '1.0.0');
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
   setRemoteMode(true);
+  // 見ていたセッションの控え（localStorage）を、テストごとに空にする
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -124,6 +126,24 @@ describe('スマホの画面の配置（App）', () => {
     await flush();
     expect(app().dataset.sessionDrawer).toBeUndefined();
     expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('米の話');
+  });
+
+  it('読み込み直したとき（つなぎ直し・iOS が裏に回した画面を開き直した）は、一覧の先頭ではなく、見ていたセッションに戻す。消えていれば先頭', async () => {
+    const first = render(<App />);
+    await flush();
+    expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('パンの話');
+    fireEvent.click(screen.getByRole('button', { name: 'セッション一覧' }));
+    fireEvent.click(screen.getAllByText('米の話')[0]);
+    await flush();
+    first.unmount();
+    const second = render(<App />);
+    await flush();
+    expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('米の話');
+    second.unmount();
+    localStorage.setItem('tanacode.remote.selected', 'gone');
+    render(<App />);
+    await flush();
+    expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('パンの話');
   });
 
   it('チャットの見出しのスイッチとボタンは「…」の中にまとめ、押したら閉じる。外を押しても閉じる', async () => {

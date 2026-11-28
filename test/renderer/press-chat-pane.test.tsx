@@ -592,6 +592,31 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(100);
   });
 
+  it('最下部を追いかけている間に、指で上へスクロールしたら追いかけをやめる（スマホ）。指で下へ動かしたときは送り直す', () => {
+    const base = props({ chat: chatOf({ status: 'running' }) });
+    render(<ClaudePane {...base} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => 1000 });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    fireEvent(list, new Event('scrollend'));
+    // 指を上へ動かす（一覧は下へ動く）: 最下部へ送り直す
+    fireEvent.touchStart(list, { touches: [{ clientY: 300 }] });
+    fireEvent.touchMove(list, { touches: [{ clientY: 250 }] });
+    list.scrollTop = 780;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(1000);
+    fireEvent.touchEnd(list);
+    fireEvent(list, new Event('scrollend'));
+    // 指を下へ動かす（一覧は上へ動く）: 人が上を読み始めたので、送り戻さない
+    fireEvent.touchStart(list, { touches: [{ clientY: 300 }] });
+    fireEvent.touchMove(list, { touches: [{ clientY: 400 }] });
+    list.scrollTop = 600;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(600);
+  });
+
   it('書いている途中の文は、会話の最後（作業中の表示の上）に素の文で出し、伸びたら最下部を追いかける。会話ログに出たら、同じ場所で本文に入れ替わる', () => {
     const writing = (text: string) => props({ chat: chatOf({ status: 'running' }), partials: fixedPartial([{ id: 'm:1', kind: 'thinking', text: '考え' }, { id: 'm:2', kind: 'text', text }]) });
     const view = render(<ClaudePane {...writing('**パン**は')} />);

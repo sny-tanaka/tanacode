@@ -81,7 +81,7 @@ import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 import { MobileBar } from './mobile/MobileBar';
 import { RemoteBrowser } from './preview/RemoteBrowser';
 import { ContextMenu } from './explorer/ContextMenu';
-import { isRemoteMode } from './remote/mode';
+import { isRemoteMode, rememberSelected, rememberedSelected } from './remote/mode';
 import { MobileTabs, MobileWaiting, type MobileTab } from './mobile/MobileTabs';
 import { useMobileLayout } from './mobile/useMobileLayout';
 
@@ -307,7 +307,9 @@ export function App() {
     if (!sessions || initialized.current) return;
     initialized.current = true;
     sessions.filter((s) => s.running).forEach((s) => load(s.id));
-    const first = sessions.find((s) => !s.archived)?.id ?? null;
+    // スマホでは、読み込み直す前に見ていたセッションに戻す（まだあれば）
+    const remembered = isRemoteMode() ? rememberedSelected() : null;
+    const first = (remembered && sessions.some((s) => s.id === remembered) ? remembered : null) ?? sessions.find((s) => !s.archived)?.id ?? null;
     setSelectedId(first);
     // アクティブなセッションが無ければ、新規セッションの画面から始める
     if (!first) setComposing({ back: null, cwd: sessions[0]?.worktree?.root ?? sessions[0]?.cwd ?? null });
@@ -366,6 +368,10 @@ export function App() {
 
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
+  // スマホでは、見ているセッションを手元に控える（読み込み直したときに戻すため）
+  useEffect(() => {
+    if (selectedId && isRemoteMode()) rememberSelected(selectedId);
+  }, [selectedId]);
   // 新規セッションの画面を出す。フォルダは画面の中で選ぶ（見ていたセッションのフォルダを選んでおく）
   const startComposing = useCallback(() => {
     const list = sessionsRef.current ?? [];

@@ -246,6 +246,8 @@ export const ClaudePane = memo(function ClaudePane({
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
+  // 指でスクロールしている間の、前に読んだ指の高さ（上へ動かしたかを見分ける）
+  const touchY = useRef<number | null>(null);
   // 上へ送るキーを押してから、そのスクロールが動き出すまで。その間に届いた scrollend は、押す前のスクロール（最下部への送り直しなど）の
   // ものなので、userScrollingUp を下ろさない。下ろすと、キーのなめらかなスクロールの最初の動きを最下部へ送り戻し、その送り戻しの
   // scrollend がまた下ろす、をくり返して、スクロールが終わるまで（1 秒ほど）一覧が動かなかった
@@ -1045,6 +1047,19 @@ export const ClaudePane = memo(function ClaudePane({
           }}
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
+            upKeyPending.current = false;
+          }}
+          // 指でのスクロール（スマホ）。指を下へ動かすと一覧は上へ動く。ホイールと同じく、人が上へ動かしたことを覚える
+          // （覚えないと、最下部を追いかけている間の上へのスクロールを、ほかのわけの動きと見なして最下部へ送り戻す）。
+          // 指を離したあとの惰性のスクロールの間も、scrollend まで立てたままにする
+          onTouchStart={(e) => {
+            touchY.current = e.touches[0]?.clientY ?? null;
+          }}
+          onTouchMove={(e) => {
+            const y = e.touches[0]?.clientY;
+            if (y === undefined || touchY.current === null) return;
+            if (y !== touchY.current) userScrollingUp.current = y > touchY.current;
+            touchY.current = y;
             upKeyPending.current = false;
           }}
           {...chatKeys}
