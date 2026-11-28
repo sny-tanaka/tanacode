@@ -9206,6 +9206,12 @@ body.resizing-rows webview {
 .app.mobile .explorer .activity-bar button {
   min-width: 44px;
   min-height: 44px;
+  /* 横に並べるので、いま見ているパネルのしるしの線は、左ではなく下に付ける */
+  border-left: none;
+  border-bottom: 2px solid transparent;
+}
+.app.mobile .explorer .activity-bar button.on {
+  border-bottom-color: var(--ide);
 }
 .app.mobile .explorer .side-panel {
   flex: 1;

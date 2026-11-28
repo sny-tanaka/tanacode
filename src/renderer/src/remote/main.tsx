@@ -7,7 +7,7 @@ import { setLanguage } from '@shared/i18n';
 import { App } from '../App';
 import { syncSharedPrefs } from '../sharedPrefs';
 import { guardLinks } from './links';
-import { BEFORE_RELOAD, setRemoteConnected, setRemoteMode } from './mode';
+import { BEFORE_RELOAD, setRemoteConnected, setRemoteMode, setRemoteProfile } from './mode';
 import { RemoteTransport } from './transport';
 import { downloadFile } from './download';
 import '../global.css';
@@ -50,6 +50,7 @@ void transport.start().then(async (ready) => {
   if (!profileId) return location.replace('/');
   localStorage.setItem(PROFILE_KEY, profileId);
   transport.useProfile(profileId);
+  setRemoteProfile(profileId);
   // ドロップしたファイルの Mac の上のパスは、スマホでは分からない
   const api = createApi(transport.api(() => '', () => ready.language));
   // Mac にしか無いものを、スマホのものに置き換える: 外のページはスマホのブラウザの新しいタブで開き、書き出したファイルはスマホにダウンロードする

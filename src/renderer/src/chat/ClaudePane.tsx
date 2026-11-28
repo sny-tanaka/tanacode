@@ -68,6 +68,8 @@ const PRESSABLE = 'button, a[href], [role="button"], summary, label';
 const UP_SLOP_PX = 0.5;
 // 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
 const PRESS_SLOP_PX = 4;
+// 指がこれより縦に動いたら、スクロールと見なす（iOS がスクロールを始める幅ほど）
+const TOUCH_SLOP_PX = 8;
 
 // 一覧の最後に出すカード（質問・許可の確認・MCP サーバーからの質問・巻き戻しの確かめ）が、見えている範囲に少しでも入っているか
 function cardInView(list: HTMLElement): boolean {
@@ -246,6 +248,10 @@ export const ClaudePane = memo(function ClaudePane({
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
+  // 指でスクロールしている間の、触れ始めの位置（start）と、前に読んだ指の高さ（y）。scrolling: 縦に TOUCH_SLOP_PX より動いて、
+  // スクロールと見なしたか。押すつもりの指のぶれや、横になぞった指の小さな縦の動きで、上へ動かした印を立てない（立てると、一覧が動かず
+  // scrollend が来ないので、印が下りないまま残り、あとで人の操作でない動きを人のスクロールと取り違える）
+  const touch = useRef<{ start: { x: number; y: number }; y: number; scrolling: boolean } | null>(null);
   // 上へ送るキーを押してから、そのスクロールが動き出すまで。その間に届いた scrollend は、押す前のスクロール（最下部への送り直しなど）の
   // ものなので、userScrollingUp を下ろさない。下ろすと、キーのなめらかなスクロールの最初の動きを最下部へ送り戻し、その送り戻しの
   // scrollend がまた下ろす、をくり返して、スクロールが終わるまで（1 秒ほど）一覧が動かなかった
@@ -1045,6 +1051,26 @@ export const ClaudePane = memo(function ClaudePane({
           }}
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
+            upKeyPending.current = false;
+          }}
+          // 指でのスクロール（スマホ）。指を下へ動かすと一覧は上へ動く。ホイールと同じく、人が上へ動かしたことを覚える
+          // （覚えないと、最下部を追いかけている間の上へのスクロールを、ほかのわけの動きと見なして最下部へ送り戻す）。
+          // 指を離したあとの惰性のスクロールの間も、scrollend まで立てたままにする
+          onTouchStart={(e) => {
+            const t = e.touches[0];
+            touch.current = t ? { start: { x: t.clientX, y: t.clientY }, y: t.clientY, scrolling: false } : null;
+          }}
+          onTouchMove={(e) => {
+            const t = e.touches[0];
+            const now = touch.current;
+            if (!t || !now) return;
+            if (!now.scrolling) {
+              const dy = Math.abs(t.clientY - now.start.y);
+              if (dy < TOUCH_SLOP_PX || Math.abs(t.clientX - now.start.x) > dy) return;
+              now.scrolling = true;
+            }
+            if (t.clientY !== now.y) userScrollingUp.current = t.clientY > now.y;
+            now.y = t.clientY;
             upKeyPending.current = false;
           }}
           {...chatKeys}
