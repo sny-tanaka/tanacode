@@ -41,9 +41,18 @@ export function takeDrafts(): Record<string, Draft> {
 // 一覧の先頭ではなく、見ていたセッションに戻すために、手元に控える（localStorage。画面を閉じても残す）
 const SELECTED_KEY = 'tanacode.remote.selected';
 
+// プロファイルごとに分ける（別のプロファイルに切り替えて戻ったときも、そのプロファイルで見ていたセッションに戻す）
+let selectedProfile = '';
+
+export function setRemoteProfile(profileId: string): void {
+  selectedProfile = profileId;
+}
+
+const selectedKey = () => `${SELECTED_KEY}.${selectedProfile}`;
+
 export function rememberSelected(sessionId: string): void {
   try {
-    localStorage.setItem(SELECTED_KEY, sessionId);
+    localStorage.setItem(selectedKey(), sessionId);
   } catch {
     // 控えられなくても、選ぶのは止めない
   }
@@ -51,7 +60,7 @@ export function rememberSelected(sessionId: string): void {
 
 export function rememberedSelected(): string | null {
   try {
-    return localStorage.getItem(SELECTED_KEY);
+    return localStorage.getItem(selectedKey());
   } catch {
     return null;
   }

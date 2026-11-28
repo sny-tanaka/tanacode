@@ -592,7 +592,7 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(100);
   });
 
-  it('最下部を追いかけている間に、指で上へスクロールしたら追いかけをやめる（スマホ）。指で下へ動かしたときは送り直す', () => {
+  it('最下部を追いかけている間に、指で上へスクロールしたら追いかけをやめる（スマホ）。指で下へ動かしたとき・指が少しぶれただけのときは送り直す', () => {
     const base = props({ chat: chatOf({ status: 'running' }) });
     render(<ClaudePane {...base} />);
     const list = document.querySelector('.chat-list') as HTMLDivElement;
@@ -602,16 +602,24 @@ describe('ヘッダー', () => {
     fireEvent.scroll(list);
     fireEvent(list, new Event('scrollend'));
     // 指を上へ動かす（一覧は下へ動く）: 最下部へ送り直す
-    fireEvent.touchStart(list, { touches: [{ clientY: 300 }] });
-    fireEvent.touchMove(list, { touches: [{ clientY: 250 }] });
+    fireEvent.touchStart(list, { touches: [{ clientX: 100, clientY: 300 }] });
+    fireEvent.touchMove(list, { touches: [{ clientX: 100, clientY: 250 }] });
     list.scrollTop = 780;
     fireEvent.scroll(list);
     expect(list.scrollTop).toBe(1000);
     fireEvent.touchEnd(list);
     fireEvent(list, new Event('scrollend'));
+    // 押すつもりの指が少し下へぶれた・横になぞった: スクロールと見なさない（あとで一覧が押し戻されても、最下部へ送り直す）
+    fireEvent.touchStart(list, { touches: [{ clientX: 100, clientY: 300 }] });
+    fireEvent.touchMove(list, { touches: [{ clientX: 100, clientY: 304 }] });
+    fireEvent.touchMove(list, { touches: [{ clientX: 160, clientY: 320 }] });
+    fireEvent.touchEnd(list);
+    list.scrollTop = 900;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(1000);
     // 指を下へ動かす（一覧は上へ動く）: 人が上を読み始めたので、送り戻さない
-    fireEvent.touchStart(list, { touches: [{ clientY: 300 }] });
-    fireEvent.touchMove(list, { touches: [{ clientY: 400 }] });
+    fireEvent.touchStart(list, { touches: [{ clientX: 100, clientY: 300 }] });
+    fireEvent.touchMove(list, { touches: [{ clientX: 100, clientY: 400 }] });
     list.scrollTop = 600;
     fireEvent.scroll(list);
     expect(list.scrollTop).toBe(600);

@@ -140,7 +140,7 @@ describe('スマホの画面の配置（App）', () => {
     await flush();
     expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('米の話');
     second.unmount();
-    localStorage.setItem('tanacode.remote.selected', 'gone');
+    localStorage.setItem('tanacode.remote.selected.', 'gone');
     render(<App />);
     await flush();
     expect(document.querySelector('.mobile-bar-title')!.textContent).toBe('パンの話');
