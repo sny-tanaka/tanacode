@@ -169,6 +169,8 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 
 会話ログの `session-owner`（2.1.318 から）は、セッションの持ち主の控えです（`{"type":"session-owner","accountUuid":"…","organizationUuid":"…","sessionId":"…"}`。セッションを開き直したときなどに、`mode`・`atis-latch` などの状態の行と並んで書かれる）。会話の中身ではないので、意図して捨てる行（`IGNORED_TYPES`）に入れています。
 
+会話ログの `data-flow-records`・`data-flow-incomplete`・`derived-from`（2.1.332 の本体にある）は、会話の中のデータの流れの控えと、どのセッションから派生したかの控えです。Claude Code が会話を開き直すときに使うもので、会話の中身ではないので、意図して捨てる行（`IGNORED_TYPES`）に入れています（入れないと、チャットに「未知のイベント」として出る）。
+
 会話ログの attachment の `structured_output`（`data`・`toolUseID`）は、ワークフローのエージェントが、決めた形（スキーマ）で返した結果の控えです。ワークフローのエージェントの会話ログ（`subagents/workflows/<実行の ID>/agent-<ID>.jsonl`）にだけあります。`data` は、`toolUseID` の `StructuredOutput` の呼び出しの `input` と同じで、ワークフローの `journal.jsonl` の、そのエージェントの `result` とも同じです（2.1.296〜2.1.303 の手元の会話ログの 822 行で実測）。チャットでは呼び出しのカードの入力に、タスクの画面ではエージェントの「結果」に同じ中身が出ているので、意図して捨てます（`IGNORED_ATTACHMENTS`）。
 
 ## 調べ直し方

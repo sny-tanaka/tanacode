@@ -104,4 +104,28 @@ describe('useMobileLayout', () => {
     unmount();
     expect(m.query.removeEventListener).toHaveBeenCalled();
   });
+
+  it('キーボードが出て iOS が見えている範囲をずらしたら、画面の高さと上の端をそのずれに合わせる（入力欄が上へ押し出されない）', () => {
+    setRemoteMode(true);
+    media(true);
+    const listeners: Record<string, (() => void)[]> = {};
+    const viewport = {
+      height: 800,
+      offsetTop: 0,
+      addEventListener: (type: string, fn: () => void) => (listeners[type] ??= []).push(fn),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('visualViewport', viewport);
+    const style = document.documentElement.style;
+    const { unmount } = renderHook(() => useMobileLayout());
+    expect([style.getPropertyValue('--app-height'), style.getPropertyValue('--app-top')]).toEqual(['800px', '0px']);
+    // キーボードが出る: 見えている高さが縮み、そのあと見えている範囲が下へずれる
+    viewport.height = 450;
+    listeners.resize.forEach((fn) => fn());
+    viewport.offsetTop = 300;
+    listeners.scroll.forEach((fn) => fn());
+    expect([style.getPropertyValue('--app-height'), style.getPropertyValue('--app-top')]).toEqual(['450px', '300px']);
+    unmount();
+    expect(viewport.removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+  });
 });
