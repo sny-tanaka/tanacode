@@ -9146,7 +9146,9 @@ body.resizing-rows webview {
    上の帯（.mobile-bar）・セッションの引き出し・下のタブ（.mobile-tabs）。列は作り替えず、今のタブの列だけを画面いっぱいに出す */
 .app.mobile {
   height: var(--app-height, 100dvh);
-  padding-top: env(safe-area-inset-top);
+  /* 上の帯（.mobile-bar）は画面の上端に固定するので、その分を空ける */
+  padding-top: calc(env(safe-area-inset-top) + var(--mobile-bar-height));
+  --mobile-bar-height: 48px;
 }
 .app.mobile .resizer,
 .app.mobile .statusbar {
@@ -9258,14 +9260,21 @@ body.resizing-rows webview {
   }
 }
 
-/* 上の帯 */
+/* 上の帯。画面の上端に固定し、不透明の背景を付ける。iOS 27 のホーム画面の Web アプリは、ステータスバーの下の約 35pt にぼかしを
+   かける（WebKit bug 324438）。上端に固定した、幅いっぱいで背景の色がある帯があれば、WebKit はぼかしの代わりにその色で塗る
+   （ステータスバーが default のときだけ。実機で測った報告による）。並びの中に置くと、帯の上半分がぼやける */
 .mobile-bar {
-  flex: none;
-  height: 48px;
+  position: fixed;
+  /* 上端にぴったり付ける（離れると WebKit の条件から外れる）。上の安全な範囲は、帯の内側の余白で空ける */
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: calc(env(safe-area-inset-top) + var(--mobile-bar-height));
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px 0 4px;
+  padding: env(safe-area-inset-top) 10px 0 4px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-chrome);
 }
