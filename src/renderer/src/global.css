@@ -9265,15 +9265,16 @@ body.resizing-rows webview {
    （ステータスバーが default のときだけ。実機で測った報告による）。並びの中に置くと、帯の上半分がぼやける */
 .mobile-bar {
   position: fixed;
-  top: env(safe-area-inset-top);
+  /* 上端にぴったり付ける（離れると WebKit の条件から外れる）。上の安全な範囲は、帯の内側の余白で空ける */
+  top: 0;
   left: 0;
   right: 0;
   z-index: 20;
-  height: var(--mobile-bar-height);
+  height: calc(env(safe-area-inset-top) + var(--mobile-bar-height));
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px 0 4px;
+  padding: env(safe-area-inset-top) 10px 0 4px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-chrome);
 }
