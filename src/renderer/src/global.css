@@ -9151,6 +9151,8 @@ body.resizing-rows webview {
   left: 0;
   right: 0;
   height: var(--app-height, 100dvh);
+  /* 上端に固定した幅いっぱいの要素なので、WebKit がぼかしの代わりに塗る色を拾うことがある（#487）。上の帯と同じ色にしておく */
+  background: var(--bg-chrome);
   /* 上の帯（.mobile-bar）は画面の上端に固定するので、その分を空ける */
   padding-top: calc(env(safe-area-inset-top) + var(--mobile-bar-height));
   --mobile-bar-height: 48px;
