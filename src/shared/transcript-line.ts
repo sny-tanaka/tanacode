@@ -109,6 +109,11 @@ const IGNORED_TYPES = new Set([
   'artifact-comment-monitor',
   'artifact-autoreact-ledger',
   'frame-link',
+  // 会話の中のデータの流れの控え（data-flow-records・取りこぼしの印の data-flow-incomplete）と、どのセッションから派生したかの控え
+  // （derived-from）。2.1.332 の本体にあり、私用の Mac で「未知のイベント」として出た
+  'data-flow-records',
+  'data-flow-incomplete',
+  'derived-from',
 ]);
 
 // 意図して捨てる system の行（docs/claude-code-events.md の 5 節）
